@@ -18,7 +18,7 @@ import {
   hasStandardViewWhitespace,
   ViewOptions,
 } from "./view-options.utils";
-import { NBSP_SYMBOL, VerseNode } from "shared";
+import { NBSP_STAND_IN, VerseNode } from "shared";
 
 /** Every view mode the package knows about. New modes join these tests automatically. */
 const allViewModes = Object.keys(viewModeToViewNames) as ViewMode[];
@@ -280,6 +280,6 @@ describe("getNbspSpelling", () => {
     expect(getNbspSpelling(undefined)).toBe("~");
     expect(getNbspSpelling(standard)).toBe("~");
     expect(getNbspSpelling({ ...standard, allowInvisibleCharacters: false })).toBe("~");
-    expect(getNbspSpelling({ ...standard, allowInvisibleCharacters: true })).toBe(NBSP_SYMBOL);
+    expect(getNbspSpelling({ ...standard, allowInvisibleCharacters: true })).toBe(NBSP_STAND_IN);
   });
 });

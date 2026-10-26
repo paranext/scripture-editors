@@ -10,7 +10,7 @@
  * - USJ: a real NBSP (U+00A0) for a no-break space; plain spaces for spaces; with the setting on,
  *   `~` for a literal tilde.
  * - Standard-view editor DOM: DISPLAY text — a stored NBSP renders as its spelling (`~`, or
- *   `NBSP_SYMBOL` with the setting on — `getNbspSpelling`), visible and editable, and spaces
+ *   `NBSP_STAND_IN` with the setting on — `getNbspSpelling`), visible and editable, and spaces
  *   inside a run of 2+ render as NBSP so they stay visible while typing instead of HTML-collapsing.
  *   Runs exist transiently: normalization is an event (serialization, Tier-2 rebuilds — matching
  *   PT9's on-reformat timing), not an invariant.
@@ -41,8 +41,75 @@
  * spelling, so the two agree.
  */
 
-import { NBSP } from "shared";
-import { getNbspSpelling, ViewOptions } from "shared-react";
+import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { NBSP, NBSP_STAND_IN } from "shared";
+import { getNbspSpelling, hasStandardViewWhitespace, ViewOptions } from "shared-react";
+
+/** Whether `code` is a C0 control character other than tab, line feed and carriage return. */
+function isIncomingControlCharacter(code: number): boolean {
+  return code >= 0x01 && code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d;
+}
+
+/**
+ * Turns each C0 control character other than tab, line feed and carriage return (U+0001-U+0008,
+ * U+000B, U+000C, U+000E-U+001F) into a space — what Paratext's reader (`ScrText.GetText`) turns
+ * them into, so a project can never hold one. Run on all text that comes into Standard view (a
+ * load, a paste, a drop, typing, applied delta ops) before anything else, because U+001A is the
+ * editor's own stand-in for a stored no-break space (`NBSP_STAND_IN`): one that came in from
+ * outside would otherwise be saved as a no-break space.
+ *
+ * @param text - Incoming text.
+ * @returns The text with those characters as spaces; `text` itself when it has none.
+ */
+export function controlCharactersToSpaces(text: string): string {
+  let index = 0;
+  while (index < text.length && !isIncomingControlCharacter(text.charCodeAt(index))) index += 1;
+  if (index === text.length) return text;
+  let result = text.slice(0, index);
+  for (; index < text.length; index += 1)
+    result += isIncomingControlCharacter(text.charCodeAt(index)) ? " " : text[index];
+  return result;
+}
+
+/**
+ * {@link controlCharactersToSpaces} over every string of a USJ document: text content and
+ * attribute values alike, since Standard view shows both as text it re-reads. Objects without such
+ * a character are returned as they are.
+ *
+ * @param usj - The document coming into Standard view.
+ * @returns The document with those characters as spaces.
+ */
+export function usjWithoutControlCharacters(usj: Usj): Usj {
+  const content = contentWithoutControlCharacters(usj.content);
+  return content === usj.content ? usj : { ...usj, content };
+}
+
+function contentWithoutControlCharacters(content: MarkerContent[]): MarkerContent[] {
+  let changed = false;
+  const mapped = content.map((item) => {
+    const next =
+      typeof item === "string"
+        ? controlCharactersToSpaces(item)
+        : objectWithoutControlCharacters(item);
+    if (next !== item) changed = true;
+    return next;
+  });
+  return changed ? mapped : content;
+}
+
+function objectWithoutControlCharacters(object: MarkerObject): MarkerObject {
+  const changes: { [key: string]: unknown } = {};
+  for (const [key, value] of Object.entries(object)) {
+    if (typeof value !== "string") continue;
+    const next = controlCharactersToSpaces(value);
+    if (next !== value) changes[key] = next;
+  }
+  if (object.content) {
+    const content = contentWithoutControlCharacters(object.content);
+    if (content !== object.content) changes.content = content;
+  }
+  return Object.keys(changes).length > 0 ? Object.assign({}, object, changes) : object;
+}
 
 /**
  * Data → display: NBSP → `nbspSpelling`; spaces in runs of 2+ → NBSP. Paragraph-leading
@@ -53,7 +120,7 @@ import { getNbspSpelling, ViewOptions } from "shared-react";
  * @param nbspSpelling - What a stored NBSP displays as (`getNbspSpelling`); `~` by default.
  */
 export function usjTextToDisplay(text: string, nbspSpelling = "~"): string {
-  const result = text.replaceAll(NBSP, nbspSpelling);
+  const result = controlCharactersToSpaces(text).replaceAll(NBSP, nbspSpelling);
   return result.replace(/ {2,}/g, (run) => NBSP.repeat(run.length));
 }
 
@@ -70,11 +137,11 @@ export function displayTextToUsj(text: string, nbspSpelling = "~"): string {
 /**
  * Respells the no-break spaces in text a host takes from the editor's display — a DOM selection or
  * an element's `textContent`, for a copy or a search — the way the project's USFM spells them.
- * Standard view shows a stored no-break space as `getNbspSpelling(viewOptions)`: with
- * `ViewOptions.allowInvisibleCharacters` off that is `~`, already the USFM spelling, and the text is
- * returned unchanged; with it on each `⍽` (U+237D) becomes U+00A0 and `~` stays an ordinary
- * character. Other display characters (the no-break spaces a space run or a marker separator
- * shows as) are left as they are.
+ * Standard view shows a stored no-break space as `~` while `ViewOptions.allowInvisibleCharacters`
+ * is off, which is already the USFM spelling, so the text is returned unchanged. With it on, the
+ * editor holds a no-break space as an internal stand-in it draws as a blank the width of a space;
+ * each one becomes U+00A0 here, and `~` stays an ordinary character. Other display characters (the
+ * no-break spaces a space run or a marker separator shows as) are left as they are.
  *
  * @param displayText - Text read from the editor's display.
  * @param viewOptions - The editor's view options.
@@ -88,4 +155,115 @@ export function toUsfmNbspSpelling(
 ): string {
   const nbspSpelling = getNbspSpelling(viewOptions);
   return nbspSpelling === "~" ? displayText : displayText.replaceAll(nbspSpelling, NBSP);
+}
+
+/**
+ * Whether the NBSP at `index` of `text` (display text in Standard view, as delta ops carry it) is
+ * the separator after an opening marker glyph (`\nd`, `\+nd`, `\c`) or a lone spacer — the NBSPs
+ * that are part of how the view lays markers out, as opposed to a space shown as an NBSP because it
+ * is in a run. A closing glyph (`\nd*`) has no separator after it.
+ */
+function isStructuralDisplayNbsp(text: string, index: number): boolean {
+  if (text === NBSP) return true;
+  return /\\\+?[^\s\\|*]+$/.test(text.slice(0, index));
+}
+
+/**
+ * Text of a delta op going out of Standard view with `ViewOptions.allowInvisibleCharacters` on:
+ * each internal stand-in becomes the U+00A0 it stands for, and an NBSP the view shows for a space
+ * (in a run of spaces) becomes that space, so no U+00A0 in the ops is anything but a no-break space
+ * or a marker's own separator. Length-preserving, so op positions are unchanged.
+ */
+function opTextOut(text: string): string {
+  let out = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === NBSP_STAND_IN) out += NBSP;
+    else if (character === NBSP && !isStructuralDisplayNbsp(text, index)) out += " ";
+    else out += character;
+  }
+  return out;
+}
+
+/**
+ * Text of a delta op coming into Standard view: control characters become spaces
+ * ({@link controlCharactersToSpaces}), and with `ViewOptions.allowInvisibleCharacters` on each
+ * U+00A0 that is not a marker's separator or a lone spacer becomes the internal stand-in, the
+ * reverse of {@link opTextOut}.
+ */
+function opTextIn(text: string, allowInvisibleCharacters: boolean): string {
+  const sanitized = controlCharactersToSpaces(text);
+  if (!allowInvisibleCharacters || !sanitized.includes(NBSP)) return sanitized;
+  let result = "";
+  for (let index = 0; index < sanitized.length; index += 1) {
+    const character = sanitized[index];
+    result +=
+      character === NBSP && !isStructuralDisplayNbsp(sanitized, index) ? NBSP_STAND_IN : character;
+  }
+  return result;
+}
+
+/** Maps the text of every insert in `ops`, including the ops inside an embed's `contents`. */
+function mapOpsText<T extends { insert?: unknown }>(ops: T[], map: (text: string) => string): T[] {
+  return ops.map((op) => {
+    const { insert } = op;
+    if (typeof insert === "string") {
+      const text = map(insert);
+      return text === insert ? op : { ...op, insert: text };
+    }
+    if (!insert || typeof insert !== "object") return op;
+    let changed = false;
+    const embed: { [kind: string]: unknown } = {};
+    for (const [kind, value] of Object.entries(insert)) {
+      embed[kind] = value;
+      if (!value || typeof value !== "object" || !("contents" in value)) continue;
+      const { contents } = value;
+      if (!contents || typeof contents !== "object" || !("ops" in contents)) continue;
+      const contentsOps: unknown = contents.ops;
+      if (!Array.isArray(contentsOps)) continue;
+      const mapped = mapOpsText<{ insert?: unknown }>(contentsOps, map);
+      embed[kind] = { ...value, contents: { ...contents, ops: mapped } };
+      changed = true;
+    }
+    return changed ? { ...op, insert: embed } : op;
+  });
+}
+
+/**
+ * Delta ops on their way out of the editor (`onUsjChange`, `getNoteOps` and the other note-op
+ * getters): in Standard view with `ViewOptions.allowInvisibleCharacters` on, a stored no-break
+ * space goes out as U+00A0 and never as the editor's internal stand-in, and an NBSP the view shows
+ * for a space in a run goes out as that space (see `opTextOut` in this file). Otherwise the ops are
+ * returned as they are.
+ *
+ * @param ops - The editor's own ops.
+ * @param viewOptions - The editor's view options.
+ * @returns The ops a host is given.
+ */
+export function opsForHost<T extends { insert?: unknown }>(
+  ops: T[],
+  viewOptions: ViewOptions | undefined,
+): T[] {
+  if (!hasStandardViewWhitespace(viewOptions) || getNbspSpelling(viewOptions) === "~") return ops;
+  return mapOpsText(ops, opTextOut);
+}
+
+/**
+ * Delta ops on their way into the editor (`applyUpdate`, `replaceEmbedUpdate`), the reverse of
+ * {@link opsForHost}: in Standard view, control characters become spaces, and with
+ * `ViewOptions.allowInvisibleCharacters` on each U+00A0 that is not a marker separator or a lone
+ * spacer becomes the internal stand-in for a stored no-break space. Other views take the ops as
+ * they are.
+ *
+ * @param ops - The host's ops.
+ * @param viewOptions - The editor's view options.
+ * @returns The ops the editor applies.
+ */
+export function opsFromHost<T extends { insert?: unknown }>(
+  ops: T[],
+  viewOptions: ViewOptions | undefined,
+): T[] {
+  if (!hasStandardViewWhitespace(viewOptions)) return ops;
+  const allow = getNbspSpelling(viewOptions) !== "~";
+  return mapOpsText(ops, (text) => opTextIn(text, allow));
 }

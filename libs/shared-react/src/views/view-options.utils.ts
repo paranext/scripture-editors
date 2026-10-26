@@ -2,7 +2,7 @@ import {
   TEXT_SPACING_CLASS_NAME,
   FORMATTED_FONT_CLASS_NAME,
   MARKER_MODE_CLASS_NAME_PREFIX,
-  NBSP_SYMBOL,
+  NBSP_STAND_IN,
   VerseNode,
 } from "shared";
 import { ImmutableVerseNode } from "../nodes/usj/ImmutableVerseNode";
@@ -166,16 +166,25 @@ export interface ViewOptions {
    * character as a space — the author's no-break space is typed as `~`, as in Paratext 9.
    *
    * On: `~` is an ordinary character and the project stores U+00A0 as itself, so the USJ can hold
-   * both and they mean different things. Standard view then shows `~` as `~` and U+00A0 as `⍽`
-   * (U+237D, `NBSP_SYMBOL` in shared) so it is visible and editable, and saves each as itself. A
-   * U+00A0 typed or pasted is kept as one (shown as `⍽`), and a copy writes `~` and U+00A0 as
-   * themselves. The Markers view's copy and the Unformatted view's marker settle spell them the
-   * same way. Space runs still collapse on save. Paratext 9 shows the U+00A0 itself there, which
-   * looks like a space; ParatextData still drops a U+00A0 right after a marker or next to a space
-   * when it saves, in both products.
+   * both and they mean different things. Standard view keeps `~` as `~` and shows each U+00A0 as a
+   * blank the width of a space, as a no-break space looks, and saves each as itself. A U+00A0 typed
+   * or pasted is kept as one, and a copy writes `~` and U+00A0 as themselves. The Markers view's
+   * copy and the Unformatted view's marker settle spell them the same way. Space runs still collapse
+   * on save. ParatextData still drops a U+00A0 right after a marker or next to a space when it
+   * saves, in both products.
    *
-   * Because `⍽` stands for U+00A0 while this is on, a literal U+237D in such a project's text is
-   * saved from Standard view as U+00A0.
+   * Inside the editor Standard view holds each such U+00A0 as an internal stand-in (U+001A,
+   * `NBSP_STAND_IN` in shared), since its engine reads an on-screen U+00A0 as display spacing; the
+   * `NBSP_STAND_IN_FONT_FAMILY` font face draws it as the blank. The stand-in never leaves the
+   * editor: `getUsj`, `onUsjChange` and its delta ops, the note-op getters, the clipboard and drag
+   * data, annotation callbacks and note-caller previews all give U+00A0. Delta ops coming in
+   * (`applyUpdate`, `replaceEmbedUpdate`) take a U+00A0 that is not a marker's separator as a stored
+   * no-break space; going out, an NBSP the view shows for a space in a run is that space. Text read
+   * from the editor's DOM still holds the stand-in; `toUsfmNbspSpelling` turns it back. No project
+   * text can hold U+001A — Paratext's reader turns U+0001-U+0008 and U+000E-U+001F into spaces — and
+   * Standard view does the same to every C0 control character other than tab, line feed and
+   * carriage return that comes in (a load, a paste, a drop, typing, applied ops), in either setting,
+   * so the stand-in is never mistaken for one.
    *
    * Views that hide markers (formatted, paragraph-structure, block verse) show the stored
    * characters as they are either way, so they behave the same with this on or off.
@@ -191,15 +200,15 @@ export interface ViewOptions {
  * The character that spells a stored no-break space (U+00A0) in Standard view's display text and
  * in the USFM its marker settle re-tokenizes: `~`, unless
  * {@link ViewOptions.allowInvisibleCharacters} is on, when `~` is an ordinary character and
- * `NBSP_SYMBOL` (`⍽`, U+237D) spells it instead.
+ * `NBSP_STAND_IN` (U+001A, the editor's internal stand-in) spells it instead.
  *
  * @param viewOptions - View options of the editor.
- * @returns `~` or `NBSP_SYMBOL`.
+ * @returns `~` or `NBSP_STAND_IN`.
  *
  * @public
  */
 export function getNbspSpelling(viewOptions: ViewOptions | undefined): string {
-  return viewOptions?.allowInvisibleCharacters ? NBSP_SYMBOL : "~";
+  return viewOptions?.allowInvisibleCharacters ? NBSP_STAND_IN : "~";
 }
 
 /**

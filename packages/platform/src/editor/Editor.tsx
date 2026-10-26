@@ -34,6 +34,7 @@ import {
   SET_MARKER_SETTLE_SUSPENDED_COMMAND,
 } from "./markerEdit/MarkerEditPlugin";
 import { MarkerValidationPlugin } from "./markerEdit/MarkerValidationPlugin";
+import { opsForHost, opsFromHost, toUsfmNbspSpelling } from "./markerEdit/whitespaceDisplay.utils";
 import { MarkersViewCopyPlugin } from "./MarkersViewCopyPlugin";
 import {
   $settledUsj,
@@ -963,7 +964,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         if (!holdsFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
         if (extraTag) $addUpdateTag(extraTag);
         try {
-          $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
+          $applyUpdate(opsFromHost(ops, viewOptions), viewOptions, nodeOptions, stableLogger);
         } catch (error) {
           // Lexical discards a throwing update but keeps its `onUpdate` for the next commit that
           // lands - the user's next edit - so end the signal here and make that callback a no-op,
@@ -1279,14 +1280,23 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         return;
       }
 
+      // The text each callback reports is the annotation's display text, so a stored no-break space
+      // is still the editor's internal stand-in there; the host is given U+00A0.
+      const hostText = (text: string) => toUsfmNbspSpelling(text, viewOptions);
       annotationRef.current?.setAnnotation(
         live,
         externalTypedMarkType(type),
         id,
-        onClick,
-        onRemove,
-        onMouseEnter,
-        onMouseLeave,
+        onClick &&
+          ((event, markType, markId, text) => onClick(event, markType, markId, hostText(text))),
+        onRemove &&
+          ((markType, markId, cause, text) => onRemove(markType, markId, cause, hostText(text))),
+        onMouseEnter &&
+          ((event, markType, markId, text) =>
+            onMouseEnter(event, markType, markId, hostText(text))),
+        onMouseLeave &&
+          ((event, markType, markId, text) =>
+            onMouseLeave(event, markType, markId, hostText(text))),
       );
     },
     removeAnnotation(type, id) {
@@ -1726,7 +1736,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
             if (!noteNode) return undefined;
 
-            return $getParticularNodeOps(noteNode);
+            return opsForHost($getParticularNodeOps(noteNode), viewOptions);
           })
         : undefined;
     },
@@ -1735,7 +1745,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       return editor
         ? readLatest(editor, () => {
             const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
-            return noteNode ? $getOpsAfterNote(noteNode) : undefined;
+            return noteNode ? opsForHost($getOpsAfterNote(noteNode), viewOptions) : undefined;
           })
         : undefined;
     },
@@ -1757,7 +1767,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         0,
       );
       applyOps([{ retain: notePosition + 1 }, { delete: length }], "remote", HISTORY_MERGE_TAG);
-      return ops;
+      return opsForHost(ops, viewOptions);
     },
     getNoteIndex(noteKey) {
       const editor = editorRef.current;
@@ -1923,7 +1933,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       opsNodeKey && !payload.prevEditorState.read(() => $getNodeByKey(opsNodeKey))
         ? opsNodeKey
         : undefined;
-    inputs.onUsjChange(settled, ops, "local", insertedNodeKey);
+    inputs.onUsjChange(settled, opsForHost(ops, inputs.viewOptions), "local", insertedNodeKey);
   }, []);
 
   const handleStateChange = useCallback(

@@ -153,7 +153,10 @@ import {
   isSomeSerializedVerseNode,
   showParaMarkerPrefix,
 } from "shared-react";
-import { usjTextToDisplay } from "../markerEdit/whitespaceDisplay.utils";
+import {
+  usjTextToDisplay,
+  usjWithoutControlCharacters,
+} from "../markerEdit/whitespaceDisplay.utils";
 
 interface UsjEditorAdaptor extends EditorAdaptor {
   initialize: typeof initialize;
@@ -234,7 +237,10 @@ export function serializeEditorState(
       _logger?.warn(`This USJ type '${usj.type}' didn't match the expected type '${USJ_TYPE}'.`);
 
     if (usj.content.length > 0) {
-      children = insertImpliedParasRecurse(recurseNodes(usj.content));
+      // Standard view re-reads what it shows as text, and holds a stored no-break space as U+001A
+      // where `~` is an ordinary character, so no other control character may come in as one.
+      const content = isStandardView() ? usjWithoutControlCharacters(usj).content : usj.content;
+      children = insertImpliedParasRecurse(recurseNodes(content));
       // After implied paragraphs exist, so the grouping only ever sees paragraph containers.
       if (isBlockVerseLayout(_viewOptions)) children = groupVersesIntoBlocks(children, _logger);
     } else children = [emptyImpliedParaNode];

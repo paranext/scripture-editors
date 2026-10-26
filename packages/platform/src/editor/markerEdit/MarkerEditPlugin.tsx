@@ -39,12 +39,15 @@ import {
   $handleCopyForStandardView,
   $handlePasteForStandardView,
   registerTypedNbspSpelling,
+  $handleDropForStandardView,
+  $setStandardViewDragData,
   getDataTransferPayload,
   normalizePastedNbsp,
   stripPastedBlockMarkers,
   stripPastedChapterAndBookId,
   getPastePayload,
 } from "./whitespaceDisplay.plugin.utils";
+import { registerNbspStandInFont } from "./nbspStandInFont";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -61,6 +64,7 @@ import {
   COMMAND_PRIORITY_LOW,
   COMMAND_PRIORITY_NORMAL,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  DRAGSTART_COMMAND,
   COPY_COMMAND,
   createCommand,
   CUT_COMMAND,
@@ -444,7 +448,7 @@ function registerPasteNormalization(
         // `normalizePastedNbsp` the Standard-view external-paste handler uses
         // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`,
         // a note's inter-child spacer) settles to a space exactly as it would outside a note, and
-        // only genuine data survives, as the display spelling (`~` or `NBSP_SYMBOL`). Inserted raw
+        // only genuine data survives, as the display spelling (`~` or `NBSP_STAND_IN`). Inserted raw
         // an NBSP is indistinguishable from a display-NBSP (a plain space in a run), so
         // serialization would corrupt it into a plain space if left unmapped. A pasted literal `~`
         // is already the display form, or an ordinary character, and passes through unchanged. `\c`/`\id` bytes are dropped first, via the
@@ -1127,6 +1131,16 @@ export function MarkerEditPlugin({
               $displayWhitespaceTransform(node);
             }),
             registerTypedNbspSpelling(editor, () => getNbspSpelling(context.viewOptions)),
+            registerNbspStandInFont(editor),
+            // Never claims the drag: the plugins that refuse one run ahead of this at HIGH.
+            editor.registerCommand(
+              DRAGSTART_COMMAND,
+              (event) => {
+                $setStandardViewDragData(event, editor, getNbspSpelling(context.viewOptions));
+                return false;
+              },
+              COMMAND_PRIORITY_LOW,
+            ),
             editor.registerCommand(
               COPY_COMMAND,
               (event) =>
@@ -1348,23 +1362,38 @@ export function MarkerEditPlugin({
       ),
       // A drop inserts through Lexical's clipboard path, which splits at every line break without
       // going through INSERT_PARAGRAPH_COMMAND, so a drop on a chapter line is claimed and goes in
-      // as a paste there does. LOW: below structure protection's HIGH block and the NORMAL
+      // as a paste there does, and in Standard view every other drop goes in as a paste does too
+      // ($handleDropForStandardView). LOW: below structure protection's HIGH block and the NORMAL
       // replace-selection delete, above Lexical's own insertion at EDITOR.
       editor.registerCommand(
         CONTROLLED_TEXT_INSERTION_COMMAND,
         (payload) => {
           if (typeof payload === "string" || !payload.dataTransfer) return false;
+          const isProtected = context.structureProtectionMode === "protected";
+          const armSplitExpected = () => {
+            context.splitExpected.current = true;
+          };
+          const nbspSpelling = getNbspSpelling(context.viewOptions);
           const { text } = getDataTransferPayload(payload.dataTransfer, editor._config.namespace);
-          return (
-            !!text &&
+          if (
+            text &&
             $pasteOnChapterLine(
               text,
-              context.structureProtectionMode === "protected",
-              () => {
-                context.splitExpected.current = true;
-              },
+              isProtected,
+              armSplitExpected,
               context.getMarker,
-              getNbspSpelling(context.viewOptions),
+              nbspSpelling,
+            )
+          )
+            return true;
+          return (
+            hasStandardViewWhitespace(context.viewOptions) &&
+            $handleDropForStandardView(
+              payload.dataTransfer,
+              isProtected,
+              armSplitExpected,
+              context.getMarker,
+              nbspSpelling,
             )
           );
         },

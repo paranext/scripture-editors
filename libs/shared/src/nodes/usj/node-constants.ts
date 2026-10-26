@@ -11,11 +11,17 @@ export const NBSP = "\u00A0";
 /** Zero-width space (U+200B). */
 export const ZWSP = "\u200B";
 /**
- * Shouldered open box (U+237D), the conventional picture of a no-break space. Standard view shows a
- * stored no-break space as this character, instead of `~`, in a project where `~` is an ordinary
- * character (see `ViewOptions.allowInvisibleCharacters` in shared-react).
+ * SUBSTITUTE (U+001A), the character Standard view holds in place of a stored no-break space, instead
+ * of `~`, in a project where `~` is an ordinary character (see
+ * `ViewOptions.allowInvisibleCharacters` in shared-react). It never leaves the editor: every way
+ * text goes out turns it back into U+00A0, and every way text comes in turns a U+001A (like every
+ * other C0 control character but tab, line feed and carriage return) into a space first, so the
+ * only U+001A an editor holds is its own. It is safe for that because Paratext's own reader
+ * (`ScrText.GetText`) turns U+0001-U+0008 and U+000E-U+001F into spaces, so project text can never
+ * hold one. It is drawn as a blank the width of a space by the `NBSP_STAND_IN_FONT_FAMILY` font
+ * face, so it looks like the no-break space it stands for.
  */
-export const NBSP_SYMBOL = "\u237D";
+export const NBSP_STAND_IN = "\u001A";
 
 export const EMPTY_CHAR_PLACEHOLDER_TEXT = NBSP;
 
