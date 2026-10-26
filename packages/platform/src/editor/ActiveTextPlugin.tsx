@@ -20,6 +20,11 @@ import { $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-re
 
 const ACTIVE_CLASS = "psc-active-text";
 const EMPTY_CLASS = "psc-empty-text";
+/**
+ * Replaces {@link EMPTY_CLASS} on the empty verse the cursor is in. Its ellipsis is hidden but keeps
+ * its width, so placing the cursor there doesn't reflow the line.
+ */
+const ACTIVE_EMPTY_CLASS = "psc-empty-text-active";
 
 /**
  * Plugin that outlines the paragraph under the cursor and marks individual verses with no
@@ -55,7 +60,7 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
         (event) => {
           const target = event.target;
           if (!(target instanceof Element)) return false;
-          const verseEl = target.closest(`.${EMPTY_CLASS}`);
+          const verseEl = target.closest(`.${EMPTY_CLASS}, .${ACTIVE_EMPTY_CLASS}`);
           if (!verseEl) return false;
           const node = $getNearestNodeFromDOMNode(verseEl);
           if (!$isSomeVerseNode(node)) return false;
@@ -86,17 +91,20 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
 
         if (newActiveKey !== activeKeyRef.current) setActivePara(newActiveKey);
 
-        // The active verse (the one whose section currently contains the cursor) is treated as
-        // non-empty: the ellipsis placeholder hides while the user is positioned to type there,
-        // and reappears on the next update when the cursor moves to a different verse.
+        // The active verse (the one whose section currently contains the cursor) hides its
+        // ellipsis placeholder while the user is positioned to type there, and shows it again on
+        // the next update when the cursor moves to a different verse. It is marked rather than
+        // just unmarked so the stylesheet can keep the ellipsis's width: dropping it reflowed the
+        // line and drew the caret at the wrap.
         emptyKeys.forEach((key) => {
-          if (key === activeVerseKey) {
-            editor.getElementByKey(key)?.classList.remove(EMPTY_CLASS);
-          } else {
-            editor.getElementByKey(key)?.classList.add(EMPTY_CLASS);
-          }
+          const isActive = key === activeVerseKey;
+          const classList = editor.getElementByKey(key)?.classList;
+          classList?.toggle(EMPTY_CLASS, !isActive);
+          classList?.toggle(ACTIVE_EMPTY_CLASS, isActive);
         });
-        nonEmptyKeys.forEach((key) => editor.getElementByKey(key)?.classList.remove(EMPTY_CLASS));
+        nonEmptyKeys.forEach((key) =>
+          editor.getElementByKey(key)?.classList.remove(EMPTY_CLASS, ACTIVE_EMPTY_CLASS),
+        );
       }),
       editor.registerCommand(
         BLUR_COMMAND,

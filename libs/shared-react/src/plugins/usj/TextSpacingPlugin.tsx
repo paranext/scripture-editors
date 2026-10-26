@@ -5,6 +5,7 @@ import {
   SomeVerseNode,
   wasNodeCreated,
 } from "../../nodes/usj/node-react.utils";
+import { $hasCaretHostMark } from "./transientCaretHost";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -90,7 +91,8 @@ function useTextSpacing(editor: LexicalEditor) {
  *
  * The exemption early-returns keep the transform away from contexts that own their own spacing:
  * non-editable nodes, already-spaced text, note/char/typed-mark adjacency, unknown-node content,
- * adjacent same-run text nodes, inline unknowns (optbreak, ref), and attribute display runs.
+ * adjacent same-run text nodes, inline unknowns (optbreak, ref), attribute display runs, and
+ * transient caret hosts.
  *
  * @param node - TextNode that might need updating.
  */
@@ -98,7 +100,13 @@ function $textNodeTrailingSpaceTransform(node: TextNode): void {
   if (!node.isAttached()) return;
 
   const text = node.getTextContent();
-  const nextSibling = node.getNextSibling();
+  // A caret host is not there as far as spacing goes: text pasted in front of one, before the next
+  // verse, is spaced against that verse.
+  const followingSibling = node.getNextSibling();
+  const nextSibling =
+    followingSibling && $hasCaretHostMark(followingSibling)
+      ? followingSibling.getNextSibling()
+      : followingSibling;
   const parent = node.getParent();
   if (
     node.getMode() !== "normal" ||
@@ -135,7 +143,14 @@ function $textNodeTrailingSpaceTransform(node: TextNode): void {
     // presentation. The transform still exempts whichever shape — loose attribute text or a
     // wrapper's children — is actually in the tree, so a pre-flip loose editor state stays exempt
     // too.
-    $isAttributeRunNode(parent)
+    $isAttributeRunNode(parent) ||
+    // A transient caret host (transientCaretHost.ts) is never saved, so it has no structural space
+    // to maintain. Spacing one before the next verse also makes it look typed into, so the host
+    // strips its placeholder and the empty-verse rule below then deletes what is left, dropping
+    // the caret back to the hostless point between two verse markers. Text that has just landed in
+    // one is left too, until the host's own transform has removed the placeholder — whichever of
+    // the two transforms runs first — so a typed trailing space is never doubled.
+    $hasCaretHostMark(node)
   )
     return;
 
