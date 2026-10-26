@@ -4,10 +4,12 @@ import {
   $moveCaretPastGutterGlyph,
   $narrowSelectionPastGutterGlyph,
   $placeCaretAtEnd,
+  $rangeSnapshot,
   $sanitizeNodesForProtectedStructure,
   $selectionContainsVerseMarker,
   $shouldBlockSelectionReplacement,
   $shouldBlockStructuralEdit,
+  $shouldRefuseExtendedDelete,
   $structuralDeleteTarget,
   ArmedDelete,
   CONFIRMED_DELETE_TAG,
@@ -54,11 +56,10 @@ import { StructureProtectionMode } from "./structure-protection.model";
  * Mutating (the returned function): call inside `editor.update()`.
  */
 function $snapshotRange(selection: RangeSelection): () => void {
-  const { anchor, focus } = selection;
-  const saved = [anchor, focus].map(({ key, offset, type }) => ({ key, offset, type }));
+  const { anchor, focus } = $rangeSnapshot(selection);
   return () => {
-    anchor.set(saved[0].key, saved[0].offset, saved[0].type);
-    focus.set(saved[1].key, saved[1].offset, saved[1].type);
+    selection.anchor.set(anchor.key, anchor.offset, anchor.type);
+    selection.focus.set(focus.key, focus.offset, focus.type);
   };
 }
 
@@ -292,16 +293,20 @@ export function StructureKeyboardPlugin({
     // `$clampLineDeletionPastBookPrefix` does: extend ONCE, judge that range, then remove exactly it
     // or refuse. Handing back to Lexical's own deleteWord/deleteLine instead would extend a second
     // time from a re-seated caret, which on a wrapped line can reach somewhere other than what was
-    // judged. Whatever range is removed is first narrowed past the display glyphs it starts in
-    // front of (the `\id` prefix, a line's gutter glyph), and a range of nothing but glyphs is
-    // refused rather than deleted and rebuilt. A caret on the `\id` line gets the same caret check,
-    // then its extension is left to `$clampLineDeletionPastBookPrefix`, which clamps it past the
-    // prefix but does not judge structure.
+    // judged. (That rule is about this handler's own measure-then-remove.
+    // `HiddenContentDeleteGuardPlugin` measures the same extent on a copy of the same caret first,
+    // to look for hidden content; when it finds none it hands the delete on, and this extends again
+    // from that caret, deliberately.) Whatever range is removed is first narrowed past the
+    // display glyphs it starts in front of (the `\id` prefix, a line's gutter glyph), and a range
+    // of nothing but glyphs is refused rather than deleted and rebuilt. A caret on the `\id` line
+    // gets the same caret check, then its extension is left to `$clampLineDeletionPastBookPrefix`,
+    // which clamps it past the prefix but does not judge structure.
     //
     // Registered at HIGH alongside OpaqueBlockGuardPlugin's refusal of the same commands, so it
     // stands aside for an opaque block itself rather than relying on mount order to lose that tie.
     // That guard sees only the caret, so a range the extension carries INTO an opaque block (a
-    // word delete just past a figure, landing in its caption) is refused here.
+    // word delete just past a figure, landing in its caption) is refused here, by the same rule
+    // the hidden-content guard applies to the extent it measures ($shouldRefuseExtendedDelete).
     const $guardExtendingDelete =
       (granularity: "word" | "lineboundary") =>
       (isBackward: boolean): boolean => {
@@ -329,7 +334,7 @@ export function StructureKeyboardPlugin({
         }
 
         // A range is removed as it stands, so it is judged as it stands (Rule 1).
-        if ($selectionReachesIntoOpaqueBlock() || $shouldBlockStructuralEdit(selection, intent)) {
+        if ($shouldRefuseExtendedDelete(selection, intent)) {
           restore();
           return true;
         }

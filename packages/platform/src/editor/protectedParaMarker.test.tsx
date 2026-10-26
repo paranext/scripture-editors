@@ -90,17 +90,23 @@ const lockedUsj: Usj = {
   ],
 };
 
-/** `lockedUsj` with `marker`'s paragraph loaded already empty. */
-function lockedUsjWithEmpty(marker: string): Usj {
+/** `lockedUsj` with the first `marker` paragraph holding `content` (loaded empty by default). */
+function lockedUsjWith(marker: string, content: unknown[] = []): Usj {
+  const index = lockedUsj.content.findIndex(
+    (node) => typeof node === "object" && node.type === "para" && node.marker === marker,
+  );
   return {
     ...lockedUsj,
-    content: lockedUsj.content.map((node) =>
-      typeof node === "object" && node.type === "para" && node.marker === marker
-        ? { type: "para", marker, content: [] }
-        : node,
+    content: lockedUsj.content.map((node, i) =>
+      i === index ? { type: "para", marker, content } : node,
     ),
-  };
+  } as Usj;
 }
+
+/** A figure, which the paragraph-structure view hides. */
+const FIGURE = { type: "figure", marker: "fig", file: "a.jpg", content: ["Cap"] };
+
+const VERSE_2 = { type: "verse", marker: "v", number: "2" };
 
 interface Mounted {
   ref: RefObject<EditorRef | null>;
@@ -239,6 +245,29 @@ async function selectWholeParagraph(lexical: LexicalEditor, marker: string): Pro
   });
 }
 
+/**
+ * Runs `gesture` as in a browser, where `Selection.modify` exists: the hidden-content guard only
+ * measures a word or line delete's extent where it can (the extent itself comes from
+ * {@link withExtensionLandingAt}'s stub).
+ */
+async function withBrowserModify(gesture: () => Promise<void>): Promise<void> {
+  const hadModify = typeof Selection.prototype.modify === "function";
+  if (!hadModify) Selection.prototype.modify = () => undefined;
+  try {
+    await gesture();
+  } finally {
+    if (!hadModify) delete (Selection.prototype as Partial<Selection>).modify;
+  }
+}
+
+/** Lets the hidden-content guard put its question to the host and act on the answer. */
+async function settleHostAnswer(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await flushQueuedEvents();
+}
+
 async function dispatch<T>(
   lexical: LexicalEditor,
   command: LexicalCommand<T>,
@@ -347,7 +376,7 @@ describe("structure protection refuses a delete that would remove a paragraph's 
 
   it("Backspace in a heading whose text has been deleted", async () => {
     // Loaded already empty, so deleting the text is not itself an undo step before the key.
-    const mounted = await mountLocked(lockedUsjWithEmpty("s1"));
+    const mounted = await mountLocked(lockedUsjWith("s1"));
     await update(mounted.lexical, () => {
       $paraOf("s1").selectEnd();
     });
@@ -374,7 +403,7 @@ describe("structure protection refuses a delete that would remove a paragraph's 
   });
 
   it("a forward delete in front of an empty line's glyph", async () => {
-    const mounted = await mountLocked(lockedUsjWithEmpty("s1"));
+    const mounted = await mountLocked(lockedUsjWith("s1"));
     await update(mounted.lexical, () => {
       $paraOf("s1").select(0, 0);
     });
@@ -499,70 +528,71 @@ describe("structure protection refuses a delete that would remove a paragraph's 
     await expectRefused(mounted, "s1", () => pressKey(mounted.lexical, "Backspace"));
   });
 
-  it("a backward word delete whose extension reaches into a figure's caption", async () => {
-    const mounted = await mountLocked({
-      type: "USJ",
-      version: "3.1",
-      content: [
+  it.each([
+    ["with no host to ask", undefined],
+    ["even if the host would confirm it", vi.fn<HiddenContentDeleteHandler>(() => "delete")],
+  ])(
+    "a backward word delete whose extension reaches into a figure's caption, %s",
+    async (_name, onHiddenContentDelete) => {
+      const mounted = await mountLocked(
         {
-          type: "para",
-          marker: "p",
+          type: "USJ",
+          version: "3.1",
           content: [
-            "Before ",
-            { type: "figure", marker: "fig", file: "a.jpg", size: "col", content: ["My caption"] },
-            " after",
+            {
+              type: "para",
+              marker: "p",
+              content: [
+                "Before ",
+                {
+                  type: "figure",
+                  marker: "fig",
+                  file: "a.jpg",
+                  size: "col",
+                  content: ["My caption"],
+                },
+                " after",
+              ],
+            },
+            { type: "para", marker: "q2", content: [POETRY_TEXT] },
           ],
-        },
-        { type: "para", marker: "q2", content: [POETRY_TEXT] },
-      ],
-    } as unknown as Usj);
-    await placeCaret(mounted.lexical, "p", 1); // " |after", just past the figure
+        } as unknown as Usj,
+        onHiddenContentDelete,
+      );
+      await placeCaret(mounted.lexical, "p", 1); // " |after", just past the figure
 
-    // The caret is outside the figure, but the word extension lands inside its caption.
-    await withExtensionLandingAt(
-      mounted.lexical,
-      ["extend", true, "word"],
-      (selection) => {
-        const caption = $getRoot()
-          .getAllTextNodes()
-          .find((node) => node.getTextContent() === "My caption");
-        if (!caption) throw new Error("no caption text");
-        selection.focus.set(caption.getKey(), 3, "text");
-      },
-      () => expectRefused(mounted, "p", () => dispatch(mounted.lexical, DELETE_WORD_COMMAND, true)),
-    );
-  });
+      // The caret is outside the figure, but the word extension lands inside its caption.
+      await withBrowserModify(() =>
+        withExtensionLandingAt(
+          mounted.lexical,
+          ["extend", true, "word"],
+          (selection) => {
+            const caption = $getRoot()
+              .getAllTextNodes()
+              .find((node) => node.getTextContent() === "My caption");
+            if (!caption) throw new Error("no caption text");
+            selection.focus.set(caption.getKey(), 3, "text");
+          },
+          () =>
+            expectRefused(mounted, "p", () => dispatch(mounted.lexical, DELETE_WORD_COMMAND, true)),
+        ),
+      );
+      if (onHiddenContentDelete) expect(onHiddenContentDelete).not.toHaveBeenCalled();
+    },
+  );
 
   it("a backward word delete over a verse and a hidden figure, even if the host would confirm it", async () => {
     // A host that always answers "delete": the lock must refuse before the question is asked.
     const onHiddenContentDelete = vi.fn<HiddenContentDeleteHandler>(() => "delete");
     const mounted = await mountLocked(
-      {
-        ...lockedUsj,
-        content: lockedUsj.content.map((node) =>
-          typeof node === "object" && node.type === "para" && node.marker === "q1"
-            ? {
-                type: "para",
-                marker: "q1",
-                content: [
-                  { type: "verse", marker: "v", number: "2" },
-                  { type: "figure", marker: "fig", file: "a.jpg", content: ["Cap"] },
-                  "Blessed is the man",
-                ],
-              }
-            : node,
-        ),
-      } as unknown as Usj,
+      lockedUsjWith("q1", [VERSE_2, FIGURE, "Blessed is the man"]),
       onHiddenContentDelete,
     );
     await placeCaret(mounted.lexical, "q1", 1); // "B|lessed is the man"
-    // The hidden-content guard only measures an extent where the browser has `Selection.modify`.
-    const hadModify = typeof Selection.prototype.modify === "function";
-    if (!hadModify) Selection.prototype.modify = () => undefined;
 
-    try {
-      // The word extension steps back over the figure and the verse to the line's own start.
-      await withExtensionLandingAt(
+    // The word extension steps back over the figure and the verse to the line's own start.
+    await withBrowserModify(() =>
+      withExtensionLandingAt(
         mounted.lexical,
         ["extend", true, "word"],
         (selection) => {
@@ -570,11 +600,24 @@ describe("structure protection refuses a delete that would remove a paragraph's 
         },
         () =>
           expectRefused(mounted, "q1", () => dispatch(mounted.lexical, DELETE_WORD_COMMAND, true)),
-      );
-    } finally {
-      if (!hadModify) delete (Selection.prototype as Partial<Selection>).modify;
-    }
+      ),
+    );
     expect(onHiddenContentDelete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Delete", (lexical: LexicalEditor) => pressKey(lexical, "Delete")],
+    [
+      "a forward delete with no Delete keydown (macOS ⌃D)",
+      (lexical: LexicalEditor) => dispatch(lexical, DELETE_CHARACTER_COMMAND, false),
+    ],
+  ])("%s in front of the glyph of a line that starts with a verse", async (_name, gesture) => {
+    const mounted = await mountLocked();
+    await update(mounted.lexical, () => {
+      $paraOf("q1").select(0, 0);
+    });
+
+    await expectRefused(mounted, "q1", () => gesture(mounted.lexical));
   });
 });
 
@@ -647,6 +690,54 @@ describe("structure protection keeps the marker when a line's text is edited", (
     expect(savedParaMarkers(ref)).toEqual(ALL_MARKERS);
     expect(savedContentOf(ref, "q2")).toEqual([]);
     expect(glyphKeyOf(lexical, "q2")).toBe(glyphBefore);
+  });
+
+  it("Delete in front of a line's glyph asks before removing a hidden figure that starts the line", async () => {
+    const onHiddenContentDelete = vi.fn<HiddenContentDeleteHandler>(() => "keep");
+    const { ref, lexical } = await mountLocked(
+      lockedUsjWith("q2", [FIGURE, POETRY_TEXT]),
+      onHiddenContentDelete,
+    );
+    await update(lexical, () => {
+      $paraOf("q2").select(0, 0);
+    });
+
+    await pressKey(lexical, "Delete");
+    await settleHostAnswer();
+
+    expect(onHiddenContentDelete).toHaveBeenCalledTimes(1);
+    expect(savedContentOf(ref, "q2")).toEqual([
+      expect.objectContaining({ marker: "fig" }),
+      POETRY_TEXT,
+    ]);
+  });
+
+  it("Cmd+Backspace mid-line over a hidden figure, once the host confirms, leaves the glyph untouched", async () => {
+    const onHiddenContentDelete = vi.fn<HiddenContentDeleteHandler>(() => "delete");
+    const { ref, lexical } = await mountLocked(
+      lockedUsjWith("q2", ["nor ", FIGURE, "stand on the path of sinners,"]),
+      onHiddenContentDelete,
+    );
+    await placeCaret(lexical, "q2", 5); // "stand| on the path of sinners,"
+    const glyphBefore = glyphKeyOf(lexical, "q2");
+
+    // With no verse in the way, the extension stops at the line's own start, in front of the glyph.
+    await withBrowserModify(() =>
+      withExtensionLandingAt(
+        lexical,
+        ["extend", true, "lineboundary"],
+        (selection) => {
+          selection.focus.set($paraOf("q2").getKey(), 0, "element");
+        },
+        () => dispatch(lexical, DELETE_LINE_COMMAND, true),
+      ),
+    );
+    await settleHostAnswer();
+
+    expect(onHiddenContentDelete).toHaveBeenCalledTimes(1);
+    expect(savedParaMarkers(ref)).toEqual(ALL_MARKERS);
+    expect(savedContentOf(ref, "q2")).toEqual([" on the path of sinners,"]);
+    expect(glyphKeyOf(lexical, "q2")).toBe(glyphBefore); // removed around, not deleted and rebuilt
   });
 
   it("Backspace over a triple-clicked line removes its text", async () => {
