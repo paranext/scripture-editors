@@ -19,9 +19,12 @@
  * `{ type: "unmatched", marker: "<name>*" }` USJ object (PT9 `sink.Unmatched`,
  * `UsxUsfmParserSink.cs:262-266`), not literal text.
  *
- * Literal-text degradation remains only for fragments the
- * tokenizer cannot confidently parse at all: a bare `\`, or an unterminated
- * milestone (stylesheet-declared, or matching the suffix convention above).
+ * A `\` is a marker only where ParatextData 9.6 reads one: text runs on until a `\` followed by a
+ * marker-name character, so a `\` in the middle of text that is not stays text, while a bare `\`
+ * at a token start is a marker whose name is empty (see {@link isMarkerStart}).
+ *
+ * Literal-text degradation remains only for an unterminated milestone (stylesheet-declared, or
+ * matching the suffix convention above).
  * Content between a milestone's marker and its `\*` is NOT literal: a
  * milestone cannot hold content, so it ends where the content begins, the
  * content follows it as a sibling, and the author's `\*` becomes an unmatched
@@ -88,12 +91,6 @@ export interface UsfmFragmentOptions {
    * placeholder with no entry stands for something other than a note or a verse.
    */
   placeholders?: readonly PreservedNodeKind[];
-  /**
-   * True when the fragment opens with the glyph of a paragraph whose marker is the empty name
-   * (shown as a bare `\`), so a bare `\` opening the fragment reads as that nameless marker
-   * rather than as text. Ignored in note content.
-   */
-  opensNamelessParagraph?: boolean;
 }
 
 const VERSE_MARKER = "v";
@@ -300,31 +297,37 @@ function scanMarkerName(fragment: string, start: number): { name: string; next: 
 }
 
 /**
- * Whether the bare `\` at `start` is the marker of a nameless paragraph — the empty name
- * ParatextData 9.6 reads in `\ df` (`<para style="">df</para>`): its tokenizer reads a marker at a
- * token start even when the name is empty, and resolves that unknown token as a paragraph in body
- * text (UsfmParser.DetermineUnknownTokenType). A `\` after text stays text there, because its text
- * scan only stops at a `\` followed by a name character.
- *
- * Read so only where the caller says the fragment opens with a nameless paragraph's glyph
- * ({@link UsfmFragmentOptions.opensNamelessParagraph}), and only for the first `\` of the
- * fragment, with nothing but whitespace in front of it — where a `\p` would still open a paragraph
- * of its own. Everywhere else a bare `\` stays literal, ParatextData's token starts included: a
- * `\` typed right after another marker, or left by deleting a marker's name, is text the user has
- * not named yet, not a paragraph break.
- *
- * The name ends where it would after a named marker: at whitespace, at the end, or at another
- * `\`. A `\` directly before `|` or a preserved-node placeholder stays literal.
+ * The character after a `\` (and after its nesting `+`, if any) that makes the `\` start a marker
+ * in the middle of text: ParatextData 9.6's `markerRegex` (`\\\+?[\w_\-\*]+`), with .NET's `\w`
+ * (letters, non-spacing marks, decimal digits, connector punctuation).
  */
-function readsAsNamelessMarker(
-  fragment: string,
-  start: number,
-  opensNamelessParagraph: boolean,
-): boolean {
-  if (!opensNamelessParagraph) return false;
-  if (!/^[\s\u00A0\u200B]*$/.test(fragment.slice(0, start))) return false;
-  const following = fragment[start + 1];
-  return following === undefined || following === "\\" || /[\s\u00A0\u200B]/.test(following);
+const MARKER_NAME_START_REGEX = /^\+?[\p{L}\p{Mn}\p{Nd}\p{Pc}\-*]/u;
+
+/**
+ * Whether the `\` at `index` starts a marker, as ParatextData 9.6's `UsfmToken.Tokenize` reads it.
+ * Its text scan runs on until a `\` followed by a marker-name character ({@link
+ * MARKER_NAME_START_REGEX}), so a `\` in the middle of text that is not — `x \ y`, `x \\nd` — is
+ * text. Where a token starts, every `\` is a marker, its name possibly empty (`\nd \`, `\v 1 \ x`):
+ * the tokenizer only reaches such a `\` from {@link tokenize}'s marker branch, never through here.
+ *
+ * Two places in a fragment are token starts the text scan would otherwise run through:
+ * - after the fragment's leading whitespace: a fragment starts where a marker ended, and the
+ *   whitespace there is the separator that marker skips, as `\p` would read after it;
+ * - directly after a {@link PRESERVED_NODE_PLACEHOLDER}: the node's bytes end in a marker (a
+ *   closer, `\*`, a verse number), so a `\` right after it starts a token in the file.
+ */
+function isMarkerStart(fragment: string, index: number): boolean {
+  if (MARKER_NAME_START_REGEX.test(fragment.slice(index + 1, index + 3))) return true;
+  if (fragment[index - 1] === PRESERVED_NODE_PLACEHOLDER) return true;
+  return /^[\s ​]*$/.test(fragment.slice(0, index));
+}
+
+/** Where the text that starts at `index` ends: the next `\` that starts a marker
+ * ({@link isMarkerStart}), or the end of the fragment. */
+function textEnd(fragment: string, index: number): number {
+  let next = fragment.indexOf("\\", index);
+  while (next !== -1 && !isMarkerStart(fragment, next)) next = fragment.indexOf("\\", next + 1);
+  return next === -1 ? fragment.length : next;
 }
 
 /** Milestone names the Paratext stylesheet family declares: `\qt-s/-e`, `\qt1-s`…`\qt5-e`,
@@ -386,7 +389,6 @@ function tokenize(
   getMarkerFn: MarkerLookup,
   isNoteContext: boolean,
   placeholders: readonly PreservedNodeKind[],
-  opensNamelessParagraph: boolean,
 ): Token[] {
   const tokens: Token[] = [];
   let index = 0;
@@ -424,8 +426,7 @@ function tokenize(
         index++;
         continue;
       }
-      const nextMarker = fragment.indexOf("\\", index);
-      let end = nextMarker === -1 ? fragment.length : nextMarker;
+      let end = textEnd(fragment, index);
       if (nextNoteEnding < noteEnding.length) end = Math.min(end, noteEnding[nextNoteEnding]);
       pushTextWithOptbreaks(regularizeSpaces(fragment.slice(index, end)));
       index = end;
@@ -443,13 +444,13 @@ function tokenize(
     };
 
     if (name === "") {
-      if (readsAsNamelessMarker(fragment, rawStart, opensNamelessParagraph)) {
-        consumeSeparator();
-        tokens.push({ kind: "para", marker: "" });
-        continue;
-      }
-      // Bare `\` anywhere else — literal (degradation property).
-      pushText(fragment.slice(rawStart, index));
+      // A bare `\` at a token start: a marker with an empty name, unknown to every stylesheet, so
+      // it resolves by context like any other unknown marker (below) — a paragraph in body text, a
+      // character style inside a note, closed by a bare `\*`.
+      consumeSeparator();
+      if (isNoteContext || openNoteMarker !== undefined)
+        tokens.push({ kind: "charOpen", marker: "", isNested: false });
+      else tokens.push({ kind: "para", marker: "" });
       continue;
     }
     if (name === "*") {
@@ -1219,7 +1220,6 @@ export function usfmFragmentToUsjContent(
     options?.getMarker ?? getMarker,
     isNoteContext,
     options?.placeholders ?? [],
-    !isNoteContext && options?.opensNamelessParagraph === true,
   );
   for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
     const token = tokens[tokenIndex];

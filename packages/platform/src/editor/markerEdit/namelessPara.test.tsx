@@ -117,13 +117,16 @@ describe("a nameless paragraph", () => {
   );
 
   // Each edit leaves the glyph naming no marker, and the paragraph's bytes then read the way
-  // ParatextData reads them: a `\\` that opens them is the nameless marker, one after text is text.
+  // ParatextData 9.6 reads them: a `\\` where a token starts is a nameless marker, one after text
+  // is text.
   // The file gets every byte the screen shows, and getUsj() reports it before the edit settles.
   const GLYPH_EDITS: {
     name: string;
     glyph: string;
     caret: number;
     settled: MarkerContent;
+    /** The block the edit splits off after the paragraph, if any. */
+    following?: MarkerContent;
     /** What the standard view saves instead, where it differs. */
     standardSettled?: MarkerContent;
   }[] = [
@@ -143,7 +146,10 @@ describe("a nameless paragraph", () => {
       name: "a backslash typed after the backslash",
       glyph: "\\\\",
       caret: 2,
-      settled: { type: "para", marker: "", content: ["\\ df"] },
+      // The first name ends at the second `\`, which starts a token of its own: two nameless
+      // paragraphs, the first empty.
+      settled: { type: "para", marker: "" },
+      following: { type: "para", marker: "", content: ["df"] },
     },
     {
       name: "the backslash deleted",
@@ -158,7 +164,7 @@ describe("a nameless paragraph", () => {
   describe.each(["standard", "unformatted"])("in the %s view", (viewName) => {
     it.each(GLYPH_EDITS)(
       "saves what the screen shows: $name",
-      async ({ glyph, caret, settled, standardSettled }) => {
+      async ({ glyph, caret, settled, following, standardSettled }) => {
         const mounted = await mountInView(namelessParaUsj(), oracleView(viewName));
         await editNamelessPara(mounted, ([glyphText]) => {
           glyphText.setTextContent(glyph);
@@ -173,6 +179,7 @@ describe("a nameless paragraph", () => {
         expect(saved?.content[2]).toEqual(
           viewName === "standard" ? (standardSettled ?? settled) : settled,
         );
+        if (following) expect(saved?.content[3]).toEqual(following);
         expect(withoutLineBreaks(screen ?? "")).toBe(withoutLineBreaks(savedBytes(saved)));
         expect(pending).toEqual(saved);
       },

@@ -210,8 +210,9 @@ function pushSentinel(out: FragmentAccumulator, nodes: LexicalNode[]): void {
   // milestone, or attribute span right after `\wj`) is still spelled with the separator the file
   // writes after an opening marker; it is structural there (consumed by the opener's separator
   // scan), and mid-word placements (`wa` + note + `tta`) are unaffected. After a bare `\` it is
-  // not structural — the tokenizer keeps `\ ` as text — so it is spelled as a no-break space no
-  // other fragment byte is, and {@link tokenizeFragment} takes it back out.
+  // spelled as a no-break space no other fragment byte is: at a token start that `\` is a nameless
+  // marker, whose separator scan consumes it, and in the middle of text the tokenizer keeps `\ ` as
+  // text, from which {@link tokenizeFragment} takes it back out.
   const tail = UNTERMINATED_MARKER_TAIL.exec(out.text)?.[0];
   if (tail !== undefined) out.text += tail === "\\" ? NBSP : " ";
   out.spans.push({
@@ -1391,18 +1392,6 @@ function $appendNodesFragment(
       pushSentinel(out, [node]);
     }
   }
-}
-
-/**
- * Whether a paragraph scope's fragment opens with a nameless paragraph's glyph: ParatextData reads
- * `\p \ df` as a paragraph whose marker is the empty name, which the editor shows as a bare `\`.
- * Every tokenize of a paragraph scope passes this on, so that `\` re-tokenizes as the marker it
- * shows while a bare `\` anywhere else — including one left by deleting another paragraph
- * marker's name — stays text.
- */
-export function $opensNamelessParagraph(paras: readonly LexicalNode[]): boolean {
-  const [first] = paras;
-  return $isParaNode(first) && first.getMarker() === "";
 }
 
 /**
@@ -2973,10 +2962,7 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
   // destroys and are transparent to re-tokenization, so nothing else would bring them back.
   const markRanges = $captureMarkByteRanges(paras, combined, undefined, $getEditor());
 
-  const content: MarkerContent[] = tokenizeFragment(combined, {
-    getMarker: getMarkerFn,
-    opensNamelessParagraph: $opensNamelessParagraph(paras),
-  });
+  const content: MarkerContent[] = tokenizeFragment(combined, { getMarker: getMarkerFn });
   if (content.length === 0) {
     logger?.debug("[MarkerEdit] Tier 2 skipped: tokenizer produced no content");
     return false;
@@ -3874,9 +3860,6 @@ export function $buildChapterFragment(
   return out;
 }
 
-/** A bare backslash and the separator after it: a marker with no name. */
-const NAMELESS_MARKER_REGEX = /^\\(?:\s|$)/;
-
 /** A `\p` spelled at the start of a fragment, which the tokenizer then opens as typed. */
 const LEADING_PARA_MARKER_REGEX = /^\s*\\p(?:\s|$)/;
 
@@ -3897,13 +3880,11 @@ export function chapterFragmentContent(text: string, getMarkerFn: MarkerLookup):
     getMarker: getMarkerFn,
   });
   const [first, ...others] = content;
-  if (
-    typeof first !== "object" ||
-    first.type !== "para" ||
-    first.marker !== "p" ||
-    LEADING_PARA_MARKER_REGEX.test(text)
-  )
-    return content;
+  if (typeof first !== "object" || first.type !== "para") return content;
+  // A bare backslash is a marker with no name, which is how ParatextData reads `\ 2` and writes it
+  // back; the tokenizer opens that paragraph itself, and only the line's trailing separator goes.
+  const isNameless = first.marker === "";
+  if (!isNameless && (first.marker !== "p" || LEADING_PARA_MARKER_REGEX.test(text))) return content;
   const lineContent = [...(first.content ?? [])];
   const last = lineContent.at(-1);
   if (typeof last === "string") {
@@ -3911,15 +3892,9 @@ export function chapterFragmentContent(text: string, getMarkerFn: MarkerLookup):
     if (trimmed) lineContent[lineContent.length - 1] = trimmed;
     else lineContent.pop();
   }
-  // A bare backslash is a marker with no name, which is how ParatextData reads `\ 2` and writes it
-  // back; holding the same paragraph means the saved chapter reads back as what was sent.
-  const [lead, ...afterLead] = lineContent;
-  if (typeof lead === "string" && NAMELESS_MARKER_REGEX.test(lead)) {
-    const leadText = lead.replace(NAMELESS_MARKER_REGEX, "");
-    const content = leadText ? [leadText, ...afterLead] : afterLead;
-    return [{ type: "para", marker: "", content }, ...others];
-  }
-  return [...lineContent, ...others];
+  if (!isNameless) return [...lineContent, ...others];
+  const nameless: MarkerContent = { type: "para", marker: "" };
+  return [lineContent.length > 0 ? { ...nameless, content: lineContent } : nameless, ...others];
 }
 
 /**
@@ -4375,10 +4350,7 @@ export function $idleSettleWouldDiscardCaretHeldBytes(
     ? $buildBookFragment(scope, getMarkerFn, viewOptions).out
     : $buildParaFragment(scope, getMarkerFn, viewOptions);
   if (!fragment) return false;
-  const content = tokenizeFragment(fragment, {
-    getMarker: getMarkerFn,
-    opensNamelessParagraph: $opensNamelessParagraph([scope]),
-  });
+  const content = tokenizeFragment(fragment, { getMarker: getMarkerFn });
   if (content.length === 0) return false;
   const counts = new Map<string, number>();
   for (const ch of fragment.text)

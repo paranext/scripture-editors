@@ -662,10 +662,11 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | UsfmRow): strin
   if (row.viewName === "standard" && fixture === "testUSFM-2SA-5.usj") {
     if (
       "text" in row ||
-      row.operation === "copy, paste html and plain" ||
-      row.operation === "copy, paste plain text"
+      ((row.operation === "copy, paste html and plain" ||
+        row.operation === "copy, paste plain text") &&
+        row.range.kind !== "across a paragraph boundary")
     )
-      return "Standard's text path over deliberately damaged USFM: a nameless marker re-tokenizes as text, and a bare backslash keeps the paste a pending literal";
+      return "Standard's text path over deliberately damaged USFM: a bare backslash keeps the paste a pending literal";
   }
   if (
     row.viewName === "standard" &&

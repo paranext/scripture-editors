@@ -502,6 +502,18 @@ export interface CharOpenerRename {
 }
 
 /**
+ * The empty name, when `node` is a paragraph's prefix glyph spelled as a bare `\`: the start of a
+ * line is a token start, where ParatextData reads a bare `\` as a marker whose name is empty, so
+ * deleting a paragraph marker's name renames the paragraph to that nameless marker rather than
+ * leaving text. `undefined` for any other glyph or spelling.
+ */
+function $namelessParaGlyphName(node: MarkerNode, text: string): string | undefined {
+  if (text !== "\\") return undefined;
+  const para = node.getParent();
+  return $isParaNode(para) && para.getFirstChild()?.is(node) ? "" : undefined;
+}
+
+/**
  * The char opener rename `node`'s pend stands for, or `undefined` when `node` is not a char span's
  * opening glyph, its bytes are not a bare opener, or Tier 1 would not apply the rename in place.
  * The in-place conditions are {@link $applyOpenerRename}'s own: the glyph and the tree agree about
@@ -1933,9 +1945,9 @@ export function $resolvePendingMarkers(
       context.pendingKeys.delete(key);
       const text = node.getTextContent();
       if ($isCanonicalMarkerNode(node)) continue;
-      const bare = BARE_OPENER_REGEX.exec(text);
-      if (node.getMarkerSyntax() === "opening" && bare)
-        mutated = $applyOpenerRename(node, bare[1], context) || mutated;
+      const openerName = BARE_OPENER_REGEX.exec(text)?.[1] ?? $namelessParaGlyphName(node, text);
+      if (node.getMarkerSyntax() === "opening" && openerName !== undefined)
+        mutated = $applyOpenerRename(node, openerName, context) || mutated;
       else if (
         settleReason === "idle" &&
         $idleSettleWouldDiscardCaretHeldBytes(node, context.getMarker, context.viewOptions)

@@ -513,7 +513,9 @@ describe.each(["standard", "unformatted"])(
           " b",
         ],
       ],
-      ["\\", ["a ", { type: "char", marker: "w", content: ["\\ grace"] }, " b"]],
+      // `\w \` puts the `\` where a token starts, so ParatextData 9.6 reads it as a nameless
+      // marker: the span ends empty, and the rest of the line is a nameless paragraph after it.
+      ["\\", ["a ", { type: "char", marker: "w", closed: "false" }]],
     ])(
       "%j saves the same at the glyph's end and in front of the separator",
       async (byte, saved) => {

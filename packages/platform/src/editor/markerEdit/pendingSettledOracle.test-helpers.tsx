@@ -965,6 +965,10 @@ interface UsfmBytes {
  *   block ends and the next begins is spelled by the next one's marker, so the screen/file
  *   comparisons set them aside ({@link withoutLineBreaks}).
  * - A zero-width space is dropped: the editor's empty-verse caret host, never a byte of the file.
+ * - A bare `\` at a token start — the start of a line, or right after a marker and the separator
+ *   it skips — is a marker with no name, as ParatextData 9.6 reads it, and is spelled as the file
+ *   spells a nameless paragraph's marker ({@link NAMELESS_MARKER_NAME}). A `\` in the middle of
+ *   text that no marker name follows stays text.
  *
  * Every other byte — a space in content, in an attribute value or in a caller's slot included — is
  * compared as it is.
@@ -1003,20 +1007,28 @@ function normalizeUsfm(text: string, keepRuns = false): UsfmBytes {
     section = undefined;
   };
   let at = 0;
+  // Whether a token starts here, where a bare `\` is a nameless marker rather than text.
+  let isTokenStart = true;
   const skipSeparator = (): void => {
     while (text[at] !== "\n" && isUsfmSpace(text[at])) at += 1;
   };
   while (at < text.length) {
     MARKER_AT_REGEX.lastIndex = at;
-    const marker = text[at] === "\\" ? MARKER_AT_REGEX.exec(text) : null;
+    const named = text[at] === "\\" ? MARKER_AT_REGEX.exec(text) : null;
+    const isNameless = !named && text[at] === "\\" && text[at + 1] !== "*" && isTokenStart;
+    const marker: readonly string[] | null = isNameless
+      ? ["\\", "", NAMELESS_MARKER_NAME, ""]
+      : named;
     if (!marker) {
       const byte = text[at];
       at += 1;
+      const isLineStart = out.length === 0 || out.at(-1) === "\n";
       if (byte === "\n") {
         endSection(false);
         open = [];
         trimEnd();
         if (out.length > 0 && out.at(-1) !== "\n") append(byte);
+        isTokenStart = true;
       } else if (byte === "\\" && text[at] === "*") {
         // A milestone's closer.
         endSection(true);
@@ -1027,18 +1039,25 @@ function normalizeUsfm(text: string, keepRuns = false): UsfmBytes {
         if (section === undefined && (scope === "char" || scope === "milestone"))
           section = out.length;
         append(byte);
+        isTokenStart = false;
       } else if (isUsfmSpace(byte)) {
-        if (out.length > 0 && out.at(-1) !== "\n" && (keepRuns || out.at(-1) !== " ")) append(" ");
-      } else if (byte !== "\u200B") append(byte);
+        if (!isLineStart && (keepRuns || out.at(-1) !== " ")) append(" ");
+        if (!isLineStart) isTokenStart = false;
+      } else if (byte !== "\u200B") {
+        append(byte);
+        // The `*` of a milestone's closer ends that token; the next one starts right after it.
+        isTokenStart = byte === "*" && text[at - 2] === "\\";
+      }
       continue;
     }
     const [token, , name, closing] = marker;
     endSection(!!closing);
     if (closing && ATTRIBUTE_SPAN_MARKERS.has(name)) trimEnd();
     const start = out.length;
-    for (const byte of token) append(byte);
+    for (const byte of `\\${marker[1]}${name}${closing}`) append(byte);
     if (start === 0 || out[start - 1] === "\n") lineMarkers.push([start, out.length]);
     at += token.length;
+    isTokenStart = true;
     if (closing) {
       const opener = open.map((entry) => entry.name).lastIndexOf(name);
       open = opener >= 0 ? open.slice(0, opener) : open.slice(0, -1);

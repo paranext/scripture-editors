@@ -56,7 +56,6 @@ import {
   $chapterAdjacentAttributeNodes,
   $charNeedsSentinelAs,
   $isRebuildSentinel,
-  $opensNamelessParagraph,
   $settleScopeForNode,
   $signatureOf,
   countSentinels,
@@ -563,10 +562,7 @@ export function $settledParaScope(
   if (!built) return undefined;
   const fragment = $fragmentWithCharOpenerRenames(built, charRenames, context);
   const tokenized = $fragmentWithoutTransient(fragment, transient);
-  const content: MarkerContent[] = tokenizeFragment(tokenized, {
-    getMarker: getMarkerFn,
-    opensNamelessParagraph: $opensNamelessParagraph(paras),
-  });
+  const content: MarkerContent[] = tokenizeFragment(tokenized, { getMarker: getMarkerFn });
   if (content.length === 0) return undefined;
   if (countSentinels(content) !== fragment.sentinels.length) {
     logger?.warn("[MarkerEdit] Settled USJ skipped: sentinel/preserved-node count mismatch");

@@ -1815,36 +1815,43 @@ describe("PT9 unknown-marker handling", () => {
   });
 });
 
-describe("a bare backslash opening a nameless paragraph's fragment is its marker", () => {
-  const nameless = { opensNamelessParagraph: true };
+describe("a bare backslash: a nameless marker at a token start, text anywhere else (ParatextData 9.6)", () => {
+  // ParatextData 9.6 `UsfmToken.Tokenize`: text runs on until a `\` followed by a marker-name
+  // character (`markerRegex`, `\\\+?[\w_\-\*]+`), so a `\` in the middle of text that is not is
+  // literal text. A `\` where a token starts — the start of the bytes, or right after a marker and
+  // the whitespace it skips — is still read as a marker, and its name is empty. That unknown marker
+  // resolves as a paragraph in body text and as a character style inside a note
+  // (`UsfmParser.DetermineUnknownTokenType`). Expected shapes are ParatextData's own USX for the
+  // same bytes.
 
-  it("reads `\\ df` as a paragraph whose marker is the empty name (ParatextData 9.6)", () => {
-    expect(usfmFragmentToUsjContent("\\ df", nameless)).toEqual([
+  it("reads `\\ df` as a paragraph whose marker is the empty name", () => {
+    expect(usfmFragmentToUsjContent("\\ df")).toEqual([
       { type: "para", marker: "", content: ["df"] },
     ]);
   });
 
   it("reads a lone backslash as an empty nameless paragraph, shaped as a lone `\\p` is", () => {
-    expect(usfmFragmentToUsjContent("\\", nameless)).toEqual([{ type: "para", marker: "" }]);
+    expect(usfmFragmentToUsjContent("\\")).toEqual([{ type: "para", marker: "" }]);
     expect(usfmFragmentToUsjContent("\\p")).toEqual([{ type: "para", marker: "p" }]);
   });
 
-  it("reads a backslash right after the opening one as the paragraph's text", () => {
-    // The marker name stops at the second `\` — the same place it stops after `\p` in `\p\ df`.
-    expect(usfmFragmentToUsjContent("\\\\ df", nameless)).toEqual([
-      { type: "para", marker: "", content: ["\\ df"] },
+  it("reads a backslash right after the opening one as a second nameless marker", () => {
+    // The first name stops at the second `\`, which then starts a token of its own.
+    expect(usfmFragmentToUsjContent("\\\\ df")).toEqual([
+      { type: "para", marker: "" },
+      { type: "para", marker: "", content: ["df"] },
     ]);
   });
 
   it("ends at the next paragraph marker like any other paragraph", () => {
-    expect(usfmFragmentToUsjContent("\\ one \\q1 two", nameless)).toEqual([
+    expect(usfmFragmentToUsjContent("\\ one \\q1 two")).toEqual([
       { type: "para", marker: "", content: ["one "] },
       { type: "para", marker: "q1", content: ["two"] },
     ]);
   });
 
   it("reads it after leading whitespace, which opens a paragraph of its own as it would before `\\p`", () => {
-    expect(usfmFragmentToUsjContent(" \\ df", nameless)).toEqual([
+    expect(usfmFragmentToUsjContent(" \\ df")).toEqual([
       { type: "para", marker: "p", content: [" "] },
       { type: "para", marker: "", content: ["df"] },
     ]);
@@ -1854,39 +1861,198 @@ describe("a bare backslash opening a nameless paragraph's fragment is its marker
     ]);
   });
 
-  it("keeps a bare backslash after text literal", () => {
-    expect(usfmFragmentToUsjContent("x\\ df", nameless)).toEqual([
+  it("reads it right after a paragraph marker", () => {
+    expect(usfmFragmentToUsjContent("\\p \\ df")).toEqual([
+      { type: "para", marker: "p" },
+      { type: "para", marker: "", content: ["df"] },
+    ]);
+  });
+
+  it("reads `\\nd \\` — a backslash typed as a span's only content — as a nameless paragraph", () => {
+    // What ParatextData writes for `<char style="nd">\</char>`, and how it reads it back: the span
+    // ends empty, and the nameless paragraph takes the closer it leaves unmatched.
+    const expected = [
+      { type: "para", marker: "p", content: [{ type: "char", marker: "nd", closed: "false" }] },
+      { type: "para", marker: "", content: [{ type: "unmatched", marker: "nd*" }] },
+    ];
+    expect(usfmFragmentToUsjContent("\\p \\nd \\ \\nd*")).toEqual(expected);
+    expect(usfmFragmentToUsjContent("\\p \\nd \\\\nd*")).toEqual(expected);
+  });
+
+  it("reads a backslash typed directly before another marker at a token start", () => {
+    expect(usfmFragmentToUsjContent("\\p \\nd \\\\wj bla\\wj*")).toEqual([
+      { type: "para", marker: "p", content: [{ type: "char", marker: "nd", closed: "false" }] },
+      { type: "para", marker: "", content: [{ type: "char", marker: "wj", content: ["bla"] }] },
+    ]);
+  });
+
+  it("reads it right after a verse number, a closing marker, or a note's caller", () => {
+    expect(usfmFragmentToUsjContent("\\p \\v 1 \\ x y")).toEqual([
+      { type: "para", marker: "p", content: [{ type: "verse", marker: "v", number: "1" }] },
+      { type: "para", marker: "", content: ["x y"] },
+    ]);
+    expect(usfmFragmentToUsjContent("\\p a \\nd b\\nd*\\ c")).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: ["a ", { type: "char", marker: "nd", content: ["b"] }],
+      },
+      { type: "para", marker: "", content: ["c"] },
+    ]);
+    expect(usfmFragmentToUsjContent("\\p text\\f \\ b\\f* end")).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          "text",
+          {
+            type: "note",
+            marker: "f",
+            caller: "",
+            content: [{ type: "char", marker: "", content: ["b"], closed: "false" }],
+          },
+          " end",
+        ],
+      },
+    ]);
+  });
+
+  it("reads it directly before a note's bytes, or a preserved node standing for them", () => {
+    expect(usfmFragmentToUsjContent("\\p \\\\f + \\ft a\\f* z")).toEqual([
+      { type: "para", marker: "p" },
+      {
+        type: "para",
+        marker: "",
+        content: [
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["a"], closed: "false" }],
+          },
+          " z",
+        ],
+      },
+    ]);
+    expect(usfmFragmentToUsjContent(`\\${PRESERVED_NODE_PLACEHOLDER}`)).toEqual([
+      { type: "para", marker: "", content: [PRESERVED_NODE_PLACEHOLDER] },
+    ]);
+  });
+
+  it("reads it right after a preserved node, whose bytes end in a marker", () => {
+    expect(
+      usfmFragmentToUsjContent(`\\p a${PRESERVED_NODE_PLACEHOLDER}\\ b`, {
+        placeholders: ["other"],
+      }),
+    ).toEqual([
+      { type: "para", marker: "p", content: [`a${PRESERVED_NODE_PLACEHOLDER}`] },
+      { type: "para", marker: "", content: ["b"] },
+    ]);
+  });
+
+  it("reads it before an attribute bar, which then stands as the paragraph's text", () => {
+    expect(usfmFragmentToUsjContent('\\p \\nd x\\nd*\\|x="y" z')).toEqual([
+      { type: "para", marker: "p", content: [{ type: "char", marker: "nd", content: ["x"] }] },
+      { type: "para", marker: "", content: ['|x="y" z'] },
+    ]);
+  });
+
+  it("reads it as a character style inside a note, closed by a bare `\\*`", () => {
+    expect(usfmFragmentToUsjContent("\\p text\\f + \\ft \\ b\\* c\\f* end")).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          "text",
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [
+              { type: "char", marker: "ft", closed: "false" },
+              { type: "char", marker: "", content: ["b"] },
+              " c",
+            ],
+          },
+          " end",
+        ],
+      },
+    ]);
+    expect(usfmFragmentToUsjContent("\\ df", { isNoteContext: true })).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [{ type: "char", marker: "", content: ["df"], closed: "false" }],
+      },
+    ]);
+  });
+});
+
+describe("a bare backslash in the middle of text stays text (ParatextData 9.6)", () => {
+  it("keeps a backslash after text literal, whatever follows it but a marker name", () => {
+    expect(usfmFragmentToUsjContent("x\\ df")).toEqual([
       { type: "para", marker: "p", content: ["x\\ df"] },
     ]);
-    expect(usfmFragmentToUsjContent("\\ one \\ two", nameless)).toEqual([
+    expect(usfmFragmentToUsjContent("\\ one \\ two")).toEqual([
       { type: "para", marker: "", content: ["one \\ two"] },
     ]);
-  });
-
-  it("keeps a bare backslash before an attribute bar or a preserved node literal", () => {
-    expect(usfmFragmentToUsjContent("\\|x", nameless)).toEqual([
-      { type: "para", marker: "p", content: ["\\|x"] },
+    expect(usfmFragmentToUsjContent("\\p x \\. y \\+ z \\| w")).toEqual([
+      { type: "para", marker: "p", content: ["x \\. y \\+ z \\| w"] },
     ]);
-    expect(usfmFragmentToUsjContent(`\\${PRESERVED_NODE_PLACEHOLDER}`, nameless)).toEqual([
-      { type: "para", marker: "p", content: [`\\${PRESERVED_NODE_PLACEHOLDER}`] },
+    expect(usfmFragmentToUsjContent("\\p x \\")).toEqual([
+      { type: "para", marker: "p", content: ["x \\"] },
     ]);
   });
 
-  it("keeps a bare backslash literal in a fragment no nameless paragraph opens", () => {
-    // ParatextData 9.6 reads a bare backslash at ANY token start as a nameless marker, but a `\`
-    // left by deleting a marker's name, or typed right after one, is text the user has not named
-    // yet.
-    expect(usfmFragmentToUsjContent("\\ df")).toEqual([
-      { type: "para", marker: "p", content: ["\\ df"] },
+  it("keeps a backslash directly before another marker's backslash literal", () => {
+    expect(usfmFragmentToUsjContent("\\p x \\\\nd y\\nd*")).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: ["x \\", { type: "char", marker: "nd", content: ["y"] }],
+      },
     ]);
-    expect(usfmFragmentToUsjContent("\\p \\ df", nameless)).toEqual([
-      { type: "para", marker: "p", content: ["\\ df"] },
+    expect(usfmFragmentToUsjContent(`\\p x\\${PRESERVED_NODE_PLACEHOLDER}`)).toEqual([
+      { type: "para", marker: "p", content: [`x\\${PRESERVED_NODE_PLACEHOLDER}`] },
     ]);
   });
 
-  it("keeps a bare backslash opening note content literal", () => {
-    expect(usfmFragmentToUsjContent("\\ df", { ...nameless, isNoteContext: true })).toEqual([
-      { type: "para", marker: "p", content: ["\\ df"] },
+  it("keeps a backslash after the space that follows a closing marker literal", () => {
+    // A closing marker does not skip the whitespace after it, so that space starts text.
+    expect(usfmFragmentToUsjContent("\\p \\nd x\\nd* \\ y")).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [{ type: "char", marker: "nd", content: ["x"] }, " \\ y"],
+      },
+    ]);
+  });
+
+  it("keeps the backslash Paratext 9.5 wrote for one typed before a closer as text", () => {
+    // Paratext 9.5 saved `\` typed before `\wj*` as `\ ` (`\p asdf \nd \wj bla \ \wj*~\nd stuff`).
+    // That `\` follows text, so 9.6 reads it — and the space written after it — as text in the span.
+    expect(usfmFragmentToUsjContent("\\p asdf \\nd \\wj bla \\ \\wj*~\\nd stuff")).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          "asdf ",
+          { type: "char", marker: "nd", closed: "false" },
+          { type: "char", marker: "wj", content: ["bla \\ "] },
+          NBSP,
+          { type: "char", marker: "nd", content: ["stuff"], closed: "false" },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps a backslash in note text literal", () => {
+    expect(usfmFragmentToUsjContent("\\ft a \\ b", { isNoteContext: true })).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [{ type: "char", marker: "ft", content: ["a \\ b"], closed: "false" }],
+      },
     ]);
   });
 });

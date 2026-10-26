@@ -81,6 +81,9 @@ import {
   NBSP,
 } from "shared";
 
+/** Text ending in a `\` with no name after it yet (a nesting `+` aside). */
+const BARE_BACKSLASH_TAIL = /\\\+?$/;
+
 /**
  * Whether `node` sits where USFM reads a `|` run as an ATTRIBUTE LIST rather than as content:
  * between a marker and its CLOSER. Attributes are only meaningful before an explicit closer, so
@@ -329,12 +332,11 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
   // deltas) keep the whole-text check; an unterminated run left before the caret still resolves
   // via Enter/blur/caret departure.
   const selection = $getSelection();
-  const terminationText =
+  const holdsCaret =
     $isRangeSelection(selection) &&
     selection.isCollapsed() &&
-    selection.anchor.key === node.getKey()
-      ? text.slice(0, selection.anchor.offset)
-      : text;
+    selection.anchor.key === node.getKey();
+  const terminationText = holdsCaret ? text.slice(0, selection.anchor.offset) : text;
   if (TERMINATED_MARKER_IN_TEXT_REGEX.test(terminationText)) {
     // A milestone rebuild that EJECTS content waits for the settle. Every other terminated marker
     // takes effect where it stands, which is why the immediate arm exists — but ejection MOVES
@@ -342,6 +344,13 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
     // rearranges the line under the caret while the user is still on it. Pending instead leaves
     // what they typed alone until they depart, and the departure settle performs the same rebuild.
     if (milestoneEjectionPending(text)) {
+      context.pendingKeys.add(node.getKey());
+      return;
+    }
+    // A bare `\` just typed at the caret waits for the settle too: where a token starts it reads
+    // as a marker with an empty name, so re-tokenizing it now would split the line before the user
+    // has typed the name (or the `*` of a milestone's `\*`).
+    if (holdsCaret && BARE_BACKSLASH_TAIL.test(terminationText)) {
       context.pendingKeys.add(node.getKey());
       return;
     }

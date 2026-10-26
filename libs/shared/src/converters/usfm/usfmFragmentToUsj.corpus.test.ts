@@ -184,18 +184,24 @@ const CASES: { label: string; usfm: string; usj: string; known?: KnownDivergence
     usfm: "testUSFM-2SA-5.usfm",
     usj: "testUSFM-2SA-5.usj",
     known: {
-      reason: "bare `\\` read as text, not a nameless marker",
+      reason: "a bare `\\` after text: a nameless marker to Paratext 9.5, text to 9.6",
       entries: [
-        // ParatextData reads a bare `\` at any token start as a marker with an empty name — here
-        // three `<para style="">` paragraphs (`\ 2`, `\bd \ text`, the `\` ending verse 3). The
-        // tokenizer keeps each one as literal text, so the `\ 2` stays in verse 1's paragraph and
-        // the unclosed `\bd` runs on through verse 3. PR #11 reads a nameless marker only where a
-        // fragment opens with one (`opensNamelessParagraph`).
+        // The oracle is Paratext 9.5, which reads EVERY `\` as a marker; the tokenizer follows 9.6,
+        // whose text runs on until a `\` followed by a marker-name character. Of the three nameless
+        // markers 9.5 reads here, two follow text — `sentence. \ 2` and the `\` ending verse 3 —
+        // so 9.6 keeps them as text: the `\ 2` and verse 2 stay in verse 1's paragraph, and the
+        // last `\` ends the paragraph verse 3 is in. The third, `\bd \` (a token start), is a
+        // nameless paragraph in both. The diff pairs that one paragraph with the oracle's FIRST
+        // nameless paragraph (`$[4]`), so it reads as content differences there and as the
+        // oracle's `$[5]` (that `\bd \` paragraph) and `$[6]` (verse 3's `\`) missing.
         '$[3]<para:p>[1] text: oracle "Chapter 5 holds deliberately damaged USFM that ..." vs "Chapter 5 holds deliberately damaged USFM that ..."',
         '$[3]<para:p>[+2] tokenizer emits <verse:v number="2"> — oracle lacks it',
         '$[3]<para:p>[+3] tokenizer emits "A bare backslash after a character marker " — oracle lacks it',
         '$[3]<para:p>[+4] tokenizer emits <char:bd closed="false"> — oracle lacks it',
-        "$[4] oracle has <para:> — tokenizer lacks it",
+        '$[4]<para:>[0] text: oracle "2 " vs "text after it. "',
+        '$[4]<para:>[1]<verse:v>.number: oracle="2" tokenizer="3"',
+        '$[4]<para:>[2] text: oracle "A bare backslash after a character marker " vs "A bare backslash at the end of a verse \\"',
+        '$[4]<para:>[3] oracle has <char:bd closed="false"> — tokenizer lacks it',
         "$[5] oracle has <para:> — tokenizer lacks it",
         "$[6] oracle has <para:> — tokenizer lacks it",
       ],
