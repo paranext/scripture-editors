@@ -112,6 +112,11 @@ interface DeleteExtent {
   hidden: UnknownNode[];
   /** The range the delete removes; absent where it removes only the hidden content. */
   range?: RangeSnapshot;
+  /**
+   * Where the browser's extension reached, even past the caret's paragraph (where `range` stops
+   * short of it); absent where it was not measured or reached nothing.
+   */
+  measured?: RangeSnapshot;
 }
 
 /**
@@ -356,13 +361,16 @@ export function HiddenContentDeleteGuardPlugin({
         granularity === "character" || run?.placement === "block"
           ? undefined
           : $deleteExtent(editor, selection, direction, granularity, from);
-      // Protected structure judges a word or line delete by the range it extends to, and refuses
-      // one that reaches a verse, another block or partway into an opaque construct; asking first
-      // would remove that range on "delete" without its say.
-      if (extent?.range && isProtected) {
-        const range = $rangeFrom(extent.range);
+      // Protected structure judges a word or line delete by where it extends to, and refuses one
+      // that reaches a verse, another block or partway into an opaque construct. Asking first
+      // would carry out on "delete" what it refuses, so this steps aside for its refusal. The one
+      // exception: an extent that only leaves the line, with hidden content right at the caret,
+      // takes just that content (stopping at the line's edge), which the structure keeps.
+      if (isProtected && extent?.measured) {
+        const measured = $rangeFrom(extent.measured);
         const intent = direction === "backward" ? "deleteBackward" : "deleteForward";
-        if (range && $shouldRefuseExtendedDelete(range, intent)) return false;
+        if (measured && $shouldRefuseExtendedDelete(measured, intent) && (extent.range || !run))
+          return false;
       }
       const hidden = $inDocumentOrder([...(run?.nodes ?? []), ...(extent?.hidden ?? [])]);
       if (hidden.length === 0) return false;
@@ -710,12 +718,10 @@ function $deleteExtent(
   // The probe moved the DOM selection; dirty makes the next `modify` (the native delete's own, when
   // nothing is hidden) start from the live caret again rather than from the probe's extent.
   selection.dirty = true;
+  const measured = probe.isCollapsed() ? undefined : $rangeSnapshot(probe);
   if (!$isInCaretContainer(probe.focus, from))
-    return { hidden: $hiddenNodesToParaEdge(from, direction) };
-  return {
-    hidden: $hiddenNodesInSelection(probe),
-    range: probe.isCollapsed() ? undefined : $rangeSnapshot(probe),
-  };
+    return { hidden: $hiddenNodesToParaEdge(from, direction), measured };
+  return { hidden: $hiddenNodesInSelection(probe), range: measured, measured };
 }
 
 /**
