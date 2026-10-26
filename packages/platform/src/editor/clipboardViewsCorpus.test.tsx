@@ -678,13 +678,15 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | UsfmRow): strin
     )
       return "PT-4921: text/html carries no char attributes (`closed`) and brings a note's display spacers back as text";
   }
+  // TODO(PT-4388): read a bare `\` as a nameless marker once ParatextData 9.6 is in (parked on
+  // branch `pt-4197-nameless-96`).
   if (row.viewName === "standard" && fixture === "testUSFM-2SA-5.usj") {
     if (
       "text" in row ||
       row.operation === "copy, paste html and plain" ||
       row.operation === "copy, paste plain text"
     )
-      return "Standard's text path over deliberately damaged USFM: a nameless marker re-tokenizes as text, and a bare backslash keeps the paste a pending literal";
+      return "PT-4388: Standard's text path over deliberately damaged USFM: a nameless marker re-tokenizes as text, and a bare backslash keeps the paste a pending literal";
   }
   return undefined;
 }
