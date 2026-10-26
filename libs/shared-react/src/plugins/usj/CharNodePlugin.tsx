@@ -79,8 +79,9 @@ function useCharNode(editor: LexicalEditor) {
  * each side genuinely differs from the other. That is a live editor freeze, reachable from any
  * edit that leaves two same-attribute spans adjacent (deleting the `*` from a `\va*` closer
  * re-tokenizes into exactly that shape). Where the glyphs are absent there are no bytes to
- * contradict, so the merge stays: adjacent same-attribute runs really are equivalent there, and
- * that is the case delta-apply and structure surgery rely on.
+ * contradict, so the merge stays for a span an update creates — the case delta-apply and structure
+ * surgery rely on — while two spans the document already held apart stay apart there too (see
+ * `$wereAlikeSpansBeforeUpdate`).
  *
  * The MIXED pairing — a glyph-less span beside a glyph-bearing one — must still merge, because
  * the marker-apply paths rely on it: `$wrapRunInCharNode` (usj-marker-action.utils.ts) wraps the
@@ -141,7 +142,8 @@ function $mergeIntoPrecedingGlyphSpan(node: CharNode, target: CharNode): void {
 }
 
 /**
- * Combine adjacent CharNodes with the same attributes.
+ * Combine adjacent CharNodes with the same attributes, unless both were already alike, separate
+ * spans before this update ({@link $wereAlikeSpansBeforeUpdate}).
  * @param node - CharNode thats needs updating.
  * @param editor - LexicalEditor instance.
  */
@@ -169,7 +171,8 @@ function $charNodeTransform(node: CharNode): void {
   if (
     $isCharNode(nextNode) &&
     $hasSameCharAttributes({ style, cid }, nextNode) &&
-    deepEqual(unknownAttributes, nextNode.getUnknownAttributes())
+    deepEqual(unknownAttributes, nextNode.getUnknownAttributes()) &&
+    !$wereAlikeSpansBeforeUpdate(node, nextNode)
   ) {
     // Combine with next CharNode since it has the same attributes. A glyph-bearing partner
     // survives the merge (its glyphs are the displayed bytes) and takes the content inside its
@@ -186,7 +189,8 @@ function $charNodeTransform(node: CharNode): void {
   if (
     $isCharNode(prevNode) &&
     $hasSameCharAttributes({ style, cid }, prevNode) &&
-    deepEqual(unknownAttributes, prevNode.getUnknownAttributes())
+    deepEqual(unknownAttributes, prevNode.getUnknownAttributes()) &&
+    !$wereAlikeSpansBeforeUpdate(prevNode, node)
   ) {
     // Combine with previous CharNode since it has the same attributes.
     if ($rendersOwnGlyphs(prevNode)) {
@@ -195,6 +199,39 @@ function $charNodeTransform(node: CharNode): void {
       $combineGlyphlessSpans(prevNode, node);
     }
   }
+}
+
+/**
+ * Whether `preceding` and `following` were both in the editor's last committed state as spans with
+ * the same marker and attributes — two spans the document already held apart, which an edit has
+ * only left side by side (the text between them deleted, or the paragraphs they end and start
+ * joined). Those stay two spans: for a word-level marker such as `\w` (each span one word, its
+ * `lemma` that word's) combining them changes the text's word segmentation, and Standard view,
+ * whose spans each keep their own glyphs, keeps them apart too. Spans an update creates — a run a
+ * marker is applied to, a split's continuation, remote content — still combine with an alike
+ * neighbor, as does a span whose marker or attributes an update changed to match its neighbor's.
+ */
+function $wereAlikeSpansBeforeUpdate(preceding: CharNode, following: CharNode): boolean {
+  return $getEditor()
+    .getEditorState()
+    .read(() => {
+      const previousPreceding = $getNodeByKey(preceding.getKey());
+      const previousFollowing = $getNodeByKey(following.getKey());
+      if (!$isCharNode(previousPreceding) || !$isCharNode(previousFollowing)) return false;
+      return (
+        $hasSameCharAttributes(
+          {
+            style: previousPreceding.getMarker(),
+            cid: $getState(previousPreceding, charIdState),
+          },
+          previousFollowing,
+        ) &&
+        deepEqual(
+          previousPreceding.getUnknownAttributes(),
+          previousFollowing.getUnknownAttributes(),
+        )
+      );
+    });
 }
 
 /**

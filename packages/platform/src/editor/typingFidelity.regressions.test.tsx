@@ -2,12 +2,19 @@
  * Keystrokes the typing-fidelity oracle (typingFidelityOracle.test-helpers.tsx) found changing
  * more than they typed, each pinned as the gesture a user makes, in every view a user edits in.
  */
-import { EDITING_VIEWS, editorView, forEachView, mountInView } from "./editorViews.test-helpers";
+import {
+  EDITING_VIEWS,
+  editorView,
+  forEachView,
+  mountInView,
+  NamedView,
+} from "./editorViews.test-helpers";
 import { installSelectionModify, press } from "./typingFidelityOracle.test-helpers";
 import { ContentJsonPath, MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $getRoot, $isElementNode, UNDO_COMMAND } from "lexical";
 import { NBSP } from "shared";
+import { StructureProtectionMode } from "shared-react";
 import { describe, expect, it } from "vitest";
 
 installSelectionModify();
@@ -378,3 +385,71 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
     });
   });
 });
+
+/** The editing views, and paragraph-structure as Simple mode edits in it, where a deletion that
+ * joins two paragraphs is made by a second press of the key. */
+const EDITING_AND_GUARDED_VIEWS: (NamedView<string> & {
+  structureProtectionMode?: StructureProtectionMode;
+})[] = [
+  ...EDITING_VIEWS,
+  {
+    name: "paragraph-structure (guarded)",
+    view: editorView("paragraph-structure"),
+    structureProtectionMode: "guarded",
+  },
+];
+
+/** A `\w` word with a lemma: two of them side by side are two words, not one. */
+function word(text: string): MarkerContent {
+  // `lemma` is an attribute the USJ type does not name; a char marker may carry any attribute.
+  const span = { type: "char", marker: "w", lemma: "grace", content: [text] };
+  return span;
+}
+
+for (const { name, view, structureProtectionMode } of EDITING_AND_GUARDED_VIEWS) {
+  describe(`in ${name} view: two alike spans left side by side by a deletion stay two spans, as in Standard view`, () => {
+    it("deleting the space between them", async () => {
+      const mounted = await mountInView(oneParaUsj([word("one"), " ", word("two")]), view, {
+        structureProtectionMode,
+      });
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[1]", offset: 1 },
+        });
+      });
+
+      expect(await press(mounted, "Backspace")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: [word("one"), word("two")],
+      });
+    });
+
+    it("joining the paragraphs they end and start", async () => {
+      const usj = oneParaUsj([word("one")]);
+      usj.content.push({ type: "para", marker: "p", content: [word("two")] });
+      const mounted = await mountInView(usj, view, { structureProtectionMode });
+      // The caret at the first paragraph's end, after its span (and, in Standard view, after the
+      // span's closing marker).
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const paragraph = $getRoot().getChildAtIndex(2);
+          if (!$isElementNode(paragraph)) throw new Error("no paragraph");
+          const end = paragraph.getChildrenSize();
+          paragraph.select(end, end);
+        });
+      });
+
+      expect(await press(mounted, "Delete")).toEqual([]);
+      // A guarded join is armed by the first press and made by the second.
+      if (mounted.ref.current?.getUsj()?.content.length === 4)
+        expect(await press(mounted, "Delete")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content.slice(2)).toEqual([
+        { type: "para", marker: "p", content: [word("one"), word("two")] },
+      ]);
+    });
+  });
+}

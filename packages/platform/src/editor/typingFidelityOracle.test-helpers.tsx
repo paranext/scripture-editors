@@ -28,10 +28,10 @@
  * The editor's own standing rules are allowed for, each where it applies and nowhere else: the
  * whitespace at a paragraph break may go (a block's edge whitespace is no content a USFM reader
  * keeps); the continuation of a split span may carry its marker alone (`CharNode.insertNewAfter`);
- * text before a verse ends in a space, and two adjacent spans alike in all but content are one
- * (TextSpacingPlugin, CharNodePlugin; compared up to both); a space typed as an empty verse's whole
- * content, text typed into an empty `\b`, and any edit inside a table or a sidebar (read-only) are
- * refused.
+ * text before a verse ends in a space (TextSpacingPlugin; compared up to it); a space typed as an
+ * empty verse's whole content, text typed into an empty `\b`, and any edit inside a table or a
+ * sidebar (read-only) are refused. Two spans alike in all but content that a keystroke leaves side
+ * by side stay two spans, as they do in Standard view.
  *
  * After every keystroke: the saved USJ must be one of the expected documents; Undo must restore
  * the pre-keystroke USJ exactly, and Redo must re-apply the keystroke's USJ exactly. Before any
@@ -320,21 +320,12 @@ function parentOf(usj: Usj, path: readonly number[]): [Item[], number] {
   return [content, path[path.length - 1]];
 }
 
-/** Whether `a` and `b` are char spans alike in everything but their content. */
-function isSameSpan(a: Item | undefined, b: Item): boolean {
-  if (!isObject(a) || !isObject(b) || a.type !== "char" || b.type !== "char") return false;
-  const { content: _a, ...restA } = a;
-  const { content: _b, ...restB } = b;
-  return sortedJson(restA) === sortedJson(restB);
-}
-
 /**
  * Adjacent strings merged, empty strings dropped, an empty `content` dropped — the spellings of
  * one document the editor may write either way. A keystroke's outcome (`isKeystroke`) is also
- * compared up to two rules the editor keeps on every edit: the text, or the char span, before a
- * verse is followed by a space (TextSpacingPlugin; the shape ParatextData writes a verse with on
- * its round trip to disk), and two adjacent char spans alike in everything but content are one
- * span (CharNodePlugin).
+ * compared up to a rule the editor keeps on every edit: the text, or the char span, before a verse
+ * is followed by a space (TextSpacingPlugin; the shape ParatextData writes a verse with on its
+ * round trip to disk).
  */
 function normalized(content: readonly Item[], isKeystroke = false): Item[] {
   const out: Item[] = [];
@@ -352,13 +343,6 @@ function normalized(content: readonly Item[], isKeystroke = false): Item[] {
       else delete copy.content;
     }
     const previous = out.at(-1);
-    if (isKeystroke && isSameSpan(previous, copy) && isObject(previous)) {
-      out[out.length - 1] = {
-        ...previous,
-        content: normalized([...(previous.content ?? []), ...(copy.content ?? [])], isKeystroke),
-      };
-      continue;
-    }
     if (isKeystroke && item.type === "verse") {
       if (typeof previous === "string" && !/\s$/.test(previous))
         out[out.length - 1] = `${previous} `;
