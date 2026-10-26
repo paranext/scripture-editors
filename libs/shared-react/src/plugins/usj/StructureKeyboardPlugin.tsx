@@ -51,11 +51,11 @@ import { StructureProtectionMode } from "./structure-protection.model";
 
 /**
  * Records a range selection's endpoints and returns a function that puts them back, so a refused
- * delete leaves the caret where it was even after the delete moved it to judge it.
+ * delete leaves the selection as it was even after the delete extended or narrowed it.
  *
  * Mutating (the returned function): call inside `editor.update()`.
  */
-function $snapshotRange(selection: RangeSelection): () => void {
+function $restorerFor(selection: RangeSelection): () => void {
   const { anchor, focus } = $rangeSnapshot(selection);
   return () => {
     selection.anchor.set(anchor.key, anchor.offset, anchor.type);
@@ -74,7 +74,8 @@ function $snapshotRange(selection: RangeSelection): () => void {
  * the CUT refusal at COMMAND_PRIORITY_CRITICAL so it outranks the handlers that perform a cut.
  * Under `"protected"`, it also performs word and line deletes itself (DELETE_WORD_COMMAND /
  * DELETE_LINE_COMMAND at COMMAND_PRIORITY_HIGH), since only the extended range shows what they
- * would remove.
+ * would remove — except inside an opaque block, left to `OpaqueBlockGuardPlugin`, and on the `\id`
+ * line, which it judges from the caret and then hands on (see `$guardExtendingDelete`).
  *
  * The armed state is published to the DOM (rather than rendered here) so the host app owns the
  * user-facing hint: the root element carries the `verse-delete-armed` class plus
@@ -269,17 +270,12 @@ export function StructureKeyboardPlugin({
       if (structureProtectionMode === "protected") {
         const selection = $getSelection();
         if (!selection) return false;
-        // In front of a line's glyph (where ArrowRight from the line before leaves the caret), a
-        // forward delete is judged — and, if allowed, run by Lexical's own handler — from just past
-        // it, so it removes the line's first character instead of the glyph.
-        let restore: (() => void) | undefined;
-        if (!isBackward && $isRangeSelection(selection)) {
-          const snapshot = $snapshotRange(selection);
-          if ($moveCaretPastGutterGlyph(selection)) restore = snapshot;
-        }
-        if (!$shouldBlockStructuralEdit(selection, intent)) return false;
-        restore?.();
-        return true;
+        if ($shouldBlockStructuralEdit(selection, intent)) return true;
+        // In front of a line's glyph (where ArrowRight from the line before leaves the caret), an
+        // allowed forward delete runs from just past it, where it was judged, so Lexical's own
+        // handler removes the line's first character rather than the glyph.
+        if (!isBackward && $isRangeSelection(selection)) $moveCaretPastGutterGlyph(selection);
+        return false;
       }
       if ($hasUpdateTag(CONFIRMED_DELETE_TAG)) return false;
       return $handleTwoStepDelete(intent, undefined);
@@ -293,20 +289,19 @@ export function StructureKeyboardPlugin({
     // `$clampLineDeletionPastBookPrefix` does: extend ONCE, judge that range, then remove exactly it
     // or refuse. Handing back to Lexical's own deleteWord/deleteLine instead would extend a second
     // time from a re-seated caret, which on a wrapped line can reach somewhere other than what was
-    // judged. (That rule is about this handler's own measure-then-remove.
-    // `HiddenContentDeleteGuardPlugin` measures the same extent on a copy of the same caret first,
-    // to look for hidden content; when it finds none it hands the delete on, and this extends again
-    // from that caret, deliberately.) Whatever range is removed is first narrowed past the
-    // display glyphs it starts in front of (the `\id` prefix, a line's gutter glyph), and a range
-    // of nothing but glyphs is refused rather than deleted and rebuilt. A caret on the `\id` line
-    // gets the same caret check, then its extension is left to `$clampLineDeletionPastBookPrefix`,
-    // which clamps it past the prefix but does not judge structure.
+    // judged. (`HiddenContentDeleteGuardPlugin` measures the same extent first, on a copy, and
+    // hands the delete on when it finds no hidden content; this second measurement is deliberate.)
+    // The removed range is first narrowed past the display glyphs it starts in front of (the `\id`
+    // prefix, a line's gutter glyph), and a range of nothing but glyphs is refused. A caret on the
+    // `\id` line gets the same caret check and is then handed on: a line delete to
+    // `$clampLineDeletionPastBookPrefix`, which clamps it past the prefix, and a word delete to
+    // Lexical's own, which cannot leave that line from anywhere the caret check allows.
     //
     // Registered at HIGH alongside OpaqueBlockGuardPlugin's refusal of the same commands, so it
     // stands aside for an opaque block itself rather than relying on mount order to lose that tie.
-    // That guard sees only the caret, so a range the extension carries INTO an opaque block (a
-    // word delete just past a figure, landing in its caption) is refused here, by the same rule
-    // the hidden-content guard applies to the extent it measures ($shouldRefuseExtendedDelete).
+    // As defense in depth, an extent that ends partway into an opaque block is refused too
+    // ($shouldRefuseExtendedDelete); in the paragraph-structure view hidden constructs are not
+    // rendered, so an extension cannot land inside one there.
     const $guardExtendingDelete =
       (granularity: "word" | "lineboundary") =>
       (isBackward: boolean): boolean => {
@@ -315,26 +310,26 @@ export function StructureKeyboardPlugin({
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
         const intent = isBackward ? "deleteBackward" : "deleteForward";
-        const restore = $snapshotRange(selection);
+        const restore = $restorerFor(selection);
 
         if (selection.isCollapsed()) {
-          if (!isBackward) $moveCaretPastGutterGlyph(selection);
-          if ($shouldBlockStructuralEdit(selection, intent)) {
-            restore();
-            return true;
-          }
+          // Judged before the caret moves, so a refusal leaves it where it was.
+          if ($shouldBlockStructuralEdit(selection, intent)) return true;
           if ($findMatchingParent(selection.anchor.getNode(), $isBookNode)) return false;
+          if (!isBackward) $moveCaretPastGutterGlyph(selection);
           selection.modify("extend", isBackward, granularity);
+          // Nothing to extend into at this granularity (a line that ends in a hidden construct,
+          // say): Lexical's own fallback deletes one character, so extend by one instead and judge
+          // that range like any other — one character from a line's end is the next line.
+          if (selection.isCollapsed()) selection.modify("extend", isBackward, "character");
           if (selection.isCollapsed()) {
-            // Nothing to extend into: Lexical's own fallback deletes one character, which the
-            // caret check above already allowed.
-            selection.deleteCharacter(isBackward);
+            restore();
             return true;
           }
         }
 
         // A range is removed as it stands, so it is judged as it stands (Rule 1).
-        if ($shouldRefuseExtendedDelete(selection, intent)) {
+        if ($shouldRefuseExtendedDelete(selection)) {
           restore();
           return true;
         }
