@@ -98,6 +98,18 @@ function $isBareHost(node: TextNode): boolean {
 }
 
 /**
+ * Whether `node` carries the caret-host mark — a bare host, or one text has landed in that this
+ * update's transforms have not yet turned into content. A transform that must leave a host alone
+ * (`TextSpacingPlugin`'s) asks this rather than {@link $isCaretHost}, so its answer does not
+ * depend on whether the host's own transform ran first.
+ *
+ * Read-only: safe in any read.
+ */
+export function $hasCaretHostMark(node: LexicalNode | null | undefined): boolean {
+  return $isTextNode(node) && $getState(node, caretHostState);
+}
+
+/**
  * The key of the text node a collapsed caret rests in, or `undefined`. Any range — even one inside
  * a host's own placeholder — has left the host: a selected placeholder would otherwise be copied,
  * or quoted by a footnote inserted over it, as content.

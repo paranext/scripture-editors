@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { act } from "@testing-library/react";
 import { $getRoot, $createTextNode, $getSelection, LexicalNode } from "lexical";
 import {
   $createGutterMarkerNode,
@@ -15,14 +16,24 @@ import {
   ParaNode,
   VerseNode,
 } from "shared";
-import { $createImmutableVerseNode, ImmutableVerseNode, SomeVerseNode } from "shared-react";
+import {
+  $createImmutableVerseNode,
+  getViewOptions,
+  ImmutableVerseNode,
+  PARAGRAPH_STRUCTURE_VIEW_MODE,
+  SomeVerseNode,
+} from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { createBasicTestEnvironment } from "../../../../libs/shared/src/nodes/usj/test.utils";
+// Reaching inside only for tests.
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import { baseTestEnvironment } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 import {
   $getActiveVerseKey,
   $getEmptyVerseStatus,
   $getParaFromSelection,
+  ActiveTextPlugin,
 } from "./ActiveTextPlugin";
 
 const nodes = [
@@ -418,5 +429,76 @@ describe("a selected paragraph marker", () => {
     editor.getEditorState().read(() => {
       expect($getActiveVerseKey()).toBe(v2.getKey());
     });
+  });
+});
+
+describe("ActiveTextPlugin empty-verse classes", () => {
+  it("swaps the cursor's empty verse to the active class, and restores it when the cursor leaves", async () => {
+    let para!: ParaNode;
+    let v3!: SomeVerseNode;
+    let v4!: SomeVerseNode;
+    let v5!: SomeVerseNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("p");
+        v3 = $createImmutableVerseNode("3");
+        v4 = $createImmutableVerseNode("4");
+        v5 = $createImmutableVerseNode("5");
+        $getRoot().append(para.append(v3, v4, v5, $createTextNode("five")));
+      },
+      <ActiveTextPlugin viewOptions={getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE)} />,
+    );
+    const classesOf = (verse: SomeVerseNode) => {
+      const classList = editor.getElementByKey(verse.getKey())?.classList;
+      return {
+        empty: classList?.contains("psc-empty-text"),
+        active: classList?.contains("psc-empty-text-active"),
+      };
+    };
+
+    // The cursor rests right after verse 3's marker.
+    await act(async () => {
+      editor.update(() => para.select(1, 1));
+    });
+    // The active empty verse is marked, not just unmarked, so the stylesheet can keep its
+    // ellipsis's width and the line doesn't reflow.
+    expect(classesOf(v3)).toEqual({ empty: false, active: true });
+    expect(classesOf(v4)).toEqual({ empty: true, active: false });
+    expect(classesOf(v5)).toEqual({ empty: false, active: false });
+
+    // Moving to verse 4 hands the active class over.
+    await act(async () => {
+      editor.update(() => para.select(2, 2));
+    });
+    expect(classesOf(v3)).toEqual({ empty: true, active: false });
+    expect(classesOf(v4)).toEqual({ empty: false, active: true });
+  });
+
+  it("clears the active class once the verse gets body text", async () => {
+    let para!: ParaNode;
+    let v3!: SomeVerseNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("p");
+        v3 = $createImmutableVerseNode("3");
+        $getRoot().append(para.append(v3, $createImmutableVerseNode("4")));
+      },
+      <ActiveTextPlugin viewOptions={getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE)} />,
+    );
+    await act(async () => {
+      editor.update(() => para.select(1, 1));
+    });
+
+    await act(async () => {
+      editor.update(() => {
+        const text = $createTextNode("typed");
+        v3.insertAfter(text);
+        text.select(5, 5);
+      });
+    });
+
+    const classList = editor.getElementByKey(v3.getKey())?.classList;
+    expect(classList?.contains("psc-empty-text")).toBe(false);
+    expect(classList?.contains("psc-empty-text-active")).toBe(false);
   });
 });

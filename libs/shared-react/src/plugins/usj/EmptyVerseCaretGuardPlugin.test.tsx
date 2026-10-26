@@ -5,6 +5,7 @@ import { $createImmutableVerseNode, ImmutableVerseNode } from "../../nodes/usj";
 import { EmptyNoteCaretGuardPlugin } from "./EmptyNoteCaretGuardPlugin";
 import { EmptyVerseCaretGuardPlugin } from "./EmptyVerseCaretGuardPlugin";
 import { baseTestEnvironment, deleteTextAtSelection, settle } from "./react-test.utils";
+import { TextSpacingPlugin } from "./TextSpacingPlugin";
 import { TrailingNoteCaretGuardPlugin } from "./TrailingNoteCaretGuardPlugin";
 import { createEmptyHistoryState, HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { act } from "@testing-library/react";
@@ -229,6 +230,141 @@ describe("EmptyVerseCaretGuardPlugin", () => {
         CURSOR_PLACEHOLDER_CHAR,
       );
     });
+  });
+});
+
+describe("EmptyVerseCaretGuardPlugin with TextSpacingPlugin", () => {
+  it("keeps the host in an empty verse followed by another verse", async () => {
+    // The real editor mounts TextSpacingPlugin too. A host sits directly before the next verse
+    // marker, which is where that plugin adds its structural trailing space — and a space would
+    // make the host look typed into, so it was stripped and removed, dropping the caret back to
+    // the hostless element point it exists to repair.
+    let para: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("p");
+        $getRoot().append(
+          para.append($createImmutableVerseNode("3"), $createImmutableVerseNode("4")),
+        );
+      },
+      <>
+        <TextSpacingPlugin />
+        <EmptyVerseCaretGuardPlugin />
+      </>,
+    );
+
+    // Rest the caret right after verse 3's marker, as a click on its ellipsis does.
+    await act(async () => {
+      editor.update(() => {
+        para!.select(1, 1);
+      });
+    });
+    await dispatchSelectionChange(editor);
+
+    editor.getEditorState().read(() => {
+      const children = para!.getChildren();
+      expect(children.length).toBe(3);
+      expect(children[1].getTextContent()).toBe(CURSOR_PLACEHOLDER_CHAR);
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.isCollapsed()).toBe(true);
+      expect(selection.focus.key).toBe(children[1].getKey());
+    });
+  });
+
+  it("still spaces typed text before the next verse once it replaces the host", async () => {
+    let para: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("p");
+        $getRoot().append(
+          para.append($createImmutableVerseNode("3"), $createImmutableVerseNode("4")),
+        );
+      },
+      <>
+        <TextSpacingPlugin />
+        <EmptyVerseCaretGuardPlugin />
+      </>,
+    );
+    await act(async () => {
+      editor.update(() => para!.select(1, 1));
+    });
+    await dispatchSelectionChange(editor);
+
+    await act(async () => {
+      editor.update(() => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertText("a");
+      });
+    });
+
+    expect(editor.getEditorState().read(() => para!.getChildAtIndex(1)?.getTextContent())).toBe(
+      "a ",
+    );
+  });
+
+  it("spaces text pasted in front of the host against the next verse in the paste's own commit", async () => {
+    let para: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("p");
+        $getRoot().append(
+          para.append($createImmutableVerseNode("3"), $createImmutableVerseNode("4")),
+        );
+      },
+      <>
+        <TextSpacingPlugin />
+        <EmptyVerseCaretGuardPlugin />
+      </>,
+    );
+    await act(async () => {
+      editor.update(() => para!.select(1, 1));
+    });
+    await dispatchSelectionChange(editor);
+
+    // A rich paste inserts nodes before the host rather than typing into it.
+    await act(async () => {
+      editor.update(() => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertNodes([$createTextNode("pasted")]);
+      });
+    });
+
+    // The structural space before verse 4 is part of the paste's commit, which the host
+    // application hears about — not of the later commit that removes the host, which it doesn't.
+    expect(editor.getEditorState().read(() => para!.getTextContent())).toContain("pasted ");
+  });
+
+  it("keeps a single trailing space on text that lands in the host, whichever transform runs first", async () => {
+    let para: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("p");
+        $getRoot().append(
+          para.append($createImmutableVerseNode("3"), $createImmutableVerseNode("4")),
+        );
+      },
+      // TextSpacingPlugin's transform registered before the guard's.
+      <>
+        <TextSpacingPlugin />
+        <EmptyVerseCaretGuardPlugin />
+      </>,
+    );
+    await act(async () => {
+      editor.update(() => para!.select(1, 1));
+    });
+    await dispatchSelectionChange(editor);
+
+    await act(async () => {
+      editor.update(() => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertText("word ");
+      });
+    });
+
+    expect(editor.getEditorState().read(() => para!.getChildAtIndex(1)?.getTextContent())).toBe(
+      "word ",
+    );
   });
 });
 
