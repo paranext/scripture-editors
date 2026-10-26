@@ -1,6 +1,7 @@
 import {
   $isArmedSelection,
   $mergeParaIntoPrevious,
+  $placeCaretAfterParaChild,
   $placeCaretAtEnd,
   $sanitizeNodesForProtectedStructure,
   $selectionContainsVerseMarker,
@@ -36,14 +37,14 @@ import {
   PASTE_COMMAND,
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { $isSomeVerseNode } from "../../nodes/usj";
-import { $isSomeParaNode } from "shared";
+import { $isSomeVerseNode, VERSE_SELECTED_CLASS_NAME } from "../../nodes/usj";
+import { $isParaLikeNode, $isSomeParaNode } from "shared";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 
 /**
- * Governs structural keystrokes (Backspace/Delete/Enter/typing) at verse- and paragraph-marker
- * boundaries. In `"protected"` mode, blocks them and sanitizes paste/drop payloads so structural
+ * Governs structural keystrokes (Backspace/Delete/Enter/typing) at verse-, chapter- and
+ * paragraph-marker boundaries. In `"protected"` mode, blocks them and sanitizes paste/drop payloads so structural
  * markers (paragraph breaks, verse markers, chapter markers) cannot be inserted — text, inline
  * character formatting, and notes are kept. In `"guarded"` mode, makes deletion a deliberate
  * two-step gesture instead: first press selects the marker/section, second press deletes it.
@@ -55,7 +56,9 @@ import { StructureProtectionMode } from "./structure-protection.model";
  * user-facing hint: the root element carries the `verse-delete-armed` class plus
  * `data-verse-delete-intent` (`deleteBackward` | `deleteForward`) and `data-verse-delete-kind`
  * (`verse` | `selection`), and the armed marker carries the `verse-selected` class. The host can
- * observe these to render a localized tooltip (see paranext-core's VerseDeleteTooltipOverlay).
+ * observe these to render a localized tooltip (see paranext-core's VerseDeleteTooltipOverlay). An
+ * armed chapter carries the `verse-selected` class too, so it shows the same armed styling, but
+ * publishes no hint kind: the host's hint names a verse marker or a selection, never a chapter.
  *
  * @param structureProtectionMode - `"off"` (e.g. the Power interface mode): the plugin registers
  *   no handlers and editing is fully native — no blocking, no two-step delete, no armed state.
@@ -119,6 +122,17 @@ export function StructureKeyboardPlugin({
             else if (next && $isTextNode(next)) next.select(0, 0);
             else parent?.selectStart();
           }
+        } else if (armed.kind === "chapter") {
+          if (node) {
+            // The caret goes back where the arming press found it: the content start of the
+            // block after the chapter (Backspace) or the end of the block before it (Delete).
+            const prev = node.getPreviousSibling();
+            const next = node.getNextSibling();
+            node.remove();
+            if (intent === "deleteBackward" && $isParaLikeNode(next))
+              $placeCaretAfterParaChild(next, null);
+            else if ($isParaLikeNode(prev)) $placeCaretAfterParaChild(prev, prev.getLastChild());
+          }
         } else if (armed.kind === "selection") {
           // Deletes the whole range, verse included, through the command every selection delete
           // reaches, so the guards on one judge this one too (the question before hidden content
@@ -141,7 +155,7 @@ export function StructureKeyboardPlugin({
       if (!selection) return false;
       const target = $structuralDeleteTarget(selection, intent);
       if (target) {
-        if (target.kind === "verse") {
+        if (target.kind === "verse" || target.kind === "chapter") {
           const ns = $createNodeSelection();
           ns.add(target.node.getKey());
           $setSelection(ns);
@@ -288,11 +302,15 @@ export function StructureKeyboardPlugin({
 
   // Publish the armed state onto the editor root: the class gates the CSS blink to armed markers,
   // and the data attributes let the host app render a localized destructive hint. `para` merges
-  // expose no hint kind (verse-marker scope), matching the previous no-tooltip behavior.
+  // and chapters expose no hint kind (the host's hint is verse-marker scope). A chapter glyph has no
+  // selection rendering of its own (unlike a verse's decorator), so its armed class is set here.
   useEffect(() => {
     const root = editor.getRootElement();
     if (!root) return;
-    const showHint = !!armed && armed.kind !== "para";
+    const showHint = !!armed && (armed.kind === "verse" || armed.kind === "selection");
+    const armedChapter =
+      armed?.kind === "chapter" ? (editor.getElementByKey(armed.key) ?? undefined) : undefined;
+    armedChapter?.classList.add(VERSE_SELECTED_CLASS_NAME);
     root.classList.toggle("verse-delete-armed", !!armed);
     if (showHint) {
       root.setAttribute("data-verse-delete-intent", armed.intent);
@@ -302,6 +320,7 @@ export function StructureKeyboardPlugin({
       root.removeAttribute("data-verse-delete-kind");
     }
     return () => {
+      armedChapter?.classList.remove(VERSE_SELECTED_CLASS_NAME);
       root.classList.remove("verse-delete-armed");
       root.removeAttribute("data-verse-delete-intent");
       root.removeAttribute("data-verse-delete-kind");

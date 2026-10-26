@@ -14,6 +14,7 @@ import {
 import {
   $getSelectableParaMarker,
   $isGutterMarkerNode,
+  $isImmutableChapterNode,
   $isMarkerTrailingSeparator,
   $isParaLikeNode,
   $isParaNode,
@@ -21,6 +22,7 @@ import {
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
   $placeCaretAtBoundary,
+  ImmutableChapterNode,
   ParaLikeNode,
   SomeParaNode,
 } from "shared";
@@ -40,6 +42,7 @@ export type EditIntent = "insertParagraph" | "deleteBackward" | "deleteForward" 
 /** What a structural delete keystroke would act on. */
 export type DeleteTarget =
   | { kind: "verse"; node: SomeVerseNode }
+  | { kind: "chapter"; node: ImmutableChapterNode }
   | { kind: "para"; node: SomeParaNode };
 
 /** A snapshot of one RangeSelection endpoint, used to detect whether a latched range still holds. */
@@ -58,9 +61,9 @@ export function isSamePoint(point: PointSnapshot, snapshot: PointSnapshot): bool
 
 /** A pending two-step delete: the armed target's kind + the intent that armed it. */
 export interface ArmedDelete {
-  kind: "verse" | "para" | "selection";
+  kind: "verse" | "chapter" | "para" | "selection";
   intent: "deleteBackward" | "deleteForward";
-  /** verse/para: the target node's key. selection: the first verse marker key in the range. */
+  /** verse/chapter/para: the target node's key. selection: the first verse marker key in the range. */
   key: NodeKey;
   /** selection only: the armed range's endpoints. */
   anchor?: PointSnapshot;
@@ -288,9 +291,13 @@ export function $shouldBlockStructuralEdit(selection: BaseSelection, intent: Edi
  * when the keystroke is ordinary editing. Mirror of `$shouldBlockStructuralEdit`'s boundary
  * conditions, but resolves the target node instead of returning a boolean.
  *
- * Backward: the adjacent verse, else the current paragraph (when a previous block exists).
- * Forward: the adjacent verse, else the NEXT paragraph (when a next block exists) — the block
- * whose marker the merge removes.
+ * Backward: the adjacent verse, else the chapter right before the current block, else the current
+ * paragraph (when a previous block exists).
+ * Forward: the adjacent verse, else the chapter right after the current block, else the NEXT
+ * paragraph (when a next block exists) — the block whose marker the merge removes.
+ *
+ * Only the atomic chapter glyph (`ImmutableChapterNode`, the views that hide markers) is a target:
+ * Standard view's chapter line is editable marker text, deleted the way any other text is.
  */
 export function $structuralDeleteTarget(
   selection: BaseSelection,
@@ -302,6 +309,8 @@ export function $structuralDeleteTarget(
     if (verse) return { kind: "verse", node: verse };
     if ($caretAtParaStart(selection) && $hasNeighborBlock(selection, "backward")) {
       const para = $getParaAncestor(selection.anchor.getNode());
+      const previous = para?.getPreviousSibling();
+      if ($isImmutableChapterNode(previous)) return { kind: "chapter", node: previous };
       if ($isSomeParaNode(para)) return { kind: "para", node: para };
     }
     return undefined;
@@ -312,6 +321,7 @@ export function $structuralDeleteTarget(
     if ($caretAtParaEnd(selection) && $hasNeighborBlock(selection, "forward")) {
       const para = $getParaAncestor(selection.anchor.getNode());
       const next = para?.getNextSibling();
+      if ($isImmutableChapterNode(next)) return { kind: "chapter", node: next };
       if ($isSomeParaNode(next)) return { kind: "para", node: next };
     }
     return undefined;
@@ -322,7 +332,7 @@ export function $structuralDeleteTarget(
 /** True when the live selection still encodes the armed target. */
 export function $isArmedSelection(selection: BaseSelection | null, armed: ArmedDelete): boolean {
   if (!selection) return false;
-  if (armed.kind === "verse") {
+  if (armed.kind === "verse" || armed.kind === "chapter") {
     return $isNodeSelection(selection) && selection.has(armed.key);
   }
   if (armed.kind === "selection") {
