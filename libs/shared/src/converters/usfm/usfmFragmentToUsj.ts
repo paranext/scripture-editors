@@ -543,8 +543,12 @@ function tokenize(
  * USFM attribute markers: markers that describe the PREVIOUS marker and become an attribute on
  * it in USX/USJ when they directly follow it (whitespace only between, plain-text content) —
  * `\c 1 \ca 2\ca*` → `chapter{altnumber:"2"}`. Standalone occurrences (not adjacent to a
- * supporting target, or carrying markup in their content) stay ordinary markers, exactly as
- * ParatextData emits them. The relation data is parser-level in ParatextData (not in any
+ * supporting target, or carrying markup in their content) stay ordinary markers, as the USFM spec
+ * describes them. ParatextData agrees except for a `\cp` whose content holds a marker after some
+ * text: it folds the text before that marker into the chapter's `pubnumber` and leaves the rest as
+ * loose content after the chapter (only a `\cp` whose content STARTS with a marker stays a `\cp`).
+ * This parser keeps such a `\cp` whole instead; the bytes it saves are the same, and a reload
+ * through ParatextData shows ParatextData's shape. The relation data is parser-level in ParatextData (not in any
  * stylesheet), so it is hardcoded here; `cat` supports two target types — an open note
  * (`f`/`fe`/`x`/`ef`/`efe`/`ex`) and an `esb` sidebar — so `targetTypes` is a list.
  *
@@ -1071,8 +1075,8 @@ export function usfmFragmentToUsjContent(
   // attribute marker follows; ordinary content (flushed) otherwise.
   let heldWhitespace = "";
   // An attribute-marker span currently being captured for folding. Aborts to a standalone
-  // marker the moment its content turns out to be markup, exactly as ParatextData keeps a
-  // `\cat` with markup or a `\cp` with markers as its own marker.
+  // marker the moment its content turns out to be markup, as ParatextData keeps a `\cat` with
+  // markup. For a `\cp` this is the USFM-spec shape, not ParatextData's: see `ATTRIBUTE_MARKERS`.
   let attrCapture:
     | {
         target: MarkerObject;
