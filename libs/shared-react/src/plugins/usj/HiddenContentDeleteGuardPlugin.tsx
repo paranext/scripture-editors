@@ -21,11 +21,16 @@ import { $selectionReachesIntoOpaqueBlock, isEditingKey } from "./OpaqueBlockGua
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 import {
+  $moveCaretPastGutterGlyph,
+  $narrowSelectionPastGutterGlyph,
+  $rangeSnapshot,
   $shouldBlockSelectionReplacement,
   $shouldBlockStructuralEdit,
+  $shouldRefuseExtendedDelete,
   CONFIRMED_DELETE_TAG,
   isSamePoint,
   PointSnapshot,
+  RangeSnapshot,
 } from "./structureKeyboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
@@ -77,12 +82,6 @@ const COMPOSITION_PLACEHOLDERS = new Set(["​", " "]);
 
 /** How long a question may stay open before the plugin logs that editing is still held. */
 const LONG_PENDING_MS = 60_000;
-
-/** A range's two ends, recorded to rebuild the range in a later update. */
-interface RangeSnapshot {
-  anchor: PointSnapshot;
-  focus: PointSnapshot;
-}
 
 /** The selection an edit was held against and what it covered, to resume it only if neither moved. */
 interface HeldEdit extends RangeSnapshot {
@@ -344,13 +343,27 @@ export function HiddenContentDeleteGuardPlugin({
       direction: DeleteDirection,
       granularity: DeleteGranularity,
     ): boolean => {
-      const run = $hiddenRunAtCaret(selection, direction);
+      const isProtected = structureProtectionModeRef.current === "protected";
+      // Under protected structure a forward delete in front of a line's gutter glyph runs from just
+      // past it (see `StructureKeyboardPlugin`), so it is judged from there, on a copy: the caret
+      // stays where it is if the answer is "keep" or the delete is refused.
+      const from = selection.clone();
+      if (isProtected && direction === "forward") $moveCaretPastGutterGlyph(from);
+      const run = $hiddenRunAtCaret(from, direction);
       // A block run is the whole step, whatever the granularity: deleting past it would merge
       // paragraphs the user never asked to merge.
       const extent =
         granularity === "character" || run?.placement === "block"
           ? undefined
-          : $deleteExtent(editor, selection, direction, granularity);
+          : $deleteExtent(editor, selection, direction, granularity, from);
+      // Protected structure judges a word or line delete by the range it extends to, and refuses
+      // one that reaches a verse, another block or partway into an opaque construct; asking first
+      // would remove that range on "delete" without its say.
+      if (extent?.range && isProtected) {
+        const range = $rangeFrom(extent.range);
+        const intent = direction === "backward" ? "deleteBackward" : "deleteForward";
+        if (range && $shouldRefuseExtendedDelete(range, intent)) return false;
+      }
       const hidden = $inDocumentOrder([...(run?.nodes ?? []), ...(extent?.hidden ?? [])]);
       if (hidden.length === 0) return false;
       const keys = hidden.map((node) => node.getKey());
@@ -439,11 +452,10 @@ export function HiddenContentDeleteGuardPlugin({
       refusedWhilePending((isBackward: boolean): boolean => {
         const selection = $judgedSelection();
         if (!selection) return false;
-        // Protected structure refuses a character delete it would refuse at the keystroke, so the
-        // question would be asked for nothing. It registers no word, line or Enter handler, so those
-        // are still asked about.
+        // Protected structure refuses a delete it would refuse at the keystroke, so the question
+        // would be asked for nothing. A word or line delete it allows from the caret is judged
+        // again by its extent (see `$holdCaretDelete`).
         if (
-          command === DELETE_CHARACTER_COMMAND &&
           structureProtectionModeRef.current === "protected" &&
           $shouldBlockStructuralEdit(selection, isBackward ? "deleteBackward" : "deleteForward")
         )
@@ -673,17 +685,21 @@ function replayablePaste(event: PasteCommandType): PasteCommandType {
  * takes only the hidden content there. Where the browser cannot measure (no `Selection.modify`, as in
  * jsdom), only hidden content is reported: for a line everything to the paragraph's edge, for a word
  * nothing beyond the caret's own run.
+ *
+ * Measured from `from`, the caret the delete will run from (the live `selection` unless the delete
+ * first moves it).
  */
 function $deleteExtent(
   editor: LexicalEditor,
   selection: RangeSelection,
   direction: DeleteDirection,
   granularity: "word" | "line",
+  from: RangeSelection = selection,
 ): DeleteExtent {
   const domSelection = editor.getRootElement()?.ownerDocument.defaultView?.getSelection();
   if (!domSelection || typeof domSelection.modify !== "function")
-    return { hidden: granularity === "line" ? $hiddenNodesToParaEdge(selection, direction) : [] };
-  const probe = selection.clone();
+    return { hidden: granularity === "line" ? $hiddenNodesToParaEdge(from, direction) : [] };
+  const probe = from.clone();
   // Dirty makes `modify` start from the probe's own points rather than the DOM's.
   probe.dirty = true;
   probe.modify(
@@ -694,8 +710,8 @@ function $deleteExtent(
   // The probe moved the DOM selection; dirty makes the next `modify` (the native delete's own, when
   // nothing is hidden) start from the live caret again rather than from the probe's extent.
   selection.dirty = true;
-  if (!$isInCaretContainer(probe.focus, selection))
-    return { hidden: $hiddenNodesToParaEdge(selection, direction) };
+  if (!$isInCaretContainer(probe.focus, from))
+    return { hidden: $hiddenNodesToParaEdge(from, direction) };
   return {
     hidden: $hiddenNodesInSelection(probe),
     range: probe.isCollapsed() ? undefined : $rangeSnapshot(probe),
@@ -704,8 +720,8 @@ function $deleteExtent(
 
 /**
  * Mutating: call inside `editor.update()`. Removes a word or line delete's measured extent, narrowed
- * as the guards on every edit's range narrow it: past the `\id` line's prefix, and out of a note's
- * shell.
+ * as the guards on every edit's range narrow it: past the `\id` line's prefix and a line's gutter
+ * glyph, and out of a note's shell.
  */
 function $removeRange(snapshot: RangeSnapshot): void {
   const range = $rangeFrom(snapshot);
@@ -722,6 +738,7 @@ function $removeRange(snapshot: RangeSnapshot): void {
  */
 function $narrowEditRange(selection: RangeSelection): void {
   $narrowSelectionPastBookPrefix(selection);
+  $narrowSelectionPastGutterGlyph(selection);
   $confineRangeToProtectedNote(selection);
 }
 
@@ -737,11 +754,6 @@ function $removeHidden(keys: NodeKey[]): void {
 function $inDocumentOrder(nodes: UnknownNode[]): UnknownNode[] {
   const unique = nodes.filter((node, index) => nodes.findIndex((n) => n.is(node)) === index);
   return unique.sort((a, b) => (a.isBefore(b) ? -1 : 1));
-}
-
-function $rangeSnapshot({ anchor, focus }: RangeSelection): RangeSnapshot {
-  const point = ({ key, offset, type }: PointSnapshot): PointSnapshot => ({ key, offset, type });
-  return { anchor: point(anchor), focus: point(focus) };
 }
 
 /** The range `snapshot` recorded, or `undefined` when one of its points no longer exists. */

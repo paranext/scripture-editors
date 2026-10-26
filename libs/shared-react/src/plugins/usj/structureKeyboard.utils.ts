@@ -1,4 +1,5 @@
 import { $isSomeVerseNode, SomeVerseNode } from "../../nodes/usj";
+import { $rangeReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $placeCaretAtParaContentStart } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { $findMatchingParent } from "@lexical/utils";
 import {
@@ -54,6 +55,23 @@ export interface PointSnapshot {
   key: NodeKey;
   offset: number;
   type: "text" | "element";
+}
+
+/** A snapshot of a RangeSelection's two endpoints. */
+export interface RangeSnapshot {
+  anchor: PointSnapshot;
+  focus: PointSnapshot;
+}
+
+/**
+ * The endpoints of `selection` as they are now, unaffected by later moves of its points.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ */
+export function $rangeSnapshot({ anchor, focus }: RangeSelection): RangeSnapshot {
+  const point = ({ key, offset, type }: PointSnapshot): PointSnapshot => ({ key, offset, type });
+  return { anchor: point(anchor), focus: point(focus) };
 }
 
 /** Whether `point` (a live selection point, or another snapshot) is the one `snapshot` recorded. */
@@ -319,6 +337,9 @@ function $hasNeighborBlock(selection: BaseSelection, direction: "backward" | "fo
 /**
  * Rule 1 (all input vectors): block when the given selection spans a block boundary or
  * touches a verse marker. Used by paste/cut/drop/IME guards.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
  */
 export function $shouldBlockSelectionReplacement(selection: BaseSelection): boolean {
   return $selectionContainsVerseMarker(selection) || $selectionSpansBlockBoundary(selection);
@@ -327,7 +348,11 @@ export function $shouldBlockSelectionReplacement(selection: BaseSelection): bool
 /**
  * Full keyboard decision: combines Rule 1 with collapsed-caret structural rules.
  *
- * @param selection - The current selection to evaluate.
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler. `selection` need not be the current one: a word or line delete's measured extent
+ * is judged by it before anything is removed.
+ *
+ * @param selection - The selection to evaluate.
  * @param intent - The structural edit the keystroke would cause (see {@link keyDownToIntent}).
  * @returns Whether the edit should be blocked in a structure-protected document.
  */
@@ -355,6 +380,22 @@ export function $shouldBlockStructuralEdit(selection: BaseSelection, intent: Edi
     case "insertText":
       return false;
   }
+}
+
+/**
+ * Whether protected structure refuses a word or line delete that would remove `extent`, the range
+ * its extension reaches: one that crosses a block or touches a verse ({@link
+ * $shouldBlockStructuralEdit}), or one that ends partway into an opaque construct such as a
+ * figure's caption. Both handlers that act on such a delete judge it by this, so they agree.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler. `extent` need not be the current selection.
+ */
+export function $shouldRefuseExtendedDelete(
+  extent: RangeSelection,
+  intent: "deleteBackward" | "deleteForward",
+): boolean {
+  return $rangeReachesIntoOpaqueBlock(extent) || $shouldBlockStructuralEdit(extent, intent);
 }
 
 /**
