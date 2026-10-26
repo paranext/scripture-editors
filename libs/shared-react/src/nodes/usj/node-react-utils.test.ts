@@ -16,6 +16,7 @@ import {
   $getEffectiveVerseForBcv,
   $getFirstPara,
   $isSomeVerseNode,
+  $removeLeadingSpace,
   $selectNextVerse,
   $selectPreviousVerse,
 } from "./node-react.utils";
@@ -347,6 +348,50 @@ describe("$findNextVerseAfter()", () => {
 
     editor.getEditorState().read(() => {
       expect($findNextVerseAfter(verse1)).toBeUndefined();
+    });
+  });
+});
+
+describe("$removeLeadingSpace()", () => {
+  it("moves a caret in the trimmed text back with it", () => {
+    const { editor } = createBasicTestEnvironment([ParaNode]);
+    editor.update(
+      () => {
+        const text = $createTextNode("  leading text");
+        $getRoot().append($createParaNode().append(text));
+        text.select(text.getTextContentSize(), text.getTextContentSize());
+
+        $removeLeadingSpace(text);
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected range selection");
+      expect(selection.anchor.getNode().getTextContent()).toBe("leading text");
+      expect(selection.anchor.offset).toBe("leading text".length);
+      expect(selection.focus.offset).toBe("leading text".length);
+    });
+  });
+
+  it("keeps a caret inside the removed space at the start of the text", () => {
+    const { editor } = createBasicTestEnvironment([ParaNode]);
+    editor.update(
+      () => {
+        const text = $createTextNode("  leading text");
+        $getRoot().append($createParaNode().append(text));
+        text.select(1, 1);
+
+        $removeLeadingSpace(text);
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected range selection");
+      expect(selection.anchor.offset).toBe(0);
     });
   });
 });
