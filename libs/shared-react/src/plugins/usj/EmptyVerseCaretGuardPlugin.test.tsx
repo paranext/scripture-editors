@@ -518,6 +518,34 @@ describe("EmptyVerseCaretGuardPlugin host lifecycle", () => {
     });
   });
 
+  it("leaves a hosted caret where it is on focus, whatever the DOM selection says", async () => {
+    const { editor, host } = await hostedEmptyVerse();
+    // Right after a focus the DOM selection may not yet hold the selection just committed (jsdom
+    // puts it at the start of the editor). An update made then would resolve the caret from it.
+    // The selectionchange the move queues is withheld from Lexical, as it hasn't arrived yet.
+    const root = editor.getRootElement();
+    if (!root) throw new Error("expected a root element");
+    const withhold = (event: Event) => event.stopPropagation();
+    window.addEventListener("selectionchange", withhold, true);
+    try {
+      window.getSelection()?.collapse(root, 0);
+      // A real focus event, as the browser sends: Lexical reads no selection from the DOM during
+      // one, only in an update made outside any event.
+      await act(async () => {
+        root.dispatchEvent(new FocusEvent("focus"));
+      });
+      await settle();
+    } finally {
+      window.removeEventListener("selectionchange", withhold, true);
+    }
+
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.focus.key).toBe(host.getKey());
+    });
+  });
+
   it("removes the host once its placeholder is selected", async () => {
     const { editor, host } = await hostedEmptyVerse();
 

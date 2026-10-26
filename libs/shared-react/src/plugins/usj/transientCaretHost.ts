@@ -339,10 +339,21 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       // closing), leaving the caret on the hostless point blur left it at; host it again. In an
       // update of its own, after this one: Lexical focuses the editor itself while committing a
       // selection, and the focus event it fires then runs against the frozen committed state.
+      // Decided against that committed state first, and only updated when a host is missing: an
+      // update made outside any event resolves its selection from the DOM, which right after a
+      // focus may not yet hold the selection just committed — the update would move the caret
+      // rather than host it.
       editor.registerCommand(
         FOCUS_COMMAND,
         () => {
-          queueMicrotask(() => editor.update($syncCaretHost));
+          queueMicrotask(() => {
+            const needsHost = editor.getEditorState().read(() => {
+              if (!$caretHostAnchor()) return false;
+              const restingKey = $restingKey();
+              return !restingKey || !$isCursorPlaceholderOnlyText($getNodeByKey(restingKey));
+            });
+            if (needsHost) editor.update($syncCaretHost);
+          });
           return false;
         },
         COMMAND_PRIORITY_EDITOR,
