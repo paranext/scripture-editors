@@ -91,6 +91,69 @@ describe("getMarkerMenuItems — paragraph source (PT9 MarkerItemSource.GetParag
   });
 });
 
+describe("the chapter marker `c` where a chapter can be inserted", () => {
+  // The caret in an empty book's `\id` line: character source, the book's own marker.
+  const idLine: Partial<MarkerMenuContext> = {
+    source: "character",
+    paraMarker: "id",
+    previousParaMarkers: ["id"],
+  };
+
+  it("is offered by the `\\` menu in the `\\id` line of a book with no chapters", () => {
+    const items = getMarkerMenuItems(sheet, makeContext({ ...idLine, canInsertChapter: true }));
+    expect(items.map((item) => item.marker)).toContain("c");
+    // Offered alongside what the line already offers, not instead of it.
+    expect(items.map((item) => item.marker)).toContain("f");
+    expect(items.find((item) => item.marker === "c")?.kind).toBe("paragraph");
+  });
+
+  it("is sorted among the `\\id` line's own entries, as in the paragraph list", () => {
+    const items = getMarkerMenuItems(sheet, makeContext({ ...idLine, canInsertChapter: true }));
+    expect(items.map((item) => item.marker)).toEqual(["c", "f", "nd"]);
+  });
+
+  it("is offered by the `\\` menu from the paragraph source too", () => {
+    const context = makeContext({ previousParaMarkers: ["id", "ip"], canInsertChapter: true });
+    const markers = getMarkerMenuItems(sheet, context).map((item) => item.marker);
+    expect(markers).toContain("c");
+    expect(markers).toContain("ip");
+  });
+
+  it("is not offered when the chapter already has its marker", () => {
+    const markers = getMarkerMenuItems(
+      sheet,
+      makeContext({ ...idLine, canInsertChapter: false }),
+    ).map((item) => item.marker);
+    expect(markers).not.toContain("c");
+  });
+
+  it("is never offered by the Enter menu", () => {
+    const context = makeContext({ previousParaMarkers: ["id"], canInsertChapter: true });
+    expect(getEnterMenuItems(sheet, context).map((item) => item.marker)).not.toContain("c");
+  });
+
+  it("is not offered inside a note or over a text selection", () => {
+    const inNote = makeContext({ ...idLine, canInsertChapter: true, noteMarker: "f" });
+    const overSelection = makeContext({
+      ...idLine,
+      canInsertChapter: true,
+      hasTextSelection: true,
+    });
+    expect(getMarkerMenuItems(sheet, inNote).map((item) => item.marker)).not.toContain("c");
+    expect(getMarkerMenuItems(sheet, overSelection).map((item) => item.marker)).not.toContain("c");
+  });
+
+  it("is not offered by a stylesheet that has no `c`", () => {
+    const markersWithoutC = Object.fromEntries(
+      Object.entries(sheet.markers).filter(([marker]) => marker !== "c"),
+    );
+    const context = makeContext({ ...idLine, canInsertChapter: true });
+    expect(
+      getMarkerMenuItems({ markers: markersWithoutC }, context).map((item) => item.marker),
+    ).not.toContain("c");
+  });
+});
+
 describe("getMarkerMenuItems — character source (PT9 MarkerItemSource.GetCharacterMarkerItems)", () => {
   it("offers character/note entries valid under the current paragraph", () => {
     const context = makeContext({ source: "character", paraMarker: "p" });

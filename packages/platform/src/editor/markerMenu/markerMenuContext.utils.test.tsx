@@ -5,6 +5,7 @@
  */
 import { $getMarkerMenuContext } from "./markerMenuContext.utils";
 import {
+  $buildBookLine,
   $noteContentText,
   findOnlyNote,
   renderStandardEditorWithUnclosedNote,
@@ -350,5 +351,51 @@ describe("$getMarkerMenuContext", () => {
 
     const context = editor.getEditorState().read(() => $getMarkerMenuContext());
     expect(context?.inMarkerText).toBe(true);
+  });
+
+  describe("canInsertChapter", () => {
+    /** An empty book, `\id` line only, with the caret at the end of the line's text. */
+    async function emptyBookEditor($appendAfterBook: () => void = () => {}) {
+      let text: TextNode;
+      const { editor } = await testEnvironment(() => {
+        text = $buildBookLine("empty book");
+        $appendAfterBook();
+      });
+      await act(async () => editor.update(() => text.select(10, 10)));
+      return editor;
+    }
+
+    it("is set in chapter 1 of a book with no chapters", async () => {
+      const editor = await emptyBookEditor();
+      const context = editor.getEditorState().read(() => $getMarkerMenuContext(undefined, 1));
+      expect(context?.canInsertChapter).toBe(true);
+    });
+
+    it("is not set once the document has a chapter, mutable or not", async () => {
+      const withChapter = await emptyBookEditor(() =>
+        $getRoot().append(
+          $createChapterNode("1").append($createTextNode(getVisibleOpenMarkerText("c", "1"))),
+        ),
+      );
+      const withImmutableChapter = await emptyBookEditor(() =>
+        $getRoot().append($createImmutableChapterNode("1")),
+      );
+      for (const editor of [withChapter, withImmutableChapter]) {
+        const context = editor.getEditorState().read(() => $getMarkerMenuContext(undefined, 1));
+        expect(context?.canInsertChapter).toBe(false);
+      }
+    });
+
+    it("is not set outside chapter 1, or with no chapter number to insert", async () => {
+      // Front matter (chapter 0) never holds a chapter, and a later chapter with no `\c` is adding
+      // chapters to a book, which this menu does not do.
+      const editor = await emptyBookEditor();
+      for (const chapterNum of [0, 2, undefined]) {
+        const context = editor
+          .getEditorState()
+          .read(() => $getMarkerMenuContext(undefined, chapterNum));
+        expect(context?.canInsertChapter).toBe(false);
+      }
+    });
   });
 });
