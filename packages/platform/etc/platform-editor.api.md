@@ -672,6 +672,7 @@ export const viewModeToViewNames: {
 
 // @public
 export interface ViewOptions {
+    allowInvisibleCharacters?: boolean;
     hasActiveTextFocusBox?: boolean;
     hasGutterParaMarkers?: boolean;
     hasSpacing: boolean;
