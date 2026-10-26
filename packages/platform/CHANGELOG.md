@@ -112,7 +112,9 @@ refused. The public surface grew substantially; nothing was removed.
   Enter split or a multi-line paste used to create a paragraph with no marker glyph, which the
   marker-prefix guard then reset to `\p`; the new paragraph now keeps its marker (an Enter in a `\li2`
   makes another `\li2`) and shows it in the gutter, where it can be selected. Like a split in any
-  other view, it drops the space the split leaves at its start.
+  other view, it drops the space the split leaves at its start. A paragraph-style change made with
+  the caret in the paragraph (not its selected marker) now drops that paragraph's leading spaces
+  too, as the formatted and standard views already did.
 - **Backspace at the start of a line with no verse number merges it into the paragraph before**, in
   the paragraph-structure view, as removing its selected marker does. It used to delete the line's
   gutter glyph and reset its marker to `\p`. `"guarded"` asks for a second press, and
@@ -203,6 +205,11 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- A paragraph that `applyUpdate` creates keeps a space at the start of its text. The editor used to
+  drop it as it does for an Enter split, without reporting the change, so the document fell one
+  character out of step with the ops applied.
+- Changing the paragraph style with the caret at the end of a paragraph whose text starts with a
+  space no longer throws. Dropping that space left the caret past the end of the shortened text.
 - The caller of an unclosed note (which renders expanded, its caller as text) can be deleted; the
   note keeps an empty caller and shows both separators (`\f  \fr …`), as Paratext 9 does.
 - Typing a note's own closer (`\f*`) into an unclosed note closes it there; what followed the

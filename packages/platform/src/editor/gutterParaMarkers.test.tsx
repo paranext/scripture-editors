@@ -14,7 +14,7 @@ import { act, render } from "@testing-library/react";
 import { $getRoot, LexicalEditor } from "lexical";
 import { createRef, RefObject } from "react";
 import { $isGutterMarkerNode, $isParaNode, $selectParaMarker, NBSP } from "shared";
-import { getViewOptions, PARAGRAPH_STRUCTURE_VIEW_MODE } from "shared-react";
+import { getEditorDelta, getViewOptions, PARAGRAPH_STRUCTURE_VIEW_MODE } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { pressKeyThroughDom } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
@@ -23,7 +23,8 @@ import { describe, expect, it } from "vitest";
 /**
  * The per-paragraph half of the `usj-nodes.css` rule that moves a paragraph's leading marker glyph
  * into the gutter. The rule's other half, the `psc-gutter-markers` class on the editor root, is
- * checked once in {@link mountSimple}.
+ * checked once in {@link mountSimple}. jsdom applies no stylesheet, so `usj-nodes.css.test.ts` pins
+ * the rule to this selector.
  */
 const GUTTER_GLYPH_SELECTOR = ":scope > .marker:not(.verse):not(.chapter):first-child";
 
@@ -44,6 +45,12 @@ const usj: Usj = {
       content: [{ type: "verse", marker: "v", number: "2" }, "second verse text"],
     },
   ],
+};
+
+/** {@link usj} with a second paragraph that has no verse and starts with a space. */
+const leadingSpaceUsj: Usj = {
+  ...usj,
+  content: [...usj.content.slice(0, 3), { type: "para", marker: "q1", content: [" leading text"] }],
 };
 
 describe("gutter paragraph markers in Simple mode", () => {
@@ -129,9 +136,48 @@ describe("gutter paragraph markers in Simple mode", () => {
 
     expect(rows).toEqual([gutterRow("q2"), gutterRow("q1")]);
   });
+
+  // A caret retag moves the paragraph's content into a fresh paragraph, which is trimmed like the
+  // new paragraph of a split, as it is in the formatted and standard views. The caret sits at the
+  // end, which the trim would leave past the end of the shorter text unless it moves the caret too.
+  it("drops a paragraph's leading space when a caret retag replaces it", async () => {
+    const { ref, lexical } = await mountSimple(leadingSpaceUsj);
+    await placeCaret(lexical, 1, "end");
+
+    await retag(ref, lexical, "q2");
+
+    expect(ref.current?.getUsj()?.content.at(-1)).toEqual({
+      type: "para",
+      marker: "q2",
+      content: ["leading text"],
+    });
+  });
+
+  it("keeps the leading space of a paragraph an applied update adds", async () => {
+    const { ref, lexical } = await mountSimple();
+    const length = getEditorDelta(lexical.getEditorState()).length();
+
+    await act(async () =>
+      ref.current?.applyUpdate(
+        [
+          { retain: length },
+          { insert: " leading text" },
+          { insert: "\n", attributes: { para: { style: "q2" } } },
+        ],
+        "remote",
+      ),
+    );
+
+    expect(ref.current?.getUsj()?.content.at(-1)).toEqual({
+      type: "para",
+      marker: "q2",
+      content: [" leading text"],
+    });
+    expect(gutterRows(lexical).at(-1)).toEqual(gutterRow("q2"));
+  });
 });
 
-async function mountSimple(): Promise<{
+async function mountSimple(initialUsj: Usj = usj): Promise<{
   ref: RefObject<EditorRef | null>;
   lexical: LexicalEditor;
 }> {
@@ -141,7 +187,7 @@ async function mountSimple(): Promise<{
     render(
       <Editor
         ref={ref}
-        defaultUsj={usj}
+        defaultUsj={initialUsj}
         options={{
           view: getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE),
           structureProtectionMode: "guarded",

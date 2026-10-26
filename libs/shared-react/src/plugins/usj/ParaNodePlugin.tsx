@@ -2,7 +2,7 @@ import { $removeLeadingSpace, wasNodeCreated } from "../../nodes/usj/node-react.
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getNodeByKey, LexicalEditor } from "lexical";
 import { useEffect } from "react";
-import { $isGutterMarkerNode, $isParaNode, ParaNode } from "shared";
+import { $isGutterMarkerNode, $isParaNode, getApplyingUpdateSource, ParaNode } from "shared";
 
 export function ParaNodePlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -31,11 +31,13 @@ function useParaNode(editor: LexicalEditor) {
  *
  * The leading space is looked for past a gutter marker glyph: in the gutter view another
  * ParaNode transform gives a new paragraph its glyph, and whether that transform runs before or
- * after this one depends on the order the plugins registered in.
+ * after this one depends on the order the plugins registered in. A paragraph an applied update
+ * creates keeps its leading space: the apply reports its ops as given, so trimming here would leave
+ * this document out of step with the one that sent them.
  * @param node - ParaNode thats needs updating.
  */
 function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
-  if (wasNodeCreated(editor, node.getKey())) {
+  if (!getApplyingUpdateSource(editor) && wasNodeCreated(editor, node.getKey())) {
     const first = node.getFirstChild();
     $removeLeadingSpace($isGutterMarkerNode(first) ? first.getNextSibling() : first);
   }
