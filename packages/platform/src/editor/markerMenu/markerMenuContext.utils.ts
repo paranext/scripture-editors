@@ -37,6 +37,7 @@ import {
   $isMarkerTrailingSeparator,
   $isParaNode,
   $isPointInMarkerGlyphText,
+  $isSomeChapterNode,
   $isSynthesizedMarkerNode,
   ParaNode,
 } from "shared";
@@ -88,7 +89,7 @@ function $collectPreviousParaMarkers(node: LexicalNode): string[] {
       // before checking what follows it). Otherwise a caret in the line reports an empty stack,
       // and the Enter palette offers every paragraph marker, including ones invalid straight
       // after `\id`.
-      if (marker !== undefined && !$isParaNode(child)) markers.push(marker);
+      if ($isBookNode(child) || $isSomeChapterNode(child)) markers.push(child.getMarker());
       break;
     }
     if (marker !== undefined) markers.push(marker);

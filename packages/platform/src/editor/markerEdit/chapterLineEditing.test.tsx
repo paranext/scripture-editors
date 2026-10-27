@@ -1192,19 +1192,33 @@ describe("a chapter inserted into a book with no chapters", () => {
   it("is inserted after the front matter by the `\\c` marker action", async () => {
     const title: MarkerContent = { type: "para", marker: "mt1", content: ["Genesis"] };
     const text: MarkerContent = { type: "para", marker: "p", content: ["Text"] };
-    const { ref, lexical } = await mountEmptyBook(GEN_1_1, requireStandardViewOptions(), {
+    const view = requireStandardViewOptions();
+    const { ref, lexical } = await mountEmptyBook(GEN_1_1, view, {
       ...emptyBook,
       content: [BOOK, title, text],
     });
 
     await act(async () => {
-      getUsjMarkerAction("c", { current: undefined }).action({
-        editor: lexical,
-        reference: GEN_1_1,
-      });
+      getUsjMarkerAction(
+        "c",
+        { current: undefined },
+        view,
+        undefined,
+        undefined,
+        undefined,
+        defaultStyleInfo,
+      ).action({ editor: lexical, reference: GEN_1_1 });
     });
 
     expect(ref.current?.getUsj()?.content).toEqual([BOOK, title, CHAPTER_1, text]);
+    // `getUsj()` reads the same whichever chapter node was built, so check that it is Standard
+    // view's editable chapter line (`$chapter` finds only that kind) and that the caret is on it.
+    lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a caret");
+      expect(selection.isCollapsed()).toBe(true);
+      expect(selection.focus.getNode().getTopLevelElement()?.is($chapter())).toBe(true);
+    });
   });
 
   it("is inserted with empty verses by `insertFirstChapter`", async () => {
