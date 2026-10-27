@@ -491,10 +491,11 @@ describe("\\c/\\id strip on paste", () => {
   });
 });
 
-describe("a space pasted as an NBSP", () => {
-  it("keeps the space between a word and the opening marker that follows it", async () => {
+describe("a no-break space pasted in front of a marker", () => {
+  it("keeps it between the word and the opening marker that follows it, as a no-break space", async () => {
     // A word processor's non-breaking space (or any source whose `text/plain` keeps one) in front
-    // of a marker is still the space between two words; dropping it glued them together.
+    // of a marker is the user's character: only an opening marker's own separator is read as a
+    // space. Dropping it would glue the two words together.
     const { editor, text } = await bookChapterParaHost();
     await pasteAndSettle(editor, () => text.select(7, 7), `the${NBSP}\\nd Lord\\nd* said `);
     await act(async () => editor.update(() => $getRoot().selectStart()));
@@ -504,7 +505,7 @@ describe("a space pasted as an NBSP", () => {
     });
 
     const para = usjOf(editor).content[2] as MarkerObject;
-    expect(para.content?.[0]).toBe("before the ");
+    expect(para.content?.[0]).toBe(`before the${NBSP}`);
     expect(para.content?.[1]).toMatchObject({ type: "char", marker: "nd", content: ["Lord"] });
   });
 });

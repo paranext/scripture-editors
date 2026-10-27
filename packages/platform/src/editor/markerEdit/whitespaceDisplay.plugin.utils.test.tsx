@@ -1696,42 +1696,43 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       it("recognizes a marker name the ENGINE class allows but canonical USFM does not", () => {
         // The engine's name class is `\w` plus `-` — deliberately wider than canonical USFM, so a
         // wrong-case or underscored name is still a marker-shaped run the tokenizer will read as a
-        // marker (markerName.pattern.ts). The positional NBSP rules have to agree with it: a name
+        // marker (markerName.pattern.ts). The positional NBSP rule has to agree with it: a name
         // this normalization fails to recognize keeps its separator NBSP, which then survives into
         // content as a literal `~` right where the tokenizer expects a space.
         expect(normalizePastedNbsp(`\\my_marker${NBSP}light`)).toBe("\\my_marker light");
         expect(normalizePastedNbsp(`\\ND${NBSP}light`)).toBe("\\ND light");
-        expect(normalizePastedNbsp(`light${NBSP}\\my_marker*`)).toBe("light \\my_marker*");
+        expect(normalizePastedNbsp(`\\+my_marker${NBSP}light`)).toBe("\\+my_marker light");
       });
 
       it("leaves an NBSP that is not adjacent to any marker as data", () => {
         expect(normalizePastedNbsp(`a${NBSP}b`)).toBe("a~b");
       });
 
-      it("keeps every NBSP before a marker as a space, outside a note's layout spacers", () => {
-        // A space between two runs is content wherever it came from, including right before a
-        // closing marker and after another space.
+      it("keeps every NBSP before a marker or after a closer as a stored no-break space", () => {
+        // Only an opening marker's separator is read as a space. Anywhere else beside a marker an
+        // NBSP is the user's no-break space: this editor's own copy writes a stored one there as
+        // U+00A0 with the setting on.
         expect(normalizePastedNbsp(`the${NBSP}\\nd Lord\\nd* said`)).toBe(
-          "the \\nd Lord\\nd* said",
+          "the~\\nd Lord\\nd* said",
         );
-        expect(normalizePastedNbsp(`\\nd Lord${NBSP}\\nd* said`)).toBe("\\nd Lord \\nd* said");
-        expect(normalizePastedNbsp(`a ${NBSP}\\nd x`)).toBe("a  \\nd x");
-        // Inside a note, too, wherever the note layout puts no spacer: before a nested marker, or
-        // before a char's own closer.
+        expect(normalizePastedNbsp(`\\nd Lord${NBSP}\\nd* said`)).toBe("\\nd Lord~\\nd* said");
+        expect(normalizePastedNbsp(`\\nd Lord\\nd*${NBSP}said`)).toBe("\\nd Lord\\nd*~said");
+        expect(normalizePastedNbsp(`a ${NBSP}\\nd x`)).toBe("a ~\\nd x");
         expect(
           normalizePastedNbsp(`\\f + \\ft see \\fq a${NBSP}\\fq*${NBSP}\\+nd b\\+nd*\\f*`),
-        ).toBe("\\f + \\ft see \\fq a \\fq* \\+nd b\\+nd*\\f*");
-        expect(normalizePastedNbsp(`a${NBSP}\n${NBSP}\\nd x`)).toBe("a~\n \\nd x");
+        ).toBe("\\f + \\ft see \\fq a~\\fq*~\\+nd b\\+nd*\\f*");
+        expect(normalizePastedNbsp(`a${NBSP}\n${NBSP}\\nd x`)).toBe("a~\n~\\nd x");
       });
 
-      it("keeps a note display's layout NBSPs as spaces rather than dropping anything", () => {
+      it("keeps a note display's layout NBSPs as stored no-break spaces rather than dropping anything", () => {
         // A note's non-editable layout puts an NBSP after its caller and after every child, so a
-        // copy of that display carries one before each child marker and before `\\f*`. Nothing in
-        // the text tells those apart from a space the user typed in the same place, and losing a
-        // user's space is worse than keeping a stray one, so they all come through as spaces.
-        expect(normalizePastedNbsp(`\\f +${NBSP}\\fr 1:1${NBSP}\\ft note.${NBSP}\\f*`)).toBe(
-          "\\f + \\fr 1:1 \\ft note. \\f*",
-        );
+        // foreign copy of that display carries one before each child marker and before `\\f*`.
+        // Nothing in the text tells those apart from a no-break space the user put in the same
+        // place, so they are kept as no-break spaces: nothing is lost. Each opener's own separator
+        // is still a space.
+        expect(
+          normalizePastedNbsp(`\\f +${NBSP}\\fr${NBSP}1:1${NBSP}\\ft${NBSP}note.${NBSP}\\f*`),
+        ).toBe("\\f +~\\fr 1:1~\\ft note.~\\f*");
       });
 
       it("keeps an NBSP at the start of the paste or of a line as data, alone or in a run", () => {
@@ -1789,16 +1790,14 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       });
     });
 
-    it("keeps an NBSP pasted between `\\va*` and `\\vp` as a space, which unfolds `\\vp` — the byte is the user's", () => {
-      // The tokenizer treats any same-line whitespace between a verse and its attribute marker as
-      // content, so the space this leaves behind makes `\\vp` a standalone span instead of the
-      // verse's pubnumber (usfmFragmentToUsj.ts, the `attrTarget` text branch). That is the same
-      // outcome Paratext 9 reaches from the same bytes: with `AllowInvisibleChars` off — the
-      // default, and the semantics Standard view adopts — its own paste postprocessing turns every
-      // literal NBSP into a space too. Dropping the byte to preserve the fold would lose content
-      // the user pasted, which is the worse trade.
+    it("keeps an NBSP pasted between `\\va*` and `\\vp` as a stored no-break space, which unfolds `\\vp` — the byte is the user's", () => {
+      // After a closer an NBSP is the user's no-break space; only an opening marker's separator
+      // is read as a space. The tokenizer treats any same-line content between a verse and its
+      // attribute marker as content, so the byte kept here makes `\\vp` a standalone span instead
+      // of the verse's pubnumber (usfmFragmentToUsj.ts, the `attrTarget` text branch). Dropping the
+      // byte to preserve the fold would lose content the user pasted, which is the worse trade.
       expect(normalizePastedNbsp(`\\v 12 \\va 12b\\va*${NBSP}\\vp 12p\\vp*`)).toBe(
-        "\\v 12 \\va 12b\\va* \\vp 12p\\vp*",
+        "\\v 12 \\va 12b\\va*~\\vp 12p\\vp*",
       );
     });
 
@@ -1880,12 +1879,11 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       });
     });
 
-    it("an NBSP sitting before a closing marker outside a note is kept as the space it is", async () => {
+    it("an NBSP sitting before a closing marker is kept as a stored no-break space", async () => {
       // `\nd` + NBSP + `Lord` + NBSP + `\nd*`. The first NBSP follows the opening marker (its
-      // separator → space). The second is a space the text has before the closer: only a note's
-      // layout puts a spacer in front of a closer, and only in front of the note's OWN closer, so
-      // out here it is content and stays — the span's text is `Lord `. Round-tripped through copy
-      // (see `pasteAndCopyBack`) to sidestep asserting on Tier 2's pre-rebuild interim text.
+      // separator → space). The second is the user's no-break space: only an opening marker's
+      // separator is read as a space, so the span's text is `Lord` + NBSP. Round-tripped through
+      // copy (see `pasteAndCopyBack`) to sidestep asserting on Tier 2's pre-rebuild interim text.
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         const para = $createParaNode("p");
@@ -1898,8 +1896,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
         "text/plain": `\\nd${NBSP}Lord${NBSP}\\nd*`,
       });
 
-      expect(roundTripped).toContain("\\nd Lord \\nd*");
-      expect(roundTripped).not.toContain("~");
+      expect(roundTripped).toContain("\\nd Lord~\\nd*");
     });
 
     it("keeps a leading NBSP with no preceding marker literal as data", async () => {
@@ -1964,7 +1961,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       expect(roundTripped).not.toContain("~");
     });
 
-    it("recognizes a milestone's anonymous self-closer (`\\*`) as a marker token — the NBSP after it does not gain `~`", async () => {
+    it("keeps an NBSP after a milestone's anonymous self-closer (`\\*`) as a stored no-break space", async () => {
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         const para = $createParaNode("p");
@@ -1984,8 +1981,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       expect(handled).toBe(true);
       editor.getEditorState().read(() => {
         const content = $getRoot().getTextContent();
-        expect(content).toContain("\\qt-s\\* after");
-        expect(content).not.toContain("~");
+        expect(content).toContain("\\qt-s\\*~after");
       });
     });
   });
@@ -2374,13 +2370,14 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       expect(roundTripped).toContain("\\f - \\fr 1:1 \\ft Caller test.\\f*");
     });
 
-    it("a browser-hop/html-derived collapsed-footnote shape (display NBSPs before `\\ft` and `\\f*`, not only after `\\f`/`\\fr`) round-trips with no `~` and no lost space", async () => {
+    it("a browser-hop/html-derived collapsed-footnote shape (display NBSPs before `\\ft` and `\\f*`, not only after `\\f`/`\\fr`) round-trips with every marker and no lost space", async () => {
       // `createNote` (usj-editor.adaptor.ts) appends a display NBSP after EVERY child of a
       // collapsed note, so a copy of that display carries one between `\\fr`'s content and `\\ft`,
       // and another between `\\ft`'s content and `\\f*`. Standard view's own copy never carries
       // that shape (the copy walker drops those spacers); a foreign carrier holding the display
-      // still can. None becomes a `~` — the corruption this describe pins — and none is dropped:
-      // the text cannot tell them from a space the user typed there, so each stays a space.
+      // still can. The markers stay markers — the corruption this describe pins is an opener's
+      // separator turned into `~` — and nothing is dropped: the text cannot tell a spacer before a
+      // marker from a no-break space the user put there, so each is kept as a stored one.
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         const para = $createParaNode("p");
@@ -2393,8 +2390,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
         "text/plain": `\\f - \\fr 1:1${NBSP}\\ft Caller test.${NBSP}\\f*`,
       });
 
-      expect(roundTripped).not.toContain("~");
-      expect(roundTripped).toContain("\\f - \\fr 1:1 \\ft Caller test. \\f*");
+      expect(roundTripped).toContain("\\f - \\fr 1:1~\\ft Caller test.~\\f*");
     });
   });
 });

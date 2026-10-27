@@ -5,10 +5,10 @@
  * with `getUsj()`.
  *
  * A pasted U+00A0 is the user's character wherever it sits — alone, first or last in the paste or a
- * line of it, beside a space or another U+00A0 — and is kept as a stored no-break space. The one
- * place a pasted U+00A0 is read as a space is right after or right before a marker token, where it
- * is the separator a copy of Standard view's display carries. Spaces in a run collapse to one space,
- * as data always does.
+ * line of it, beside a space or another U+00A0, beside a closing marker or in front of a marker — and
+ * is kept as a stored no-break space. The one place a pasted U+00A0 is read as a space is right after
+ * an opening marker, where it is the marker's separator. Spaces in a run collapse to one space, as
+ * data always does.
  */
 import { editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -192,20 +192,35 @@ describe.each<[string, boolean]>([
     });
   });
 
-  describe("next to a marker token, where U+00A0 is the separator a copy of the display carries", () => {
-    it.each<[string, string, MarkerContent[]]>([
-      [
-        "after an opener",
-        `\\nd${NBSP}Lord\\nd*`,
-        ["a", { type: "char", marker: "nd", content: ["Lord"] }, "b"],
-      ],
-      [
-        "before a closer",
-        `\\nd Lord${NBSP}\\nd*`,
-        ["a", { type: "char", marker: "nd", content: ["Lord "] }, "b"],
-      ],
-    ])("%s, as a space", async (_label, pasted, expected) => {
-      expect(await pasteIntoAb(allow, { "text/plain": pasted })).toEqual(expected);
+  describe("next to a marker token", () => {
+    it("after an opener, as the marker's separator", async () => {
+      expect(await pasteIntoAb(allow, { "text/plain": `\\nd${NBSP}Lord\\nd*` })).toEqual([
+        "a",
+        { type: "char", marker: "nd", content: ["Lord"] },
+        "b",
+      ]);
+    });
+
+    it("a `~` right after an opener, which is no separator, loses no text", async () => {
+      // `~` is not whitespace, so the tokenizer reads `\\nd~Lord` as one marker name, as
+      // ParatextData does: every byte survives, in the marker's name.
+      const mounted = await mountInView(usjWith(["ab"]), standard(allow));
+      await select(mounted.lexical, "ab", 1);
+      await pasteFlavors(mounted.lexical, { "text/plain": "\\nd~Lord\\nd*" });
+      await commit(mounted);
+
+      expect(mounted.ref.current?.getUsj()?.content.slice(2, 4)).toEqual([
+        { type: "para", marker: "p", content: ["a"] },
+        { type: "para", marker: "nd~Lord", content: [{ type: "unmatched", marker: "nd*" }, "b"] },
+      ]);
+    });
+
+    it("before a closer, as a stored no-break space", async () => {
+      expect(await pasteIntoAb(allow, { "text/plain": `\\nd Lord${NBSP}\\nd*` })).toEqual([
+        "a",
+        { type: "char", marker: "nd", content: [`Lord${NBSP}`] },
+        "b",
+      ]);
     });
   });
 });
@@ -289,12 +304,9 @@ describe.each<[string, boolean]>([
   }
 
   const nd: MarkerContent = { type: "char", marker: "nd", content: ["L"] };
-  // With the setting on, the copy writes a stored no-break space as U+00A0, and a U+00A0 right
-  // beside a marker token is read as the separator a copy of the display carries, so it pastes back
-  // as a space. Which reading wins there is an open question; with the setting off the copy writes
-  // `~`, which no position rule touches.
-  const besideMarker = allow ? it.fails : it;
-  besideMarker.each<[string, MarkerContent[], MarkerContent[]]>([
+  // With the setting on, the copy writes a stored no-break space as U+00A0, beside the marker as
+  // anywhere else; only a U+00A0 right after an opening marker is read back as its separator.
+  it.each<[string, MarkerContent[], MarkerContent[]]>([
     ["a stored no-break space right after a closer", ["q", nd, `${NBSP}z`], ["a", nd, `${NBSP}zb`]],
     [
       "a stored no-break space right before an opener",
