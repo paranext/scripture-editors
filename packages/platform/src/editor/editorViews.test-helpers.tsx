@@ -245,6 +245,8 @@ export interface MountOptions {
   structureProtectionMode?: StructureProtectionMode;
   /** `EditorOptions.nodes`: node options such as a note caller's click handler. */
   nodes?: EditorOptions["nodes"];
+  /** `EditorOptions.copyLimit`: the most text one copy or cut may take. */
+  copyLimit?: number;
 }
 
 /** A mounted test editor: its public ref, the raw Lexical editor, and the teardown a row needs
@@ -276,6 +278,7 @@ export async function mountInView(
     styleInfo,
     structureProtectionMode,
     nodes,
+    copyLimit,
   }: MountOptions = {},
 ): Promise<MountedEditor> {
   const ref = createRef<EditorRef>();
@@ -301,7 +304,14 @@ export async function mountInView(
       defaultUsj={usj}
       scrRef={currentScrRef}
       onScrRefChange={onScrRefChange}
-      options={{ view, isReadonly, styleInfo: currentStyleInfo, structureProtectionMode, nodes }}
+      options={{
+        view,
+        isReadonly,
+        styleInfo: currentStyleInfo,
+        structureProtectionMode,
+        nodes,
+        copyLimit,
+      }}
       onUsjChange={onUsjChange}
       onSelectionChange={onSelectionChange}
       logger={collectingLogger}

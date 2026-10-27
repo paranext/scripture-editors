@@ -391,77 +391,53 @@ export function getDataTransferPayload(
 }
 
 /**
- * A marker token this handler recognizes for positional NBSP normalization: a plain or
- * nested-char marker (`\nd`, `\+nd`), either one's closer (`\nd*`, `\+nd*`), or a milestone's
- * anonymous self-closer (`\*`).
+ * An opening marker token, plain or nested-char (`\nd`, `\+nd`) — the one place
+ * {@link normalizePastedNbsp} reads a pasted NBSP as a separator. A closer (`\nd*`, `\+nd*`) or a
+ * milestone's anonymous self-closer (`\*`) does not match: a `*` is outside the name class, so the
+ * lookbehind cannot end on one.
  *
  * Built from the engine's liberal name class, not the canonical one: this is RECOGNIZING a
  * marker-shaped byte run in arbitrary pasted text, which is exactly the job that class exists for,
  * and a name the tokenizer will read as a marker has to be read as one here too — otherwise its
- * separator NBSP survives into content as a data `~`.
+ * separator NBSP survives into content as a stored no-break space.
  */
-const MARKER_TOKEN = String.raw`\\(?:\+?[${ENGINE_MARKER_NAME_BYTES}]+\*?|\*)`;
+const OPENING_MARKER_TOKEN = String.raw`\\\+?[${ENGINE_MARKER_NAME_BYTES}]+`;
 
-/**
- * An NBSP directly after a marker token or directly before one — the two adjacencies
- * {@link normalizePastedNbsp} resolves to a plain space. One alternation rather than a pass each,
- * so the two directions cannot drift apart in what they recognize or in what they substitute; the
- * lookbehind and lookahead read as the mirror images the rule actually is.
- */
-const MARKER_ADJACENT_NBSP = new RegExp(
-  String.raw`(?<=${MARKER_TOKEN})\u00A0|\u00A0(?=${MARKER_TOKEN})`,
+/** An NBSP directly after an opening marker token: the marker's separator. */
+const OPENING_MARKER_SEPARATOR_NBSP = new RegExp(
+  String.raw`(?<=${OPENING_MARKER_TOKEN})\u00A0`,
   "g",
 );
 
 /**
- * Positional NBSP normalization for an external paste's resolved text. Standard view has no
- * `text/html` fidelity carrier for foreign sources (`$handlePasteForStandardView` below drops
- * formatting entirely and re-tokenizes the plain text — a Paratext 9 clipboard is the one source
- * whose html IS read for fidelity, and it is decoded to USFM outright before reaching here, with
- * every NBSP already resolved to the space it stands for: {@link getPastePayload}), so a
- * `text/html` payload's NBSPs are the only clue to which spaces were meaningful markup vs. plain
- * content — and the browser's own
- * clipboard round-trip (and a same-editor paste, whose private Lexical flavor does not survive
- * `navigator.clipboard.read()` — see `$handlePasteForStandardView`'s doc comment) both carry a
- * DISPLAY-NBSP (a Standard-view run space, a marker's own trailing separator, or a note's
- * internal spacer — `createNote` in `usj-editor.adaptor.ts` appends one after EVERY child, not
- * just the first, so one sits directly before `\ft`/`\f*` and every other child after the caller)
- * as a real NBSP, indistinguishable at this point from a genuine data-NBSP (PT9's `~` glyph).
+ * Positional NBSP normalization for a paste's resolved text. A pasted U+00A0 is the user's
+ * character — a no-break space — with one exception: an NBSP directly after an opening marker
+ * token (`\nd\u00A0Lord`) becomes a plain space, the marker's separator. That is how ParatextData
+ * reads the same bytes: the first whitespace after a marker ends the marker, whichever space
+ * character it is. It is also the separator a copy of Standard view's DISPLAY carries — Standard
+ * view shows a marker's separator as NBSP, and a copy of the display taken without this editor's
+ * own copy handler (a host's `Selection.toString()` or `textContent` copy, an html-only clipboard)
+ * carries it as a real one. This editor's own copy carries no display NBSP: both of its readable
+ * flavors are USFM bytes with a plain space for every display NBSP
+ * ({@link $getStandardViewClipboardData}), and a Paratext 9 clipboard is decoded to USFM with every
+ * NBSP resolved before it reaches here ({@link getPastePayload}).
  *
- * The two are told apart POSITIONALLY, mirroring PT9's `PostprocessUsfm`, in three passes:
- *
- * 1. A leading NBSP run — at the very start of the text, or right after a newline (a later
- *    paragraph of a multi-line paste can itself start mid-span) — reads as display spacing with
- *    nothing in front of it to match against (a partial selection starting exactly at a char
- *    span's structural leading NBSP, or inside a paragraph-leading space run, which Standard view
- *    stores as all-NBSP) and becomes plain spaces, one per NBSP.
- * 2. An NBSP immediately FOLLOWING a marker token is the required opener/closer separator and
- *    becomes a plain space (e.g. the mandatory space after `\f`/`\fr`, or a char span's own
- *    leading separator when the marker literal IS present in the pasted text).
- * 3. An NBSP immediately PRECEDING a marker token becomes a plain space — `the\u00A0\nd Lord`
- *    keeps the space between its words, and `\nd Lord\u00A0\nd*` keeps its span's trailing space.
- *    None is dropped, even where a note's display layout puts a spacer (before a child's marker or
- *    the note's own `\f*`): no copy this editor makes puts that layout on the clipboard (Standard
- *    view and the Markers view both copy USFM), a foreign carrier holding a copy of the display is
- *    the only source left, and telling its spacers apart from a space the user typed there is not
- *    possible from the text alone. Keeping a spacer costs a stray space; dropping a user's space
- *    loses content.
- *
- * Rules 2 and 3 run as ONE pass over `MARKER_ADJACENT_NBSP`, so a marker recognized on one side is
- * recognized on the other and both resolve to the same byte. Every remaining NBSP is genuine data
- * and is preserved as `nbspSpelling`, the display form a stored NBSP takes (`~`, or `NBSP_STAND_IN`
- * where `~` is an ordinary character — `getNbspSpelling`), so serialization round-trips it to a
- * real NBSP instead of silently collapsing it to a plain space or dropping it. A pasted `~` is
- * never touched: it is the display form already, or an ordinary character.
+ * Every other NBSP — after a closing marker, before a marker, alone, first or last in the paste or
+ * in a line of it, beside a space or another NBSP — is preserved as `nbspSpelling`, the display form
+ * a stored NBSP takes (`~`, or `NBSP_STAND_IN` where `~` is an ordinary character —
+ * `getNbspSpelling`), so serialization round-trips it to a real NBSP instead of saving a space or,
+ * beside another space, collapsing it away. This editor's own copy writes a stored NBSP next to a
+ * marker as U+00A0 with the setting on, so reading those positions as spacing would turn the user's
+ * no-break space into a space. A foreign copy of the display that carries a run's or a note
+ * layout's spacing there keeps it as a no-break space: nothing is lost, where reading it as a space
+ * would lose the user's character. A pasted `~` is never touched: it is the display form already, or
+ * an ordinary character.
  *
  * @param text - The paste's resolved text.
  * @param nbspSpelling - What a stored NBSP displays as; `~` by default.
  */
 export function normalizePastedNbsp(text: string, nbspSpelling = "~"): string {
-  return text
-    .replace(/^\u00A0+/gm, (run) => " ".repeat(run.length))
-    .replace(MARKER_ADJACENT_NBSP, " ")
-    .replaceAll(NBSP, nbspSpelling);
+  return text.replace(OPENING_MARKER_SEPARATOR_NBSP, " ").replaceAll(NBSP, nbspSpelling);
 }
 
 /** A `\c` chapter token ANYWHERE in a line: the marker, its separator, and the ONE

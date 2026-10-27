@@ -120,12 +120,14 @@ refused. The public surface grew substantially; nothing was removed.
   display (a DOM selection, an element's `textContent`) to copy or search it — turns the editor's
   internal stand-in for a stored no-break space back into U+00A0 when
   `ViewOptions.allowInvisibleCharacters` is on, and leaves the text unchanged when it is off (`~`
-  is already the project's spelling then).
-- `NBSP_STAND_IN_FONT_FAMILY`: the font family that draws that stand-in as a blank. The editor adds
-  its face (`unicode-range: U+1A`) to its document itself; a host that sets its own Scripture
-  `font-family` must name this family FIRST, since a browser draws a control character as a box
-  unless the first family has a glyph for it. `generateUsjCss` already puts it first in every
-  family it emits, and the `.usfm.formatted-font` rule in `usj-nodes.css` leads with it.
+  is already the project's spelling then). Experimental: expected to be removed once Standard view
+  holds a stored no-break space as itself.
+- The font family `PlatformEditorNbspStandIn` draws that stand-in as a blank. The editor adds its
+  face (`unicode-range: U+1A`) to its document itself; a host stylesheet that sets its own
+  Scripture `font-family` must name `PlatformEditorNbspStandIn` FIRST, since a browser draws a
+  control character as a box unless the first family has a glyph for it. `generateUsjCss` already
+  puts it first in every family it emits, and the `.usfm.formatted-font` rule in `usj-nodes.css`
+  leads with it.
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
 - `EditorProps.onParaMarkerMenuRequest` — fired on unmodified Enter or Alt+↓ while a paragraph marker is
   selected, so the host can open its paragraph dropdown.
@@ -141,7 +143,7 @@ refused. The public surface grew substantially; nothing was removed.
 - **A drop into Standard view goes in as a paste of the same data does** (`\c`/`\id` stripped,
   no-break spaces resolved positionally, lines replayed), instead of through Lexical's own
   insertion, and a drag out of Standard view carries the same USFM text and html a copy writes.
-- **`generateUsjCss` names `NBSP_STAND_IN_FONT_FAMILY` first in every `font-family` it emits.**
+- **`generateUsjCss` names `PlatformEditorNbspStandIn` first in every `font-family` it emits.**
 - **The editor hands back every document at the USJ `version` it was given.** `getUsj()`,
   `onUsjChange` and every settled read report the `version` of `defaultUsj` or of the latest
   `setUsj` document (`USJ_VERSION` when it has none), instead of always `USJ_VERSION`, so a host
