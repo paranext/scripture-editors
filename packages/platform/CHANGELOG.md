@@ -105,8 +105,20 @@ refused. The public surface grew substantially; nothing was removed.
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
 - `EditorProps.onParaMarkerMenuRequest` — fired on unmodified Enter or Alt+↓ while a paragraph marker is
   selected, so the host can open its paragraph dropdown.
+- `EditorRef.insertFirstChapter(verseCount?)` — starts chapter 1 in a book with no chapters: `\c 1`
+  and optional empty verses after the book's front matter, the same place the `\` menu's `\c` puts
+  it. Returns `false`, changing nothing, outside chapter 1 or once the document has a chapter.
+- `MarkerMenuContext.canInsertChapter` — set in chapter 1 of a document with no chapter yet, where
+  `getMarkerMenuItems` offers `\c`.
 
 ### Changed
+
+- **A book with no chapters can start chapter 1 from the `\` menu.** In chapter 1 with no chapter
+  yet, the menu offers `\c`; picking it, or `EditorRef.insertMarker("c")`, inserts `\c 1` after the
+  book's front matter (the `\id` line, running header, table of contents, titles and introduction)
+  and before the first paragraph that needs a chapter, such as a `\s1` or a `\p`, whatever the
+  caret position. `\c` stays out of the Enter menu, and out of the `\` menu in every other chapter,
+  which already has its marker. `insertMarker("c")` used to do nothing in the `\id` line.
 
 - **Paragraphs the editor creates in the paragraph-structure view get their gutter marker.** An
   Enter split or a multi-line paste used to create a paragraph with no marker glyph, which the

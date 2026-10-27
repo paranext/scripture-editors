@@ -12,6 +12,7 @@ import {
   $buildBookLine,
   historyTestEnvironment,
   testEnvironment,
+  unsettledUsjOf,
   usjNoteFromUsfm,
   usjNoteOf,
   viewOptions,
@@ -21,6 +22,7 @@ import {
   reset as resetSerialize,
 } from "../adaptors/usj-editor.adaptor";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
+import { $findMatchingParent } from "@lexical/utils";
 import { act } from "@testing-library/react";
 import {
   $createPoint,
@@ -41,6 +43,7 @@ import {
   UNDO_COMMAND,
 } from "lexical";
 import {
+  $createChapterNode,
   $createCharNode,
   $createImmutableUnmatchedNode,
   $createMarkerNode,
@@ -48,6 +51,7 @@ import {
   $createParaNode,
   $createTypedMarkNode,
   $isBookNode,
+  $isChapterNode,
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
@@ -56,6 +60,7 @@ import {
   CharNode,
   defaultStyleInfo,
   getEditableCallerText,
+  getVisibleOpenMarkerText,
   LoggerBasic,
   MarkerNode,
   NBSP,
@@ -1042,6 +1047,266 @@ describe("$applyMarkerMenuSelection", () => {
         expect(notes[0].getMarker()).toBe("f");
         expect(insertedKey).toBe(notes[0].getKey());
       });
+    });
+  });
+
+  describe("the `\\c` pick in a book with no chapters", () => {
+    /** Chapter 1 of a book with no chapters (`\id` line, then `$afterBook`), caret placed by `$select`. */
+    async function emptyBookAtCaret($select: (idText: TextNode) => void, $afterBook?: () => void) {
+      let idText: TextNode;
+      const environment = await historyTestEnvironment(() => {
+        idText = $buildBookLine("Genesis description");
+        $afterBook?.();
+      });
+      await act(async () =>
+        environment.editor.update(() => $select(requireDefined(idText, "book line text"))),
+      );
+      return environment;
+    }
+
+    /** The `c` entry the live `\` menu offers at the caret, in chapter 1. */
+    function offeredChapterItem(editor: LexicalEditor): MarkerMenuItem {
+      const items = editor
+        .getEditorState()
+        .read(() =>
+          getMarkerMenuItems(
+            defaultStyleInfo,
+            requireDefined($getMarkerMenuContext(undefined, 1), "marker menu context"),
+          ),
+        );
+      return requireDefined(
+        items.find((item) => item.marker === "c"),
+        "the menu offers no `c`",
+      );
+    }
+
+    async function pick(
+      editor: LexicalEditor,
+      item: MarkerMenuItem,
+      deps = makeDeps(),
+    ): Promise<void> {
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            item,
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            deps,
+          );
+        }),
+      );
+    }
+
+    /** A paragraph with its visible marker prefix and `text`. */
+    function $createParaNodeWithText(marker: string, text: string): ParaNode {
+      return $createParaNode(marker).append(
+        $createMarkerNode(marker),
+        $createTrailingSpaceNode(),
+        $createTextNode(text),
+      );
+    }
+
+    /** Each top-level block as `type:marker`, in document order. */
+    function $blocks(): string[] {
+      return $getRoot()
+        .getChildren()
+        .map((child) => {
+          const marker =
+            $isBookNode(child) || $isParaNode(child) || $isChapterNode(child)
+              ? child.getMarker()
+              : "";
+          return `${child.getType()}:${marker}`;
+        });
+    }
+
+    it("inserts chapter 1 after the `\\id` line, leaving the line whole", async () => {
+      const { editor } = await emptyBookAtCaret((idText) => idText.select(7, 7));
+
+      await pick(editor, offeredChapterItem(editor));
+
+      const usj = requireDefined(unsettledUsjOf(editor), "usj");
+      expect(usj.content).toEqual([
+        { type: "book", marker: "id", code: "GEN", content: ["Genesis description"] },
+        expect.objectContaining({ type: "chapter", marker: "c", number: "1" }),
+      ]);
+    });
+
+    it("goes after the front matter and before chapter content, wherever the caret is", async () => {
+      // The front matter is what the paragraph validator accepts after `\id`: `\toca1` only follows
+      // the running header, `\h`. A section heading is chapter content, so chapter 1 starts there.
+      const $appendBlocks = () =>
+        $getRoot().append(
+          $createParaNodeWithText("h", "Jonah"),
+          $createParaNodeWithText("toca1", "Jon"),
+          $createParaNodeWithText("mt1", "Jonah"),
+          $createParaNodeWithText("ip", "Introduction"),
+          $createParaNodeWithText("s1", "Heading"),
+          $createParaNodeWithText("p", "Text"),
+        );
+      const atIdLine = await emptyBookAtCaret((idText) => idText.selectEnd(), $appendBlocks);
+      const inBody = await emptyBookAtCaret(
+        () => requireDefined($getRoot().getLastDescendant() ?? undefined, "no text").selectEnd(),
+        $appendBlocks,
+      );
+
+      for (const { editor } of [atIdLine, inBody]) {
+        await pick(editor, offeredChapterItem(editor));
+        expect(editor.getEditorState().read($blocks)).toEqual([
+          "book:id",
+          "para:h",
+          "para:toca1",
+          "para:mt1",
+          "para:ip",
+          "chapter:c",
+          "para:s1",
+          "para:p",
+        ]);
+      }
+    });
+
+    it("keeps front matter that is out of order before the chapter", async () => {
+      // The validator rejects a second `\imt2` after introduction prose, and an `\ie` after the
+      // `\imte1`, on rank alone. They are still the introduction, so the chapter goes after them.
+      const { editor } = await emptyBookAtCaret(
+        (idText) => idText.selectEnd(),
+        () =>
+          $getRoot().append(
+            $createParaNodeWithText("mt1", "Jonah"),
+            $createParaNodeWithText("ip", "Introduction"),
+            $createParaNodeWithText("imt2", "Outline"),
+            $createParaNodeWithText("ip", "More introduction"),
+            $createParaNodeWithText("imte1", "End of introduction"),
+            $createParaNodeWithText("ie", ""),
+            $createParaNodeWithText("p", "Text"),
+          ),
+      );
+
+      await pick(editor, offeredChapterItem(editor));
+
+      expect(editor.getEditorState().read($blocks)).toEqual([
+        "book:id",
+        "para:mt1",
+        "para:ip",
+        "para:imt2",
+        "para:ip",
+        "para:imte1",
+        "para:ie",
+        "chapter:c",
+        "para:p",
+      ]);
+    });
+
+    it("starts the chapter content at a paragraph the stylesheet allows anywhere", async () => {
+      // A host stylesheet may leave `occursUnder` out. The validator then accepts the paragraph
+      // anywhere, which says nothing about whether it comes before the chapter.
+      const styleInfo: StyleInfo = {
+        ...defaultStyleInfo,
+        markers: {
+          ...defaultStyleInfo.markers,
+          p: { ...defaultStyleInfo.markers.p, occursUnder: undefined },
+        },
+      };
+      const { editor } = await emptyBookAtCaret(
+        (idText) => idText.selectEnd(),
+        () =>
+          $getRoot().append(
+            $createParaNodeWithText("mt1", "Jonah"),
+            $createParaNodeWithText("p", "Text"),
+          ),
+      );
+
+      await pick(editor, offeredChapterItem(editor), makeDeps(styleInfo));
+
+      expect(editor.getEditorState().read($blocks)).toEqual([
+        "book:id",
+        "para:mt1",
+        "chapter:c",
+        "para:p",
+      ]);
+    });
+
+    it("keeps the introduction together when the stylesheet gives `\\c` no rank", async () => {
+      // The rank check rejects an `\mt2` after introduction prose. Read as rank 0, a `\c` would not
+      // close the introduction, so the `\mt2` would look like it starts the chapter content.
+      const styleInfo: StyleInfo = {
+        ...defaultStyleInfo,
+        markers: {
+          ...defaultStyleInfo.markers,
+          c: { ...defaultStyleInfo.markers.c, rank: undefined },
+        },
+      };
+      const { editor } = await emptyBookAtCaret(
+        (idText) => idText.selectEnd(),
+        () =>
+          $getRoot().append(
+            $createParaNodeWithText("mt1", "Jonah"),
+            $createParaNodeWithText("ip", "Introduction"),
+            $createParaNodeWithText("mt2", "Outline"),
+            $createParaNodeWithText("p", "Text"),
+          ),
+      );
+
+      await pick(editor, offeredChapterItem(editor), makeDeps(styleInfo));
+
+      expect(editor.getEditorState().read($blocks)).toEqual([
+        "book:id",
+        "para:mt1",
+        "para:ip",
+        "para:mt2",
+        "chapter:c",
+        "para:p",
+      ]);
+    });
+
+    it("puts the caret on the new chapter line", async () => {
+      const { editor } = await emptyBookAtCaret((idText) => idText.selectEnd());
+
+      await pick(editor, offeredChapterItem(editor));
+
+      editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a caret");
+        expect(selection.isCollapsed()).toBe(true);
+        expect($findMatchingParent(selection.focus.getNode(), $isChapterNode)).not.toBeNull();
+      });
+    });
+
+    it("is undone by a single undo", async () => {
+      const { editor } = await emptyBookAtCaret((idText) => idText.selectEnd());
+      const before = editor.getEditorState().read($blocks);
+
+      await pick(editor, offeredChapterItem(editor));
+      expect(editor.getEditorState().read($blocks)).toEqual([...before, "chapter:c"]);
+      await act(async () => {
+        editor.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+
+      expect(editor.getEditorState().read($blocks)).toEqual(before);
+    });
+
+    it("inserts nothing once the document has a chapter, and says so", async () => {
+      const { editor } = await emptyBookAtCaret(
+        (idText) => idText.selectEnd(),
+        () =>
+          $getRoot().append(
+            $createChapterNode("1").append($createTextNode(getVisibleOpenMarkerText("c", "1"))),
+          ),
+      );
+      const before = editor.getEditorState().read($blocks);
+      const warn = vi.fn();
+      const logger: LoggerBasic = { error: vi.fn(), warn, info: vi.fn(), debug: vi.fn() };
+
+      await pick(
+        editor,
+        { marker: "c", kind: "paragraph", isBasic: false },
+        {
+          ...makeDeps(),
+          logger,
+        },
+      );
+
+      expect(editor.getEditorState().read($blocks)).toEqual(before);
+      expect(warn).toHaveBeenCalledOnce();
     });
   });
 

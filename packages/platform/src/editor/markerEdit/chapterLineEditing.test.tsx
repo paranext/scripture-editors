@@ -11,9 +11,14 @@
  * it cannot be split, so Enter there starts a new paragraph after it, Shift+Enter does nothing, and
  * a paste or a drop goes in as it would be typed there.
  */
+import { getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
 import { EditorRef } from "../editor.model";
-import { getEnterMenuItems } from "../markerMenu/markerItemSource";
-import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { getEnterMenuItems, getMarkerMenuItems } from "../markerMenu/markerItemSource";
+import {
+  mountStandardViewEditor,
+  mountViewEditor,
+  requireStandardViewOptions,
+} from "../settledGetUsj.test-helpers";
 import { requireDefined } from "./markerEdit.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { SerializedVerseRef } from "@sillsdev/scripture";
@@ -43,10 +48,17 @@ import {
   $isChapterNode,
   $isTypedMarkNode,
   ChapterNode,
+  defaultStyleInfo,
   getVisibleOpenMarkerText,
   NBSP,
   StyleInfo,
 } from "shared";
+import {
+  FORMATTED_VIEW_MODE,
+  getViewOptions,
+  PARAGRAPH_STRUCTURE_VIEW_MODE,
+  ViewMode,
+} from "shared-react";
 import { describe, expect, it } from "vitest";
 
 const CHAPTER_2: MarkerContent = { type: "chapter", marker: "c", number: "2" };
@@ -1090,5 +1102,354 @@ describe("the caret on a chapter line that is no longer a chapter", () => {
     expect(ref.current?.getSelection()).toEqual({
       start: { jsonPath: "$.content[0]['marker']", propertyOffset: 1 },
     });
+  });
+});
+
+describe("a chapter inserted into a book with no chapters", () => {
+  // An empty book's chapter 1 is its `\id` line and nothing else, so there is no chapter line to
+  // type `\c` into. Each way of asking for one inserts it, and the chapter edits and saves like a
+  // loaded one.
+  const BOOK: MarkerContent = { type: "book", marker: "id", code: "GEN", content: ["Genesis"] };
+  const CHAPTER_1: MarkerContent = { type: "chapter", marker: "c", number: "1" };
+  const emptyBook: Usj = { type: "USJ", version: "3.1", content: [BOOK] };
+  const GEN_1_1: SerializedVerseRef = { book: "GEN", chapterNum: 1, verseNum: 1 };
+
+  /** Mounts `usj` (the empty book) at `scrRef` with the caret at the end of the `\id` line's text. */
+  async function mountEmptyBook(
+    scrRef: SerializedVerseRef = GEN_1_1,
+    view = requireStandardViewOptions(),
+    usj = emptyBook,
+  ) {
+    const mounted = await mountViewEditor(usj, view, { scrRef });
+    await act(async () =>
+      mounted.lexical.update(() => {
+        const book = requireDefined($getRoot().getFirstChild() ?? undefined, "no book");
+        $lastLeaf(book).selectEnd();
+      }),
+    );
+    return mounted;
+  }
+
+  /** The `\` menu's items at the caret. */
+  function menuItems(ref: { current: EditorRef | null }) {
+    const context = requireDefined(ref.current?.getMarkerMenuContext(), "no menu context");
+    return getMarkerMenuItems(defaultStyleInfo, context);
+  }
+
+  /** Picks the `\` menu's `\c`, as the host's palette does. */
+  async function pickChapterFromMenu(ref: { current: EditorRef | null }): Promise<void> {
+    const chapterItem = requireDefined(
+      menuItems(ref).find((item) => item.marker === "c"),
+      "the menu offers no `c`",
+    );
+    await act(async () => {
+      ref.current?.applyMarkerMenuSelection(chapterItem, {
+        trigger: "backslash",
+        literalPrefixLanded: false,
+      });
+    });
+  }
+
+  it("is offered by the `\\` menu and saves as chapter 1 after the `\\id` line", async () => {
+    const { ref } = await mountEmptyBook();
+
+    await pickChapterFromMenu(ref);
+
+    expect(ref.current?.getUsj()?.content).toEqual([BOOK, CHAPTER_1]);
+  });
+
+  // Enter on the chapter line is the host's Enter palette, whose pick splits through
+  // `splitParagraphWithMarker`; the new paragraph has to start after the chapter line.
+  it("starts a paragraph after it from the Enter palette, and takes typing there", async () => {
+    const { ref, lexical } = await mountEmptyBook();
+    await pickChapterFromMenu(ref);
+
+    await act(async () => {
+      ref.current?.splitParagraphWithMarker("p");
+    });
+    await typeText(lexical, "new");
+
+    expect(ref.current?.getUsj()?.content).toEqual([
+      BOOK,
+      CHAPTER_1,
+      { type: "para", marker: "p", content: ["new"] },
+    ]);
+  });
+
+  // The host's marker menu outside Standard view inserts through `insertMarker`.
+  it("is inserted by `insertMarker`, as by the menu", async () => {
+    const { ref } = await mountEmptyBook();
+
+    await act(async () => {
+      ref.current?.insertMarker("c");
+    });
+
+    expect(ref.current?.getUsj()?.content).toEqual([BOOK, CHAPTER_1]);
+  });
+
+  // The editor's own marker menu, shown when the host has no marker UI of its own, runs the same
+  // marker action as `insertMarker`.
+  it("is inserted after the front matter by the `\\c` marker action", async () => {
+    const title: MarkerContent = { type: "para", marker: "mt1", content: ["Genesis"] };
+    const text: MarkerContent = { type: "para", marker: "p", content: ["Text"] };
+    const view = requireStandardViewOptions();
+    const { ref, lexical } = await mountEmptyBook(GEN_1_1, view, {
+      ...emptyBook,
+      content: [BOOK, title, text],
+    });
+
+    await act(async () => {
+      getUsjMarkerAction(
+        "c",
+        { current: undefined },
+        view,
+        undefined,
+        undefined,
+        undefined,
+        defaultStyleInfo,
+      ).action({ editor: lexical, reference: GEN_1_1 });
+    });
+
+    expect(ref.current?.getUsj()?.content).toEqual([BOOK, title, CHAPTER_1, text]);
+    // `getUsj()` reads the same whichever chapter node was built, so check that it is Standard
+    // view's editable chapter line (`$chapter` finds only that kind) and that the caret is on it.
+    lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a caret");
+      expect(selection.isCollapsed()).toBe(true);
+      expect(selection.focus.getNode().getTopLevelElement()?.is($chapter())).toBe(true);
+    });
+  });
+
+  it("is inserted with empty verses by `insertFirstChapter`", async () => {
+    const { ref } = await mountEmptyBook();
+
+    let inserted: boolean | undefined;
+    await act(async () => {
+      inserted = ref.current?.insertFirstChapter(2);
+    });
+
+    expect(inserted).toBe(true);
+    expect(ref.current?.getUsj()?.content).toEqual([
+      BOOK,
+      CHAPTER_1,
+      { type: "verse", marker: "v", number: "1" },
+      { type: "verse", marker: "v", number: "2" },
+    ]);
+  });
+
+  // Where the markers are hidden the chapter is a decorator, with no line to put the caret on.
+  describe.each<ViewMode>([FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE])(
+    "with the markers hidden (%s view)",
+    (viewMode) => {
+      const mountHiddenMarkers = (usj = emptyBook) =>
+        mountEmptyBook(GEN_1_1, requireDefined(getViewOptions(viewMode), "no view options"), usj);
+
+      it("puts the caret after verse 1, so typing goes into verse 1", async () => {
+        const { ref, lexical } = await mountHiddenMarkers();
+
+        await act(async () => {
+          ref.current?.insertFirstChapter(2);
+        });
+        await typeText(lexical, "In the beginning");
+
+        expect(ref.current?.getUsj()?.content).toEqual([
+          BOOK,
+          CHAPTER_1,
+          { type: "verse", marker: "v", number: "1" },
+          // The space is the editor's, ahead of the next verse, as when typing in a loaded chapter.
+          "In the beginning ",
+          { type: "verse", marker: "v", number: "2" },
+        ]);
+      });
+
+      it("puts the caret after a single verse", async () => {
+        const { ref, lexical } = await mountHiddenMarkers();
+
+        await act(async () => {
+          ref.current?.insertFirstChapter(1);
+        });
+        await typeText(lexical, "In the beginning");
+
+        expect(ref.current?.getUsj()?.content).toEqual([
+          BOOK,
+          CHAPTER_1,
+          { type: "verse", marker: "v", number: "1" },
+          "In the beginning",
+        ]);
+      });
+
+      it("puts the caret at the start of the chapter content when there are no verses", async () => {
+        const text: MarkerContent = { type: "para", marker: "p", content: ["Text"] };
+        const { ref, lexical } = await mountHiddenMarkers({ ...emptyBook, content: [BOOK, text] });
+
+        await act(async () => {
+          ref.current?.insertFirstChapter();
+        });
+        await typeText(lexical, "New ");
+
+        expect(ref.current?.getUsj()?.content).toEqual([
+          BOOK,
+          CHAPTER_1,
+          { type: "para", marker: "p", content: ["New Text"] },
+        ]);
+      });
+
+      it("leaves the caret where it was when nothing follows the chapter", async () => {
+        const { ref, lexical } = await mountHiddenMarkers();
+        const $caret = () => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("expected a caret");
+          return { key: selection.focus.key, offset: selection.focus.offset };
+        };
+        const before = lexical.getEditorState().read($caret);
+
+        await act(async () => {
+          ref.current?.insertFirstChapter();
+        });
+
+        expect(ref.current?.getUsj()?.content).toEqual([BOOK, CHAPTER_1]);
+        expect(lexical.getEditorState().read($caret)).toEqual(before);
+      });
+    },
+  );
+
+  it("is not offered or inserted in a chapter after the first", async () => {
+    const { ref } = await mountEmptyBook({ book: "GEN", chapterNum: 2, verseNum: 1 });
+
+    expect(menuItems(ref).map((item) => item.marker)).not.toContain("c");
+    let inserted: boolean | undefined;
+    await act(async () => {
+      inserted = ref.current?.insertFirstChapter();
+    });
+    expect(inserted).toBe(false);
+    expect(ref.current?.getUsj()?.content).toEqual([BOOK]);
+  });
+
+  /** Asks for `\c` at the selection through the `\` menu's pick and `insertMarker`. */
+  async function askAtSelection(ref: { current: EditorRef | null }): Promise<void> {
+    const context = requireDefined(ref.current?.getMarkerMenuContext(), "no menu context");
+    // The menu does not offer `\c` here, so pick the item it would have offered.
+    const chapterItem = requireDefined(
+      getMarkerMenuItems(defaultStyleInfo, { ...context, canInsertChapter: true }).find(
+        (item) => item.marker === "c",
+      ),
+      "no `c` item",
+    );
+    await act(async () => {
+      ref.current?.applyMarkerMenuSelection(chapterItem, {
+        trigger: "backslash",
+        literalPrefixLanded: false,
+      });
+    });
+    await act(async () => {
+      ref.current?.insertMarker("c");
+    });
+  }
+
+  // The `\` menu, its pick and `insertMarker` act at the selection, so they refuse where a chapter
+  // cannot start. The host's button does not act at the selection, so it still inserts.
+  describe.each<[string, () => void, MarkerContent[]]>([
+    [
+      "inside a note",
+      () =>
+        requireDefined(
+          $getRoot()
+            .getAllTextNodes()
+            .find((node) => node.getTextContent().includes("note body")),
+          "no note text",
+        ).select(1, 1),
+      [
+        BOOK,
+        {
+          type: "para",
+          marker: "ip",
+          content: [
+            "Intro",
+            {
+              type: "note",
+              marker: "f",
+              caller: "+",
+              content: [{ type: "char", marker: "ft", content: ["note body"] }],
+            },
+          ],
+        },
+      ],
+    ],
+    [
+      "over a text selection",
+      () => {
+        const book = requireDefined($getRoot().getFirstChild() ?? undefined, "no book");
+        const text = $lastLeaf(book);
+        if (!(text instanceof TextNode)) throw new Error("expected the `\\id` line's text");
+        text.select(0, text.getTextContentSize());
+      },
+      [BOOK],
+    ],
+  ])("%s", (_, $select, content) => {
+    async function mountWithSelection() {
+      const mounted = await mountEmptyBook(GEN_1_1, requireStandardViewOptions(), {
+        ...emptyBook,
+        content,
+      });
+      await act(async () => mounted.lexical.update($select));
+      return mounted;
+    }
+
+    it("is not offered by the menu, or inserted by its pick or `insertMarker`", async () => {
+      const { ref } = await mountWithSelection();
+      const before = ref.current?.getUsj();
+
+      expect(menuItems(ref).map((item) => item.marker)).not.toContain("c");
+      await askAtSelection(ref);
+
+      expect(ref.current?.getUsj()).toEqual(before);
+    });
+
+    it("is still inserted by `insertFirstChapter`", async () => {
+      const { ref } = await mountWithSelection();
+
+      let inserted: boolean | undefined;
+      await act(async () => {
+        inserted = ref.current?.insertFirstChapter();
+      });
+
+      expect(inserted).toBe(true);
+      expect(ref.current?.getUsj()?.content).toEqual([...content, CHAPTER_1]);
+    });
+  });
+
+  // Front and back matter, introductions, glossaries, concordances and indexes never hold chapters.
+  it("is not offered or inserted in a peripheral book", async () => {
+    const frontMatter: MarkerContent = { ...BOOK, code: "FRT", content: ["Front matter"] };
+    const { ref } = await mountEmptyBook(
+      { book: "FRT", chapterNum: 1, verseNum: 1 },
+      requireStandardViewOptions(),
+      { ...emptyBook, content: [frontMatter] },
+    );
+
+    expect(menuItems(ref).map((item) => item.marker)).not.toContain("c");
+    await askAtSelection(ref);
+    let inserted: boolean | undefined;
+    await act(async () => {
+      inserted = ref.current?.insertFirstChapter();
+    });
+
+    expect(inserted).toBe(false);
+    expect(ref.current?.getUsj()?.content).toEqual([frontMatter]);
+  });
+
+  // The Extra books (XXA–XXG) hold chapters like any other book.
+  it("is offered and inserted in an Extra book", async () => {
+    const extraBook: MarkerContent = { ...BOOK, code: "XXA", content: ["Extra A"] };
+    const { ref } = await mountEmptyBook(
+      { book: "XXA", chapterNum: 1, verseNum: 1 },
+      requireStandardViewOptions(),
+      { ...emptyBook, content: [extraBook] },
+    );
+
+    await pickChapterFromMenu(ref);
+
+    expect(ref.current?.getUsj()?.content).toEqual([extraBook, CHAPTER_1]);
   });
 });

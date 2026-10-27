@@ -35,6 +35,10 @@ import {
 } from "../markerEdit/markerEditDeletion.utils";
 import { MarkerMenuItem } from "./markerItemSource";
 import { $isAtParagraphContentStart } from "./markerMenuContext.utils";
+import {
+  $canInsertChapterAtSelection,
+  $insertFirstChapter,
+} from "../markerEdit/firstChapter.utils";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import { $findMatchingParent } from "@lexical/utils";
 import {
@@ -482,9 +486,23 @@ export function $applyMarkerMenuSelection(
   // than inserting an \fp span outside any note.
   if (item.marker === "fp" && $handleEnterInNote() !== "declined") return;
 
+  if (item.marker === "c") {
+    const inserted =
+      $canInsertChapterAtSelection(reference.chapterNum) &&
+      $insertFirstChapter({
+        chapterNum: reference.chapterNum,
+        viewOptions: deps.viewOptions,
+        styleInfo: deps.styleInfo,
+      });
+    if (!inserted)
+      deps.logger?.warn(
+        "$applyMarkerMenuSelection: no chapter inserted; only chapter 1 of a book that holds chapters but has none yet can take one, from a caret outside a note",
+      );
+    return;
+  }
+
   // Paragraph-kind picks that are real ParaNode markers retag or split (PT9 reformat
-  // semantics). The sheet also types some non-para structural markers as "paragraph" (`c` —
-  // chapter); those keep the structural action below, which handles them specially.
+  // semantics).
   if (
     item.kind === "paragraph" &&
     ParaNode.isValidMarker(item.marker, deps.nodeOptions?.extraValidMarkers)

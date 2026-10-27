@@ -26,6 +26,7 @@ import {
 } from "./markerMenu/markerMenuApply.utils";
 import { $getMarkerMenuContext } from "./markerMenu/markerMenuContext.utils";
 import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
+import { $insertFirstChapter } from "./markerEdit/firstChapter.utils";
 import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
 import {
   COMMIT_PENDING_MARKERS_COMMAND,
@@ -1492,13 +1493,28 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // is known exactly here, so it cannot drift with the coordinate systems.
       return markerAction.getInsertedNoteKey?.();
     },
+    insertFirstChapter(verseCount) {
+      if (effectiveIsReadonly) throw new Error("Cannot insert a chapter in readonly mode");
+      if (!scrRef)
+        throw new Error("Cannot insert a chapter without a scripture reference (scrRef)");
+      if (!editorRef.current) return false;
+      const { chapterNum } = scrRef;
+      let inserted = false;
+      editorRef.current.update(
+        () => {
+          inserted = $insertFirstChapter({ chapterNum, verseCount, viewOptions, styleInfo });
+        },
+        { discrete: true },
+      );
+      return inserted;
+    },
     getMarkerMenuContext() {
       if (isReadonly) return undefined;
       // `getEditorState().read`, NOT `editor.read` - the latter force-flushes any in-flight
       // update mid-dispatch (the same hazard as reading during an `OnSelectionChangePlugin`
       // callback).
       const editor = editorRef.current;
-      return editor?.getEditorState().read(() => $getMarkerMenuContext(editor));
+      return editor?.getEditorState().read(() => $getMarkerMenuContext(editor, scrRef?.chapterNum));
     },
     applyMarkerMenuSelection(item, opts) {
       if (isReadonly) throw new Error("Cannot apply marker menu selection in readonly mode");
