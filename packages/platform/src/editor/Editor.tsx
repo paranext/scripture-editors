@@ -999,18 +999,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     );
   }
 
-  /** Starts chapter 1 in a book with no chapters; `false`, changing nothing, anywhere else. */
-  function insertFirstChapterAtScrRef(editor: LexicalEditor, chapterNum: number, verseCount = 0) {
-    let inserted = false;
-    editor.update(
-      () => {
-        inserted = $insertFirstChapter({ chapterNum, verseCount, viewOptions, styleInfo });
-      },
-      { discrete: true },
-    );
-    return inserted;
-  }
-
   // Built as a plain object (rebuilt per render, same as the previous inline useImperativeHandle
   // factory) and assigned to editorApiRef UNCONDITIONALLY below — never inside the
   // useImperativeHandle factory, which React only invokes when the consumer actually attached a
@@ -1488,9 +1476,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // Every edit below is written for a caret; a selected paragraph marker counts as one at its
       // paragraph's content start, so collapse to there first rather than act on the glyph.
       editorRef.current.update($collapseParaMarkerSelection, { discrete: true });
-      // In a book with no chapters, `\c` starts chapter 1 where the `\` menu's pick does.
-      if (marker === "c" && insertFirstChapterAtScrRef(editorRef.current, scrRef.chapterNum))
-        return undefined;
       const markerAction = getUsjMarkerAction(
         marker,
         expandedNoteKeyRef,
@@ -1513,7 +1498,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       if (!scrRef)
         throw new Error("Cannot insert a chapter without a scripture reference (scrRef)");
       if (!editorRef.current) return false;
-      return insertFirstChapterAtScrRef(editorRef.current, scrRef.chapterNum, verseCount);
+      const { chapterNum } = scrRef;
+      let inserted = false;
+      editorRef.current.update(
+        () => {
+          inserted = $insertFirstChapter({ chapterNum, verseCount, viewOptions, styleInfo });
+        },
+        { discrete: true },
+      );
+      return inserted;
     },
     getMarkerMenuContext() {
       if (isReadonly) return undefined;

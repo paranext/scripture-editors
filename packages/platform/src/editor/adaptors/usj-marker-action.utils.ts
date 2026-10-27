@@ -70,6 +70,7 @@ import {
 import usjEditorAdaptor from "./usj-editor.adaptor";
 import { $coveredTextNodes } from "../markerEdit/charFormatting.utils";
 import { $moveCaretOffChapterLine } from "../markerEdit/chapterLine.utils";
+import { $insertFirstChapter } from "../markerEdit/firstChapter.utils";
 import { Tier2Context } from "../markerEdit/tier2Rebuild.utils";
 
 interface UsjMarkerActionResult {
@@ -304,6 +305,17 @@ export function getUsjMarkerAction(
     noteText?: string;
   }) => {
     currentEditor.editor.update(() => {
+      // In a book with no chapters, `\c` starts chapter 1 after the front matter, as the `\` menu's
+      // pick does, rather than at the caret.
+      if (
+        marker === "c" &&
+        $insertFirstChapter({
+          chapterNum: currentEditor.reference.chapterNum,
+          viewOptions,
+          styleInfo,
+        })
+      )
+        return;
       // A caret on an editable chapter line has no block to insert inline content into; move it
       // to where content after the chapter number goes (see `chapterLine.utils.ts`).
       if (!$moveCaretOffChapterLine(chapterLineContext)) return;
