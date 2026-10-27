@@ -145,9 +145,13 @@ export function displayTextToUsj(text: string, nbspSpelling = "~"): string {
  * each one becomes U+00A0 here, and `~` stays an ordinary character. Other display characters (the
  * no-break spaces a space run or a marker separator shows as) are left as they are.
  *
+ * Expected to be removed once Standard view holds a stored no-break space as itself (PT-4931):
+ * display text will then already carry the project's spelling.
+ *
  * @param displayText - Text read from the editor's display.
  * @param viewOptions - The editor's view options.
  * @returns The text with the project's spelling of a no-break space.
+ * @experimental This member is unstable and may change shape or disappear without notice.
  *
  * @public
  */

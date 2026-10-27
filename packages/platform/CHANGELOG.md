@@ -120,7 +120,8 @@ refused. The public surface grew substantially; nothing was removed.
   display (a DOM selection, an element's `textContent`) to copy or search it — turns the editor's
   internal stand-in for a stored no-break space back into U+00A0 when
   `ViewOptions.allowInvisibleCharacters` is on, and leaves the text unchanged when it is off (`~`
-  is already the project's spelling then).
+  is already the project's spelling then). Experimental: expected to be removed once Standard view
+  holds a stored no-break space as itself.
 - The font family `PlatformEditorNbspStandIn` draws that stand-in as a blank. The editor adds its
   face (`unicode-range: U+1A`) to its document itself; a host stylesheet that sets its own
   Scripture `font-family` must name `PlatformEditorNbspStandIn` FIRST, since a browser draws a
