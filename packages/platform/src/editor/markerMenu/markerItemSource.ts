@@ -16,10 +16,9 @@
  */
 import { isUsjMarkerSupported } from "../adaptors/usj-marker-action.utils";
 import {
+  buildParaStack,
   getMarkerStyleInfo,
   isParagraphTagValid,
-  ParaStackEntry,
-  pushParaTagIfValid,
   toStackEntry,
 } from "../markerEdit/markerValidation.utils";
 import { MarkerStyleInfo, StyleInfo } from "shared";
@@ -108,22 +107,6 @@ function includeMarker(marker: string, extraValidMarkers?: readonly string[]): b
   return (
     !marker.startsWith("zpa") && marker !== "c" && isUsjMarkerSupported(marker, extraValidMarkers)
   );
-}
-
-/**
- * Replays previousParaMarkers (forward order) into a validity stack — PT9
- * GetValidParagraphTags's build pass, which calls
- * `TagValidator.IsParagraphTagValid(stack, tag, addTag: true)` for each
- * previous tag (MarkerItemSource.cs:183-194). Only the stack the replay leaves
- * behind matters here, so each tag's verdict is discarded.
- */
-function buildParaStack(styleInfo: StyleInfo, previousParaMarkers: string[]): ParaStackEntry[] {
-  const stack: ParaStackEntry[] = [];
-  for (const marker of previousParaMarkers) {
-    const tag = toStackEntry(styleInfo, marker);
-    if (tag) pushParaTagIfValid(stack, tag);
-  }
-  return stack;
 }
 
 function toItem(entry: MarkerStyleInfo, kind: MarkerMenuItem["kind"]): MarkerMenuItem {

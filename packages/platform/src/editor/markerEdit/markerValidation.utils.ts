@@ -105,7 +105,7 @@ function placeParaTag(
  * TagValidator.IsParagraphTagValid's `addTag: false` call (TagValidator.cs:18-57).
  *
  * Pure: `stack` is not modified. Use this to PROBE a candidate; use
- * {@link pushParaTagIfValid} to advance the stack over a tag that is actually there.
+ * {@link replayParaTag} to advance the stack over a tag that is actually there.
  */
 export function isParagraphTagValid(
   stack: readonly ParaStackEntry[],
@@ -123,7 +123,7 @@ export function isParagraphTagValid(
  * stack untouched. Returns the same verdict as {@link isParagraphTagValid}, so a caller that also
  * wants to flag the invalid case can read it.
  */
-export function pushParaTagIfValid(stack: ParaStackEntry[], tag: ParaStackEntry): boolean {
+function pushParaTagIfValid(stack: ParaStackEntry[], tag: ParaStackEntry): boolean {
   const placement = placeParaTag(stack, tag);
   if (!placement) return false;
   if (placement.joins) {
@@ -131,6 +131,63 @@ export function pushParaTagIfValid(stack: ParaStackEntry[], tag: ParaStackEntry)
     stack.push(tag);
   }
   return true;
+}
+
+/**
+ * Advance `stack` over the paragraph tag `marker`, reading it from the stylesheet, and report its
+ * verdict there. Every walk over the paragraphs replays them through this, so they all agree.
+ *
+ * A tag the stylesheet does not declare is `"unknown"`. PT9 auto-creates it with an empty
+ * occursUnder (ScrStylesheet.GetTagIndex:182-201): valid anywhere, so like every such tag it joins
+ * only an empty stack (TagValidator.cs:28-30).
+ *
+ * MUTATES `stack` (see {@link pushParaTagIfValid}).
+ */
+export function replayParaTag(
+  stack: ParaStackEntry[],
+  styleInfo: StyleInfo,
+  marker: string,
+): MarkerValidity | "valid" {
+  const tag = toStackEntry(styleInfo, marker);
+  if (!tag) {
+    pushParaTagIfValid(stack, { marker, rank: 0, occursUnder: [] });
+    return "unknown";
+  }
+  return pushParaTagIfValid(stack, tag) ? "valid" : "invalid";
+}
+
+/**
+ * Replays `markers` (paragraph tags, in document order) into a validity stack — PT9
+ * GetValidParagraphTags's build pass (MarkerItemSource.cs:183-194). Only the stack the replay
+ * leaves behind matters here, so each tag's verdict is discarded.
+ */
+export function buildParaStack(styleInfo: StyleInfo, markers: readonly string[]): ParaStackEntry[] {
+  const stack: ParaStackEntry[] = [];
+  for (const marker of markers) replayParaTag(stack, styleInfo, marker);
+  return stack;
+}
+
+/**
+ * The validity stack right after a `\c`: the `\id` line, then the chapter. A chapter closes
+ * everything before it but the `\id` line, whatever rank the stylesheet gives `\c`. A sheet may
+ * leave the rank out, and the rank-0 that leaves would let PT9's rank check keep the introduction's
+ * ranked paragraphs open after the chapter.
+ */
+export function paraStackAfterChapter(styleInfo: StyleInfo): ParaStackEntry[] {
+  const chapter = toStackEntry(styleInfo, "c") ?? { marker: "c", rank: 0, occursUnder: ["id"] };
+  return [...buildParaStack(styleInfo, ["id"]), { ...chapter, rank: Number.POSITIVE_INFINITY }];
+}
+
+/**
+ * The paragraph tag a top-level block opens, as the validity stack sees it: the `\id` line's `id`,
+ * a chapter's `c`, or a paragraph's own marker. `undefined` for any other block: an implied
+ * paragraph, or an opaque one such as a sidebar, which the stack skips.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $getParaTagMarker(node: LexicalNode): string | undefined {
+  if ($isBookNode(node) || $isSomeChapterNode(node) || $isParaNode(node)) return node.getMarker();
+  return undefined;
 }
 
 /** Flag a node's visible marker glyphs (opener and closer MarkerNodes). Decorator
@@ -227,30 +284,20 @@ export function $validateDocument(
   const out = new Map<NodeKey, MarkerValidity>();
   const stack: ParaStackEntry[] = [];
 
-  const validateParaLevel = (node: LexicalNode, marker: string): void => {
-    const tag = toStackEntry(styleInfo, marker);
-    if (!tag) {
-      flagGlyphs(node, "unknown", out);
-      // PT9 auto-creates unknown tags with empty occursUnder (ScrStylesheet
-      // .GetTagIndex:182-201) — valid anywhere, and like every empty-occursUnder
-      // tag they do NOT join a non-empty stack (TagValidator.cs:28-30).
-      pushParaTagIfValid(stack, { marker, rank: 0, occursUnder: [] });
-      return;
-    }
-    if (!pushParaTagIfValid(stack, tag)) flagGlyphs(node, "invalid", out);
-  };
-
   const inScope = (child: LexicalNode): boolean =>
     !onlyParagraphs || onlyParagraphs.has(child.getKey());
   for (const child of $getRoot().getChildren()) {
     if ($isUnknownNode(child)) continue; // opaque blocks: skip entirely
+    const marker = $getParaTagMarker(child);
+    if (marker !== undefined) {
+      const verdict = replayParaTag(stack, styleInfo, marker);
+      if (verdict !== "valid") flagGlyphs(child, verdict, out);
+    }
     if ($isBookNode(child)) {
-      validateParaLevel(child, child.getMarker());
       if (inScope(child)) $validateInline(child, undefined, styleInfo, out, false);
     } else if ($isSomeChapterNode(child)) {
-      validateParaLevel(child, child.getMarker());
+      // A chapter has no inline content of its own to validate.
     } else if ($isParaNode(child)) {
-      validateParaLevel(child, child.getMarker());
       if (inScope(child)) $validateInline(child, child.getMarker(), styleInfo, out, false);
     } else if ($isElementNode(child)) {
       // ImpliedParaNode and other unmarked wrappers: no para-level flag; PT9's

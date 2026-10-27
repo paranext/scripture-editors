@@ -10,9 +10,11 @@
  */
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
 import {
+  $getParaTagMarker,
+  buildParaStack,
   isParagraphTagValid,
-  ParaStackEntry,
-  pushParaTagIfValid,
+  paraStackAfterChapter,
+  replayParaTag,
   toStackEntry,
 } from "./markerValidation.utils";
 import { MarkerContent, USJ_TYPE, USJ_VERSION } from "@eten-tech-foundation/scripture-utilities";
@@ -49,23 +51,23 @@ export function $canInsertChapter(chapterNum: number | undefined): boolean {
  * introduction.
  *
  * The validator cannot place a paragraph the stylesheet does not declare, or one it declares valid
- * anywhere, so those start the chapter content, as does text in no paragraph at all.
+ * anywhere, so those start the chapter content, as does text in no paragraph at all. A `\c` closes
+ * the introduction whatever its rank in the stylesheet (see {@link paraStackAfterChapter}).
  */
 function $findChapterContentStart(styleInfo: StyleInfo): LexicalNode | undefined {
-  const id = toStackEntry(styleInfo, "id") ?? { marker: "id", rank: 0, occursUnder: [] };
-  const chapter = toStackEntry(styleInfo, "c") ?? { marker: "c", rank: 0, occursUnder: ["id"] };
-  // A `\c` closes everything above the `\id` line, so this is the stack after any chapter marker.
-  const afterChapter: readonly ParaStackEntry[] = [id, chapter];
-  const stack: ParaStackEntry[] = [id];
+  const afterChapter = paraStackAfterChapter(styleInfo);
+  // Seeded with the `\id` line, so a document without one still starts there.
+  const stack = buildParaStack(styleInfo, ["id"]);
   return $getRoot()
     .getChildren()
     .find((child) => {
       if ($isBookNode(child)) return false;
-      if (!$isParaNode(child)) return true;
-      const tag = toStackEntry(styleInfo, child.getMarker());
+      const marker = $getParaTagMarker(child);
+      if (marker === undefined) return true;
+      const verdict = replayParaTag(stack, styleInfo, marker);
+      const tag = toStackEntry(styleInfo, marker);
       if (!tag || tag.occursUnder.length === 0) return true;
-      if (pushParaTagIfValid(stack, tag)) return false;
-      return isParagraphTagValid(afterChapter, tag);
+      return verdict === "invalid" && isParagraphTagValid(afterChapter, tag);
     });
 }
 
