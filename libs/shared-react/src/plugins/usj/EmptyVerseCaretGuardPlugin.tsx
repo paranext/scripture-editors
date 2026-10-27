@@ -1,11 +1,15 @@
 import { $isCaretHost, useTransientCaretHost } from "./transientCaretHost";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { mergeRegister } from "@lexical/utils";
 import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
   COMMAND_PRIORITY_LOW,
   DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
+  LexicalCommand,
   LexicalEditor,
 } from "lexical";
 import { useEffect } from "react";
@@ -47,17 +51,31 @@ export function $emptyVerseNeedingHost(): SomeVerseNode | undefined {
   return undefined;
 }
 
+/** The deletes a caret in a host must not swallow: by character, by word, and to the line's end. */
+const DELETE_COMMANDS: readonly LexicalCommand<boolean>[] = [
+  DELETE_CHARACTER_COMMAND,
+  DELETE_WORD_COMMAND,
+  DELETE_LINE_COMMAND,
+];
+
 /**
  * A delete from a caret in an empty verse's host, run from the boundary the host stands for.
  *
  * Run as it is, a delete removes only the host's placeholder, whichever offset the caret is at and
- * whichever way it goes: the emptied host is removed, a new one is put back, and the verse marker
- * beyond is never reached. With structure protection on, `StructureKeyboardPlugin` arms that marker
- * before any delete runs; with it off, this is all that reaches it.
+ * whichever way it goes: the emptied host is removed, a new one is put back, and what lies beyond is
+ * never reached. With structure protection on, `StructureKeyboardPlugin` arms a verse marker before
+ * any delete runs; with it off, this is all that reaches it. From the boundary the delete does what
+ * it does there without a host: between two verses it reaches the verse marker; at the end of a
+ * paragraph, a forward delete merges the next paragraph in, dropping its marker, as Delete at the end
+ * of any paragraph does with protection off.
  *
  * Mutating: call inside `editor.update()` (a command handler is).
  */
-function $deleteFromEmptyVerseHost(editor: LexicalEditor, isBackward: boolean): boolean {
+function $deleteFromEmptyVerseHost(
+  editor: LexicalEditor,
+  command: LexicalCommand<boolean>,
+  isBackward: boolean,
+): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   const host = selection.anchor.getNode();
@@ -68,7 +86,7 @@ function $deleteFromEmptyVerseHost(editor: LexicalEditor, isBackward: boolean): 
   parent.select(boundary, boundary);
   // Every other delete handler judges this one too. Handled either way: the host is gone, so the
   // delete it stood in for has been run.
-  editor.dispatchCommand(DELETE_CHARACTER_COMMAND, isBackward);
+  editor.dispatchCommand(command, isBackward);
   return true;
 }
 
@@ -98,10 +116,14 @@ export function EmptyVerseCaretGuardPlugin(): null {
   useTransientCaretHost($emptyVerseNeedingHost);
   useEffect(
     () =>
-      editor.registerCommand(
-        DELETE_CHARACTER_COMMAND,
-        (isBackward) => $deleteFromEmptyVerseHost(editor, isBackward),
-        COMMAND_PRIORITY_LOW,
+      mergeRegister(
+        ...DELETE_COMMANDS.map((command) =>
+          editor.registerCommand(
+            command,
+            (isBackward) => $deleteFromEmptyVerseHost(editor, command, isBackward),
+            COMMAND_PRIORITY_LOW,
+          ),
+        ),
       ),
     [editor],
   );

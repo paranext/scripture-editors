@@ -19,7 +19,10 @@ import {
   $isTextNode,
   $setSelection,
   BLUR_COMMAND,
+  COMMAND_PRIORITY_CRITICAL,
   DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
   FOCUS_COMMAND,
   LexicalEditor,
   LexicalNode,
@@ -770,6 +773,80 @@ describe("EmptyVerseCaretGuardPlugin host lifecycle", () => {
         await deleteCharacter(editor, true);
 
         expect(verseNumbers(editor, para)).toEqual(["4"]);
+      },
+    );
+
+    it("merges the next paragraph in going forward from an empty verse that ends a paragraph", async () => {
+      // As Delete at the end of any paragraph does with protection off: the next paragraph's text
+      // joins this one, and its marker goes.
+      let first!: ParaNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          first = $createParaNode("p");
+          $getRoot().append(
+            first.append(
+              $createImmutableVerseNode("11"),
+              $createTextNode("eleven "),
+              $createImmutableVerseNode("12"),
+            ),
+            $createParaNode("q").append($createTextNode("next")),
+          );
+        },
+        <EmptyVerseCaretGuardPlugin />,
+      );
+      await act(async () => {
+        editor.update(() => first.select(3, 3));
+      });
+      await dispatchSelectionChange(editor);
+      expect(editor.getEditorState().read(() => first.getChildren().some($isCaretHost))).toBe(true);
+
+      await deleteCharacter(editor, false);
+
+      editor.getEditorState().read(() => {
+        expect($getRoot().getChildrenSize()).toBe(1);
+        expect(first.getTextContent()).toContain("next");
+      });
+    });
+
+    it.each([
+      ["word", false, DELETE_WORD_COMMAND],
+      ["word", true, DELETE_WORD_COMMAND],
+      ["line", false, DELETE_LINE_COMMAND],
+      ["line", true, DELETE_LINE_COMMAND],
+    ])(
+      "runs a %s delete (backward: %s) from the boundary, not the host",
+      async (_, isBackward, command) => {
+        const { editor, para } = await hostedEmptyVerse();
+        // Where each dispatch of the delete starts. jsdom can't extend a selection by word or line,
+        // so the re-dispatched delete is stopped here, before rich text runs it.
+        const starts: { inHost: boolean; anchor: [string, number, string] }[] = [];
+        const unregister = editor.registerCommand(
+          command,
+          () => {
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+            const { anchor } = selection;
+            starts.push({
+              inHost: $isCaretHost(anchor.getNode()),
+              anchor: [anchor.key, anchor.offset, anchor.type],
+            });
+            return starts.length > 1;
+          },
+          COMMAND_PRIORITY_CRITICAL,
+        );
+        try {
+          await act(async () => {
+            editor.dispatchCommand(command, isBackward);
+          });
+        } finally {
+          unregister();
+        }
+
+        expect(starts.map((start) => start.inHost)).toEqual([true, false]);
+        expect(starts[1].anchor).toEqual([para.getKey(), 1, "element"]);
+        expect(editor.getEditorState().read(() => para.getChildren().some($isCaretHost))).toBe(
+          false,
+        );
       },
     );
 
