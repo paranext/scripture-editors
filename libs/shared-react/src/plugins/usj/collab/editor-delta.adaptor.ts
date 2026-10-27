@@ -30,6 +30,7 @@ import {
   $isDisplayRunPiece,
   $isImmutableUnmatchedNode,
   $isImpliedParaNode,
+  $isLoneNbspContent,
   $isMarkerNode,
   $isMilestoneNode,
   $isNoteNode,
@@ -339,10 +340,13 @@ function $handleTextNodes(
     text.startsWith(NODE_ATTRIBUTE_PREFIX) ||
     $getState(currentNode, textTypeState) === "attribute" ||
     $hasAttributeRunAncestor(currentNode);
+  // An author's `~` as a span's whole text has the placeholder's shape; `$isLoneNbspContent`
+  // tells the two apart, as it does for the editor→USJ conversion.
   const isPlaceholderText =
     !!parentCharNode &&
     text === EMPTY_CHAR_PLACEHOLDER_TEXT &&
-    parentCharNode.getChildrenSize() === 1;
+    parentCharNode.getChildrenSize() === 1 &&
+    !$isLoneNbspContent(currentNode);
 
   const activeEmbed = $getActiveEmbedContext(currentNode, openEmbeds);
   // An embed's `contents` ops are a SELF-CONTAINED SUB-DOCUMENT: they are materialized on the
@@ -363,7 +367,10 @@ function $handleTextNodes(
   const textOp = $getTextOp(currentNode, embedScopedCharNodes);
   textOp.insert = text;
   if (activeEmbed) {
-    if (!text || text === NBSP || isNodeAttributeText) return;
+    // A lone NBSP is a separator, spacer or placeholder of the note's layout unless it is a
+    // no-break space of the note's content (a `~` as a span's whole text, or between two spans) —
+    // the same rule the editor→USJ conversion keeps content by.
+    if (!text || (text === NBSP && !$isLoneNbspContent(currentNode)) || isNodeAttributeText) return;
     activeEmbed.contentsOps?.push(textOp);
   } else {
     // Attribute display text is presentation-only regardless of WHERE it rides — inside a char
