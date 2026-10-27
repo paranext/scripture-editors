@@ -34,6 +34,7 @@ import {
   $isNoteNode,
   $isParaLikeNode,
   $isParaNode,
+  $isEmptyCharPlaceholder,
   $isPresentationNbsp,
   $isSomeChapterNode,
   $isUnknownNode,
@@ -43,7 +44,6 @@ import {
   CHAPTER_MARKER,
   charIdState,
   CharNode,
-  EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE,
   getEditableCallerText,
   isCursorPlaceholderOnly,
   ImmutableUnmatchedNode,
@@ -350,12 +350,8 @@ function $handleTextNodes(
     $getState(currentNode, textTypeState) === "attribute" ||
     $hasAttributeRunAncestor(currentNode);
   // Keyed on the placeholder TAG, not the NBSP text: an untagged lone NBSP is an authored `~`
-  // and must flow into ops. No sole-child requirement: an editable-mode empty span holds its
-  // placeholder between the opening and closing glyphs.
-  const isPlaceholderText =
-    !!parentCharNode &&
-    $isPresentationNbsp(currentNode) &&
-    $getState(currentNode, textTypeState) === EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE;
+  // and must flow into ops. The OT length mirror skips the same node with the same predicate.
+  const isPlaceholderText = $isEmptyCharPlaceholder(currentNode);
 
   const activeEmbed = $getActiveEmbedContext(currentNode, openEmbeds);
   // An embed's `contents` ops are a SELF-CONTAINED SUB-DOCUMENT: they are materialized on the

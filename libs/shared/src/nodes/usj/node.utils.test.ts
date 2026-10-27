@@ -4,6 +4,7 @@ import { $createCharNode } from "./CharNode.js";
 import {
   $createEmptyCharPlaceholder,
   $createMarkerTrailingSeparator,
+  $isEmptyCharPlaceholder,
   $isMarkerTrailingSeparator,
   $isPresentationNbsp,
   $markEmptyCharPlaceholder,
@@ -91,6 +92,30 @@ describe("presentation NBSP tags", () => {
         nodes.map((node) => $isPresentationNbsp(node)),
       );
       expect(nodes.map((node) => $isPresentationNbsp(node))).toEqual([true, true, false, false]);
+    });
+  });
+
+  it("recognizes only an untyped, tagged placeholder in a char span as the empty-char placeholder", () => {
+    inEditor(() => {
+      const placeholder = $createEmptyCharPlaceholder();
+      const typedInto = $createEmptyCharPlaceholder();
+      const spacer = $createMarkerTrailingSeparator();
+      const untagged = $createTextNode(NBSP);
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createCharNode("nd").append(placeholder),
+          $createCharNode("wj").append(typedInto),
+          $createCharNode("add").append(spacer),
+          $createCharNode("qt").append(untagged),
+        ),
+      );
+      typedInto.setTextContent(NBSP + "a");
+      const outsideChar = $createEmptyCharPlaceholder();
+      $getRoot().append($createParaNode("p").append(outsideChar));
+
+      expect(
+        [placeholder, typedInto, spacer, untagged, outsideChar].map($isEmptyCharPlaceholder),
+      ).toEqual([true, false, false, false, false]);
     });
   });
 

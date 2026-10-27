@@ -1072,6 +1072,25 @@ export function $isPresentationNbsp(node: LexicalNode | null | undefined): boole
 }
 
 /**
+ * Whether `node` is the empty-char placeholder still standing in for an empty char span: a direct
+ * child of a char span, tagged as the placeholder, whose text is still exactly one NBSP. The
+ * collab ops producer never emits it, and the OT length mirror never counts it. An untagged lone
+ * NBSP is an authored `~`, and a placeholder that was typed into is content. There is no
+ * sole-child requirement, because an editable-mode empty span holds its placeholder between the
+ * opening and closing glyphs.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $isEmptyCharPlaceholder(node: LexicalNode | null | undefined): boolean {
+  return (
+    $isPresentationNbsp(node) &&
+    $isTextNode(node) &&
+    $isCharNode(node.getParent()) &&
+    $getState(node, textTypeState) === EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE
+  );
+}
+
+/**
  * The serialized twin of {@link $isPresentationNbsp}: the same rule over a serialized node's
  * `textType` node state and `text`. Pure.
  */

@@ -17,7 +17,6 @@ import {
 import { Op } from "quill-delta";
 import {
   $isAttributeRunNode,
-  $isCharNode,
   $isCursorPlaceholderOnlyText,
   $isDescendantOf,
   $isImmutableUnmatchedNode,
@@ -26,12 +25,11 @@ import {
   $isNoteNode,
   $isParaLikeNode,
   $isParaNode,
-  $isPresentationNbsp,
   $isDisplayRunPiece,
+  $isEmptyCharPlaceholder,
   $isSomeChapterNode,
   $isSynthesizedMarkerNode,
   $isUnknownNode,
-  EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE,
   getEditableCallerText,
   ImmutableUnmatchedNode,
   MilestoneNode,
@@ -566,21 +564,6 @@ export function $hasAttributeRunAncestor(node: LexicalNode): boolean {
 }
 
 /**
- * Mirror of editor-delta.adaptor.ts's empty-char-placeholder skip, in delta-doc coordinates: a
- * char span's child tagged as the empty-char placeholder whose text is still exactly one NBSP,
- * which the ops stream never emits. Keyed on the tag, not the text: an untagged lone NBSP is an
- * authored `~` and counts. There is no sole-child requirement, because an editable-mode empty span
- * holds its placeholder between the opening and closing glyphs.
- */
-function $isEmptyCharPlaceholderText(node: TextNode): boolean {
-  return (
-    $isCharNode(node.getParent()) &&
-    $isPresentationNbsp(node) &&
-    $getState(node, textTypeState) === EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE
-  );
-}
-
-/**
  * Mirror of editor-delta.adaptor.ts's positional note-caller skip: the editable-mode caller text
  * directly after a glyph-fronted note's opening glyph, which the ops stream never emits. The
  * positional guard keeps a pathological content text that merely EQUALS the caller text
@@ -684,7 +667,7 @@ function $getNodeOTContribution(node: LexicalNode, coordinates: OTCoordinateSyst
         // untagged lone NBSP is content and counts), and the editable-mode note caller in caller
         // position.
         nodeText.startsWith(NODE_ATTRIBUTE_PREFIX) ||
-        $isEmptyCharPlaceholderText(node) ||
+        $isEmptyCharPlaceholder(node) ||
         $isEditableNoteCallerText(node))
     )
       return 0;
