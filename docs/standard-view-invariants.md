@@ -223,6 +223,10 @@ What follows from that:
   paragraph the validator rejects only on rank. A paragraph the stylesheet does not declare, or
   declares valid anywhere, starts the chapter. `EditorRef.insertMarker("c")` and
   `EditorRef.insertFirstChapter` put it in the same place (`markerEdit/firstChapter.utils.ts`).
+  A peripheral book (FRT, INT, BAK, OTH, CNC, GLO, TDX, NDX) never takes one; the Extra books
+  (XXA–XXG) do. The menu, its pick and `insertMarker("c")` also refuse inside a note or over a text
+  selection (`$canInsertChapterAtSelection`), and `insertMarker("c")` then does nothing rather than
+  insert a `\c` at the caret. `insertFirstChapter` does not act at the caret, so it skips those two checks.
 - **The line settles.** `$rebuildBook` is the fourth settle scope beside paragraphs, note content
   and chapters; like the note scope it re-tokenizes only the content and preserves the book node,
   its code and its prefix, which are never re-derived from displayed bytes. Without it, typed

@@ -132,17 +132,6 @@ describe("the chapter marker `c` where a chapter can be inserted", () => {
     expect(getEnterMenuItems(sheet, context).map((item) => item.marker)).not.toContain("c");
   });
 
-  it("is not offered inside a note or over a text selection", () => {
-    const inNote = makeContext({ ...idLine, canInsertChapter: true, noteMarker: "f" });
-    const overSelection = makeContext({
-      ...idLine,
-      canInsertChapter: true,
-      hasTextSelection: true,
-    });
-    expect(getMarkerMenuItems(sheet, inNote).map((item) => item.marker)).not.toContain("c");
-    expect(getMarkerMenuItems(sheet, overSelection).map((item) => item.marker)).not.toContain("c");
-  });
-
   it("is not offered by a stylesheet that has no `c`", () => {
     const markersWithoutC = Object.fromEntries(
       Object.entries(sheet.markers).filter(([marker]) => marker !== "c"),

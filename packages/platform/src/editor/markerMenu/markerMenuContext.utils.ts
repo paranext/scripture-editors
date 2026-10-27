@@ -17,7 +17,7 @@
  * `OnSelectionChangePlugin`.
  */
 import { MarkerMenuContext } from "./markerItemSource";
-import { $canInsertChapter } from "../markerEdit/firstChapter.utils";
+import { $canInsertChapterAtSelection } from "../markerEdit/firstChapter.utils";
 import { $getParaTagMarker } from "../markerEdit/markerValidation.utils";
 import { $findMatchingParent } from "@lexical/utils";
 import {
@@ -269,7 +269,7 @@ export function $getMarkerMenuContext(
     // (see $isPointInMarkerGlyphText) — Enter there opens the paragraph menu exactly as at the
     // end of a plain-text paragraph.
     inMarkerText: $isPointInMarkerGlyphText(focusNode, offset),
-    canInsertChapter: $canInsertChapter(chapterNum),
+    canInsertChapter: $canInsertChapterAtSelection(chapterNum),
     anchorRect: getGlyphRect(editor, $getSelectedParaMarker(selection)) ?? getAnchorRect(),
   };
 }

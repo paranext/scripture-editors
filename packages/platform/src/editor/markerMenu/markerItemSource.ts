@@ -47,9 +47,10 @@ export interface MarkerMenuContext {
   /** Caret is inside visible marker glyph text (extension lets Enter pass through). */
   inMarkerText: boolean;
   /**
-   * Set when a chapter marker can be inserted: the document is chapter 1 and has no `\c` yet, as in
-   * a book that has no chapters. Every other chapter document already carries its own `\c`, and
-   * the host's save removes a second one.
+   * Set when a chapter marker can be inserted here: the document is chapter 1 of a book that holds
+   * chapters and has no `\c` yet, as in a book that has no chapters, and the caret is not in a note
+   * or over a text selection. Every other chapter document already carries its own `\c`, and the
+   * host's save removes a second one.
    */
   canInsertChapter?: boolean;
 }
@@ -286,14 +287,13 @@ export function getMarkerMenuItems(
 }
 
 /**
- * The `\c` entry, when the caret is where a chapter can be inserted: the document has no chapter
- * yet ({@link MarkerMenuContext.canInsertChapter}), outside a note, at a caret rather than over a
- * selection (a chapter does not wrap text). Offered from both `\` sources, since an empty book's
- * only caret position, the `\id` line, is character source. Picking it inserts the chapter line
- * itself (`$applyMarkerMenuSelection`), never a paragraph retag or split.
+ * The `\c` entry, when the caret is where a chapter can be inserted
+ * ({@link MarkerMenuContext.canInsertChapter}). Offered from both `\` sources, since an empty
+ * book's only caret position, the `\id` line, is character source. Picking it inserts the chapter
+ * line itself (`$applyMarkerMenuSelection`), never a paragraph retag or split.
  */
 function chapterItem(styleInfo: StyleInfo, context: MarkerMenuContext): MarkerMenuItem | undefined {
-  if (!context.canInsertChapter || context.noteMarker || context.hasTextSelection) return undefined;
+  if (!context.canInsertChapter) return undefined;
   const entry = getMarkerStyleInfo(styleInfo, "c");
   return entry ? toItem(entry, "paragraph") : undefined;
 }

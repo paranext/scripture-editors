@@ -1325,4 +1325,131 @@ describe("a chapter inserted into a book with no chapters", () => {
     expect(inserted).toBe(false);
     expect(ref.current?.getUsj()?.content).toEqual([BOOK]);
   });
+
+  /** Asks for `\c` at the selection through the `\` menu's pick and `insertMarker`. */
+  async function askAtSelection(ref: { current: EditorRef | null }): Promise<void> {
+    const context = requireDefined(ref.current?.getMarkerMenuContext(), "no menu context");
+    // The menu does not offer `\c` here, so pick the item it would have offered.
+    const chapterItem = requireDefined(
+      getMarkerMenuItems(defaultStyleInfo, { ...context, canInsertChapter: true }).find(
+        (item) => item.marker === "c",
+      ),
+      "no `c` item",
+    );
+    await act(async () => {
+      ref.current?.applyMarkerMenuSelection(chapterItem, {
+        trigger: "backslash",
+        literalPrefixLanded: false,
+      });
+    });
+    await act(async () => {
+      ref.current?.insertMarker("c");
+    });
+  }
+
+  // The `\` menu, its pick and `insertMarker` act at the selection, so they refuse where a chapter
+  // cannot start. The host's button does not act at the selection, so it still inserts.
+  describe.each<[string, () => void, MarkerContent[]]>([
+    [
+      "inside a note",
+      () =>
+        requireDefined(
+          $getRoot()
+            .getAllTextNodes()
+            .find((node) => node.getTextContent().includes("note body")),
+          "no note text",
+        ).select(1, 1),
+      [
+        BOOK,
+        {
+          type: "para",
+          marker: "ip",
+          content: [
+            "Intro",
+            {
+              type: "note",
+              marker: "f",
+              caller: "+",
+              content: [{ type: "char", marker: "ft", content: ["note body"] }],
+            },
+          ],
+        },
+      ],
+    ],
+    [
+      "over a text selection",
+      () => {
+        const book = requireDefined($getRoot().getFirstChild() ?? undefined, "no book");
+        const text = $lastLeaf(book);
+        if (!(text instanceof TextNode)) throw new Error("expected the `\\id` line's text");
+        text.select(0, text.getTextContentSize());
+      },
+      [BOOK],
+    ],
+  ])("%s", (_, $select, content) => {
+    async function mountWithSelection() {
+      const mounted = await mountEmptyBook(GEN_1_1, requireStandardViewOptions(), {
+        ...emptyBook,
+        content,
+      });
+      await act(async () => mounted.lexical.update($select));
+      return mounted;
+    }
+
+    it("is not offered by the menu, or inserted by its pick or `insertMarker`", async () => {
+      const { ref } = await mountWithSelection();
+      const before = ref.current?.getUsj();
+
+      expect(menuItems(ref).map((item) => item.marker)).not.toContain("c");
+      await askAtSelection(ref);
+
+      expect(ref.current?.getUsj()).toEqual(before);
+    });
+
+    it("is still inserted by `insertFirstChapter`", async () => {
+      const { ref } = await mountWithSelection();
+
+      let inserted: boolean | undefined;
+      await act(async () => {
+        inserted = ref.current?.insertFirstChapter();
+      });
+
+      expect(inserted).toBe(true);
+      expect(ref.current?.getUsj()?.content).toEqual([...content, CHAPTER_1]);
+    });
+  });
+
+  // Front and back matter, introductions, glossaries, concordances and indexes never hold chapters.
+  it("is not offered or inserted in a peripheral book", async () => {
+    const frontMatter: MarkerContent = { ...BOOK, code: "FRT", content: ["Front matter"] };
+    const { ref } = await mountEmptyBook(
+      { book: "FRT", chapterNum: 1, verseNum: 1 },
+      requireStandardViewOptions(),
+      { ...emptyBook, content: [frontMatter] },
+    );
+
+    expect(menuItems(ref).map((item) => item.marker)).not.toContain("c");
+    await askAtSelection(ref);
+    let inserted: boolean | undefined;
+    await act(async () => {
+      inserted = ref.current?.insertFirstChapter();
+    });
+
+    expect(inserted).toBe(false);
+    expect(ref.current?.getUsj()?.content).toEqual([frontMatter]);
+  });
+
+  // The Extra books (XXA–XXG) hold chapters like any other book.
+  it("is offered and inserted in an Extra book", async () => {
+    const extraBook: MarkerContent = { ...BOOK, code: "XXA", content: ["Extra A"] };
+    const { ref } = await mountEmptyBook(
+      { book: "XXA", chapterNum: 1, verseNum: 1 },
+      requireStandardViewOptions(),
+      { ...emptyBook, content: [extraBook] },
+    );
+
+    await pickChapterFromMenu(ref);
+
+    expect(ref.current?.getUsj()?.content).toEqual([extraBook, CHAPTER_1]);
+  });
 });

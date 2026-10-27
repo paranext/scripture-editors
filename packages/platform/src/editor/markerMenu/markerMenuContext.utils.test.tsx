@@ -386,6 +386,19 @@ describe("$getMarkerMenuContext", () => {
       }
     });
 
+    it("is not set over a text selection, since a chapter does not wrap text", async () => {
+      const editor = await emptyBookEditor();
+      await act(async () =>
+        editor.update(() => {
+          const book = $getRoot().getFirstChild<BookNode>();
+          book?.getLastChild<TextNode>()?.select(0, 10);
+        }),
+      );
+      const context = editor.getEditorState().read(() => $getMarkerMenuContext(undefined, 1));
+      expect(context?.hasTextSelection).toBe(true);
+      expect(context?.canInsertChapter).toBe(false);
+    });
+
     it("is not set outside chapter 1, or with no chapter number to insert", async () => {
       // Front matter (chapter 0) never holds a chapter, and a later chapter with no `\c` is adding
       // chapters to a book, which this menu does not do.

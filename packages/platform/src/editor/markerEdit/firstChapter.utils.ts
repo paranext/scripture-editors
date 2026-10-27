@@ -19,8 +19,17 @@ import {
   toStackEntry,
 } from "./markerValidation.utils";
 import { MarkerContent, USJ_TYPE, USJ_VERSION } from "@eten-tech-foundation/scripture-utilities";
-import { $getRoot, $isElementNode, $parseSerializedNode, LexicalNode } from "lexical";
+import { Canon } from "@sillsdev/scripture";
 import {
+  $getRoot,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  $parseSerializedNode,
+  LexicalNode,
+} from "lexical";
+import {
+  $findFirstAncestorNoteNode,
   $isBookNode,
   $isImpliedParaNode,
   $isParaNode,
@@ -31,13 +40,49 @@ import {
 import { ViewOptions } from "shared-react";
 
 /**
- * Whether a chapter marker can be inserted in the document: it is chapter 1 and holds no chapter
- * yet, as an empty book does. Chapter 0 (front matter) never holds one.
+ * Whether the document's book holds chapters. A peripheral book (FRT, INT, BAK, OTH, CNC, GLO,
+ * TDX, NDX) never does: it is the extra material outside the Extra books (XXA–XXG), which hold
+ * chapters like any other book. The host's book and chapter control draws the same line. A document
+ * with no `\id` line names no book, so nothing rules chapters out.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $bookHoldsChapters(): boolean {
+  const code = $getRoot().getChildren().find($isBookNode)?.getCode();
+  return !code || !Canon.isExtraMaterial(code) || Canon.extraBooks().includes(code);
+}
+
+/**
+ * Whether a chapter marker can be inserted in the document: it is chapter 1 of a book that holds
+ * chapters ({@link $bookHoldsChapters}) and holds no chapter yet, as an empty book does. Chapter 0
+ * (front matter) never holds one.
  *
  * Read-only: call inside `editor.getEditorState().read(...)` or an update.
  */
 export function $canInsertChapter(chapterNum: number | undefined): boolean {
-  return chapterNum === 1 && !$getRoot().getChildren().some($isSomeChapterNode);
+  return (
+    chapterNum === 1 && $bookHoldsChapters() && !$getRoot().getChildren().some($isSomeChapterNode)
+  );
+}
+
+/**
+ * Whether a chapter marker can be inserted from where the user is: {@link $canInsertChapter}, and
+ * not over a text selection (a chapter does not wrap text) or inside a note (a chapter cannot start
+ * in one). The `\` menu and the `\c` marker action ask this, so both refuse the same places; the
+ * host's "Add chapter number" button does not act at the selection, so it asks
+ * {@link $canInsertChapter} alone.
+ *
+ * Where the chapter goes does not depend on the selection, so a selected node, such as a paragraph
+ * marker, or no selection at all, as after the editor loses focus, does not stop it.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $canInsertChapterAtSelection(chapterNum: number | undefined): boolean {
+  if (!$canInsertChapter(chapterNum)) return false;
+  const selection = $getSelection();
+  if ($isRangeSelection(selection))
+    return selection.isCollapsed() && !$findFirstAncestorNoteNode(selection.focus.getNode());
+  return !selection?.getNodes().some((node) => $findFirstAncestorNoteNode(node));
 }
 
 /**
