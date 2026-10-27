@@ -57,6 +57,7 @@ import {
   $isImmutableTableCellNode,
   $isImmutableTableRowNode,
   $isImmutableTypedTextNode,
+  $getNbspDisplaySpelling,
   $isImmutableUnmatchedNode,
   $isImpliedParaNode,
   $isMarkerNode,
@@ -656,6 +657,7 @@ function $visibleGlyphBytes(glyph: ImmutableTypedTextNode): DisplayBytes {
       owner.getTag(),
       owner.getMarker(),
       owner.getUnknownAttributes(),
+      $getNbspDisplaySpelling(),
     );
     if (parts.closing !== "" && text === parts.closing)
       return { owner, length, spans: closingGlyphSpans() };
@@ -1335,7 +1337,11 @@ function $emptySpanStandIn(
     );
   if (!isEmpty) return undefined;
   const defaultAttribute = defaultMarkerAttribute(char.getMarker());
-  const text = canonicalAttributeText(char.getUnknownAttributes() ?? {}, defaultAttribute);
+  const text = canonicalAttributeText(
+    char.getUnknownAttributes() ?? {},
+    defaultAttribute,
+    $getNbspDisplaySpelling(),
+  );
   if (!text) return undefined;
   const attributeSpans = pipeAttributeSpans(text, 1, defaultAttribute);
   const isDisplayed = $displayByteCarriers(char).some((carrier) =>

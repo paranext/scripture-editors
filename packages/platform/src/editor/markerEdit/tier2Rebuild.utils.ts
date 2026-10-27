@@ -344,6 +344,22 @@ export function contentFragmentText(
   return (hasLead ? " " : "") + body.replaceAll(NBSP, nbspSpelling);
 }
 
+/**
+ * Display text → USFM fragment text for an attribute run (`|lemma="…"`, a milestone's ` |who`, a
+ * `\va`/`\vp`/`\cat`/`\ca`/`\cp` value). Its leading NBSP, where it has one, is the file's real
+ * separator before the bytes, and flattens to " " in every view. Under Standard-view whitespace a
+ * value's own no-break space displays as its spelling (`getNbspSpelling`, applied by the adaptor and
+ * the display-run syncs), so every other NBSP is display spacing as well ({@link toFragmentText}).
+ * Elsewhere (Unformatted) the value's NBSP IS the data byte, and is spelled the way the tokenizer
+ * is told to read one — the rule {@link contentFragmentText} applies to content.
+ */
+export function attributeFragmentText(text: string, viewOptions: ViewOptions | undefined): string {
+  if (hasStandardViewWhitespace(viewOptions)) return toFragmentText(text);
+  const hasLead = text.startsWith(NBSP);
+  const body = hasLead ? text.slice(1) : text;
+  return (hasLead ? " " : "") + body.replaceAll(NBSP, getNbspSpelling(viewOptions));
+}
+
 /** Leading bytes the tokenizer's name scan runs through (anything but whitespace, a zero-width
  * space, `\`, `|` and `*`), when an NBSP is what ends them. */
 const NAME_ENDING_AT_NBSP_REGEX = /^[^\s\u200B\\|*]+(?=\u00A0)/;
@@ -1359,29 +1375,30 @@ function $appendNodesFragment(
       consumeCharLead();
       pushText(out, node, lineBreakFragmentText($isVerseLineBreak(node)));
     } else if ($isTextNode(node)) {
-      // Glyph-adjacent structural text (the para-prefix separator, attribute runs — whose own
-      // leading NBSP is the file's real separator byte before `|…`, a chapter's `\c N` glyph
+      // Glyph-adjacent structural text (the para-prefix separator, a chapter's `\c N` glyph
       // text — whose NBSP is the separator after `\c`) keeps the blanket NBSP-to-space
-      // flattening in every view; everything else is a content run, where the flattening is
-      // view-dependent (see `contentFragmentText`).
+      // flattening in every view. An attribute run's leading NBSP is the file's real separator
+      // byte before its bytes, but the value after it is data (`attributeFragmentText`), and
+      // everything else is a content run; both of those flatten by view (`contentFragmentText`).
       const parent = node.getParent();
+      const isAttributeRun = $getState(node, textTypeState) === "attribute";
       const isStructuralRun =
         $isMarkerTrailingSeparator(node) ||
-        $getState(node, textTypeState) === "attribute" ||
+        isAttributeRun ||
         ($isChapterNode(parent) && !!$chapterGlyphTextNode(parent)?.is(node));
       const structuralLead = consumeCharLead() && !isStructuralRun;
-      pushText(
-        out,
-        node,
-        isStructuralRun
-          ? toFragmentText($textNodeFragmentText(node))
-          : contentFragmentText(
-              $textNodeFragmentText(node),
-              viewOptions,
-              structuralLead,
-              $isLoneNbspContent(node),
-            ),
-      );
+      let fragmentText: string;
+      if (isAttributeRun)
+        fragmentText = attributeFragmentText($textNodeFragmentText(node), viewOptions);
+      else if (isStructuralRun) fragmentText = toFragmentText($textNodeFragmentText(node));
+      else
+        fragmentText = contentFragmentText(
+          $textNodeFragmentText(node),
+          viewOptions,
+          structuralLead,
+          $isLoneNbspContent(node),
+        );
+      pushText(out, node, fragmentText);
     } else if ($isElementNode(node)) {
       // TypedMarkNode and other transparent wrappers: an annotation is a host overlay, never
       // document content, so only its children's text reaches the tokenizer — in the SAME content

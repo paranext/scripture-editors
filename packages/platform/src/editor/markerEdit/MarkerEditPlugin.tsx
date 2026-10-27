@@ -116,6 +116,7 @@ import {
   NoteNode,
   PARA_MARKER_DEFAULT,
   ParaNode,
+  registerNbspDisplaySpelling,
   registerPendedDisplayOwners,
   textTypeState,
   VerseNode,
@@ -683,6 +684,16 @@ export function MarkerEditPlugin({
   const markerSettleSuspendedRef = useRef(false);
   // Wiring too, read by the Standard-view copy and cut claims at each copy or cut.
   const copyLimitRef = useRef(copyLimit);
+
+  // The display-run syncs redraw attribute values from node state, so they must spell a value's
+  // no-break space as the adaptor did when it built the run (its `attributeNbspSpelling`).
+  const nbspDisplaySpelling = hasStandardViewWhitespace(viewOptions)
+    ? getNbspSpelling(viewOptions)
+    : undefined;
+  useEffect(() => {
+    if (!isEnabled) return;
+    return registerNbspDisplaySpelling(editor, nbspDisplaySpelling);
+  }, [editor, isEnabled, nbspDisplaySpelling]);
 
   // Refresh the wiring on the live context every render, without tearing the engine down. The
   // registration effect below deliberately does NOT depend on these values, so an identity-only
