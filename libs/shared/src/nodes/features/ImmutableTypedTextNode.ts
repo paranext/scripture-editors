@@ -27,7 +27,7 @@ export type SerializedImmutableTypedTextNode = Spread<
 export const IMMUTABLE_TYPED_TEXT_VERSION = 1;
 
 /** The `textType` every USFM marker glyph carries, whichever way the view renders it. */
-const MARKER_TEXT_TYPE = "marker";
+export const MARKER_TEXT_TYPE = "marker";
 
 /**
  * Marks a marker glyph as one the view renders in the GUTTER — the fixed column beside the text
@@ -259,8 +259,9 @@ function isTypedTextElement(node: HTMLElement | null | undefined): boolean {
   // EVERY pasted `<span>` at priority 1 — including the verse spans that
   // `StructureKeyboardPlugin`'s paste sanitizer expects to strip down to text. A real fix also has
   // to narrow the predicate (the `data-text-type` attribute `exportDOM` emits is the natural
-  // discriminator) and decide what pasting a marker glyph should do, which is a behavior decision
-  // rather than a typo fix.
+  // discriminator). Under structure protection, a pasted marker glyph is dropped before parsing
+  // (`StructureKeyboardPlugin`'s paste sanitizer removes every `MARKER_TEXT_TYPE` element); outside
+  // it, one still arrives as plain marker text.
   return node?.tagName === "span";
 }
 

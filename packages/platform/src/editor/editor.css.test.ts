@@ -2,7 +2,7 @@
 // (jsdom rewrites `import.meta.url` to an http URL, which breaks the stylesheet read; this test
 // only reads a file, so the node environment is the correct one anyway.)
 import { readFileSync } from "node:fs";
-import { PARA_MARKER_SELECTED_CLASS_NAME } from "shared-react";
+import { PARA_MARKER_SELECTED_CLASS_NAME, PARA_MERGE_ARMED_CLASS_NAME } from "shared-react";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -33,5 +33,20 @@ describe("editor.css selected paragraph marker", () => {
   it("sizes the gutter offset by a length computed on the root, not the paragraph's em", () => {
     expect(flatCss).toContain('@property --psc-para-marker-gutter-width { syntax: "<length>";');
     expect(flatCss).not.toMatch(new RegExp(`${selected} \\{[^}]*--psc-gutter-width`));
+  });
+});
+
+/** Pins the armed-merge marker rules to the class `StructureKeyboardPlugin` (shared-react) toggles. */
+describe("editor.css armed paragraph merge", () => {
+  const flatCss = readFileSync(new URL("./editor.css", import.meta.url), "utf-8").replace(
+    /\s+/g,
+    " ",
+  );
+  const armed = PARA_MERGE_ARMED_CLASS_NAME;
+
+  it("tints the armed gutter glyph through the plugin's class", () => {
+    const glyph = `.psc-gutter-markers .para > .marker.${armed}:not(.verse):not(.chapter):first-child`;
+    expect(flatCss).toContain(`${glyph} {`);
+    expect(flatCss).toContain(`${glyph}::before {`);
   });
 });
