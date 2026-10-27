@@ -30,7 +30,10 @@ this package's publish today — `Publish Scribe Package` publishes only `packag
   reading 3.0 USX now get `version: "3.0"`.**
 - **`usjToUsxString` writes the USJ's own `version`** on the root `<usx>`, falling back to
   `USX_VERSION` only when the USJ has none. Previously it always wrote `USX_VERSION`. Together with
-  the change above, a USX → USJ → USX round trip now returns the version it started at.
+  the change above, a USX → USJ → USX round trip now returns the version it started at. The
+  converters' round trip only: the Scribe editor (`packages/scribe`) does not carry the version
+  through yet — it still warns on a USJ whose version is not `USJ_VERSION` and hands back every
+  document as `USJ_VERSION`, so a round trip through it still ends at `USJ_VERSION` (follow-up).
 - **`usxStringToUsj` keeps whitespace-only text.** A USX text node consisting only of whitespace is
   now retained as document text unless it contains a line break; previously any text that trimmed to
   the empty string was dropped (with a narrow exception for a single space between siblings). USFM

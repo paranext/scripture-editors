@@ -103,12 +103,16 @@ describe("$isCharContentEmpty", () => {
     const { editor } = createBasicTestEnvironment();
     editor.update(
       () => {
-        const span = $createCharNode("nd").append(
-          $createMarkerNode("nd"),
-          $createTextNode(`${NBSP}${NBSP}`),
-          $createMarkerNode("nd", "closing"),
+        const span = $createCharNode("nd");
+        $getRoot().append(
+          $createParaNode("p").append(
+            span.append(
+              $createMarkerNode("nd"),
+              $createTextNode(`${NBSP}${NBSP}`),
+              $createMarkerNode("nd", "closing"),
+            ),
+          ),
         );
-        $getRoot().append($createParaNode("p").append(span));
         expect($isCharContentEmpty(span)).toBe(false);
       },
       { discrete: true },
@@ -119,9 +123,12 @@ describe("$isCharContentEmpty", () => {
     const { editor } = createBasicTestEnvironment();
     editor.update(
       () => {
-        const tilde = $setState($createTextNode(NBSP), authoredNbspState, true);
-        const span = $createCharNode("nd").append(tilde);
-        $getRoot().append($createParaNode("p").append(span));
+        const span = $createCharNode("nd");
+        $getRoot().append(
+          $createParaNode("p").append(
+            span.append($setState($createTextNode(NBSP), authoredNbspState, true)),
+          ),
+        );
         expect($isCharContentEmpty(span)).toBe(false);
       },
       { discrete: true },
@@ -132,8 +139,8 @@ describe("$isCharContentEmpty", () => {
     const { editor } = createBasicTestEnvironment();
     editor.update(
       () => {
-        const span = $createCharNode("nd").append($createTextNode(NBSP));
-        $getRoot().append($createParaNode("p").append(span));
+        const span = $createCharNode("nd");
+        $getRoot().append($createParaNode("p").append(span.append($createTextNode(NBSP))));
         expect($isCharContentEmpty(span)).toBe(true);
       },
       { discrete: true },

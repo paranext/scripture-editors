@@ -68,7 +68,7 @@ function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
   // start, or a range across the break typed over) moves that paragraph's content in. Paratext 9
   // keeps the joined paragraph and drops the blank line: its formatted view joins two paragraphs
   // the way its HTML editor joins two blocks, keeping the second block.
-  const next = nextKey === undefined ? null : $getNodeByKey(nextKey);
+  const next = nextKey === undefined ? undefined : ($getNodeByKey(nextKey) ?? undefined);
   if (nextKey !== undefined && (!next || !next.isAttached())) {
     if (nextPara) {
       $syncParaMarkerGlyph(node, nextPara.marker);

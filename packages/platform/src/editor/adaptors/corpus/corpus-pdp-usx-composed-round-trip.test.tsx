@@ -95,8 +95,8 @@ function quote(text: string): string {
  *   regenerates them from each opener's `sid` (`usx-to-usj.ts`, `usj-to-usx.ts`): ParatextData
  *   places a verse's closer at the end of its last paragraph and the regenerated one lands at the
  *   start of the next verse's paragraph, and a verse closer whose opener's `sid` is empty (every
- *   chapter after the first) is not regenerated at all. A closer carries no data the opener lacks, so closers are
- *   left out of the comparison; their openers, `sid` included, are still compared.
+ *   chapter after the first) is not regenerated at all. A closer carries no data the opener lacks,
+ *   so closers are left out of the comparison; their openers, `sid` included, are still compared.
  * - **`vid` on `<para>` and `status` on any element.** `usxStringToUsj` drops both as derived
  *   metadata (see its comments). `vid` is compared everywhere else it could appear.
  */

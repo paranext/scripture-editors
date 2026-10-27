@@ -2071,7 +2071,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
           {/* Enter has no meaning inside a note outside Standard view (its `\fp` break is
-              MarkerEditPlugin's); left alone it splits the note's paragraph and strands the caret. */}
+              MarkerEditPlugin's); left alone it splits the note's paragraph and strands the caret.
+              Out of alphabetical order on purpose: HiddenContentDeleteGuardPlugin and
+              NoteShellCaretGuardPlugin also take INSERT_PARAGRAPH and INSERT_LINE_BREAK at
+              CRITICAL, and handlers of one priority run in the order they were registered, so
+              mounting this first makes Enter in a note do nothing before either acts on it (the
+              hidden-content guard would otherwise ask the host about a removal that never
+              happens). */}
           <NoteEnterGuardPlugin isEnabled={viewOptions?.markerMode !== "editable"} />
           <HiddenContentDeleteGuardPlugin
             isEnabled={viewOptions?.markerMode !== "editable"}

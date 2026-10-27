@@ -182,9 +182,10 @@ export interface ViewOptions {
    * no-break space; going out, an NBSP the view shows for a space in a run is that space. Text read
    * from the editor's DOM still holds the stand-in; `toUsfmNbspSpelling` turns it back. No project
    * text can hold U+001A — Paratext's reader turns U+0001-U+0008 and U+000E-U+001F into spaces — and
-   * Standard view does the same to every C0 control character other than tab, line feed and
-   * carriage return that comes in (a load, a paste, a drop, typing, applied ops), in either setting,
-   * so the stand-in is never mistaken for one.
+   * Standard view turns every C0 control character other than tab, line feed and carriage return
+   * that comes in (a load, a paste, a drop, typing, applied ops) into a space, in either setting,
+   * so the stand-in is never mistaken for one. That includes U+000B and U+000C, which Paratext's
+   * reader keeps; they become spaces on purpose, since JavaScript reads them as whitespace.
    *
    * Views that hide markers (formatted, paragraph-structure, block verse) show the stored
    * characters as they are either way, so they behave the same with this on or off.
@@ -192,6 +193,11 @@ export interface ViewOptions {
    * Passing the wrong value for the project corrupts text saved from Standard view: off for a
    * project that has it on turns every `~` into U+00A0; on for a project that has it off saves a
    * typed `~` as `~`, which that project reads back as a no-break space.
+   *
+   * Pass the right value before the first document loads (`defaultUsj` or the first `setUsj`). A
+   * later change reloads the view from the editor's own export of the document, not the host's,
+   * and a distinction the wrong value has already lost (a stored `~` and a stored no-break space
+   * read as the same character) cannot be recovered from it.
    */
   allowInvisibleCharacters?: boolean;
 }

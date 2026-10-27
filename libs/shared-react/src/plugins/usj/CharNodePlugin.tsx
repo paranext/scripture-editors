@@ -336,6 +336,10 @@ const placeholderDroppedThisUpdate = new WeakSet<TextNode>();
  * that span's leading NBSP is the author's, or, in the editable views, the opener's separator. The
  * editable views are otherwise left alone: there the placeholder is the opener's separator, which
  * the editor→USJ conversion strips.
+ *
+ * Mutating: a `TextNode` transform, registered here and also called from `NoteNodePlugin`'s text
+ * transform; call it only inside `editor.update()`, since it compares the node with the last
+ * committed state to tell what the update changed.
  * @param node - TextNode that might hold a placeholder.
  */
 export function $dropFilledCharPlaceholder(node: TextNode): void {

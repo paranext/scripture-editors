@@ -30,7 +30,11 @@
  * nobody edits in.
  */
 
-import { EDITING_VIEW_CONFIGS, mountInView } from "../../editorViews.test-helpers";
+import {
+  EDITING_VIEW_CONFIGS,
+  knownFailureRunner,
+  mountInView,
+} from "../../editorViews.test-helpers";
 import { corpusFixtures } from "./corpus-data";
 import {
   expectEveryTextBearingNodeRendered,
@@ -49,29 +53,31 @@ import { usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
  * cannot leave a stale entry behind. Do NOT add an entry for a NEW failure without a named
  * mechanism and a named owner.
  */
-const KNOWN_FAILURES: { [fixtureName: string]: string } = {};
+const KNOWN_FAILURES: { [testKey: string]: string } = {};
+
+const register = knownFailureRunner(
+  KNOWN_FAILURES,
+  corpusFixtures.flatMap((fixture) =>
+    EDITING_VIEW_CONFIGS.map(({ label }) => `${fixture.name} [${label}]`),
+  ),
+);
 
 describe("corpus transform fixed point (USJ -> editor state -> dirty -> USJ)", () => {
   for (const fixture of corpusFixtures) {
     for (const { label, viewOptions } of EDITING_VIEW_CONFIGS) {
       const testKey = `${fixture.name} [${label}]`;
       const skip = fixture.skipModes?.find((entry) => entry.startsWith(`${label}:`));
-      const known = KNOWN_FAILURES[testKey];
-      let run = known ? it.fails : it;
-      if (skip) run = it.skip;
-      run(
-        `${testKey}${skip ? ` (${skip})` : ""}${known ? ` (known failure: ${known})` : ""}`,
-        async () => {
-          const usj = usxStringToUsj(fixture.usx);
-          const { lexical } = await mountInView(usj, viewOptions);
-          expectEveryTextBearingNodeRendered(lexical, `${testKey} after load`);
+      const run = skip ? it.skip : register(testKey);
+      run(`${testKey}${skip ? ` (${skip})` : ""}`, async () => {
+        const usj = usxStringToUsj(fixture.usx);
+        const { lexical } = await mountInView(usj, viewOptions);
+        expectEveryTextBearingNodeRendered(lexical, `${testKey} after load`);
 
-          const afterTransforms = await runEveryTransform(lexical, viewOptions, usj.version);
+        const afterTransforms = await runEveryTransform(lexical, viewOptions, usj.version);
 
-          expectEveryTextBearingNodeRendered(lexical, `${testKey} after the dirty pass`);
-          expect(afterTransforms).toEqual(usj);
-        },
-      );
+        expectEveryTextBearingNodeRendered(lexical, `${testKey} after the dirty pass`);
+        expect(afterTransforms).toEqual(usj);
+      });
     }
   }
 });

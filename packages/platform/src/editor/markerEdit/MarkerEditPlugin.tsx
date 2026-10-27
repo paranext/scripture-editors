@@ -446,16 +446,16 @@ function registerPasteNormalization(
         if (!payload.text.includes("\n")) return false;
         // Standard view: every pasted NBSP is normalized POSITIONALLY here, via the same
         // `normalizePastedNbsp` the Standard-view external-paste handler uses
-        // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`,
-        // a note's inter-child spacer) settles to a space exactly as it would outside a note, and
-        // only genuine data survives, as the display spelling (`~` or `NBSP_STAND_IN`). Inserted raw
-        // an NBSP is indistinguishable from a display-NBSP (a plain space in a run), so
+        // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`, a
+        // note's inter-child spacer) settles to a space exactly as it would outside a note, and
+        // only genuine data survives, as the display spelling (`~` or `NBSP_STAND_IN`). Inserted
+        // raw an NBSP is indistinguishable from a display-NBSP (a plain space in a run), so
         // serialization would corrupt it into a plain space if left unmapped. A pasted literal `~`
-        // is already the display form, or an ordinary character, and passes through unchanged. `\c`/`\id` bytes are dropped first, via the
-        // same `stripPastedChapterAndBookId` the external handler uses — note content
-        // re-tokenizes literal text through the SAME Tier 2 tokenizer a paragraph does, so a
-        // pasted `\c`/`\id` landing here is just as reachable (and just as save-poisoning) as one
-        // landing in body text.
+        // is already the display form, or an ordinary character, and passes through unchanged.
+        // `\c`/`\id` bytes are dropped first, via the same `stripPastedChapterAndBookId` the
+        // external handler uses — note content re-tokenizes literal text through the SAME Tier 2
+        // tokenizer a paragraph does, so a pasted `\c`/`\id` landing here is just as reachable (and
+        // just as save-poisoning) as one landing in body text.
         //
         // Both run before the line-break test BELOW (the raw gate above only rules out text that
         // never had a break), because the claim below removes the selected range before it inserts

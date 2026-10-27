@@ -134,8 +134,10 @@ refused. The public surface grew substantially; nothing was removed.
 
 - **Standard view turns incoming control characters into spaces.** Every C0 control character but
   tab, line feed and carriage return in a loaded document (text and attribute values), a paste, a
-  drop, typed text or applied delta ops becomes a space, which is what Paratext's reader makes of
-  it, so none can be saved as the stand-in for a no-break space.
+  drop, typed text or applied delta ops becomes a space, so none can be saved as the stand-in for a
+  no-break space. Paratext's reader makes the same of all of them but vertical tab (U+000B) and
+  form feed (U+000C), which become spaces here on purpose, since JavaScript reads them as
+  whitespace.
 - **A drop into Standard view goes in as a paste of the same data does** (`\c`/`\id` stripped,
   no-break spaces resolved positionally, lines replayed), instead of through Lexical's own
   insertion, and a drag out of Standard view carries the same USFM text and html a copy writes.
@@ -380,3 +382,34 @@ refused. The public surface grew substantially; nothing was removed.
   loses it. Text continuing a closed run lands inside the run, ahead of its closing glyph.
 - The note-shell and trailing-note caret guards release their cursor-change tag after a
   correction, so the keystroke right after it reaches `onUsjChange`.
+- Enter inside an expanded note does nothing in a view whose `markerMode` is not `"editable"`. It
+  split the paragraph holding the note and left the caret outside it, so what was typed next was
+  lost on save.
+- Standard view saves no space typed right after a char span's opener (`\nd  things\nd*` saves as
+  `\nd things\nd*`), and a span holding only spaces saves empty, as Paratext 9 saves both. The
+  screen keeps the typed spaces; a no-break space (`~`) after the opener stays.
+- A nameless character marker (`\f + \ft \ b\f*`, which ParatextData reads as `<char style="">`)
+  keeps `marker: ""` in `getUsj()` instead of losing its marker, so the USX written from it is the
+  USX loaded.
+- In the views without a span separator (those that hide markers, and the read-only Markers view),
+  an author's no-break space left alone in a char span, after the rest of `\nd ~x\nd*` is deleted
+  or typed into an empty span, is saved instead of being dropped as the empty span's placeholder,
+  and a note's `\ft ~x` keeps its `~`.
+- In the views that hide markers, typing over or deleting a range that crosses a char span's edge
+  or a collapsed note takes only the selected text: the text after the span stays outside it, and
+  a range starting just before a collapsed note no longer loses the typed text and the rest of the
+  range into the note.
+- In the views that hide markers, joining a paragraph into an empty `\b` before it (Backspace at
+  the paragraph's start, Delete in the blank line, or typing over a range across the break) keeps
+  the paragraph, with its own marker, and drops the blank line, as Paratext 9 does. It kept `\b`
+  on the joined text, and in the formatted view could delete that text.
+- Undo takes back an Enter typed in front of a char span or a note in the formatted view, instead
+  of folding it into the step before.
+- Delete just before a collapsed note in the views that hide markers removes the note and keeps
+  the text around it, instead of throwing and discarding the edit.
+- Two alike char spans (same marker and attributes) that a deletion leaves side by side stay two
+  spans in the views that hide markers, as in Standard view and Paratext 9. Deleting the space
+  between `\w one|x\w*` and `\w two|x\w*`, or joining the paragraphs they end and start, made them
+  one word.
+- Plain text pasted inside a char span or a note stays inside it. Lexical's own paste split the
+  span around the text, or put the text after the note.

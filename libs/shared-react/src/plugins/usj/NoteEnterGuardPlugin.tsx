@@ -24,7 +24,7 @@ function $isInExpandedNote(node: LexicalNode): boolean {
  *
  * Read-only: call inside `editor.getEditorState().read()` or a command listener.
  */
-export function $isSelectionInExpandedNote(): boolean {
+function $isSelectionInExpandedNote(): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
   return (

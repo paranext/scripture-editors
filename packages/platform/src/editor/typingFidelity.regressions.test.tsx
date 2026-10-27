@@ -14,7 +14,15 @@ import { EditorRef } from "./editor.model";
 import { installSelectionModify, press } from "./typingFidelityOracle.test-helpers";
 import { ContentJsonPath, MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, $isElementNode, UNDO_COMMAND } from "lexical";
+import {
+  $createRangeSelection,
+  $getRoot,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  $setSelection,
+  UNDO_COMMAND,
+} from "lexical";
 import { NBSP } from "shared";
 import { StructureProtectionMode } from "shared-react";
 import { describe, expect, it } from "vitest";
@@ -315,6 +323,21 @@ const NESTED_SPAN: Usj = oneParaUsj([
 /** The path of the text "two" in {@link NESTED_SPAN}. */
 const NESTED_TWO = "$.content[2].content[1].content[1].content[0]";
 
+/** Swap the selection's anchor and focus, as a selection dragged the other way has them. */
+async function reverseSelection(mounted: MountedEditor): Promise<void> {
+  await act(async () => {
+    mounted.lexical.update(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || selection.isCollapsed())
+        throw new Error("no range to reverse");
+      const backward = $createRangeSelection();
+      backward.anchor.set(selection.focus.key, selection.focus.offset, selection.focus.type);
+      backward.focus.set(selection.anchor.key, selection.anchor.offset, selection.anchor.type);
+      $setSelection(backward);
+    });
+  });
+}
+
 forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
   describe("a range from inside a nested span to outside it", () => {
     it("typed over within the enclosing span takes only the selected text", async () => {
@@ -368,6 +391,107 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
         ],
       });
     });
+
+    it("typed over when selected backward takes the same text as forward", async () => {
+      const mounted = await mountInView(NESTED_SPAN, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: NESTED_TWO, offset: 2 },
+          end: { jsonPath: "$.content[2].content[1].content[2]", offset: 1 },
+        });
+      });
+      await reverseSelection(mounted);
+
+      expect(await press(mounted, "x", "x")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: [
+          "a ",
+          {
+            type: "char",
+            marker: "nd",
+            content: ["one ", { type: "char", marker: "wj", content: ["twx"] }, "three"],
+          },
+          " b",
+        ],
+      });
+    });
+
+    it("deleted from the start of the nested span removes the span it empties", async () => {
+      const mounted = await mountInView(NESTED_SPAN, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: NESTED_TWO, offset: 0 },
+          end: { jsonPath: "$.content[2].content[1].content[2]", offset: 1 },
+        });
+      });
+
+      expect(await press(mounted, "Delete")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: ["a ", { type: "char", marker: "nd", content: ["one three"] }, " b"],
+      });
+    });
+
+    it("typed over to the end of the nested span removes the span it empties", async () => {
+      const mounted = await mountInView(NESTED_SPAN, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[1].content[0]", offset: 2 },
+          end: { jsonPath: NESTED_TWO, offset: 3 },
+        });
+      });
+
+      expect(await press(mounted, "x", "x")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: ["a ", { type: "char", marker: "nd", content: ["onx three"] }, " b"],
+      });
+    });
+
+    it("typed over with both edge texts wholly selected keeps the text after the span outside it", async () => {
+      const mounted = await mountInView(NESTED_SPAN, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[1].content[0]", offset: 0 },
+          end: { jsonPath: NESTED_TWO, offset: 3 },
+        });
+      });
+
+      expect(await press(mounted, "x", "x")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: ["a ", { type: "char", marker: "nd", content: ["x three"] }, " b"],
+      });
+    });
+
+    it("deleted with both edge texts wholly selected keeps the text after the span outside it", async () => {
+      // No edge text is left to hold the caret, so Lexical's own deletion makes this edit.
+      const mounted = await mountInView(NESTED_SPAN, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[1].content[0]", offset: 0 },
+          end: { jsonPath: NESTED_TWO, offset: 3 },
+        });
+      });
+
+      expect(await press(mounted, "Backspace")).toEqual([]);
+      expect(await press(mounted, "x", "x")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: ["a ", { type: "char", marker: "nd", content: ["x three"] }, " b"],
+      });
+    });
   });
 });
 
@@ -398,6 +522,27 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
         content: ["axb"],
       });
     });
+
+    it.each(["Backspace", "Delete"])(
+      "deleted with %s keeps the text after the range",
+      async (key) => {
+        const mounted = await mountInView(oneParaUsj(["a", NOTE, " b"]), view);
+        await act(async () => {
+          mounted.ref.current?.setSelection({
+            start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+            end: { jsonPath: "$.content[2].content[2]", offset: 1 },
+          });
+        });
+
+        expect(await press(mounted, key)).toEqual([]);
+
+        expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+          type: "para",
+          marker: "p",
+          content: ["ab"],
+        });
+      },
+    );
   });
 });
 

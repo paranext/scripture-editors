@@ -44,11 +44,11 @@ import { StructureProtectionMode } from "./structure-protection.model";
 
 /**
  * Governs structural keystrokes (Backspace/Delete/Enter/typing) at verse-, chapter- and
- * paragraph-marker boundaries. In `"protected"` mode, blocks them and sanitizes paste/drop payloads so structural
- * markers (paragraph breaks, verse markers, chapter markers) cannot be inserted — text, inline
- * character formatting, and notes are kept. In `"guarded"` mode, makes deletion a deliberate
- * two-step gesture instead: first press selects the marker/section, second press deletes it.
- * In `"off"` mode, no handlers are registered and editing is fully native.
+ * paragraph-marker boundaries. In `"protected"` mode, blocks them and sanitizes paste/drop payloads
+ * so structural markers (paragraph breaks, verse markers, chapter markers) cannot be inserted —
+ * text, inline character formatting, and notes are kept. In `"guarded"` mode, makes deletion a
+ * deliberate two-step gesture instead: first press selects the marker/section, second press deletes
+ * it. In `"off"` mode, no handlers are registered and editing is fully native.
  * Registers a KEY_DOWN handler at COMMAND_PRIORITY_HIGH, mirroring ArrowNavigationPlugin, and
  * the CUT refusal at COMMAND_PRIORITY_CRITICAL so it outranks the handlers that perform a cut.
  *

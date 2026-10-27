@@ -651,9 +651,9 @@ function rowsFor(fixture: string, usj: Usj): { ranges: RangeRow[]; usfm: UsfmRow
 }
 
 /**
- * Why a row is known to fail, or `undefined`. Each reason names a finding in the PT-4197
- * data-fidelity catalog, led by the ticket that will fix it where one is filed; a row that starts
- * passing fails, so a fix deletes its rule.
+ * Why a row is known to fail, or `undefined`. Each reason names a finding in paranext-core's
+ * Scripture-Data-Fidelity-Catalog, led by the ticket that will fix it where one is filed; a row
+ * that starts passing fails, so a fix deletes its rule.
  */
 function knownFailure(fixture: string, usj: Usj, row: RangeRow | UsfmRow): string | undefined {
   if ("range" in row) {
@@ -678,8 +678,8 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | UsfmRow): strin
     )
       return "PT-4921: text/html carries no char attributes (`closed`) and brings a note's display spacers back as text";
   }
-  // TODO(PT-4388): read a bare `\` as a nameless marker once ParatextData 9.6 is in (parked on
-  // branch `pt-4197-nameless-96`).
+  // TODO(PT-4388): read a bare `\` as a nameless marker once ParatextData 9.6 is in; the
+  // tokenizer change waits on that upgrade.
   if (row.viewName === "standard" && fixture === "testUSFM-2SA-5.usj") {
     if (
       "text" in row ||

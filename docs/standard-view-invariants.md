@@ -429,12 +429,14 @@ The stand-in is internal and must never leave the editor, and nothing from outsi
   a copy writes), annotation callbacks' text, and note-caller previews. Text a host reads from the
   DOM still holds it; `toUsfmNbspSpelling` turns it back.
 - **In:** every C0 control character but tab, line feed and carriage return becomes a space before
-  anything else reads the text (`controlCharactersToSpaces`) — a load (`usjWithoutControlCharacters`,
-  attribute values included), a paste or a drop (`getDataTransferPayload`), typing
-  (`registerTypedNbspSpelling`), applied ops (`opsFromHost`) — in either setting, as ParatextData
-  would read it back. Then a U+00A0 that is data becomes the stand-in: typed, pasted or dropped
-  (`normalizePastedNbsp`'s positional rules), or in applied ops when it is not a marker's separator
-  or a lone spacer.
+  anything else reads the text (`controlCharactersToSpaces`) — a load
+  (`usjWithoutControlCharacters`, attribute values included), a paste or a drop
+  (`getDataTransferPayload`), typing (`registerTypedNbspSpelling`), applied ops (`opsFromHost`) — in
+  either setting. U+0001–U+0008 and U+000E–U+001F become spaces as ParatextData would read them
+  back; ParatextData keeps U+000B and U+000C, which become spaces on purpose, since JavaScript's
+  `\s` reads them as whitespace. Then a U+00A0 that is data becomes the stand-in: typed, pasted or
+  dropped (`normalizePastedNbsp`'s positional rules), or in applied ops when it is not a marker's
+  separator or a lone spacer.
 - **The tokenizer** keeps the spelling as a character: `regularizeSpaces` would otherwise turn a
   control character into a space before `UsfmFragmentOptions.nbspSpelling` maps it to U+00A0.
 

@@ -52,11 +52,13 @@ function isIncomingControlCharacter(code: number): boolean {
 
 /**
  * Turns each C0 control character other than tab, line feed and carriage return (U+0001-U+0008,
- * U+000B, U+000C, U+000E-U+001F) into a space — what Paratext's reader (`ScrText.GetText`) turns
- * them into, so a project can never hold one. Run on all text that comes into Standard view (a
- * load, a paste, a drop, typing, applied delta ops) before anything else, because U+001A is the
- * editor's own stand-in for a stored no-break space (`NBSP_STAND_IN`): one that came in from
- * outside would otherwise be saved as a no-break space.
+ * U+000B, U+000C, U+000E-U+001F) into a space. Paratext's reader (`ScrText.GetText`) turns
+ * U+0001-U+0008 and U+000E-U+001F into spaces, so a project can never hold one of those; it keeps
+ * U+000B and U+000C, which become spaces here on purpose, since JavaScript reads them as
+ * whitespace (`\s`). Run on all text that comes into Standard view (a load, a paste, a drop,
+ * typing, applied delta ops) before anything else, because U+001A is the editor's own stand-in for
+ * a stored no-break space (`NBSP_STAND_IN`): one that came in from outside would otherwise be saved
+ * as a no-break space.
  *
  * @param text - Incoming text.
  * @returns The text with those characters as spaces; `text` itself when it has none.

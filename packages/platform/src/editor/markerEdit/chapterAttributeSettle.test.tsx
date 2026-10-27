@@ -744,13 +744,14 @@ describe("first-class \\ca char span adjacent to its chapter", () => {
 /**
  * The other direction of the `\cp` unfold, and the piece the attribute-markers track left open.
  *
- * Typing markup into a chapter's `\cp` value correctly materializes a REAL `\cp` ParaNode below
- * the chapter — the USFM-spec shape for a marker-bearing `cp` (the saved bytes are the ones
+ * Typing markup into a chapter's `\cp` value correctly materializes a REAL `\cp` ParaNode below the
+ * chapter — the USFM-spec shape for a marker-bearing `cp` (the saved bytes are the ones
  * ParatextData writes, though ParatextData reads them back with the text before the marker folded
- * into `pubnumber`), and the two tests above pin that. Deleting the markup again has to put it back, and could not: a `\cp` paragraph is a
- * root-level ParaNode, so its own scope is a PARAGRAPH, and re-tokenizing `\cp 1` alone can only
- * ever produce a `\cp` paragraph. Only a re-tokenize that sees `\c 1` and `\cp 1` TOGETHER can
- * fold, so the paragraph stayed on screen until a reload while the file had already converged.
+ * into `pubnumber`), and the two tests above pin that. Deleting the markup again has to put it
+ * back, and could not: a `\cp` paragraph is a root-level ParaNode, so its own scope is a PARAGRAPH,
+ * and re-tokenizing `\cp 1` alone can only ever produce a `\cp` paragraph. Only a re-tokenize that
+ * sees `\c 1` and `\cp 1` TOGETHER can fold, so the paragraph stayed on screen until a reload while
+ * the file had already converged.
  *
  * The chapter settle REGION is what carries the fix: it already spans the chapter plus any
  * adjacent first-class `\ca`/`\cp` chars, and a directly-following `\cp` PARAGRAPH joins it on

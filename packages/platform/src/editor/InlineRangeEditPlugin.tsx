@@ -1,5 +1,9 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getNearestBlockElementAncestorOrThrow, mergeRegister } from "@lexical/utils";
+import {
+  $findMatchingParent,
+  $getNearestBlockElementAncestorOrThrow,
+  mergeRegister,
+} from "@lexical/utils";
 import {
   $getEditor,
   $getSelection,
@@ -64,9 +68,12 @@ interface Edge {
 
 /** The collapsed note `node` is shown in, if any. */
 function $collapsedNoteOf(node: LexicalNode): NoteNode | undefined {
-  for (let at: LexicalNode | null = node; at; at = at.getParent())
-    if ($isNoteNode(at) && at.getIsCollapsed()) return at;
-  return undefined;
+  return (
+    $findMatchingParent(
+      node,
+      (at): at is NoteNode => $isNoteNode(at) && at.getIsCollapsed() === true,
+    ) ?? undefined
+  );
 }
 
 /**
@@ -106,9 +113,6 @@ function $inlineRangeEdges(selection: RangeSelection): [start: Edge, end: Edge] 
   if (!start.node.isBefore(end.node)) return undefined;
   const block = $getNearestBlockElementAncestorOrThrow(start.node);
   if (!block.is($getNearestBlockElementAncestorOrThrow(end.node))) return undefined;
-  // With both edge texts wholly selected there is no text left to hold the caret; Lexical's own
-  // path is left to place it.
-  if (start.offset === 0 && end.offset === end.node.getTextContentSize()) return undefined;
   return [start, end];
 }
 
@@ -129,6 +133,10 @@ function $replaceInlineRange(text: string): boolean {
   const edges = $inlineRangeEdges(selection);
   if (!edges) return false;
   const [start, end] = edges;
+  // A deletion of both edge texts whole leaves no text to hold the caret, so Lexical's own path,
+  // which deletes such a range correctly, places it. Typed text holds it in the start text.
+  if (text === "" && start.offset === 0 && end.offset === end.node.getTextContentSize())
+    return false;
   const emptied = new Set<ElementNode | null>([start.node.getParent(), end.node.getParent()]);
   // The leaves wholly inside the range; an element whose content all is goes with its content.
   const inside = start.node

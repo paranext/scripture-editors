@@ -217,12 +217,16 @@ describe("ClipboardPlugin — text pasted inside a char span or note stays there
     const { editor } = await baseTestEnvironment(
       () => {
         spanText = $createTextNode("Lord");
-        const span = $createCharNode("nd").append(spanText);
-        const para = $createParaNode("p").append($createTextNode("Before "));
-        if (inNote) para.append($createNoteNode("f", "+").append(span));
-        else para.append(span);
-        para.append($createTextNode(" after"));
-        $getRoot().append(para);
+        const span = $createCharNode("nd");
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createTextNode("Before "),
+            inNote
+              ? $createNoteNode("f", "+").append(span.append(spanText))
+              : span.append(spanText),
+            $createTextNode(" after"),
+          ),
+        );
       },
       <ClipboardPlugin />,
     );

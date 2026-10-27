@@ -183,8 +183,8 @@ const CASES: { label: string; usfm: string; usj: string; known?: KnownDivergence
     label: "testUSFM 2SA 5",
     usfm: "testUSFM-2SA-5.usfm",
     usj: "testUSFM-2SA-5.usj",
-    // TODO(PT-4388): read a bare `\` as a nameless marker once ParatextData 9.6 is in (parked on
-    // branch `pt-4197-nameless-96`), then remove this pin.
+    // TODO(PT-4388): read a bare `\` as a nameless marker once ParatextData 9.6 is in (the
+    // tokenizer change waits on that upgrade), then remove this pin.
     known: {
       reason: "bare `\\` read as text, not a nameless marker",
       entries: [

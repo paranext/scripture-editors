@@ -311,15 +311,16 @@ export function tokenizeFragment(
  * - Unformatted (editable without the standard whitespace mapping): a content NBSP IS the data
  *   byte. It is spelled the way the tokenizer is told to read a no-break space (`getNbspSpelling`,
  *   passed to it as `nbspSpelling`; `~` is PT9 UsfmParser's spelling) — so a settle that rewrites
- *   the paragraph round-trips it instead of corrupting it to a plain space. Two structural shapes still flatten to " " even here: a node
- *   that is EXACTLY one NBSP in one of the engine's display slots (a spacer, separator or
- *   empty-char placeholder — `isNbspContent`, from `$isLoneNbspContent`, the rule serialization
- *   keeps content by), and the one structural leading NBSP fused onto a char span's first
- *   content child (`structuralLead` — the twin of the conversion's positional separator strip,
- *   `precedesOpeningCharGlyph` in editor-usj.adaptor.ts). When that first content child has LOST
- *   its separator, its leading bytes run on as the opener's marker name, and the name ends at the
- *   first space the screen shows — an NBSP there included, which flattens to " " so the name never
- *   swallows it (`\wLord⍽God` reads as `\wLord` followed by `God`, as `\wLord God` does).
+ *   the paragraph round-trips it instead of corrupting it to a plain space. Two structural shapes
+ *   still flatten to " " even here: a node that is EXACTLY one NBSP in one of the engine's display
+ *   slots (a spacer, separator or empty-char placeholder — `isNbspContent`, from
+ *   `$isLoneNbspContent`, the rule serialization keeps content by), and the one structural leading
+ *   NBSP fused onto a char span's first content child (`structuralLead` — the twin of the
+ *   conversion's positional separator strip, `precedesOpeningCharGlyph` in editor-usj.adaptor.ts).
+ *   When that first content child has LOST its separator, its leading bytes run on as the opener's
+ *   marker name, and the name ends at the first space the screen shows — an NBSP there included,
+ *   which flattens to " " so the name never swallows it (`\wLord⍽God` reads as `\wLord` followed by
+ *   `God`, as `\wLord God` does).
  *
  * ONE definition for every fragment producer: the mutating rebuilds and the read-only settle both
  * build their fragments through `$appendNodesFragment` below, so the mirror can never flatten a
