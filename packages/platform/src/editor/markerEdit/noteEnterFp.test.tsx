@@ -45,6 +45,7 @@ import {
   $isMarkerNode,
   $isNoteNode,
   $isParaNode,
+  $isPresentationNbsp,
   getEditableCallerText,
   MarkerNode,
   NBSP,
@@ -223,6 +224,7 @@ describe("Enter inside note content", () => {
         .find((n): n is TextNode => $isTextNode(n) && !$isMarkerNode(n));
       expect(selection.anchor.getNode().getKey()).toBe(placeholder?.getKey());
       expect(selection.anchor.offset).toBe(1);
+      expect($isPresentationNbsp(placeholder)).toBe(true);
     });
   });
 

@@ -6,7 +6,6 @@
  */
 
 import {
-  $createTextNode,
   $getNearestNodeFromDOMNode,
   $getSelection,
   $isElementNode,
@@ -20,12 +19,12 @@ import {
 import { LINE_LEADING_MARKER_REGEX } from "./markerName.pattern";
 import {
   $createCharNode,
+  $createEmptyCharPlaceholder,
   $createMarkerNode,
   $findFirstAncestorNoteNode,
   $isMarkerNode,
   $liftOutOfCharStack,
   $withCharContentNbspPrefix,
-  EMPTY_CHAR_PLACEHOLDER_TEXT,
   MarkerLookup,
   MarkerType,
   NBSP,
@@ -309,8 +308,7 @@ function $startFpAtCaret(): boolean {
   }
   // Nothing after the caret anywhere: the break opens an empty `\fp`, which needs placeholder
   // content — a CharNode with no content is not selectable and would be reaped as empty.
-  if (fp.getChildren().every($isMarkerNode))
-    fp.append($createTextNode(EMPTY_CHAR_PLACEHOLDER_TEXT));
+  if (fp.getChildren().every($isMarkerNode)) fp.append($createEmptyCharPlaceholder());
 
   $selectBreakPoint(fp);
   return true;

@@ -28,6 +28,7 @@ import {
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
+  $isPresentationNbsp,
   CharNode,
   getEditableCallerText,
   getVisibleOpenMarkerText,
@@ -94,6 +95,17 @@ describe("note insertion in standard view (MarkerEditPlugin active)", () => {
       expectEditableChar(charNodes[1], "ft");
       // The reference text survived (note is not empty).
       expect(note.getTextContent()).toContain("1:1");
+    });
+  });
+
+  it("tags the empty \\ft placeholder of an inserted footnote as presentation-only", async () => {
+    const editor = await insertNoteAfterSeedText("f");
+
+    editor.getEditorState().read(() => {
+      const note = findOnlyNote($getRoot());
+      const ft = note.getChildren().filter($isCharNode)[1];
+      const placeholder = ft.getChildren().find((n) => $isTextNode(n) && !$isMarkerNode(n));
+      expect($isPresentationNbsp(placeholder)).toBe(true);
     });
   });
 

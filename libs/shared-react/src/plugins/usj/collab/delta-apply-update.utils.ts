@@ -48,6 +48,7 @@ import {
   $createBookNode,
   $createChapterNode,
   $createCharNode,
+  $createEmptyCharPlaceholder,
   $createImmutableChapterNode,
   $createImmutableTypedTextNode,
   $createImmutableUnmatchedNode,
@@ -77,6 +78,7 @@ import {
   CharNode,
   closingMarkerText,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
+  $markEmptyCharPlaceholder,
   getUnknownAttributes,
   getVisibleOpenMarkerText,
   ImpliedParaNode,
@@ -925,9 +927,8 @@ function $handleCharText(
     )} at index ${targetIndex}`,
   );
 
-  const textNode = $createTextNode(
-    textToInsert === "" ? EMPTY_CHAR_PLACEHOLDER_TEXT : textToInsert,
-  );
+  const textNode =
+    textToInsert === "" ? $createEmptyCharPlaceholder() : $createTextNode(textToInsert);
   // Apply other non-char attributes to the TextNode inside the CharNode if necessary.
   $applyTextAttributes(attributes, textNode);
 
@@ -2041,6 +2042,7 @@ function $createNestedChars(
 ): LexicalNode[] {
   if ($isTextNode(innerNode) && innerNode.getTextContentSize() === 0) {
     innerNode.setTextContent(EMPTY_CHAR_PLACEHOLDER_TEXT);
+    $markEmptyCharPlaceholder(innerNode);
   }
   // Prepend the structural separator to a text innerNode about to become a fresh span's first
   // content (never to the empty-char placeholder, which stands alone).

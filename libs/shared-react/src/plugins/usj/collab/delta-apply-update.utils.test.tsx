@@ -57,6 +57,7 @@ import {
   $isMilestoneNode,
   $isNoteNode,
   $isParaNode,
+  $isPresentationNbsp,
   $isSomeChapterNode,
   $isUnknownNode,
   charIdState,
@@ -2768,6 +2769,57 @@ describe("Delta Utils $applyUpdate", () => {
         const inner = char.getFirstChild();
         if (!$isTextNode(inner)) throw new Error("Expected inner TextNode");
         expect(inner.getTextContent()).toBe(EMPTY_CHAR_PLACEHOLDER_TEXT);
+      });
+    });
+
+    describe.each([
+      ["editable", { ...defaultViewOptions, markerMode: "editable" } as ViewOptions],
+      ["formatted", { ...defaultViewOptions, markerMode: "visible" } as ViewOptions],
+    ])("empty char placeholder tag (%s)", (_mode, viewOptions) => {
+      it("tags the placeholder inserted for an empty char", async () => {
+        const { editor } = await testEnvironment(() => {
+          $getRoot().append($createParaNode());
+        });
+        const ops: DeltaOp[] = [{ insert: "", attributes: { char: { style: "wj", cid: "1" } } }];
+
+        await sutApplyUpdate(editor, ops, viewOptions);
+
+        editor.getEditorState().read(() => {
+          const para = $getRoot().getFirstChild();
+          if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+          const char = para.getFirstChild();
+          if (!$isCharNode(char)) throw new Error("Expected a CharNode");
+          const inner = char.getChildren().find((n) => $isTextNode(n) && !$isMarkerNode(n));
+          if (!$isTextNode(inner)) throw new Error("Expected inner TextNode");
+          expect($isPresentationNbsp(inner)).toBe(true);
+        });
+      });
+
+      it("tags the placeholder inserted for an empty nested char", async () => {
+        const { editor } = await testEnvironment(() => {
+          $getRoot().append($createParaNode());
+        });
+        const ops: DeltaOp[] = [
+          {
+            insert: "",
+            attributes: {
+              char: [
+                { style: "wj", cid: "1" },
+                { style: "nd", cid: "2" },
+              ],
+            },
+          },
+        ];
+
+        await sutApplyUpdate(editor, ops, viewOptions);
+
+        editor.getEditorState().read(() => {
+          const placeholders = $getRoot()
+            .getAllTextNodes()
+            .filter((n) => !$isMarkerNode(n) && n.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT);
+          expect(placeholders.length).toBeGreaterThan(0);
+          for (const node of placeholders) expect($isPresentationNbsp(node)).toBe(true);
+        });
       });
     });
 

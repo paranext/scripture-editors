@@ -34,6 +34,7 @@ import {
 } from "lexical";
 import {
   $createCharNode,
+  $createEmptyCharPlaceholder,
   $createImmutableTypedTextNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
@@ -48,7 +49,6 @@ import {
   $normalizeSelectionOutOfGlyphText,
   CharNode,
   closingMarkerText,
-  EMPTY_CHAR_PLACEHOLDER_TEXT,
   getEditableCallerText,
   getNoteKind,
   ImmutableTypedTextNode,
@@ -269,8 +269,11 @@ function $createNoteContentChar(
   // the load adaptor (implicitly-closed note-content chars get no closer there either).
   else if (viewOptions?.markerMode === "visible")
     char.append($createImmutableTypedTextNode("marker", openingMarkerText(marker)));
-  const text = content === "" ? EMPTY_CHAR_PLACEHOLDER_TEXT : isEditable ? NBSP + content : content;
-  char.append($createTextNode(text));
+  char.append(
+    content === ""
+      ? $createEmptyCharPlaceholder()
+      : $createTextNode(isEditable ? NBSP + content : content),
+  );
   return char;
 }
 
