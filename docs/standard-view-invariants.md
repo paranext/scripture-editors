@@ -166,6 +166,31 @@ text before it), and at the seam between the glyph and the caller it inserts bet
 Consequence for tests: asserting that the mode is `token` proves nothing about whether the shell is
 protected. Assert what the DOCUMENT does under a keystroke.
 
+### Presentation NBSP is identified by tag, never by text alone
+
+The editor puts NBSP text nodes in its tree that are not document content: the collapsed-note
+spacers (`$createMarkerTrailingSeparator`), the element-first char spacer, the opener-separator
+sync's spacer, and the empty-char placeholder. A real `~` in the document is also one NBSP, so the
+text cannot tell them apart. Outside Standard view a node is presentation only when it carries one
+of the two tags (`marker-trailing-space` or `empty-char-placeholder`) AND its text is still exactly
+one NBSP; `$isPresentationNbsp` and `isSerializedPresentationNbsp` are the one definition. The
+editor-to-USJ adaptor, the annotation content index, the Tier-2 fragment, the collab ops producer
+and the OT length mirror all call it — extend it, never re-spell it as a byte test. Spacers are
+created in `token` mode so typing can never land in a tagged node and borrow its tag.
+
+**Standard view keeps the byte test.** There a data NBSP is displayed as a literal `~`, so a
+bare-NBSP node never holds content, and an untagged one that a split strands is still scaffolding.
+Keeping the byte test keeps Standard's output byte-identical by construction.
+
+When a node is ambiguous it is kept as content. The backstop is position: `createCharMarker`
+strips a leading NBSP from a char span's first content item in editable non-Standard mode, so an
+untagged NBSP stranded in that slot is removed for where it sits.
+
+One exception is collab-only. When the apply side materializes a lone NBSP it received, it tags the
+NBSP as scaffolding if it is the only content of a char span, or sits right after the opener glyph
+and before an element — the two slots older peers fill with scaffolding sent as plain text. So an
+authored `\nd ~\nd*` that arrives through collab is dropped; a local load and save keeps it.
+
 ### `\cat` is the attribute marker the stylesheet does not declare
 
 `ATTRIBUTE_MARKERS` holds `ca`, `cp`, `va`, `vp`, and `cat`. All but `cat` are also usfm.sty
