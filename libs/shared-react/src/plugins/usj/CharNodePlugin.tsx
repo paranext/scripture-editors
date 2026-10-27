@@ -23,6 +23,7 @@ import {
   $syncDisplayRun,
   $syncNestedGlyphs,
   $syncOpenerSeparators,
+  $wereSplitFromOneSpan,
   authoredNbspState,
   charIdState,
   CharNode,
@@ -210,8 +211,11 @@ function $charNodeTransform(node: CharNode): void {
  * whose spans each keep their own glyphs, keeps them apart too. Spans an update creates — a run a
  * marker is applied to, a split's continuation, remote content — still combine with an alike
  * neighbor, as does a span whose marker or attributes an update changed to match its neighbor's.
+ * So do two pieces of one span that a split cut apart ({@link $wereSplitFromOneSpan}): joining the
+ * paragraphs back (Enter, then Backspace) restores the one span the document held.
  */
 function $wereAlikeSpansBeforeUpdate(preceding: CharNode, following: CharNode): boolean {
+  if ($wereSplitFromOneSpan(preceding, following)) return false;
   return $getEditor()
     .getEditorState()
     .read(() => {

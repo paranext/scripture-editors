@@ -410,6 +410,7 @@ refused. The public surface grew substantially; nothing was removed.
 - Two alike char spans (same marker and attributes) that a deletion leaves side by side stay two
   spans in the views that hide markers, as in Standard view and Paratext 9. Deleting the space
   between `\w one|x\w*` and `\w two|x\w*`, or joining the paragraphs they end and start, made them
-  one word.
+  one word. A span that Enter cut in two is still one span again when Backspace joins the
+  paragraphs back.
 - Plain text pasted inside a char span or a note stays inside it. Lexical's own paste split the
   span around the text, or put the text after the note.

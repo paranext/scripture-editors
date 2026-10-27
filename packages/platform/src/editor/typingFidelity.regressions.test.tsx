@@ -625,6 +625,30 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
   });
 });
 
+forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
+  describe("Enter inside a span, then Backspace", () => {
+    // Both halves are in the document by the time Backspace joins the paragraphs, but they are
+    // one span cut in two, not two spans the document held apart.
+    it("saves the span as one span again", async () => {
+      const span: MarkerContent = { type: "char", marker: "nd", content: ["thing"] };
+      const mounted = await mountInView(oneParaUsj(["a ", span, " b"]), view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[1].content[0]", offset: 2 },
+        });
+      });
+
+      expect(await press(mounted, "Enter")).toEqual([]);
+      expect(mounted.ref.current?.getUsj()?.content).toHaveLength(4);
+      expect(await press(mounted, "Backspace")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content.slice(2)).toEqual([
+        { type: "para", marker: "p", content: ["a ", span, " b"] },
+      ]);
+    });
+  });
+});
+
 /** The editing views, and paragraph-structure as Simple mode edits in it, where a deletion that
  * joins two paragraphs is made by a second press of the key. */
 const EDITING_AND_GUARDED_VIEWS: (NamedView<string> & {

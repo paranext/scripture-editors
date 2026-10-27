@@ -129,6 +129,9 @@ function $removeIfEmptyInline(element: ElementNode | null): void {
 /** Replace the selected range with `text`, when it is one {@link $inlineRangeEdges} takes. */
 function $replaceInlineRange(text: string): boolean {
   const selection = $getSelection();
+  // Not covered: a composition (an input method or a dead key) started over such a range. Lexical
+  // sets the composition key before it dispatches that insertion, so the range takes Lexical's own
+  // path. Clearing the range first could leave the composition key on a text it no longer selects.
   if (!$isRangeSelection(selection) || $getEditor().isComposing()) return false;
   const edges = $inlineRangeEdges(selection);
   if (!edges) return false;

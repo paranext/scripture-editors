@@ -4,6 +4,7 @@ import { UnknownAttributes } from "./node-constants.js";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import {
   $applyNodeReplacement,
+  $getEditor,
   DOMConversionMap,
   DOMConversionOutput,
   DOMExportOutput,
@@ -288,6 +289,7 @@ export class CharNode extends ElementNode {
     newElement.setFormat(this.getFormatType());
     newElement.setStyle(this.getTextStyle());
     this.insertAfter(newElement, restoreSelection);
+    $recordSplitContinuation(this, newElement);
     return newElement;
   }
 
@@ -345,6 +347,41 @@ function isCharElement(node: HTMLElement | null | undefined): boolean {
 
 export function $isCharNode(node: LexicalNode | null | undefined): node is CharNode {
   return node instanceof CharNode;
+}
+
+/**
+ * For each editor, the char spans that a split (`insertNewAfter`: Enter, or a multi-paragraph
+ * paste) created, mapped to the key of the span they were first cut from. A continuation of a
+ * continuation maps to that first span too, so every piece of one span shares one origin.
+ */
+const splitOrigins = new WeakMap<LexicalEditor, Map<NodeKey, NodeKey>>();
+
+function $recordSplitContinuation(original: CharNode, continuation: CharNode): void {
+  const editor = $getEditor();
+  let origins = splitOrigins.get(editor);
+  if (!origins) {
+    origins = new Map();
+    splitOrigins.set(editor, origins);
+  }
+  const originalKey = original.getKey();
+  origins.set(continuation.getKey(), origins.get(originalKey) ?? originalKey);
+}
+
+/**
+ * Whether `a` and `b` are pieces of one span that a split cut apart in this editor session, so
+ * meeting again (the paragraphs a split made joined back) restores that one span. Spans the
+ * document held apart, or that two different spans' splits made, are not.
+ *
+ * Call it inside an editor update or read.
+ * @param a - A char span.
+ * @param b - Another char span.
+ */
+export function $wereSplitFromOneSpan(a: CharNode, b: CharNode): boolean {
+  const origins = splitOrigins.get($getEditor());
+  if (!origins) return false;
+  const aKey = a.getKey();
+  const bKey = b.getKey();
+  return (origins.get(aKey) ?? aKey) === (origins.get(bKey) ?? bKey);
 }
 
 export function isSerializedCharNode(
