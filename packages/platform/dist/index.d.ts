@@ -976,6 +976,23 @@ export declare interface EditorRef {
    */
   insertMarker(marker: string): string | undefined;
   /**
+   * Starts chapter 1 in a book that has no chapters: inserts `\c 1`, then `verseCount` empty
+   * verses, after the book's front matter (the `\id` line, running header, table of contents,
+   * titles and introduction; a section heading such as `\s1` already belongs to the chapter). This
+   * is where {@link EditorRef.insertMarker} with `"c"` and the `\` menu's `\c` put it too.
+   *
+   * Where the markers show (Standard view), the caret goes at the end of the chapter line. Where
+   * they are hidden there is no chapter line, so the caret goes after verse 1, or with no verses to
+   * the start of the paragraph that follows; with neither, it stays where it was.
+   *
+   * @param verseCount - How many empty verses to add after the chapter marker. Defaults to none.
+   * @returns `false`, changing nothing, unless the `scrRef` prop is chapter 1 and the document has
+   *   no chapter yet.
+   * @throws Will throw an error if the editor is in readonly mode.
+   * @throws Will throw an error if the `scrRef` prop was not provided to the editor.
+   */
+  insertFirstChapter(verseCount?: number): boolean;
+  /**
    * Snapshot of the marker-menu context at the current selection (standard-view marker menus).
    * Returns undefined when the editor is readonly or has no range selection.
    */
@@ -1698,6 +1715,12 @@ export declare interface MarkerMenuContext {
   hasTextSelection: boolean;
   /** Caret is inside visible marker glyph text (extension lets Enter pass through). */
   inMarkerText: boolean;
+  /**
+   * Set when a chapter marker can be inserted: the document is chapter 1 and has no `\c` yet, as in
+   * a book that has no chapters. Every other chapter document already carries its own `\c`, and
+   * the host's save removes a second one.
+   */
+  canInsertChapter?: boolean;
 }
 
 /**
