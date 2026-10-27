@@ -41,6 +41,7 @@ import {
   defaultMarkerAttribute,
   EditorAdaptor,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
+  EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE,
   ENDING_MS_COMMENT_MARKER,
   getEditableCallerText,
   getPreviewTextFromSerializedNodes,
@@ -446,13 +447,16 @@ function createChar(
     // span's start — never to text that follows a nested closer (e.g. the `ht` in
     // `\wj li\+nd g\+nd*ht\wj*`), which leaked to the file and accumulated on each rebuild.
     // Text-first content carries it as a prefix; element-first content (a nested char, note,
-    // milestone, or verse: `\nd \+wj …`) gets a standalone NBSP spacer, which the editor→USJ
-    // conversion drops as presentation-only.
+    // milestone, or verse: `\nd \+wj …`) gets a standalone NBSP spacer tagged as a marker
+    // trailing space (token mode), which the editor→USJ conversion drops by that tag rather than
+    // by its text.
     const [firstChild] = childNodes;
     if (isSerializedTextNode(firstChild)) firstChild.text = NBSP + firstChild.text;
-    else if (firstChild) childNodes.unshift(createText(NBSP));
+    else if (firstChild)
+      childNodes.unshift(createText(NBSP, MARKER_TRAILING_SPACE_TEXT_TYPE, "token"));
   }
-  if (childNodes.length === 0) childNodes.push(createText(EMPTY_CHAR_PLACEHOLDER_TEXT));
+  if (childNodes.length === 0)
+    childNodes.push(createText(EMPTY_CHAR_PLACEHOLDER_TEXT, EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE));
   // A char span nested inside another char span carries the `+` prefix in its editable glyphs
   // (`\+w …\+w*`) — ParatextData's writer rule and PT9's on-screen display for USFM ≤3.0. This
   // keeps the visible glyph text truthful so a Tier-2 re-tokenization reproduces the same nesting.

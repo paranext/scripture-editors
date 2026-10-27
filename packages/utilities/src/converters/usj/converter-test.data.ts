@@ -367,6 +367,7 @@ export const editorStateGen1v1 = {
                 children: [
                   {
                     type: "text",
+                    $: { textType: "empty-char-placeholder" },
                     text: EMPTY_CHAR_PLACEHOLDER_TEXT,
                     detail: 0,
                     format: 0,
@@ -971,6 +972,7 @@ export const editorStateGen1v1Editable = {
                   },
                   {
                     type: "text",
+                    $: { textType: "empty-char-placeholder" },
                     text: EMPTY_CHAR_PLACEHOLDER_TEXT,
                     detail: 0,
                     format: 0,

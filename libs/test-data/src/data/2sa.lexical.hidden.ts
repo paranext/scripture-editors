@@ -1114,6 +1114,9 @@ export const lexicalHidden2Sa: SerializedEditorState = {
                 mode: "normal",
                 style: "",
                 version: 1,
+                $: {
+                  textType: "empty-char-placeholder",
+                },
               },
             ],
             direction: null,
@@ -1630,6 +1633,9 @@ export const lexicalHidden2Sa: SerializedEditorState = {
                 mode: "normal",
                 style: "",
                 version: 1,
+                $: {
+                  textType: "empty-char-placeholder",
+                },
               },
             ],
             direction: null,
@@ -1887,6 +1893,9 @@ export const lexicalHidden2Sa: SerializedEditorState = {
                 mode: "normal",
                 style: "",
                 version: 1,
+                $: {
+                  textType: "empty-char-placeholder",
+                },
               },
             ],
             direction: null,

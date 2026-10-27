@@ -1142,9 +1142,12 @@ export const lexicalEditable2Sa: SerializedEditorState = {
                     text: " ",
                     detail: 0,
                     format: 0,
-                    mode: "normal",
+                    mode: "token",
                     style: "",
                     version: 1,
+                    $: {
+                      textType: "marker-trailing-space",
+                    },
                   },
                   {
                     type: "char",
@@ -1924,6 +1927,9 @@ export const lexicalEditable2Sa: SerializedEditorState = {
                 mode: "normal",
                 style: "",
                 version: 1,
+                $: {
+                  textType: "empty-char-placeholder",
+                },
               },
               {
                 type: "marker",
@@ -2998,6 +3004,9 @@ export const lexicalEditable2Sa: SerializedEditorState = {
                 mode: "normal",
                 style: "",
                 version: 1,
+                $: {
+                  textType: "empty-char-placeholder",
+                },
               },
               {
                 type: "text",
@@ -3540,6 +3549,9 @@ export const lexicalEditable2Sa: SerializedEditorState = {
                 mode: "normal",
                 style: "",
                 version: 1,
+                $: {
+                  textType: "empty-char-placeholder",
+                },
               },
               {
                 type: "marker",

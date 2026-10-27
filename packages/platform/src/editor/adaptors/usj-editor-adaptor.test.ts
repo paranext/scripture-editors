@@ -54,6 +54,7 @@ import {
   $isParaNode,
   CharNode,
   closingMarkerText,
+  EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE,
   getEditableCallerText,
   gutterMarkerState,
   isSerializedChapterNode,
@@ -2067,5 +2068,57 @@ describe("editable marker-prefix separators are one shape", () => {
       ["row", NBSP, "token", { textType: MARKER_TRAILING_SPACE_TEXT_TYPE }],
       ["cell", NBSP, "token", { textType: MARKER_TRAILING_SPACE_TEXT_TYPE }],
     ]);
+  });
+});
+
+describe("USJ Editor Adaptor presentation NBSP tags", () => {
+  /** The children of the one char span in the first para of a one-para USJ. */
+  function charChildrenOf(
+    content: MarkerObject["content"],
+    viewMode: string,
+  ): SerializedLexicalNode[] {
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [{ type: "para", marker: "p", content: [{ type: "char", marker: "nd", content }] }],
+    };
+    initialize(undefined, undefined);
+    reset();
+    const state = serializeEditorState(usj, getViewOptions(viewMode));
+    const para = state.root.children.find(isSerializedParaNode);
+    const char = para?.children.find(isSerializedCharNode);
+    if (!char) throw new Error("no char node found");
+    return char.children;
+  }
+
+  it("tags the editable char-span spacer as a token-mode marker trailing space", () => {
+    const children = charChildrenOf(
+      [{ type: "char", marker: "wj", content: ["x"] }],
+      UNFORMATTED_VIEW_MODE,
+    );
+
+    const spacer = children.find(isSerializedTextNode);
+    expect(spacer).toMatchObject({
+      text: NBSP,
+      mode: "token",
+      [NODE_STATE_KEY]: { textType: MARKER_TRAILING_SPACE_TEXT_TYPE },
+    });
+  });
+
+  it.each([
+    ["formatted", FORMATTED_VIEW_MODE],
+    ["unformatted", UNFORMATTED_VIEW_MODE],
+    ["standard", STANDARD_VIEW_MODE],
+  ])("tags the empty-char placeholder in %s view", (_name, viewMode) => {
+    const children = charChildrenOf([], viewMode);
+
+    const placeholder = children.find(
+      (child) => isSerializedTextNode(child) && child.text === NBSP,
+    );
+    expect(placeholder).toMatchObject({
+      text: NBSP,
+      mode: "normal",
+      [NODE_STATE_KEY]: { textType: EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE },
+    });
   });
 });

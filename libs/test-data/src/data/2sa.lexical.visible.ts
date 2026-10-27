@@ -1444,6 +1444,9 @@ export const lexicalVisible2Sa: SerializedEditorState = {
                 mode: "normal",
                 style: "",
                 version: 1,
+                $: {
+                  textType: "empty-char-placeholder",
+                },
               },
               {
                 type: "immutable-typed-text",
@@ -2140,6 +2143,9 @@ export const lexicalVisible2Sa: SerializedEditorState = {
                 mode: "normal",
                 style: "",
                 version: 1,
+                $: {
+                  textType: "empty-char-placeholder",
+                },
               },
               {
                 type: "immutable-typed-text",
@@ -2487,6 +2493,9 @@ export const lexicalVisible2Sa: SerializedEditorState = {
                 mode: "normal",
                 style: "",
                 version: 1,
+                $: {
+                  textType: "empty-char-placeholder",
+                },
               },
               {
                 type: "immutable-typed-text",
