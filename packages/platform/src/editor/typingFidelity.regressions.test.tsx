@@ -184,6 +184,56 @@ for (const { name, view, structureProtectionMode, presses } of HIDDEN_MARKER_AND
   });
 }
 
+/** `\id`, `\c 1`, `\p first`, an empty `\b`, then `\p more`. */
+const BLANK_LINE_BETWEEN_PARAGRAPHS: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+    { type: "chapter", marker: "c", number: "1" },
+    { type: "para", marker: "p", content: ["first"] },
+    { type: "para", marker: "b" },
+    { type: "para", marker: "p", content: ["more"] },
+  ],
+};
+
+describe("in paragraph-structure (guarded) view: Undo after an empty blank line is removed", () => {
+  it.each<[string, Parameters<EditorRef["setSelection"]>[0], string]>([
+    [
+      "Backspace in the blank line",
+      { start: { jsonPath: "$.content[3]", offset: 0 } },
+      "Backspace",
+    ],
+    [
+      "Delete at the end of the paragraph before it",
+      { start: { jsonPath: "$.content[2].content[0]", offset: 5 } },
+      "Delete",
+    ],
+  ])("brings the blank line back (%s)", async (_, selection, key) => {
+    const mounted = await mountInView(
+      BLANK_LINE_BETWEEN_PARAGRAPHS,
+      editorView("paragraph-structure"),
+      { structureProtectionMode: "guarded" },
+    );
+    await act(async () => {
+      mounted.ref.current?.setSelection(selection);
+    });
+    // The first press arms the removal; the second makes it.
+    expect(await press(mounted, key)).toEqual([]);
+    expect(await press(mounted, key)).toEqual([]);
+    expect(paragraphsAfterChapter(mounted.ref.current?.getUsj())).toEqual([
+      { marker: "p", text: "first" },
+      { marker: "p", text: "more" },
+    ]);
+
+    await act(async () => {
+      mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined);
+    });
+
+    expect(mounted.ref.current?.getUsj()).toEqual(BLANK_LINE_BETWEEN_PARAGRAPHS);
+  });
+});
+
 forEachView(EDITING_VIEWS, ({ view }) => {
   describe("Undo after Enter in front of a char span or a note", () => {
     const bold: MarkerContent = { type: "char", marker: "nd", content: ["bold"] };

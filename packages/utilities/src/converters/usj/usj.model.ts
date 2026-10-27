@@ -100,7 +100,7 @@ export interface Usj {
   /**
    * The USJ spec version of this document, e.g. `"3.0"` or `"3.1"` — the same numbering as USX
    * and USFM. A document converted from USX keeps the version that USX declared.
-   * {@link USJ_VERSION} is the newest version this package targets, not the only one allowed.
+   * `USJ_VERSION` is the newest version this package targets, not the only one allowed.
    */
   version: string;
   /** The JSON representation of scripture contents from USFM/USX */

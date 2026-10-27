@@ -531,3 +531,24 @@ describe("an attribute value's no-break space in the views that do not show attr
         expect(objectIn(content, "ms")).toEqual(milestone);
       });
 });
+
+describe("an author's literal `~` in a milestone's attribute value in Standard view, allowInvisibleCharacters off", () => {
+  // ParatextData keeps a `~` in an attribute value as `~`: only body text and `\vp` read it as a
+  // no-break space. Standard view shows a value's no-break space as `~` too, so a settle of the
+  // paragraph cannot tell the two apart and reads the author's `~` back as U+00A0. Char-span
+  // attributes, `\cat`, `\ca`/`\cp` and `\va` do the same. The fix is a product call: row O-12 of
+  // paranext-core's Scripture-Data-Fidelity-Catalog.md.
+  it.fails("keeps the `~` through a settle of its paragraph", async () => {
+    const mounted = await mountInView(
+      usjWith(["x ", withAttributes({ type: "ms", marker: "qt-s" }, { who: "A~B" }), "y z"]),
+      viewWith("standard", false),
+    );
+    await select(mounted.lexical, "y z", 3);
+    await type(mounted.lexical, "\\");
+    await commit(mounted);
+
+    expect(pick(objectIn(paraContent(mounted.ref.current?.getUsj()), "ms"), ["who"])).toEqual({
+      who: "A~B",
+    });
+  });
+});

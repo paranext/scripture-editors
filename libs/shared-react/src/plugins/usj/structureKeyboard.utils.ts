@@ -599,6 +599,11 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   // ImmutableTypedTextNode) is still its first child here; moving it into `prev` would fuse it
   // onto `prev`'s trailing text as a literal marker byte (e.g. `first\qsecond`), so it is dropped
   // along with the separator instead of moved.
+  // Lexical's history folds an update whose only dirty leaf is a text that kept its text into the
+  // step before, even one tagged `history-push`. Removing an empty paragraph touches only the text
+  // the caret lands in, so the leaves that go with the paragraph are marked too, and Undo takes the
+  // removal back on its own.
+  for (const child of para.getChildren()) if (!$isElementNode(child)) child.markDirty();
   const moved = para
     .getChildren()
     .filter(

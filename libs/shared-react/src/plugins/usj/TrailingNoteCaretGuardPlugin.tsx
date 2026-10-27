@@ -1,5 +1,5 @@
 import { releaseTagsAfterNextCommit } from "./editorUpdate.utils";
-import { useTransientCaretHost } from "./transientCaretHost";
+import { $tagCaretHostCommit, useTransientCaretHost } from "./transientCaretHost";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
@@ -288,7 +288,7 @@ export function TrailingNoteCaretGuardPlugin(): null {
     // node in is tagged, since Lexical carries a tag on a selection-only commit over to the user's
     // next edit (see CaretHostRepair).
     const $repairPast = (note: NoteNode): void => {
-      if ($repairCaret(note)) $addUpdateTag(CURSOR_CHANGE_TAG);
+      if ($repairCaret(note)) $tagCaretHostCommit();
     };
 
     return mergeRegister(

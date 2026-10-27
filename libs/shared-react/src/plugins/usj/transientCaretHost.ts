@@ -8,6 +8,7 @@ import {
   $isTextNode,
   BLUR_COMMAND,
   COMMAND_PRIORITY_EDITOR,
+  HISTORY_MERGE_TAG,
   LexicalNode,
   NodeKey,
   SELECTION_CHANGE_COMMAND,
@@ -55,6 +56,20 @@ export type CaretHostAnchor = () => LexicalNode | undefined;
  * Mutating: call inside `editor.update()`.
  */
 export type CaretHostRepair = (target: LexicalNode | undefined) => boolean;
+
+/**
+ * Tags the active update as a caret-host commit: kept from the host's USJ-change handler
+ * ({@link CURSOR_CHANGE_TAG}) and from the undo history (`HISTORY_MERGE_TAG`). A host comes and goes
+ * as the caret moves, an Undo or Redo included, and a commit of its own in the history would clear
+ * the redo stack, so Redo after the caret came to rest beside an empty verse did nothing.
+ *
+ * Mutating: call inside `editor.update()`, only for a commit that changed a node (see
+ * {@link CaretHostRepair}).
+ */
+export function $tagCaretHostCommit(): void {
+  $addUpdateTag(CURSOR_CHANGE_TAG);
+  $addUpdateTag(HISTORY_MERGE_TAG);
+}
 
 /** Whether `key` currently resolves to a bare cursor-host text node (only placeholder chars). */
 function $isPlaceholderHost(key: NodeKey | undefined): boolean {
@@ -178,7 +193,7 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       if (!hasWork) return;
       // Tagged only for a commit that really moves a node (see CaretHostRepair): a tag on a
       // selection-only commit would ride along on the user's next edit and hide it from the host.
-      if ($repairCaret(target)) $addUpdateTag(CURSOR_CHANGE_TAG);
+      if ($repairCaret(target)) $tagCaretHostCommit();
     };
 
     /**
@@ -231,7 +246,7 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
               // Tagged only when the host is still there to remove (see CaretHostRepair).
               if (!$isTextNode(host)) return;
               host.remove();
-              $addUpdateTag(CURSOR_CHANGE_TAG);
+              $tagCaretHostCommit();
             });
           }
           hostKeyRef.current = undefined;

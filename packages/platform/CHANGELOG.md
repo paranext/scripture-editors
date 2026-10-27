@@ -327,6 +327,12 @@ refused. The public surface grew substantially; nothing was removed.
   caret move and never reach `onUsjChange`.
 - In the paragraph-structure view, a guarded two-step paragraph merge no longer leaves the merged
   paragraph's gutter marker in the middle of the paragraph it joined.
+- In the paragraph-structure view, Undo after a guarded two-step delete removes an empty paragraph
+  (an empty `\b`) brings the paragraph back. It used to fold the removal into the undo step before
+  it, so Undo either did nothing or also took back the edit before.
+- Redo works after an Undo leaves the caret beside an empty verse or a trailing note. The invisible
+  caret host the editor gives such a caret no longer becomes an undo step of its own, which cleared
+  the redo history.
 - In the paragraph-structure view, Enter at a word break (`In| the`) no longer leaves the break's
   space at the start of the new paragraph: `getUsj()` reports `the`, as the other views do, where it
   reported ` the`.
