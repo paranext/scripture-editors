@@ -34,6 +34,7 @@ import {
   $isNoteNode,
   $isParaLikeNode,
   $isParaNode,
+  $isPresentationNbsp,
   $isSomeChapterNode,
   $isUnknownNode,
   $isVerseNode,
@@ -42,7 +43,7 @@ import {
   CHAPTER_MARKER,
   charIdState,
   CharNode,
-  EMPTY_CHAR_PLACEHOLDER_TEXT,
+  EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE,
   getEditableCallerText,
   isCursorPlaceholderOnly,
   ImmutableUnmatchedNode,
@@ -348,10 +349,13 @@ function $handleTextNodes(
     text.startsWith(NODE_ATTRIBUTE_PREFIX) ||
     $getState(currentNode, textTypeState) === "attribute" ||
     $hasAttributeRunAncestor(currentNode);
+  // Keyed on the placeholder TAG, not the NBSP text: an untagged lone NBSP is an authored `~`
+  // and must flow into ops. No sole-child requirement: an editable-mode empty span holds its
+  // placeholder between the opening and closing glyphs.
   const isPlaceholderText =
     !!parentCharNode &&
-    text === EMPTY_CHAR_PLACEHOLDER_TEXT &&
-    parentCharNode.getChildrenSize() === 1;
+    $isPresentationNbsp(currentNode) &&
+    $getState(currentNode, textTypeState) === EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE;
 
   const activeEmbed = $getActiveEmbedContext(currentNode, openEmbeds);
   // An embed's `contents` ops are a SELF-CONTAINED SUB-DOCUMENT: they are materialized on the
@@ -372,7 +376,7 @@ function $handleTextNodes(
   const textOp = $getTextOp(currentNode, embedScopedCharNodes);
   textOp.insert = text;
   if (activeEmbed) {
-    if (!text || text === NBSP || isNodeAttributeText) return;
+    if (!text || $isPresentationNbsp(currentNode) || isNodeAttributeText) return;
     activeEmbed.contentsOps?.push(textOp);
   } else {
     // Attribute display text is presentation-only regardless of WHERE it rides — inside a char

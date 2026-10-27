@@ -24,7 +24,18 @@ import { $createImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode
 import { baseTestEnvironment } from "../react-test.utils";
 import { DeltaOp, isInsertEmbedOpOfType, LF } from "./delta-common.utils";
 import { $getParticularNodeOps, getEditorDelta } from "./editor-delta.adaptor";
-import { $setState, $createTextNode, $getRoot, LexicalNode } from "lexical";
+import { act } from "@testing-library/react";
+import {
+  $createTextNode,
+  $getRoot,
+  $getSelection,
+  $getState,
+  $isRangeSelection,
+  $isTextNode,
+  $setState,
+  LexicalNode,
+  TextNode,
+} from "lexical";
 import { $dfs } from "@lexical/utils";
 import {
   $createAttributeRunNode,
@@ -34,15 +45,17 @@ import {
   $createImmutableTypedTextNode,
   $createImpliedParaNode,
   $createMarkerNode,
+  $createMarkerTrailingSeparator,
   $createMilestoneNode,
   $createNoteNode,
   $createParaNode,
   $createUnknownNode,
   $createCursorPlaceholderNode,
+  $createEmptyCharPlaceholder,
   $createVerseNode,
   $isNoteNode,
+  $markPresentationSpacer,
   charIdState,
-  EMPTY_CHAR_PLACEHOLDER_TEXT,
   GENERATOR_NOTE_CALLER,
   getEditableCallerText,
   getVisibleOpenMarkerText,
@@ -471,7 +484,7 @@ describe("getEditorDelta", () => {
       $getRoot().append(
         $createImpliedParaNode().append(
           addChar.append($createTextNode("added text")),
-          wjChar.append($createTextNode(EMPTY_CHAR_PLACEHOLDER_TEXT)),
+          wjChar.append($createEmptyCharPlaceholder()),
         ),
       );
     });
@@ -497,7 +510,7 @@ describe("getEditorDelta", () => {
           $createNoteNode("f", GENERATOR_NOTE_CALLER).append(
             $createImmutableNoteCallerNode(GENERATOR_NOTE_CALLER, "ref"),
             frChar.append($createTextNode("ref ")),
-            ftChar.append($createTextNode(EMPTY_CHAR_PLACEHOLDER_TEXT)),
+            ftChar.append($createEmptyCharPlaceholder()),
           ),
         ),
       );
@@ -615,10 +628,7 @@ describe("getEditorDelta", () => {
             $createMarkerNode("f"),
             $createTextNode(getEditableCallerText(GENERATOR_NOTE_CALLER)),
             $createCharNode("fr").append($createMarkerNode("fr"), $createTextNode(`${NBSP}3:2 `)),
-            $createCharNode("fk").append(
-              $createMarkerNode("fk"),
-              $createTextNode(EMPTY_CHAR_PLACEHOLDER_TEXT),
-            ),
+            $createCharNode("fk").append($createMarkerNode("fk"), $createEmptyCharPlaceholder()),
             $createCharNode("ft").append(
               $createMarkerNode("ft"),
               $createTextNode(`${NBSP}Footnote text `),
@@ -902,13 +912,13 @@ describe("getEditorDelta", () => {
           note.append(
             $createImmutableTypedTextNode("marker", `\\f${NBSP}`),
             $createImmutableNoteCallerNode(GENERATOR_NOTE_CALLER, "2.1  in time."),
-            $createTextNode(NBSP),
+            $createMarkerTrailingSeparator(),
             $createImmutableTypedTextNode("marker", "\\fr"),
             frChar.append($createTextNode("2.1 ")),
-            $createTextNode(NBSP),
+            $createMarkerTrailingSeparator(),
             $createImmutableTypedTextNode("marker", "\\ft"),
             ftChar.append($createTextNode("in time.")),
-            $createTextNode(NBSP),
+            $createMarkerTrailingSeparator(),
             $createImmutableTypedTextNode("marker", `\\f*${NBSP}`),
           ),
         ),
@@ -976,10 +986,10 @@ describe("getEditorDelta", () => {
           note.append(
             $createImmutableTypedTextNode("marker", `\\f${NBSP}`),
             $createImmutableNoteCallerNode(GENERATOR_NOTE_CALLER, "2.1  in \\+bdtime\\+bd*"),
-            $createTextNode(NBSP),
+            $createMarkerTrailingSeparator(),
             $createImmutableTypedTextNode("marker", "\\fr"),
             frChar.append($createTextNode("2.1 ")),
-            $createTextNode(NBSP),
+            $createMarkerTrailingSeparator(),
             $createImmutableTypedTextNode("marker", "\\ft"),
             ftChar.append(
               $createTextNode("in "),
@@ -987,7 +997,7 @@ describe("getEditorDelta", () => {
               bdChar.append($createTextNode("time")),
               $createImmutableTypedTextNode("marker", "\\+bd*"),
             ),
-            $createTextNode(NBSP),
+            $createMarkerTrailingSeparator(),
             $createImmutableTypedTextNode("marker", `\\f*${NBSP}`),
           ),
         ),
@@ -1604,6 +1614,182 @@ describe("getEditorDelta", () => {
 
       expect(delta.ops).toEqual(opsGen1v1Standard);
     });
+  });
+});
+
+// A lone NBSP is content (an authored `~`) unless it carries a presentation tag. The ops stream
+// keys the exclusion on that tag, never on the NBSP text alone.
+describe("getEditorDelta lone NBSP", () => {
+  it("emits an untagged lone NBSP between char spans inside a note", async () => {
+    const ops = await getOpsFor(() => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createNoteNode("f", GENERATOR_NOTE_CALLER).append(
+            $createImmutableNoteCallerNode(GENERATOR_NOTE_CALLER, "ref"),
+            $createCharNode("fr").append($createTextNode("1:1 ")),
+            $createTextNode(NBSP),
+            $createCharNode("ft").append($createTextNode("text")),
+          ),
+        ),
+      );
+    });
+
+    expect(ops).toEqual([
+      {
+        insert: {
+          note: {
+            style: "f",
+            caller: GENERATOR_NOTE_CALLER,
+            contents: {
+              ops: [
+                { insert: "1:1 ", attributes: { char: { style: "fr" } } },
+                { insert: NBSP },
+                { insert: "text", attributes: { char: { style: "ft" } } },
+              ],
+            },
+          },
+        },
+      },
+      { insert: LF, attributes: { para: { style: "p" } } },
+    ]);
+  });
+
+  it("emits an untagged lone NBSP between char spans outside a note", async () => {
+    const ops = await getOpsFor(() => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createCharNode("wj").append($createTextNode("glory")),
+          $createTextNode(NBSP),
+          $createCharNode("nd").append($createTextNode("Lord")),
+        ),
+      );
+    });
+
+    expect(ops).toEqual([
+      { insert: "glory", attributes: { char: { style: "wj" } } },
+      { insert: NBSP },
+      { insert: "Lord", attributes: { char: { style: "nd" } } },
+      { insert: LF, attributes: { para: { style: "p" } } },
+    ]);
+  });
+
+  it("emits no op for a tagged placeholder in a formatted empty span", async () => {
+    const ops = await getOpsFor(() => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("a"),
+          $createCharNode("wj").append($createEmptyCharPlaceholder()),
+        ),
+      );
+    });
+
+    expect(ops).toEqual([
+      { insert: "a" },
+      { insert: "", attributes: { char: { style: "wj" } } },
+      { insert: LF, attributes: { para: { style: "p" } } },
+    ]);
+  });
+
+  it("emits no op for a tagged placeholder in an editable empty span", async () => {
+    const ops = await getOpsFor(() => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("a"),
+          $createCharNode("wj").append(
+            $createMarkerNode("wj"),
+            $createEmptyCharPlaceholder(),
+            $createMarkerNode("wj", "closing"),
+          ),
+        ),
+      );
+    });
+
+    // Outside a note a span's own glyphs flow as literal text; only the placeholder between them
+    // is dropped.
+    expect(ops).toEqual([
+      { insert: "a" },
+      { insert: "\\wj\\wj*", attributes: { char: { style: "wj" } } },
+      { insert: LF, attributes: { para: { style: "p" } } },
+    ]);
+  });
+
+  it("emits no op for a tagged spacer inside a note", async () => {
+    const ops = await getOpsFor(() => {
+      const spacer = $createTextNode(NBSP);
+      $markPresentationSpacer(spacer);
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createNoteNode("f", GENERATOR_NOTE_CALLER).append(
+            $createImmutableNoteCallerNode(GENERATOR_NOTE_CALLER, "ref"),
+            spacer,
+            $createCharNode("ft").append($createTextNode("text")),
+          ),
+        ),
+      );
+    });
+
+    expect(ops).toEqual([
+      {
+        insert: {
+          note: {
+            style: "f",
+            caller: GENERATOR_NOTE_CALLER,
+            contents: { ops: [{ insert: "text", attributes: { char: { style: "ft" } } }] },
+          },
+        },
+      },
+      { insert: LF, attributes: { para: { style: "p" } } },
+    ]);
+  });
+
+  it("emits text typed at an element-first spacer", async () => {
+    let spacer: TextNode | undefined;
+    const { editor } = await testEnvironment(() => {
+      spacer = $createTextNode(NBSP);
+      $markPresentationSpacer(spacer);
+      const nd = $createCharNode("nd");
+      $getRoot().append(
+        $createParaNode("p").append(
+          nd.append(
+            $createMarkerNode("nd"),
+            spacer,
+            $createCharNode("wj").append($createMarkerNode("wj"), $createTextNode(`${NBSP}x`)),
+            $createMarkerNode("nd", "closing"),
+          ),
+        ),
+      );
+    });
+    if (!spacer) throw new Error("spacer not initialized");
+    const spacerNode = spacer;
+
+    await act(async () => {
+      editor.update(
+        () => {
+          spacerNode.select(1, 1);
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+          selection.insertText("a");
+        },
+        { discrete: true },
+      );
+    });
+
+    const { spacerText, typedIsTagged } = editor.getEditorState().read(() => {
+      const typed = spacerNode.getLatest().getNextSibling();
+      return {
+        spacerText: spacerNode.getLatest().getTextContent(),
+        typedIsTagged: $isTextNode(typed) && $getState(typed, textTypeState) !== undefined,
+      };
+    });
+    expect(spacerText).toBe(NBSP);
+    expect(typedIsTagged).toBe(false);
+    const ops = getEditorDelta(editor.getEditorState()).ops;
+    expect(ops).toEqual([
+      { insert: "\\nda", attributes: { char: { style: "nd" } } },
+      { insert: `\\wj${NBSP}x`, attributes: { char: [{ style: "nd" }, { style: "wj" }] } },
+      { insert: "\\nd*", attributes: { char: { style: "nd" } } },
+      { insert: LF, attributes: { para: { style: "p" } } },
+    ]);
   });
 });
 

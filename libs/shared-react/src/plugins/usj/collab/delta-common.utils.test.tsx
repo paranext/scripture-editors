@@ -18,6 +18,7 @@ import {
 } from "./delta-common.utils";
 import { act } from "@testing-library/react";
 import { $createTextNode, $getRoot, $isTextNode, $setState, LexicalNode } from "lexical";
+import Delta from "quill-delta";
 import { ReactNode } from "react";
 import {
   $createAttributeRunNode,
@@ -30,6 +31,7 @@ import {
   $createMilestoneNode,
   $createNoteNode,
   $createCursorPlaceholderNode,
+  $createEmptyCharPlaceholder,
   $createParaNode,
   $createUnknownNode,
   $createVerseNode,
@@ -44,6 +46,7 @@ import {
   getVisibleOpenMarkerText,
   NBSP,
   NoteNode,
+  ParaNode,
   segmentState,
   textTypeState,
 } from "shared";
@@ -1703,6 +1706,115 @@ describe("editable verse counts as one OT unit (embed)", () => {
       expect(getInsertedNodeKey(ops, editor.getEditorState(), "apply")).toBe(notes[0].getKey());
     });
   });
+});
+
+/**
+ * A lone NBSP counts as content (an authored `~`) unless it carries the empty-char placeholder
+ * tag, the same rule the ops stream keys on. Each document is `[Text "a", <span>, Text "b"]`, and
+ * the span's contribution is read off the position of the trailing "b".
+ *
+ * Coordinate decision (see `$getNodeOTContribution`'s doc comment): the placeholder is excluded
+ * only in `"delta-doc"` coordinates. `$applyUpdate`'s traversals count its raw byte, so `"apply"`
+ * coordinates keep counting it. Content is counted in both.
+ */
+describe("lone NBSP OT contribution", () => {
+  let tailNode: LexicalNode | undefined;
+
+  function $buildSpanDoc(span: LexicalNode) {
+    const tail = $createTextNode("b");
+    tailNode = tail;
+    $getRoot().append($createParaNode("p").append($createTextNode("a"), span, tail));
+  }
+
+  async function tailPositions($createSpan: () => LexicalNode) {
+    const { editor } = await testEnvironment(() => $buildSpanDoc($createSpan()));
+    if (!tailNode) throw new Error("tailNode not initialized");
+    const tail = tailNode;
+    return editor.getEditorState().read(() => ({
+      deltaDoc: $getOTPositionOfNode(tail, "delta-doc"),
+      apply: $getOTPositionOfNode(tail, "apply"),
+    }));
+  }
+
+  it("counts a tagged placeholder in a formatted span as 0 in delta-doc and its raw byte in apply", async () => {
+    const positions = await tailPositions(() =>
+      $createCharNode("wj").append($createEmptyCharPlaceholder()),
+    );
+
+    // "a" (1) + placeholder
+    expect(positions).toEqual({ deltaDoc: 1, apply: 2 });
+  });
+
+  it("counts a tagged placeholder in an editable span as 0 in delta-doc and its raw byte in apply", async () => {
+    const positions = await tailPositions(() =>
+      $createCharNode("wj").append(
+        $createMarkerNode("wj"),
+        $createEmptyCharPlaceholder(),
+        $createMarkerNode("wj", "closing"),
+      ),
+    );
+
+    // "a" (1) + "\wj" (3) + placeholder + "\wj*" (4)
+    expect(positions).toEqual({ deltaDoc: 8, apply: 9 });
+  });
+
+  it("counts an untagged lone NBSP in a char as 1 in both coordinate systems", async () => {
+    const positions = await tailPositions(() =>
+      $createCharNode("nd").append($createTextNode(NBSP)),
+    );
+
+    // "a" (1) + NBSP (1)
+    expect(positions).toEqual({ deltaDoc: 2, apply: 2 });
+  });
+
+  it.each([
+    {
+      mode: "formatted",
+      // "a" (1) + empty span (0) + NBSP (1)
+      contentLength: 2,
+      $createEmptySpan: () => $createCharNode("wj").append($createEmptyCharPlaceholder()),
+      $createLoneNbspSpan: () => $createCharNode("nd").append($createTextNode(NBSP)),
+    },
+    {
+      mode: "editable",
+      // "a" (1) + `\wj\wj*` (7) + `\nd` (3) + separator and NBSP (2) + `\nd*` (4)
+      contentLength: 17,
+      $createEmptySpan: () =>
+        $createCharNode("wj").append(
+          $createMarkerNode("wj"),
+          $createEmptyCharPlaceholder(),
+          $createMarkerNode("wj", "closing"),
+        ),
+      $createLoneNbspSpan: () =>
+        $createCharNode("nd").append(
+          $createMarkerNode("nd"),
+          $createTextNode(`${NBSP}${NBSP}`),
+          $createMarkerNode("nd", "closing"),
+        ),
+    },
+  ])(
+    "sums delta-doc contributions to the ops stream's insert length ($mode)",
+    async ({ contentLength, $createEmptySpan, $createLoneNbspSpan }) => {
+      let para: ParaNode | undefined;
+      const { editor } = await testEnvironment(() => {
+        para = $createParaNode("p");
+        $getRoot().append(
+          para.append($createTextNode("a"), $createEmptySpan(), $createLoneNbspSpan()),
+        );
+      });
+      if (!para) throw new Error("para not initialized");
+      const paraNode = para;
+
+      const paraClose = editor
+        .getEditorState()
+        .read(() => $getOTPositionOfNode(paraNode, "delta-doc"));
+      const opsLength = new Delta(getEditorDelta(editor.getEditorState()).ops).length();
+
+      // The ops stream ends with the paragraph's LF; the para's own position is just before it.
+      expect(opsLength).toBe(contentLength + 1);
+      expect(paraClose).toBe(contentLength);
+    },
+  );
 });
 
 async function testEnvironment($initialEditorState?: () => void, children?: ReactNode | undefined) {

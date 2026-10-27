@@ -26,11 +26,12 @@ import {
   $isNoteNode,
   $isParaLikeNode,
   $isParaNode,
+  $isPresentationNbsp,
   $isDisplayRunPiece,
   $isSomeChapterNode,
   $isSynthesizedMarkerNode,
   $isUnknownNode,
-  EMPTY_CHAR_PLACEHOLDER_TEXT,
+  EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE,
   getEditableCallerText,
   ImmutableUnmatchedNode,
   MilestoneNode,
@@ -565,15 +566,17 @@ export function $hasAttributeRunAncestor(node: LexicalNode): boolean {
 }
 
 /**
- * Mirror of editor-delta.adaptor.ts's empty-char-placeholder skip, in delta-doc coordinates: the
- * lone stand-in text of an otherwise childless char span, which the ops stream never emits.
+ * Mirror of editor-delta.adaptor.ts's empty-char-placeholder skip, in delta-doc coordinates: a
+ * char span's child tagged as the empty-char placeholder whose text is still exactly one NBSP,
+ * which the ops stream never emits. Keyed on the tag, not the text: an untagged lone NBSP is an
+ * authored `~` and counts. There is no sole-child requirement, because an editable-mode empty span
+ * holds its placeholder between the opening and closing glyphs.
  */
 function $isEmptyCharPlaceholderText(node: TextNode): boolean {
-  const parent = node.getParent();
   return (
-    $isCharNode(parent) &&
-    node.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT &&
-    parent.getChildrenSize() === 1
+    $isCharNode(node.getParent()) &&
+    $isPresentationNbsp(node) &&
+    $getState(node, textTypeState) === EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE
   );
 }
 
@@ -677,8 +680,9 @@ function $getNodeOTContribution(node: LexicalNode, coordinates: OTCoordinateSyst
         // The remaining ops-stream exclusions, so this side and $handleTextNodes count the same
         // bytes (docs/standard-view-invariants.md §II — extend the shared list, never fork it):
         // the legacy NBSP-`|` byte-prefixed attribute text the ops stream still honors for
-        // pre-state-tag peers and persisted deltas, the empty-char placeholder, and the
-        // editable-mode note caller in caller position.
+        // pre-state-tag peers and persisted deltas, the tagged empty-char placeholder (an
+        // untagged lone NBSP is content and counts), and the editable-mode note caller in caller
+        // position.
         nodeText.startsWith(NODE_ATTRIBUTE_PREFIX) ||
         $isEmptyCharPlaceholderText(node) ||
         $isEditableNoteCallerText(node))
