@@ -1716,9 +1716,10 @@ export declare interface MarkerMenuContext {
   /** Caret is inside visible marker glyph text (extension lets Enter pass through). */
   inMarkerText: boolean;
   /**
-   * Set when a chapter marker can be inserted: the document is chapter 1 and has no `\c` yet, as in
-   * a book that has no chapters. Every other chapter document already carries its own `\c`, and
-   * the host's save removes a second one.
+   * Set when a chapter marker can be inserted here: the document is chapter 1 of a book that holds
+   * chapters and has no `\c` yet, as in a book that has no chapters, and the caret is not in a note
+   * or over a text selection. Every other chapter document already carries its own `\c`, and the
+   * host's save removes a second one.
    */
   canInsertChapter?: boolean;
 }
