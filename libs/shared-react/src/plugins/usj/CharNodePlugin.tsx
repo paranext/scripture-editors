@@ -1,6 +1,5 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
-import { deepEqual } from "fast-equals";
 import {
   $getEditor,
   $getNodeByKey,
@@ -10,16 +9,20 @@ import {
   $isRangeSelection,
   $isTextNode,
   $setState,
+  COMMAND_PRIORITY_CRITICAL,
   LexicalEditor,
   NodeKey,
+  SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   TextNode,
 } from "lexical";
 import { useEffect } from "react";
 import {
-  $hasSameCharAttributes,
+  $arrivedTogetherFromClipboard,
+  $hasAllSameCharAttributes,
   $isCharNode,
   $isMarkerNode,
   $isSeparatorPrefixHostText,
+  $recordClipboardSpans,
   $syncDisplayRun,
   $syncNestedGlyphs,
   $syncOpenerSeparators,
@@ -62,6 +65,16 @@ function useCharNode(editor: LexicalEditor) {
       editor.registerNodeTransform(CharNode, (node) =>
         $syncDisplayRun(displayRunDescriptor("char"), node),
       ),
+      // Spans a paste or drop brings in stay the spans the copied content held: never claims the
+      // insertion, only notes which spans it inserts before whichever handler inserts them.
+      editor.registerCommand(
+        SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+        ({ nodes }) => {
+          $recordClipboardSpans(nodes);
+          return false;
+        },
+        COMMAND_PRIORITY_CRITICAL,
+      ),
       editor.registerNodeTransform(TextNode, $dropFilledCharPlaceholder),
       editor.registerNodeTransform(TextNode, $keepRemainingNbsp),
     );
@@ -81,8 +94,8 @@ function useCharNode(editor: LexicalEditor) {
  * edit that leaves two same-attribute spans adjacent (deleting the `*` from a `\va*` closer
  * re-tokenizes into exactly that shape). Where the glyphs are absent there are no bytes to
  * contradict, so the merge stays for a span an update creates — the case delta-apply and structure
- * surgery rely on — while two spans the document already held apart stay apart there too (see
- * `$wereAlikeSpansBeforeUpdate`).
+ * surgery rely on — while two spans the document already held apart, or that one paste brought in,
+ * stay apart there too (see `$areHeldApart`).
  *
  * The MIXED pairing — a glyph-less span beside a glyph-bearing one — must still merge, because
  * the marker-apply paths rely on it: `$wrapRunInCharNode` (usj-marker-action.utils.ts) wraps the
@@ -143,8 +156,8 @@ function $mergeIntoPrecedingGlyphSpan(node: CharNode, target: CharNode): void {
 }
 
 /**
- * Combine adjacent CharNodes with the same attributes, unless both were already alike, separate
- * spans before this update ({@link $wereAlikeSpansBeforeUpdate}).
+ * Combine adjacent CharNodes with the same attributes, unless they are spans held apart
+ * ({@link $areHeldApart}).
  * @param node - CharNode thats needs updating.
  * @param editor - LexicalEditor instance.
  */
@@ -171,9 +184,8 @@ function $charNodeTransform(node: CharNode): void {
   const nextNode = node.getNextSibling();
   if (
     $isCharNode(nextNode) &&
-    $hasSameCharAttributes({ style, cid }, nextNode) &&
-    deepEqual(unknownAttributes, nextNode.getUnknownAttributes()) &&
-    !$wereAlikeSpansBeforeUpdate(node, nextNode)
+    $hasAllSameCharAttributes({ style, cid }, unknownAttributes, nextNode) &&
+    !$areHeldApart(node, nextNode)
   ) {
     // Combine with next CharNode since it has the same attributes. A glyph-bearing partner
     // survives the merge (its glyphs are the displayed bytes) and takes the content inside its
@@ -189,9 +201,8 @@ function $charNodeTransform(node: CharNode): void {
   const prevNode = node.getPreviousSibling();
   if (
     $isCharNode(prevNode) &&
-    $hasSameCharAttributes({ style, cid }, prevNode) &&
-    deepEqual(unknownAttributes, prevNode.getUnknownAttributes()) &&
-    !$wereAlikeSpansBeforeUpdate(prevNode, node)
+    $hasAllSameCharAttributes({ style, cid }, unknownAttributes, prevNode) &&
+    !$areHeldApart(prevNode, node)
   ) {
     // Combine with previous CharNode since it has the same attributes.
     if ($rendersOwnGlyphs(prevNode)) {
@@ -200,6 +211,21 @@ function $charNodeTransform(node: CharNode): void {
       $combineGlyphlessSpans(prevNode, node);
     }
   }
+}
+
+/**
+ * Whether `preceding` and `following`, two alike spans side by side, are two spans to keep: spans
+ * the document already held apart ({@link $wereAlikeSpansBeforeUpdate}), or spans one paste or drop
+ * brought in together ({@link $arrivedTogetherFromClipboard}) — the copied content held them apart,
+ * as Standard view's paste, which keeps every span's glyphs, keeps them. A pasted span still
+ * combines with an alike span the document held, so a piece of a span pasted inside or at the end of
+ * a span of the same marker extends that span.
+ */
+function $areHeldApart(preceding: CharNode, following: CharNode): boolean {
+  return (
+    $arrivedTogetherFromClipboard(preceding, following) ||
+    $wereAlikeSpansBeforeUpdate(preceding, following)
+  );
 }
 
 /**
@@ -222,18 +248,10 @@ function $wereAlikeSpansBeforeUpdate(preceding: CharNode, following: CharNode): 
       const previousPreceding = $getNodeByKey(preceding.getKey());
       const previousFollowing = $getNodeByKey(following.getKey());
       if (!$isCharNode(previousPreceding) || !$isCharNode(previousFollowing)) return false;
-      return (
-        $hasSameCharAttributes(
-          {
-            style: previousPreceding.getMarker(),
-            cid: $getState(previousPreceding, charIdState),
-          },
-          previousFollowing,
-        ) &&
-        deepEqual(
-          previousPreceding.getUnknownAttributes(),
-          previousFollowing.getUnknownAttributes(),
-        )
+      return $hasAllSameCharAttributes(
+        { style: previousPreceding.getMarker(), cid: $getState(previousPreceding, charIdState) },
+        previousPreceding.getUnknownAttributes(),
+        previousFollowing,
       );
     });
 }

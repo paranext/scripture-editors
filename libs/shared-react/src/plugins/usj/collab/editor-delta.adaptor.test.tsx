@@ -41,6 +41,7 @@ import {
   $createCursorPlaceholderNode,
   $createVerseNode,
   $isNoteNode,
+  authoredNbspState,
   charIdState,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   GENERATOR_NOTE_CALLER,
@@ -123,7 +124,7 @@ describe("getEditorDelta", () => {
     const delta = getEditorDelta(editor.getEditorState());
 
     expect(delta.ops).toEqual([
-      { insert: { milestone: { style: "ts-s", sid: "TS1" } } },
+      { insert: { ms: { style: "ts-s", sid: "TS1" } } },
       { insert: LF, attributes: { para: { style: "q1" } } },
     ]);
   });
@@ -165,7 +166,7 @@ describe("getEditorDelta", () => {
     });
 
     expect(ops).toEqual([
-      { insert: { milestone: { style: "qt-s", sid: "q1" } } },
+      { insert: { ms: { style: "qt-s", sid: "q1" } } },
       { insert: LF, attributes: { para: { style: "q1" } } },
     ]);
   });
@@ -192,7 +193,7 @@ describe("getEditorDelta", () => {
     });
 
     expect(ops).toEqual([
-      { insert: { milestone: { style: "qt-s", sid: "q1" } } },
+      { insert: { ms: { style: "qt-s", sid: "q1" } } },
       { insert: LF, attributes: { para: { style: "q1" } } },
     ]);
   });
@@ -522,6 +523,54 @@ describe("getEditorDelta", () => {
         },
       },
       { insert: LF, attributes: { para: { style: "q1" } } },
+    ]);
+  });
+
+  it("keeps an author's no-break space that has the placeholder's shape, in and out of a note", async () => {
+    const { editor } = await testEnvironment(() => {
+      const $authoredNbsp = () => {
+        const text = $createTextNode(NBSP);
+        $setState(text, authoredNbspState, true);
+        return text;
+      };
+      const fqChar = $createCharNode("fq");
+      $setState(fqChar, charIdState, "1");
+      const ftChar = $createCharNode("ft");
+      $setState(ftChar, charIdState, "2");
+      const ndChar = $createCharNode("nd");
+      $setState(ndChar, charIdState, "3");
+      $getRoot().append(
+        $createImpliedParaNode().append(
+          ndChar.append($authoredNbsp()),
+          $createNoteNode("f", GENERATOR_NOTE_CALLER).append(
+            fqChar.append($createTextNode("a")),
+            $createTextNode(NBSP),
+            ftChar.append($authoredNbsp()),
+          ),
+        ),
+      );
+    });
+
+    const delta = getEditorDelta(editor.getEditorState());
+
+    expect(delta.ops).toEqual([
+      { insert: NBSP, attributes: { char: { style: "nd", cid: "3" } } },
+      {
+        insert: {
+          note: {
+            style: "f",
+            caller: GENERATOR_NOTE_CALLER,
+            contents: {
+              ops: [
+                { insert: "a", attributes: { char: { style: "fq", cid: "1" } } },
+                { insert: NBSP },
+                { insert: NBSP, attributes: { char: { style: "ft", cid: "2" } } },
+              ],
+            },
+          },
+        },
+      },
+      { insert: LF },
     ]);
   });
 
@@ -1263,7 +1312,7 @@ describe("getEditorDelta", () => {
           },
         },
       },
-      { insert: { milestone: { style: "ts-s", sid: "TS1" } } },
+      { insert: { ms: { style: "ts-s", sid: "TS1" } } },
       { insert: LF, attributes: { para: { style: "q1" } } },
     ]);
   });
@@ -1515,7 +1564,7 @@ describe("getEditorDelta", () => {
       expect(delta.ops[2]).toEqual({
         insert: { verse: { style: "v", number: "1", ...unknownAttrs } },
       });
-      expect(delta.ops[5]).toEqual({ insert: { milestone: { style: "ts", ...unknownAttrs } } });
+      expect(delta.ops[5]).toEqual({ insert: { ms: { style: "ts", ...unknownAttrs } } });
       expect(delta.ops.at(-1)).toEqual({
         insert: LF,
         attributes: { para: { style: "p", ...unknownAttrs } },

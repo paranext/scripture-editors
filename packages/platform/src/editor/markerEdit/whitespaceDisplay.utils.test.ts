@@ -105,23 +105,59 @@ describe("opsForHost and opsFromHost", () => {
     ).toEqual([{ insert: `a${NBSP}b  c` }, note(`d${NBSP}e`)]);
   });
 
-  it("keep a marker's own separator and a lone spacer, but not an NBSP after a closer", () => {
-    expect(opsForHost([{ insert: `\\nd${NBSP}d\\nd*${NBSP}e` }, { insert: NBSP }], on)).toEqual([
+  it("keep a marker's own separator and spacer, but not an NBSP after a closer", () => {
+    expect(
+      opsForHost(
+        [
+          { insert: `\\nd${NBSP}d\\nd*${NBSP}e` },
+          { insert: "\\nd" },
+          { insert: NBSP },
+          { insert: "\\+wj" },
+          { insert: `${NBSP}f` },
+          { insert: "\\+wj*" },
+          { insert: NBSP },
+        ],
+        on,
+      ),
+    ).toEqual([
       { insert: `\\nd${NBSP}d\\nd* e` },
+      { insert: "\\nd" },
       { insert: NBSP },
+      { insert: "\\+wj" },
+      { insert: `${NBSP}f` },
+      { insert: "\\+wj*" },
+      { insert: " " },
     ]);
   });
 
-  it("take U+00A0 from a host as the stand-in, except a separator or lone spacer", () => {
+  it("take U+00A0 from a host as the stand-in, except a separator or spacer", () => {
     expect(
       opsFromHost(
-        [{ insert: `\\nd${NBSP}a${NBSP}b\u001Ac` }, { insert: NBSP }, note(`d${NBSP}e`)],
+        [
+          { insert: `\\nd${NBSP}a${NBSP}b\u001Ac` },
+          { insert: "\\nd" },
+          { insert: NBSP },
+          { insert: `${NBSP}g` },
+          note(`d${NBSP}e`),
+        ],
         on,
       ),
     ).toEqual([
       { insert: `\\nd${NBSP}a${NBSP_STAND_IN}b c` },
+      { insert: "\\nd" },
       { insert: NBSP },
+      { insert: `${NBSP_STAND_IN}g` },
       note(`d${NBSP_STAND_IN}e`),
+    ]);
+  });
+
+  it("take a no-break space that is a whole op's text as one, in notes too", () => {
+    const glyph = { insert: "\\nd*", attributes: { char: { style: "nd" } } };
+    expect(opsFromHost([glyph, { insert: NBSP }, note(NBSP), { insert: NBSP }], on)).toEqual([
+      glyph,
+      { insert: NBSP_STAND_IN },
+      note(NBSP_STAND_IN),
+      { insert: NBSP_STAND_IN },
     ]);
   });
 
@@ -130,12 +166,22 @@ describe("opsForHost and opsFromHost", () => {
     expect(opsFromHost(opsForHost(ops, on), on)).toEqual(ops);
   });
 
-  it("change nothing in other views, and only control characters with the option off", () => {
+  it("give and take U+00A0 for the `~` a stored no-break space shows as with the option off", () => {
+    expect(opsForHost([{ insert: `a~b${NBSP}${NBSP}c` }, note("d~e")], standard)).toEqual([
+      { insert: `a${NBSP}b  c` },
+      note(`d${NBSP}e`),
+    ]);
+    expect(
+      opsFromHost([{ insert: `a${NBSP}b\u001Ac` }, { insert: "\\nd" }, { insert: NBSP }], standard),
+    ).toEqual([{ insert: "a~b c" }, { insert: "\\nd" }, { insert: NBSP }]);
+  });
+
+  it("change nothing in other views", () => {
     const formatted = { markerMode: "hidden", hasSpacing: true, isFormattedFont: true } as const;
-    const ops = [{ insert: `a${NBSP}${NBSP}b\u001Ac` }];
-    expect(opsForHost(ops, { ...formatted, allowInvisibleCharacters: true })).toBe(ops);
-    expect(opsFromHost(ops, { ...formatted, allowInvisibleCharacters: true })).toBe(ops);
-    expect(opsForHost(ops, standard)).toBe(ops);
-    expect(opsFromHost(ops, standard)).toEqual([{ insert: `a${NBSP}${NBSP}b c` }]);
+    const ops = [{ insert: `a${NBSP}${NBSP}b\u001Ac~` }];
+    for (const allowInvisibleCharacters of [true, false]) {
+      expect(opsForHost(ops, { ...formatted, allowInvisibleCharacters })).toBe(ops);
+      expect(opsFromHost(ops, { ...formatted, allowInvisibleCharacters })).toBe(ops);
+    }
   });
 });

@@ -24,7 +24,7 @@ import { CharNodePlugin } from "../CharNodePlugin";
 import { baseTestEnvironment, removeNoteCallerOnClick } from "../react-test.utils";
 import { getDefaultViewOptions, ViewOptions } from "../../../views/view-options.utils";
 import { $applyUpdate } from "./delta-apply-update.utils";
-import { DeltaOp, LF } from "./delta-common.utils";
+import { DeltaOp, isInsertEmbedOpOfType, LF } from "./delta-common.utils";
 import { getEditorDelta } from "./editor-delta.adaptor";
 import { act } from "@testing-library/react";
 import {
@@ -45,6 +45,7 @@ import {
   $createImmutableTypedTextNode,
   $createImpliedParaNode,
   $createMarkerNode,
+  $createMilestoneNode,
   $createNoteNode,
   $createParaNode,
   $createVerseNode,
@@ -3051,6 +3052,75 @@ describe("Delta Utils $applyUpdate", () => {
       });
     });
 
+    it("should insert a milestone embed under the `milestone` key older op producers wrote", async () => {
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append($createParaNode().append($createTextNode("ab")));
+      });
+      const ops: DeltaOp[] = [
+        { retain: 1 },
+        { insert: { milestone: { style: "qt-s", sid: "q1" } } },
+      ];
+
+      await sutApplyUpdate(editor, ops);
+
+      editor.getEditorState().read(() => {
+        const p = $getRoot().getFirstChild();
+        if (!$isParaNode(p)) throw new Error("p is not a ParaNode");
+        const [before, milestone, after] = p.getChildren();
+        expect(before.getTextContent()).toBe("a");
+        if (!$isMilestoneNode(milestone)) throw new Error("milestone is not a MilestoneNode");
+        expect(milestone.getMarker()).toBe("qt-s");
+        expect(milestone.getSid()).toBe("q1");
+        expect(after.getTextContent()).toBe("b");
+      });
+    });
+
+    it("should insert plain text after a nested char span's end outside every span", async () => {
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append(
+          $createParaNode().append(
+            $createCharNode("nd").append(
+              $createTextNode("L "),
+              $createCharNode("wj").append($createTextNode("M")),
+            ),
+          ),
+        );
+      });
+
+      await sutApplyUpdate(editor, [{ retain: 3 }, { insert: " y" }]);
+
+      editor.getEditorState().read(() => {
+        const p = $getRoot().getFirstChild();
+        if (!$isParaNode(p)) throw new Error("p is not a ParaNode");
+        const [nd, text] = p.getChildren();
+        if (!$isCharNode(nd)) throw new Error("nd is not a CharNode");
+        expect(nd.getTextContent()).toBe("L M");
+        expect(text.getTextContent()).toBe(" y");
+      });
+    });
+
+    it("should count an editable char span's glyphs when placing the ops after it", async () => {
+      const viewOptions: ViewOptions = { ...defaultViewOptions, markerMode: "editable" };
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append($createParaNode());
+      });
+      const ops: DeltaOp[] = [
+        { insert: "L", attributes: { char: { style: "nd" } } },
+        { insert: " y" },
+      ];
+
+      await sutApplyUpdate(editor, ops, viewOptions);
+
+      editor.getEditorState().read(() => {
+        const p = $getRoot().getFirstChild();
+        if (!$isParaNode(p)) throw new Error("p is not a ParaNode");
+        const [nd, text] = p.getChildren();
+        if (!$isCharNode(nd)) throw new Error("nd is not a CharNode");
+        expect(nd.getTextContent()).toBe(`\\nd${NBSP}L\\nd*`);
+        expect(text.getTextContent()).toBe(" y");
+      });
+    });
+
     it("(dc) should insert milestone embeds before and in text", async () => {
       const text = "“So you say,” answered Jesus.";
       const { editor } = await testEnvironment(() => {
@@ -5102,6 +5172,50 @@ describe("Delta Utils $applyUpdate", () => {
       const serializedEditorState = editor.getEditorState().toJSON();
       cleanupSerializedEditorState(serializedEditorState, null);
       expect(serializedEditorState).toEqual(editorStateGen1v1ImpliedPara);
+    });
+
+    it("should roundtrip a milestone and its attributes through produced ops", async () => {
+      const { editor: host } = await testEnvironment(() => {
+        $getRoot().append(
+          $createParaNode("q1").append(
+            $createTextNode("before "),
+            $createMilestoneNode("qt-s", "q1", undefined, { who: "Jesus" }),
+            $createTextNode("words"),
+            $createMilestoneNode("qt-e", undefined, "q1"),
+            $createTextNode(" after"),
+          ),
+        );
+      });
+      const hostOps: DeltaOp[] = getEditorDelta(host.getEditorState()).ops;
+
+      // The producer writes the key `OTEmbedTypes` declares, so a host reading ops through the
+      // public type guard sees both milestones.
+      expect(hostOps.filter((op) => isInsertEmbedOpOfType("ms", op))).toEqual([
+        { insert: { ms: { style: "qt-s", sid: "q1", who: "Jesus" } } },
+        { insert: { ms: { style: "qt-e", eid: "q1" } } },
+      ]);
+
+      const { editor: replica } = await testEnvironment();
+      await sutApplyUpdate(replica, hostOps);
+
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(0);
+      replica.getEditorState().read(() => {
+        const para = $getRoot().getFirstChild();
+        if (!$isParaNode(para)) throw new Error("para is not a ParaNode");
+        expect(para.getMarker()).toBe("q1");
+        const [before, start, words, end, after] = para.getChildren();
+        expect(before.getTextContent()).toBe("before ");
+        if (!$isMilestoneNode(start)) throw new Error("start is not a MilestoneNode");
+        expect(start.getMarker()).toBe("qt-s");
+        expect(start.getSid()).toBe("q1");
+        expect(start.getUnknownAttributes()).toEqual({ who: "Jesus" });
+        expect(words.getTextContent()).toBe("words");
+        if (!$isMilestoneNode(end)) throw new Error("end is not a MilestoneNode");
+        expect(end.getMarker()).toBe("qt-e");
+        expect(end.getEid()).toBe("q1");
+        expect(after.getTextContent()).toBe(" after");
+      });
+      expect(getEditorDelta(replica.getEditorState()).ops).toEqual(hostOps);
     });
   });
 

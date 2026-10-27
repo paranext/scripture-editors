@@ -134,6 +134,10 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Changed
 
+- **Delta ops carry a milestone under `ms`**, the key `OTEmbedTypes` declares and
+  `isInsertEmbedOpOfType("ms", op)` finds (`{ insert: { ms: { style: "qt-s", sid: "q1" } } }`);
+  they carried it under `milestone`. `applyUpdate` and `replaceEmbedUpdate` still accept
+  `milestone`, so ops from earlier builds keep their milestones.
 - **Standard view turns incoming control characters into spaces.** Every C0 control character but
   tab, line feed and carriage return in a loaded document (text and attribute values), a paste, a
   drop, typed text or applied delta ops becomes a space, so none can be saved as the stand-in for a

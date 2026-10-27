@@ -2859,7 +2859,7 @@ export const opsWithUnknownItems = [
       },
     },
   },
-  { insert: { milestone: { style: "ts" } } },
+  { insert: { ms: { style: "ts" } } },
   { insert: "wat content?Mk 9.50sidebar contentperiph contentfigure contentcell1" },
   { insert: "\n", attributes: { para: { style: "p" } } },
 ];
@@ -2925,7 +2925,7 @@ export const opsWithUnknownItemsNoTable = [
     },
   },
   {
-    insert: { milestone: { style: "ts", category: "watCat", "attr-unknown": "watAttr" } },
+    insert: { ms: { style: "ts", category: "watCat", "attr-unknown": "watAttr" } },
   },
   {
     insert: {

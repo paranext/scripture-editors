@@ -54,6 +54,7 @@ import {
   $isBookNode,
   $isParaLikeNode,
   $isSomeParaNode,
+  $recordClipboardSpans,
   $selectParaMarker,
   MARKER_TEXT_TYPE,
 } from "shared";
@@ -307,7 +308,12 @@ export function StructureKeyboardPlugin({
       const sanitized = $sanitizeNodesForProtectedStructure($generateNodesFromDOM(editor, dom));
       // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
       const selection = $getSelection();
-      if ($isRangeSelection(selection)) selection.insertNodes(sanitized);
+      if ($isRangeSelection(selection)) {
+        // Inserted directly rather than through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, so
+        // record the spans the way that command's listener in `CharNodePlugin` does.
+        $recordClipboardSpans(sanitized);
+        selection.insertNodes(sanitized);
+      }
       event.preventDefault();
       return true;
     };
