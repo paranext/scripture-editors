@@ -144,6 +144,39 @@ describe("structureKeyboard.utils", () => {
     });
   });
 
+  it.each([0, 1])(
+    "a caret host ending a paragraph is at its end from either offset (%i)",
+    async (offset) => {
+      let host: TextNode;
+      const { editor } = await baseTestEnvironment(() => {
+        host = $createCaretHostNode();
+        $getRoot().append($createParaNode("p").append($createImmutableVerseNode("3"), host));
+      });
+      updateSelection(editor, host!, offset);
+      editor.getEditorState().read(() => {
+        expect($caretAtParaEnd($getSelection()!)).toBe(true);
+      });
+    },
+  );
+
+  it.each([0, 1])(
+    "a caret host starting a paragraph is at its start from either offset (%i)",
+    async (offset) => {
+      let host: TextNode;
+      const { editor } = await baseTestEnvironment(() => {
+        host = $createCaretHostNode();
+        $getRoot().append(
+          $createParaNode("q").append($createTextNode("prev")),
+          $createParaNode("p").append(host, $createImmutableVerseNode("4")),
+        );
+      });
+      updateSelection(editor, host!, offset);
+      editor.getEditorState().read(() => {
+        expect($caretAtParaStart($getSelection()!)).toBe(true);
+      });
+    },
+  );
+
   it("empty paragraph: caret is both at start and at end", async () => {
     let para: ParaNode;
     const { editor } = await baseTestEnvironment(() => {

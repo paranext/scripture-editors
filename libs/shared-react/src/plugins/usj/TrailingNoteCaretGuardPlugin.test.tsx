@@ -6,7 +6,7 @@ import { getViewOptions } from "../../views/view-options.utils";
 import { STANDARD_VIEW_MODE } from "../../views/view-mode.model";
 import { ArrowNavigationPlugin } from "./ArrowNavigationPlugin";
 import { EmptyVerseCaretGuardPlugin } from "./EmptyVerseCaretGuardPlugin";
-import { baseTestEnvironment, pressKey, updateSelection } from "./react-test.utils";
+import { baseTestEnvironment, pressKey, settle, updateSelection } from "./react-test.utils";
 import { TrailingNoteCaretGuardPlugin } from "./TrailingNoteCaretGuardPlugin";
 import { act } from "@testing-library/react";
 import {
@@ -378,9 +378,7 @@ describe("TrailingNoteCaretGuardPlugin", () => {
     // Let the selectionchange events jsdom queued for those writes arrive before the blur: one
     // arriving after it would rest the caret past the note again and re-host it, as a real return
     // to the editor should.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await settle();
 
     await act(async () => {
       editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
@@ -399,9 +397,7 @@ describe("TrailingNoteCaretGuardPlugin", () => {
       <TrailingNoteCaretGuardPlugin />,
     );
     await restCaretPastNote(editor, para!);
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await settle();
 
     await act(async () => {
       editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
@@ -1234,9 +1230,7 @@ describe("TrailingNoteCaretGuardPlugin", () => {
         await giveEditorACaret(editor, before);
         const { paraDom, callerDom } = noteParagraphDom(editor);
         await clickIntoUnfocusedEditor(editor, paraDom, callerDom, 0);
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        });
+        await settle();
 
         await act(async () => {
           editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));

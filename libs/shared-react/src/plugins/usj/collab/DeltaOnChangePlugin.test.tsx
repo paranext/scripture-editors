@@ -33,6 +33,7 @@ import {
   blackListedChangeTags,
   charIdState,
   CURSOR_CHANGE_TAG,
+  EMPTY_CHAR_PLACEHOLDER_TEXT,
   EXTERNAL_USJ_MUTATION_TAG,
   ImmutableChapterNode,
   ImpliedParaNode,
@@ -400,9 +401,6 @@ describe("OnChangePlugin", () => {
       expect(calls).toHaveLength(0);
     });
 
-    // The transient caret hosts (an emptied verse's, and a trailing note's) tag every mutation they
-    // make with CURSOR_CHANGE_TAG. That tag is what keeps a host out of save emission entirely: the
-    // commit never reaches this handler, so the host application is never told the document changed.
     it("emits only the insert when text replaces a caret host between two verses", async () => {
       // The empty-verse guard hosts the caret in a placeholder-only text node, which delta-doc
       // coordinates count as zero length. The first keystroke turns it into the typed text, and
@@ -431,6 +429,35 @@ describe("OnChangePlugin", () => {
       expect(updateOps.filter((op) => "insert" in op)).toEqual([{ insert: "a" }]);
     });
 
+    it("emits only the insert when text replaces an empty char span's stand-in", async () => {
+      // An otherwise empty char span holds a stand-in NBSP, which delta-doc coordinates also count
+      // as zero length. Diffing from it would delete the next verse just as a caret host would.
+      let standIn: TextNode;
+      const { editor } = await testEnvironment(() => {
+        standIn = $createTextNode(EMPTY_CHAR_PLACEHOLDER_TEXT);
+        $getRoot().append(
+          $createImpliedParaNode().append(
+            $createImmutableVerseNode("2"),
+            $createCharNode("nd").append(standIn),
+            $createImmutableVerseNode("3"),
+            $createTextNode("three"),
+          ),
+        );
+      });
+
+      await sutUpdate(editor, () => {
+        // Defined by the test environment.
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        standIn!.setTextContent("a");
+      });
+
+      expect(updateOps.some((op) => "delete" in op)).toBe(false);
+      expect(updateOps.filter((op) => "insert" in op).map((op) => op.insert)).toEqual(["a"]);
+    });
+
+    // The transient caret hosts (an emptied verse's, and a trailing note's) tag every mutation they
+    // make with CURSOR_CHANGE_TAG. That tag is what keeps a host out of save emission entirely: the
+    // commit never reaches this handler, so the host application is never told the document changed.
     it("skips the delta for a CURSOR_CHANGE_TAG commit, so a caret host is never emitted", async () => {
       const { editor, calls } = await setup();
       await sutUpdate(editor, $makeMultiNodeChange, { tag: CURSOR_CHANGE_TAG });

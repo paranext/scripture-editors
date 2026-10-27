@@ -647,7 +647,7 @@ export function $isFastPathContentText(node: TextNode): boolean {
  *   traversal; only `"delta-doc"` excludes it, mirroring `editor-delta.adaptor.ts`'s existing ops
  *   exclusion for the identical bytes.
  */
-function $getNodeOTContribution(node: LexicalNode, coordinates: OTCoordinateSystem): number {
+export function $getNodeOTContribution(node: LexicalNode, coordinates: OTCoordinateSystem): number {
   // Embeds are checked FIRST: an editable VerseNode is a TextNode subclass but counts as one
   // opaque OT unit (its glyph text is engine-owned display, excluded from content ops), the same
   // as it counts in the doc delta and in `$applyUpdate`'s traversals. See {@link $isOTTextNode}.

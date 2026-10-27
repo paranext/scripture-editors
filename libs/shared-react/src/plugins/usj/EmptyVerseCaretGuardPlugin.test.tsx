@@ -4,7 +4,7 @@
 import { $createImmutableVerseNode, ImmutableVerseNode } from "../../nodes/usj";
 import { EmptyNoteCaretGuardPlugin } from "./EmptyNoteCaretGuardPlugin";
 import { EmptyVerseCaretGuardPlugin } from "./EmptyVerseCaretGuardPlugin";
-import { baseTestEnvironment, deleteTextAtSelection } from "./react-test.utils";
+import { baseTestEnvironment, deleteTextAtSelection, settle } from "./react-test.utils";
 import { TrailingNoteCaretGuardPlugin } from "./TrailingNoteCaretGuardPlugin";
 import { createEmptyHistoryState, HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { act } from "@testing-library/react";
@@ -25,7 +25,7 @@ import {
   TextNode,
   UNDO_COMMAND,
 } from "lexical";
-import { $createParaNode, CURSOR_PLACEHOLDER_CHAR, ParaNode } from "shared";
+import { $createParaNode, CURSOR_CHANGE_TAG, CURSOR_PLACEHOLDER_CHAR, ParaNode } from "shared";
 
 // jsdom implements no layout: Lexical reads a Range rect when it writes the DOM selection.
 if (typeof Range.prototype.getBoundingClientRect !== "function") {
@@ -270,13 +270,6 @@ describe("EmptyVerseCaretGuardPlugin host lifecycle", () => {
     return { editor, para, host };
   }
 
-  /** Let the selectionchange events jsdom queued for earlier writes arrive now, not mid-test. */
-  async function settle() {
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-  }
-
   async function insertText(editor: LexicalEditor, text: string) {
     await act(async () => {
       editor.update(() => {
@@ -330,15 +323,8 @@ describe("EmptyVerseCaretGuardPlugin host lifecycle", () => {
     const { editor, para } = await hostedEmptyVerse(
       <HistoryPlugin externalHistoryState={historyState} />,
     );
-    const type = async (text: string) =>
-      act(async () => {
-        editor.update(() => {
-          const selection = $getSelection();
-          if ($isRangeSelection(selection)) selection.insertText(text);
-        });
-      });
 
-    await type("a");
+    await insertText(editor, "a");
     await settle();
     await act(async () => {
       editor.dispatchCommand(UNDO_COMMAND, undefined);
@@ -353,7 +339,7 @@ describe("EmptyVerseCaretGuardPlugin host lifecycle", () => {
         restored.select(0, 0);
       });
     });
-    await type("b");
+    await insertText(editor, "b");
 
     expect(leakedPlaceholders(editor, para)).toEqual([]);
   });
@@ -382,7 +368,8 @@ describe("EmptyVerseCaretGuardPlugin host lifecycle", () => {
 
   it("removes nothing when the host's selected placeholder is replaced", async () => {
     const { editor, para, host } = await hostedEmptyVerse();
-    // Shift+ArrowRight selects the placeholder; what lands next replaces it.
+    // A selection over the placeholder that no selectionchange has reported yet: what lands
+    // replaces it.
     await act(async () => {
       editor.update(() => {
         const range = $createRangeSelection();
@@ -546,6 +533,98 @@ describe("EmptyVerseCaretGuardPlugin host lifecycle", () => {
     });
   });
 
+  it("strips the placeholder when text is typed after it, at the host's offset 1", async () => {
+    const { editor, para, host } = await hostedEmptyVerse();
+    // ArrowRight inside the host, or a click landing past the placeholder.
+    await act(async () => {
+      editor.update(() => host.select(1, 1));
+    });
+
+    await insertText(editor, "a");
+
+    expect(editor.getEditorState().read(() => para.getTextContent())).toBe("a");
+  });
+
+  it("keeps a blur from a hosted caret out of undo and the USJ-change handler", async () => {
+    const historyState = createEmptyHistoryState();
+    const { editor, para } = await hostedEmptyVerse(
+      <HistoryPlugin externalHistoryState={historyState} />,
+    );
+    const undoSteps = historyState.undoStack.length;
+    const tagsOfUpdates: string[][] = [];
+    const unregister = editor.registerUpdateListener(({ tags, dirtyLeaves, dirtyElements }) => {
+      if (dirtyLeaves.size > 0 || dirtyElements.size > 0) tagsOfUpdates.push([...tags]);
+    });
+
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
+    });
+    unregister();
+
+    expect(editor.getEditorState().read(() => para.getChildrenSize())).toBe(2);
+    expect(historyState.undoStack.length).toBe(undoSteps);
+    // CURSOR_CHANGE_TAG is blacklisted, so the host application's onUsjChange never sees it.
+    expect(tagsOfUpdates.length).toBeGreaterThan(0);
+    expect(tagsOfUpdates.every((tags) => tags.includes(CURSOR_CHANGE_TAG))).toBe(true);
+  });
+
+  describe("a host undo restored, which no selection change has adopted", () => {
+    async function restoredHost() {
+      const historyState = createEmptyHistoryState();
+      const hosted = await hostedEmptyVerse(<HistoryPlugin externalHistoryState={historyState} />);
+      const { editor, para } = hosted;
+      await insertText(editor, "a");
+      await settle();
+      await act(async () => {
+        editor.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+      // Undo brings the host back with the caret in it, and dispatches no selection change.
+      await act(async () => {
+        editor.update(() => {
+          const restored = para.getChildAtIndex(1);
+          if (!$isTextNode(restored)) throw new Error("expected undo to restore the host");
+          restored.select(0, 0);
+        });
+      });
+      return hosted;
+    }
+
+    it("is removed on blur", async () => {
+      const { editor, para } = await restoredHost();
+
+      await act(async () => {
+        editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
+      });
+
+      expect(editor.getEditorState().read(() => para.getChildrenSize())).toBe(2);
+    });
+
+    it("is removed on blur after the queued selection events arrive", async () => {
+      const { editor, para } = await restoredHost();
+      await settle();
+
+      await act(async () => {
+        editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
+      });
+
+      expect(editor.getEditorState().read(() => para.getChildrenSize())).toBe(2);
+    });
+
+    it("is removed when the caret leaves it", async () => {
+      const { editor, para } = await restoredHost();
+
+      // The browser moves the caret to the paragraph's start, as a click there does.
+      const paraDom = editor.getElementByKey(para.getKey());
+      if (!paraDom) throw new Error("expected the paragraph's element");
+      await act(async () => {
+        window.getSelection()?.collapse(paraDom, 0);
+      });
+      await settle();
+
+      expect(editor.getEditorState().read(() => para.getChildrenSize())).toBe(2);
+    });
+  });
+
   it("removes the host once its placeholder is selected", async () => {
     const { editor, host } = await hostedEmptyVerse();
 
@@ -561,7 +640,7 @@ describe("EmptyVerseCaretGuardPlugin host lifecycle", () => {
     });
     await dispatchSelectionChange(editor);
 
-    // The host is replaced by a fresh one at the same position, with nothing selected in it.
+    // The host is removed, and nothing is selected.
     editor.getEditorState().read(() => {
       expect(host.isAttached()).toBe(false);
       const selection = $getSelection();

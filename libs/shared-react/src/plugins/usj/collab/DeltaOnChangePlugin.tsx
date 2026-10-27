@@ -2,14 +2,19 @@
  * Adapted from https://github.com/facebook/lexical/blob/d0456a81955bc6fef7cc7f87907f2a172d41bbf2/packages/lexical-react/src/LexicalOnChangePlugin.ts
  */
 
-import { $getOTPositionOfNode, $isFastPathContentText, DeltaOp } from "./delta-common.utils";
+import {
+  $getNodeOTContribution,
+  $getOTPositionOfNode,
+  $isFastPathContentText,
+  DeltaOp,
+} from "./delta-common.utils";
 import { $getTextOp, getEditorDelta } from "./editor-delta.adaptor";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import type { EditorState, LexicalEditor, UpdateListenerPayload } from "lexical";
 import { $getNodeByKey, $isTextNode, HISTORY_MERGE_TAG } from "lexical";
 import Delta from "quill-delta";
 import { useLayoutEffect } from "react";
-import { $findFirstAncestorNoteNode, isCursorPlaceholderOnly, MARKER_SETTLE_TAG } from "shared";
+import { $findFirstAncestorNoteNode, MARKER_SETTLE_TAG } from "shared";
 
 /** Stable default for {@link DeltaOnChangePlugin}'s `ignoreTags` so the effect deps stay stable. */
 const EMPTY_TAGS: readonly string[] = [];
@@ -141,26 +146,34 @@ export function $getUpdateOps(
       // See `OTCoordinateSystem` in delta-common.utils.ts.
       const retain = $getOTPositionOfNode(dirtyNode);
       if (retain !== undefined) {
+        // The node's previous text is diffed from what it contributed in the same delta-doc
+        // counting, not from its raw bytes: a caret host's placeholder or an empty char span's
+        // stand-in contributed nothing, and diffing from those bytes would delete whatever
+        // follows the node, such as the next verse. Any other text that counted differently
+        // from its bytes takes the full diff.
         const prevTextDoc = prevEditorState.read(() => {
           const prevNode = $getNodeByKey(nodeKey);
-          // A placeholder-only caret host has zero length in delta-doc coordinates, like the
-          // retain above counts it: diffing from its raw placeholder would delete a unit that is
-          // not there — whatever follows it, such as the next verse.
-          const isBareHost =
-            $isTextNode(prevNode) && isCursorPlaceholderOnly(prevNode.getTextContent());
-          return new Delta([
-            $isTextNode(prevNode) && !isBareHost ? $getTextOp(prevNode) : { insert: "" },
-          ]);
+          if (!$isTextNode(prevNode) || $getNodeOTContribution(prevNode, "delta-doc") === 0) {
+            return new Delta([{ insert: "" }]);
+          }
+          return $isFastPathContentText(prevNode) ? new Delta([$getTextOp(prevNode)]) : undefined;
         });
+        if (!prevTextDoc) {
+          update = getFullDiff(editor, prevEditorState);
+          return;
+        }
         const textDoc = new Delta([$getTextOp(dirtyNode)]);
         const nodePositionRetain = new Delta(retain > 0 ? [{ retain }] : []);
         update = update.concat(nodePositionRetain).concat(prevTextDoc.diff(textDoc));
       }
     } else {
-      const prevDoc = getEditorDelta(prevEditorState);
-      const currentDoc = getEditorDelta(editor.getEditorState());
-      update = prevDoc.diff(currentDoc);
+      update = getFullDiff(editor, prevEditorState);
     }
   });
   return update.ops;
+}
+
+/** The ops between the previous state's whole delta and the current one's. */
+function getFullDiff(editor: LexicalEditor, prevEditorState: EditorState): Delta {
+  return getEditorDelta(prevEditorState).diff(getEditorDelta(editor.getEditorState()));
 }

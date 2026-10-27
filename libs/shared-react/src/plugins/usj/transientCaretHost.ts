@@ -47,20 +47,20 @@ export type CaretHostAnchor = () => LexicalNode | undefined;
 /**
  * Puts the caret at the boundary just past `target`, materializing a host there when nothing else
  * renders one, drops a host the caret has left behind, and takes over a host the caret rests in
- * that no instance tracks (one an undo brought back). Passing `undefined` does only the last two.
+ * that this instance does not track (one an undo brought back). Passing `undefined` does only the
+ * last two.
  *
  * {@link useTransientCaretHost} returns this so a guard can drive the same repair from an arrival
  * the caret cannot report itself — a click Lexical resolved to no caret at all.
  *
- * Returns whether it changed any node — adopting a host that is already there and moving the caret
- * into it changes none. It tags the active update only when it did: Lexical clears an update's
- * tags only when the commit dirties a node, so a tag on a selection-only commit rides along on the
- * user's NEXT update, and `CURSOR_CHANGE_TAG` is in `blackListedChangeTags` — which would keep
- * that edit from ever reaching the host's USJ-change handler.
+ * It tags the active update (`CURSOR_CHANGE_TAG`, `HISTORY_MERGE_TAG`) only when it changed a node.
+ * Lexical clears an update's tags only when the commit dirties a node, so tags on a selection-only
+ * commit ride along on the user's NEXT update, hiding it from the USJ-change handler and merging it
+ * into the previous undo step.
  *
  * Mutating: call inside `editor.update()`.
  */
-export type CaretHostRepair = (target: LexicalNode | undefined) => boolean;
+export type CaretHostRepair = (target: LexicalNode | undefined) => void;
 
 /**
  * Marks a text node as a caret host from the moment it is created until text lands in it. It is
@@ -98,18 +98,6 @@ function $isBareHost(node: TextNode): boolean {
 }
 
 /**
- * Whether `node` carries the caret-host mark — a bare host, or one text has landed in that this
- * update's transforms have not yet turned into content. A transform that must leave a host alone
- * asks this rather than {@link $isCaretHost}, so its answer does not depend on whether the host's
- * own transform ran first.
- *
- * Read-only: safe in any read.
- */
-export function $hasCaretHostMark(node: LexicalNode | null | undefined): boolean {
-  return $isTextNode(node) && $getState(node, caretHostState);
-}
-
-/**
  * The key of the text node a collapsed caret rests in, or `undefined`. Any range — even one inside
  * a host's own placeholder — has left the host: a selected placeholder would otherwise be copied,
  * or quoted by a footnote inserted over it, as content.
@@ -143,6 +131,8 @@ function $removeHostPlaceholder(node: TextNode): void {
       ? selection.anchor.offset
       : undefined;
   let index: number | undefined;
+  // From offset 0 the key is not checked: a placeholder right at the caret is the host's own, and
+  // a caret that arrived from another node has a previous anchor elsewhere.
   if (previous.anchor.offset === 0) {
     if (caretOffset !== undefined && text[caretOffset] === CURSOR_PLACEHOLDER_CHAR) {
       index = caretOffset;
@@ -176,18 +166,21 @@ function $removeHostPlaceholder(node: TextNode): void {
  * same single host as the arrival that does announce itself.
  *
  * The host is TRANSIENT, and this hook is what makes that true in one place rather than once per
- * guard: it is created only when the caret comes to rest at such a position, removed as soon as the
- * caret leaves or the editor blurs, and stripped the moment real text is typed into it. It never
- * accumulates and never appears in a document nobody put a caret into.
+ * guard: it is created only when the caret comes to rest at such a position (or focus returns to
+ * one), removed as soon as the caret leaves (a range selection counts) or the editor blurs, and
+ * loses its own placeholder the moment text lands in it. It never accumulates and never appears in
+ * a document nobody put a caret into.
  *
- * Every mutation carries {@link CURSOR_CHANGE_TAG}, which is in `blackListedChangeTags` — so the
- * commit never reaches the host application's USJ-change handler and produces no delta op — and
- * `HISTORY_MERGE_TAG`, so creating or removing a host is no step of its own in undo and never
- * clears the redo stack. The USJ serializer drops a placeholder-only text node as well, and the
- * collab coordinate systems give it zero length, so a host cannot reach saved Scripture or a peer
- * even if one somehow outlived a commit. All placeholder handling is scoped to nodes marked as
- * hosts, and removes only a host's own placeholder — a zero-width space is legitimate content in
- * some scripts (Thai/Khmer/Lao line breaks) and is never touched.
+ * Every host creation and removal carries {@link CURSOR_CHANGE_TAG}, which is in
+ * `blackListedChangeTags` — so the commit never reaches the host application's USJ-change handler
+ * and produces no delta op — and `HISTORY_MERGE_TAG`, so creating or removing a host is no step of
+ * its own in undo and never clears the redo stack. The text that lands in a host is the user's
+ * edit, so the transform that turns the host into that text adds no tags. The USJ serializer drops
+ * a placeholder-only text node as well, and the collab coordinate systems give it zero length, so
+ * a host cannot reach saved Scripture or a peer even if one somehow outlived a commit. All
+ * placeholder handling is scoped to nodes marked as hosts, and removes only a host's own
+ * placeholder — a zero-width space is legitimate content in some scripts (Thai/Khmer/Lao line
+ * breaks) and is never touched.
  *
  * Unlike the arrow-driven `CursorHandler` placeholder system (perf-react), this hosts a *resting*
  * caret.
@@ -226,9 +219,8 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       const atBoundary = $caretHostAtBoundary(parent, boundary);
       const existing = $isCursorPlaceholderOnlyText(atBoundary) ? atBoundary : undefined;
       if (existing) {
-        // Track the adopted host too: every cleanup path (the stale-host pass below, blur,
-        // unmount) acts solely on hostKeyRef, so a host reused from another instance — or one an
-        // undo brought back — would otherwise never be removed when the caret leaves it.
+        // Track a reused host too, so the stale-host pass below and blur remove it when the caret
+        // leaves. Neither ever removes an unmarked one, so tracking that is harmless.
         hostKeyRef.current = existing.getKey();
         occupiedKey = existing.getKey();
       } else {
@@ -241,14 +233,19 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       $placeCaretAtBoundary(parent, boundary);
     }
 
-    // A tracked host the caret has left, and has not just been put back into, should go.
-    if (staleKey && staleIsBareHost && staleKey !== restingKey && staleKey !== occupiedKey) {
-      const stale = $getNodeByKey(staleKey);
-      if ($isTextNode(stale)) {
-        stale.remove();
-        mutated = true;
-      }
-      if (hostKeyRef.current === staleKey) hostKeyRef.current = undefined;
+    // A host the caret has left, and has not just been put back into, should go: the tracked one,
+    // and the one the caret last rested in, which no instance may track yet — an undo brings a
+    // host back with the caret in it but dispatches no selection change to adopt it.
+    const previous = $getPreviousSelection();
+    const previousKey =
+      $isRangeSelection(previous) && previous.isCollapsed() ? previous.anchor.key : undefined;
+    for (const key of new Set([staleIsBareHost ? staleKey : undefined, previousKey])) {
+      if (!key || key === restingKey || key === occupiedKey) continue;
+      const stale = $getNodeByKey(key);
+      if (!$isCaretHost(stale) || !stale?.isAttached()) continue;
+      stale.remove();
+      mutated = true;
+      if (hostKeyRef.current === key) hostKeyRef.current = undefined;
     }
 
     // A host the caret rests in that this instance does not track — one an undo brought back, say
@@ -260,21 +257,12 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       $addUpdateTag(CURSOR_CHANGE_TAG);
       $addUpdateTag(HISTORY_MERGE_TAG);
     }
-    return mutated;
   }, []);
 
   useEffect(() => {
-    // Repair the caret's resting place and/or drop a stale host it has left. Runs from
-    // SELECTION_CHANGE (a command, the sanctioned place to mutate), which Lexical dispatches
-    // from WITHIN the update that applies the new selection — so `$getSelection()` must be read
-    // DIRECTLY here, where it resolves against the pending state. Wrapping the reads in
-    // `editor.getEditorState().read(...)` evaluated the PREVIOUS commit: the anchor was the
-    // caret's old position, so no host was created where the caret just arrived, and on the
-    // next move the stale-host pass treated the still-current host as abandoned and yanked the
-    // caret back to the previous boundary. A nested `editor.update(...)` is queued rather than
-    // run inline while an update is active, so the repair also runs directly, tagging the
-    // active update instead. It converges: after the repair the caret sits in a host past the
-    // anchor, so the next SELECTION_CHANGE finds nothing to repair and no stale host.
+    // SELECTION_CHANGE runs inside the update that applies the new selection, so the repair reads
+    // that pending selection directly. It converges: after the repair the caret sits in a host
+    // past the anchor, so the next SELECTION_CHANGE finds nothing to repair and no stale host.
     const $syncCaretHost = (): void => {
       $repairCaret($caretHostAnchor());
     };
@@ -295,6 +283,8 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       $removeHostPlaceholder(node);
     };
 
+    // A focus's queued re-host must not run once this effect is torn down.
+    let disposed = false;
     const unregister = mergeRegister(
       editor.registerCommand(
         SELECTION_CHANGE_COMMAND,
@@ -307,12 +297,14 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       editor.registerCommand(
         BLUR_COMMAND,
         () => {
-          // Commands run inside an update, so the host is removed in this one, leaving the caret
-          // at the boundary it stood for rather than wherever Lexical moves a removed node's
-          // selection (into a collapsed note, past a trailing one). Tagged to leave the DOM
-          // selection alone: written back, it would refocus the editor and take focus from
-          // wherever the user just moved it.
-          const key = hostKeyRef.current;
+          // Runs inside the blur's update. A caret in the host goes to the boundary it stood for,
+          // unannounced so no guard re-hosts it. `SKIP_DOM_SELECTION_TAG`: writing the selection
+          // back would refocus the editor. With nothing tracked, the host the caret rests in is
+          // the one to remove — an undo brings a host back without any instance adopting it.
+          const restingKey = $restingKey();
+          const key =
+            hostKeyRef.current ??
+            (restingKey && $isCaretHost($getNodeByKey(restingKey)) ? restingKey : undefined);
           hostKeyRef.current = undefined;
           const host = key ? $getNodeByKey(key) : undefined;
           // Another guard instance tracking the same host may have removed it already.
@@ -335,19 +327,18 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
         },
         COMMAND_PRIORITY_EDITOR,
       ),
-      // Focus can come back without a selectionchange (a host refocusing the editor, a menu
-      // closing), leaving the caret on the hostless point blur left it at; host it again. In an
-      // update of its own, after this one: Lexical focuses the editor itself while committing a
-      // selection, and the focus event it fires then runs against the frozen committed state.
-      // Decided against that committed state first, and only updated when a host is missing: an
-      // update made outside any event resolves its selection from the DOM, which right after a
-      // focus may not yet hold the selection just committed — the update would move the caret
-      // rather than host it.
+      // Focus can return without a selectionchange (the host application refocusing the editor, a
+      // menu closing), leaving the caret on the hostless point blur left. Re-host in a later
+      // update, since Lexical can fire focus mid-commit against the frozen state, and only when
+      // the committed caret lacks a host: an update outside any event reads its selection from
+      // the DOM, which may not yet hold the committed caret. `editor.read` commits any pending
+      // update first, so the re-host's tags never cover someone else's edit.
       editor.registerCommand(
         FOCUS_COMMAND,
         () => {
           queueMicrotask(() => {
-            const needsHost = editor.getEditorState().read(() => {
+            if (disposed) return;
+            const needsHost = editor.read(() => {
               if (!$caretHostAnchor()) return false;
               const restingKey = $restingKey();
               return !restingKey || !$isCursorPlaceholderOnlyText($getNodeByKey(restingKey));
@@ -362,6 +353,7 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
     );
     // Drop the tracked key when the editor changes so it can't resolve into a different editor.
     return () => {
+      disposed = true;
       unregister();
       hostKeyRef.current = undefined;
     };

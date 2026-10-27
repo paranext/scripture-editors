@@ -733,6 +733,39 @@ describe("StructureKeyboardPlugin — two-step delete guards", () => {
       expect((root.getChildren()[0] as ParaNode).getTextContent()).toBe("first");
     });
   });
+
+  it.each([
+    ["Delete", 0],
+    ["Backspace", 1],
+  ] as const)(
+    "%s from inside an empty verse's caret host arms the neighboring verse",
+    async (key, offset) => {
+      // The empty-verse guard rests the caret in a placeholder-only host between two verses. Each
+      // key starts from the offset facing the placeholder, so it would delete the placeholder
+      // rather than reach the verse if the host's two offsets were not read as one position.
+      let host: TextNode;
+      const { editor } = await guardedEnvironment(() => {
+        host = $createCaretHostNode();
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createImmutableVerseNode("3"),
+            host,
+            $createImmutableVerseNode("4"),
+            $createTextNode("four"),
+          ),
+        );
+      });
+      updateSelection(editor, host!, offset);
+
+      await pressKey(editor, key, 0);
+
+      expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(true);
+      editor.getEditorState().read(() => {
+        // Nothing was deleted: the host and both verses are still there.
+        expect($getRoot().getFirstChildOrThrow<ParaNode>().getChildrenSize()).toBe(4);
+      });
+    },
+  );
 });
 
 describe("StructureKeyboardPlugin — two-step delete for range selections with verse markers", () => {
@@ -791,37 +824,6 @@ describe("StructureKeyboardPlugin — two-step delete for range selections with 
       expect($getRoot().getTextContent()).toContain("d");
     });
   });
-
-  it.each([
-    ["Delete", 0],
-    ["Backspace", 1],
-  ] as const)(
-    "%s from inside an empty verse's caret host arms the neighboring verse",
-    async (key, offset) => {
-      // The empty-verse guard rests the caret in a placeholder-only host between two verses.
-      let host: TextNode;
-      const { editor } = await guardedEnvironment(() => {
-        host = $createCaretHostNode();
-        $getRoot().append(
-          $createParaNode("p").append(
-            $createImmutableVerseNode("3"),
-            host,
-            $createImmutableVerseNode("4"),
-            $createTextNode("four"),
-          ),
-        );
-      });
-      updateSelection(editor, host!, offset);
-
-      await pressKey(editor, key, 0);
-
-      expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(true);
-      editor.getEditorState().read(() => {
-        // Nothing was deleted: the host and both verses are still there.
-        expect($getRoot().getFirstChildOrThrow<ParaNode>().getChildrenSize()).toBe(4);
-      });
-    },
-  );
 
   it("toggles the verse-delete-armed class on the editor root while armed", async () => {
     let t1: TextNode;
