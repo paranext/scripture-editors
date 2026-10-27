@@ -42,7 +42,7 @@
  */
 
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
-import { NBSP, NBSP_STAND_IN } from "shared";
+import { NBSP } from "shared";
 import { getNbspSpelling, hasStandardViewWhitespace, ViewOptions } from "shared-react";
 
 /** Whether `code` is a C0 control character other than tab, line feed and carriage return. */
@@ -159,29 +159,43 @@ export function toUsfmNbspSpelling(
   return nbspSpelling === "~" ? displayText : displayText.replaceAll(nbspSpelling, NBSP);
 }
 
+/** An opening marker glyph (`\nd`, `\+nd`, `\c`) at the end of a text; a closer ends in `*`. */
+const OPENING_GLYPH_AT_END = /\\\+?[^\s\\|*]+$/;
+
 /**
  * Whether the NBSP at `index` of `text` (display text in Standard view, as delta ops carry it) is
- * the separator after an opening marker glyph (`\nd`, `\+nd`, `\c`) or a lone spacer — the NBSPs
- * that are part of how the view lays markers out, as opposed to a space shown as an NBSP because it
- * is in a run. A closing glyph (`\nd*`) has no separator after it.
+ * the separator or spacer after an opening marker glyph (`\nd`, `\+nd`, `\c`) — the NBSPs that are
+ * part of how the view lays markers out, as opposed to a space shown as an NBSP because it is in a
+ * run. A glyph is usually an op of its own (each text node is one op), so an NBSP at the start of
+ * an op is structural when the op before it ends in an opening glyph. A closing glyph (`\nd*`) has
+ * no separator after it.
+ *
+ * Nothing else makes an NBSP structural: a note's contents ops carry no glyphs, separators or
+ * spacers, and a lone NBSP op anywhere else is a no-break space, which the editor itself only ever
+ * holds as its spelling.
+ *
+ * @param text - The op's text.
+ * @param index - Where the NBSP is in `text`.
+ * @param previousText - The text of the op before this one in the same ops list, if that op is a
+ *   text insert.
  */
-function isStructuralDisplayNbsp(text: string, index: number): boolean {
-  if (text === NBSP) return true;
-  return /\\\+?[^\s\\|*]+$/.test(text.slice(0, index));
+function isStructuralDisplayNbsp(text: string, index: number, previousText = ""): boolean {
+  return OPENING_GLYPH_AT_END.test(index === 0 ? previousText : text.slice(0, index));
 }
 
 /**
- * Text of a delta op going out of Standard view with `ViewOptions.allowInvisibleCharacters` on:
- * each internal stand-in becomes the U+00A0 it stands for, and an NBSP the view shows for a space
- * (in a run of spaces) becomes that space, so no U+00A0 in the ops is anything but a no-break space
- * or a marker's own separator. Length-preserving, so op positions are unchanged.
+ * Text of a delta op going out of Standard view: each stored no-break space (shown as
+ * `nbspSpelling`) becomes U+00A0, and an NBSP the view shows for a space (in a run of spaces)
+ * becomes that space, so the ops read as USJ text does, the way every other view's ops do: no
+ * U+00A0 in them is anything but a no-break space or a marker's own separator. Length-preserving,
+ * so op positions are unchanged.
  */
-function opTextOut(text: string): string {
+function opTextOut(text: string, previousText: string | undefined, nbspSpelling: string): string {
   let out = "";
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index];
-    if (character === NBSP_STAND_IN) out += NBSP;
-    else if (character === NBSP && !isStructuralDisplayNbsp(text, index)) out += " ";
+    if (character === nbspSpelling) out += NBSP;
+    else if (character === NBSP && !isStructuralDisplayNbsp(text, index, previousText)) out += " ";
     else out += character;
   }
   return out;
@@ -189,28 +203,36 @@ function opTextOut(text: string): string {
 
 /**
  * Text of a delta op coming into Standard view: control characters become spaces
- * ({@link controlCharactersToSpaces}), and with `ViewOptions.allowInvisibleCharacters` on each
- * U+00A0 that is not a marker's separator or a lone spacer becomes the internal stand-in, the
- * reverse of {@link opTextOut}.
+ * ({@link controlCharactersToSpaces}), and each U+00A0 that is not a marker's separator or spacer
+ * becomes `nbspSpelling`, the reverse of {@link opTextOut}.
  */
-function opTextIn(text: string, allowInvisibleCharacters: boolean): string {
+function opTextIn(text: string, previousText: string | undefined, nbspSpelling: string): string {
   const sanitized = controlCharactersToSpaces(text);
-  if (!allowInvisibleCharacters || !sanitized.includes(NBSP)) return sanitized;
+  if (!sanitized.includes(NBSP)) return sanitized;
   let result = "";
   for (let index = 0; index < sanitized.length; index += 1) {
     const character = sanitized[index];
     result +=
-      character === NBSP && !isStructuralDisplayNbsp(sanitized, index) ? NBSP_STAND_IN : character;
+      character === NBSP && !isStructuralDisplayNbsp(sanitized, index, previousText)
+        ? nbspSpelling
+        : character;
   }
   return result;
 }
 
-/** Maps the text of every insert in `ops`, including the ops inside an embed's `contents`. */
-function mapOpsText<T extends { insert?: unknown }>(ops: T[], map: (text: string) => string): T[] {
-  return ops.map((op) => {
+/**
+ * Maps the text of every insert in `ops`, including the ops inside an embed's `contents`. `map` is
+ * also given the original text of the op before, when that op is a text insert.
+ */
+function mapOpsText<T extends { insert?: unknown }>(
+  ops: T[],
+  map: (text: string, previousText: string | undefined) => string,
+): T[] {
+  return ops.map((op, index) => {
     const { insert } = op;
     if (typeof insert === "string") {
-      const text = map(insert);
+      const previousInsert = index > 0 ? ops[index - 1].insert : undefined;
+      const text = map(insert, typeof previousInsert === "string" ? previousInsert : undefined);
       return text === insert ? op : { ...op, insert: text };
     }
     if (!insert || typeof insert !== "object") return op;
@@ -233,10 +255,13 @@ function mapOpsText<T extends { insert?: unknown }>(ops: T[], map: (text: string
 
 /**
  * Delta ops on their way out of the editor (`onUsjChange`, `getNoteOps` and the other note-op
- * getters): in Standard view with `ViewOptions.allowInvisibleCharacters` on, a stored no-break
- * space goes out as U+00A0 and never as the editor's internal stand-in, and an NBSP the view shows
- * for a space in a run goes out as that space (see `opTextOut` in this file). Otherwise the ops are
- * returned as they are.
+ * getters). Standard view holds display text, so its ops are given as USJ text, the way every
+ * other view's are: a stored no-break space goes out as U+00A0 and never as its display spelling
+ * (`~`, or the internal stand-in with `ViewOptions.allowInvisibleCharacters` on), and an NBSP the
+ * view shows for a space in a run goes out as that space (see `opTextOut` in this file). That is
+ * what lets a note move between Standard view and another view (Simple mode's footnotes pane edits
+ * a paragraph-structure editor's notes in Standard view). Other views' ops are returned as they
+ * are.
  *
  * @param ops - The editor's own ops.
  * @param viewOptions - The editor's view options.
@@ -246,16 +271,16 @@ export function opsForHost<T extends { insert?: unknown }>(
   ops: T[],
   viewOptions: ViewOptions | undefined,
 ): T[] {
-  if (!hasStandardViewWhitespace(viewOptions) || getNbspSpelling(viewOptions) === "~") return ops;
-  return mapOpsText(ops, opTextOut);
+  if (!hasStandardViewWhitespace(viewOptions)) return ops;
+  const nbspSpelling = getNbspSpelling(viewOptions);
+  return mapOpsText(ops, (text, previousText) => opTextOut(text, previousText, nbspSpelling));
 }
 
 /**
  * Delta ops on their way into the editor (`applyUpdate`, `replaceEmbedUpdate`), the reverse of
- * {@link opsForHost}: in Standard view, control characters become spaces, and with
- * `ViewOptions.allowInvisibleCharacters` on each U+00A0 that is not a marker separator or a lone
- * spacer becomes the internal stand-in for a stored no-break space. Other views take the ops as
- * they are.
+ * {@link opsForHost}: in Standard view, control characters become spaces, and each U+00A0 that is
+ * not the separator or spacer after an opening marker glyph becomes the display spelling of a
+ * stored no-break space. Other views take the ops as they are.
  *
  * @param ops - The host's ops.
  * @param viewOptions - The editor's view options.
@@ -266,6 +291,6 @@ export function opsFromHost<T extends { insert?: unknown }>(
   viewOptions: ViewOptions | undefined,
 ): T[] {
   if (!hasStandardViewWhitespace(viewOptions)) return ops;
-  const allow = getNbspSpelling(viewOptions) !== "~";
-  return mapOpsText(ops, (text) => opTextIn(text, allow));
+  const nbspSpelling = getNbspSpelling(viewOptions);
+  return mapOpsText(ops, (text, previousText) => opTextIn(text, previousText, nbspSpelling));
 }
