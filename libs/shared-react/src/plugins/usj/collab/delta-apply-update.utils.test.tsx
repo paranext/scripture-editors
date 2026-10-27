@@ -3777,6 +3777,55 @@ describe("Delta Utils $applyUpdate", () => {
       });
     });
 
+    it("gives an op's own no-break space the separator, and an empty op only the placeholder (editable mode)", async () => {
+      const { editor } = await testEnvironment();
+      const viewOptions: ViewOptions = {
+        ...defaultViewOptions,
+        markerMode: "editable",
+        noteMode: "expanded",
+      };
+      // An op's U+00A0 is the author's `~`: it is the span's first content, so the separator goes
+      // in front of it as in front of any other. Without it, saving strips the `~` as the separator.
+      const ops: DeltaOp[] = [
+        {
+          insert: {
+            note: {
+              style: "f",
+              caller: GENERATOR_NOTE_CALLER,
+              contents: {
+                ops: [
+                  { insert: NBSP, attributes: { char: { style: "ft" } } },
+                  { insert: "", attributes: { char: { style: "fk" } } },
+                  { insert: NBSP, attributes: { char: { style: "fq" } } },
+                  { insert: "x", attributes: { char: [{ style: "fq" }, { style: "wj" }] } },
+                ],
+              },
+            },
+          },
+        },
+      ];
+
+      await sutApplyUpdate(editor, ops, viewOptions);
+
+      editor.getEditorState().read(() => {
+        const p = $getRoot().getFirstChild();
+        if (!$isImpliedParaNode(p)) throw new Error("p is not an ImpliedParaNode");
+        const note = p.getFirstChild();
+        if (!$isNoteNode(note)) throw new Error("note is not a NoteNode");
+        const spanTexts = Object.fromEntries(
+          note
+            .getChildren()
+            .filter($isCharNode)
+            .map((span) => [span.getMarker(), span.getChildAtIndex(1)?.getTextContent()]),
+        );
+        expect(spanTexts).toEqual({
+          ft: `${NBSP}${NBSP}`,
+          fk: EMPTY_CHAR_PLACEHOLDER_TEXT,
+          fq: `${NBSP}${NBSP}`,
+        });
+      });
+    });
+
     it("should keep consecutive attribute-identical \\fp note-content ops as separate spans", async () => {
       const { editor } = await testEnvironment();
       const viewOptions: ViewOptions = {

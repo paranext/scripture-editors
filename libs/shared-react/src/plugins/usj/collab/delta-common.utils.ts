@@ -22,6 +22,7 @@ import {
   $isCursorPlaceholderOnlyText,
   $isDescendantOf,
   $isImmutableUnmatchedNode,
+  $isLoneNbspContent,
   $isMilestoneNode,
   $isNoteNode,
   $isParaLikeNode,
@@ -589,14 +590,17 @@ export function $hasAttributeRunAncestor(node: LexicalNode): boolean {
 
 /**
  * Mirror of editor-delta.adaptor.ts's empty-char-placeholder skip, in delta-doc coordinates: the
- * lone stand-in text of an otherwise childless char span, which the ops stream never emits.
+ * lone stand-in text of an otherwise childless char span, which the ops stream never emits. An
+ * author's `~` as a span's whole text has the same bytes; the ops stream emits it, so it counts
+ * here too ({@link $isLoneNbspContent} tells the two apart on both sides).
  */
 function $isEmptyCharPlaceholderText(node: TextNode): boolean {
   const parent = node.getParent();
   return (
     $isCharNode(parent) &&
     node.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT &&
-    parent.getChildrenSize() === 1
+    parent.getChildrenSize() === 1 &&
+    !$isLoneNbspContent(node)
   );
 }
 

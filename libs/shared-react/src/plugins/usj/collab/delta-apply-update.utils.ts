@@ -2110,18 +2110,21 @@ function $createNestedChars(
   // the text starts a new span or appends into an existing span's tail — an NBSP prepended to a
   // tail-append is fabricated content (`~` in the file), not a separator.
   addEditableSeparator = false,
+  // True when a caller up the merge recursion already turned an empty text innerNode into the
+  // empty-char placeholder.
+  isInnerPlaceholder = false,
 ): LexicalNode[] {
-  if ($isTextNode(innerNode) && innerNode.getTextContentSize() === 0) {
+  const isPlaceholder =
+    isInnerPlaceholder || ($isTextNode(innerNode) && innerNode.getTextContentSize() === 0);
+  if (isPlaceholder && $isTextNode(innerNode) && innerNode.getTextContentSize() === 0) {
     innerNode.setTextContent(EMPTY_CHAR_PLACEHOLDER_TEXT);
   }
   // Prepend the structural separator to a text innerNode about to become a fresh span's first
-  // content (never to the empty-char placeholder, which stands alone).
+  // content (never to the empty-char placeholder, which stands alone). Known by where it came
+  // from, not by its bytes: an op's own U+00A0 is the author's `~` and takes the separator like any
+  // other first content, or the separator strip on save would take the `~` with it.
   const $prependEditableSeparator = (): void => {
-    if (
-      addEditableSeparator &&
-      $isTextNode(innerNode) &&
-      innerNode.getTextContent() !== EMPTY_CHAR_PLACEHOLDER_TEXT
-    )
+    if (addEditableSeparator && $isTextNode(innerNode) && !isPlaceholder)
       innerNode.setTextContent(NBSP + innerNode.getTextContent());
   };
   if (Array.isArray(charAttr)) {
@@ -2145,6 +2148,7 @@ function $createNestedChars(
           undefined,
           true,
           addEditableSeparator,
+          isPlaceholder,
         );
         $appendSpanContent(lastNode, innerCharNodes);
       } else {

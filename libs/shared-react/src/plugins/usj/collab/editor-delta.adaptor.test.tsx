@@ -802,6 +802,56 @@ describe("getEditorDelta", () => {
     ]);
   });
 
+  it("keeps an author's `~` that follows the opener's separator in canonical contents ops", async () => {
+    // `\ft ~\ft*` and `\fk ~\+wj x\+wj*\fk*` in editable marker mode: the text after the opener
+    // is the separator plus the author's no-break space. Only the separator strips; what is left
+    // is a lone NBSP, but of content, not the span's separator, spacer or placeholder.
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createParaNode("q1").append(
+          $createTextNode("When"),
+          $createNoteNode("f", GENERATOR_NOTE_CALLER, false).append(
+            $createMarkerNode("f"),
+            $createTextNode(getEditableCallerText(GENERATOR_NOTE_CALLER)),
+            $createCharNode("ft").append(
+              $createMarkerNode("ft"),
+              $createTextNode(`${NBSP}${NBSP}`),
+              $createMarkerNode("ft", "closing"),
+            ),
+            $createCharNode("fk").append(
+              $createMarkerNode("fk"),
+              $createTextNode(`${NBSP}${NBSP}`),
+              $createCharNode("wj").append($createMarkerNode("wj"), $createTextNode(`${NBSP}x`)),
+            ),
+            $createMarkerNode("f", "closing"),
+          ),
+        ),
+      );
+    });
+
+    const delta = getEditorDelta(editor.getEditorState());
+
+    expect(delta.ops).toEqual([
+      { insert: "When" },
+      {
+        insert: {
+          note: {
+            style: "f",
+            caller: GENERATOR_NOTE_CALLER,
+            contents: {
+              ops: [
+                { insert: NBSP, attributes: { char: { style: "ft" } } },
+                { insert: NBSP, attributes: { char: { style: "fk" } } },
+                { insert: "x", attributes: { char: [{ style: "fk" }, { style: "wj" }] } },
+              ],
+            },
+          },
+        },
+      },
+      { insert: LF, attributes: { para: { style: "q1" } } },
+    ]);
+  });
+
   it("should exclude a char span's attribute display run from canonical contents ops", async () => {
     // \w word|gloss\w* — the display run is engine-owned presentation, re-derived from the char's
     // own unknownAttributes by the CharNodePlugin sync ($syncDisplayRun, char descriptor), not by
