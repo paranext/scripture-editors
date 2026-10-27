@@ -17,9 +17,11 @@ import {
   TextNode,
   $isTextNode,
   $getNodeByKey,
+  $getState,
 } from "lexical";
 import {
   $createCharNode,
+  $createEmptyCharPlaceholder,
   $createImmutableChapterNode,
   $createMarkerNode,
   $createNoteNode,
@@ -33,6 +35,7 @@ import {
   getEditableCallerText,
   NBSP,
   NoteNode,
+  textTypeState,
 } from "shared";
 import { MockInstance } from "vitest";
 
@@ -228,6 +231,37 @@ describe("NoteNodePlugin", () => {
         const textNode = ftChar.getFirstChild();
         if (!$isTextNode(textNode)) throw new Error("Expected a TextNode");
         expect(textNode.getTextContent()).toBe("Updated text");
+      });
+    });
+
+    it("clears the placeholder tag once content is typed into it", async () => {
+      let placeholder: TextNode;
+      const { editor } = await testEnvironment(undefined, undefined, () => {
+        placeholder = $createEmptyCharPlaceholder();
+        firstNoteNode = $createNoteNode("f", GENERATOR_NOTE_CALLER);
+        $getRoot().append(
+          $createParaNode().append(
+            firstNoteNode.append(
+              $createImmutableNoteCallerNode("a", ""),
+              $createCharNode("fr").append($createTextNode("1:1 ")),
+              $createCharNode("ft").append(placeholder),
+            ),
+          ),
+        );
+      });
+
+      await updateNoteNodeText(
+        editor,
+        firstNoteNode,
+        4,
+        0,
+        `${EMPTY_CHAR_PLACEHOLDER_TEXT}Updated text`,
+      );
+
+      editor.getEditorState().read(() => {
+        expect(placeholder.getTextContent()).toBe("Updated text");
+        expect($getState(placeholder, textTypeState)).toBeUndefined();
+        expect(placeholder.getLatest().exportJSON().$).toBeUndefined();
       });
     });
 

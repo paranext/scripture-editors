@@ -13,9 +13,11 @@ import {
   $createRangeSelection,
   $getNodeByKey,
   $getSelection,
+  $getState,
   $isRangeSelection,
   $isTextNode,
   $setSelection,
+  $setState,
   COMMAND_PRIORITY_LOW,
   EditorState,
   LexicalEditor,
@@ -35,11 +37,13 @@ import {
   $markPresentationSpacer,
   CharNode,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
+  EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE,
   GENERATOR_NOTE_CALLER,
   getEditableCallerText,
   LoggerBasic,
   NBSP,
   NoteNode,
+  textTypeState,
 } from "shared";
 
 export interface CounterStyleRuleLike {
@@ -249,6 +253,9 @@ function $noteTextNodeTransform(node: TextNode): void {
     const text = node.getTextContent();
     if (text.length > 1 && text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT)) {
       node.setTextContent(text.slice(1));
+      // The node now holds typed content, so it is no longer the placeholder.
+      if ($getState(node, textTypeState) === EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE)
+        $setState(node, textTypeState, undefined);
       node.selectEnd();
     }
   }

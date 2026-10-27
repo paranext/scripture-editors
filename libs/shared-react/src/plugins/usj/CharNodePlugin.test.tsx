@@ -5,6 +5,7 @@ import { $getRoot, $createTextNode, $getState, $isTextNode, $setState, TextNode 
 import {
   $caretHoldsRunSite,
   $createCharNode,
+  $createEmptyCharPlaceholder,
   $createMarkerNode,
   $createParaNode,
   $createTypedMarkNode,
@@ -14,6 +15,7 @@ import {
   charIdState,
   CharNode,
   displayRunDescriptor,
+  EMPTY_CHAR_PLACEHOLDER_TEXT,
   NBSP,
   textTypeState,
 } from "shared";
@@ -517,6 +519,27 @@ describe("CharNodePlugin", () => {
 
   // Self-healing nested glyphs: the tree is the source of truth for nesting; each glyph's cached
   // `+` (MarkerNode.__text via the `nested` flag) must follow the span when structure changes.
+  it("clears the placeholder tag when text is typed into an empty span's placeholder", async () => {
+    let placeholder: TextNode;
+    const { editor } = await testEnvironment(() => {
+      placeholder = $createEmptyCharPlaceholder();
+      $getRoot().append($createParaNode().append($createCharNode("nd").append(placeholder)));
+    });
+
+    await act(async () => {
+      editor.update(() => {
+        placeholder.setTextContent(`${EMPTY_CHAR_PLACEHOLDER_TEXT}x`);
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      expect(placeholder.getTextContent()).toBe("x");
+      expect($getState(placeholder, textTypeState)).toBeUndefined();
+      // Nothing of the tag survives into the serialized node either.
+      expect(placeholder.getLatest().exportJSON().$).toBeUndefined();
+    });
+  });
+
   describe("nested glyph healing ($syncNestedGlyphs transform)", () => {
     /** A char span's own marker glyph texts, in order. */
     function glyphTexts(char: CharNode): string[] {

@@ -1,7 +1,7 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import { deepEqual } from "fast-equals";
-import { $getState, LexicalEditor, TextNode } from "lexical";
+import { $getState, $setState, LexicalEditor, TextNode } from "lexical";
 import { useEffect } from "react";
 import {
   $hasSameCharAttributes,
@@ -15,7 +15,9 @@ import {
   CharNode,
   displayRunDescriptor,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
+  EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE,
   NBSP,
+  textTypeState,
 } from "shared";
 
 /** Combine adjacent CharNodes with the same attributes. */
@@ -185,7 +187,8 @@ function $charNodeTransform(node: CharNode): void {
 }
 
 /**
- * Remove 'empty' placeholder in CharNode once other text content is added.
+ * Remove 'empty' placeholder in CharNode once other text content is added. The node now holds
+ * typed content, so it also loses the placeholder tag.
  * @param node - TextNode that might be a placeholder.
  */
 function $charTextNodeTransform(node: TextNode): void {
@@ -195,6 +198,8 @@ function $charTextNodeTransform(node: TextNode): void {
   const text = node.getTextContent();
   if (text.length > 1 && text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT)) {
     node.setTextContent(text.slice(1));
+    if ($getState(node, textTypeState) === EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE)
+      $setState(node, textTypeState, undefined);
     node.selectEnd();
   }
 }
