@@ -43,6 +43,7 @@ import {
   $isCharNode,
   $isImmutableChapterNode,
   $isMarkerNode,
+  $isMarkerTrailingSeparator,
   $isNoteNode,
   $isParaNode,
   CharNode,
@@ -2935,6 +2936,32 @@ describe("USJ Marker Action Utils", () => {
         if (!$isTextNode(charTextNode))
           throw new Error("Inserted char node does not have a text node");
         $expectSelectionToBe(charTextNode);
+      });
+    });
+
+    it("leaves a tagged spacer after the new marker", () => {
+      const { editor } = createBasicTestEnvironment(nodes, $noteInitialEditorState);
+      const markerAction = getUsjMarkerAction(
+        "fk",
+        expandedNoteKeyRef,
+        undefined,
+        undefined,
+        undefined,
+        {
+          discrete: true,
+        },
+      );
+      updateSelection(editor, noteSpacerTextNode);
+
+      markerAction.action({ editor, reference });
+
+      editor.getEditorState().read(() => {
+        const insertedNode = noteSpacerTextNode.getNextSibling();
+        if (!$isCharNode(insertedNode)) throw new Error("Inserted node is not a char");
+        const trailingSpacer = insertedNode.getNextSibling();
+        if (!$isTextNode(trailingSpacer)) throw new Error("Trailing spacer is missing");
+        expect(trailingSpacer.getTextContent()).toBe(NBSP);
+        expect($isMarkerTrailingSeparator(trailingSpacer)).toBe(true);
       });
     });
 

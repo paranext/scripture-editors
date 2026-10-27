@@ -27,6 +27,7 @@ import {
   $isCharNode,
   $isNoteNode,
   $isParaNode,
+  $isPresentationNbsp,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   GENERATOR_NOTE_CALLER,
   getEditableCallerText,
@@ -315,6 +316,133 @@ describe("NoteNodePlugin", () => {
         // Node should not be removed
         expect(noteNode).not.toBeNull();
         expect(noteNode?.isAttached()).toBe(true);
+      });
+    });
+  });
+
+  describe("Spacer tagging", () => {
+    const collapsedViewOptions: ViewOptions = {
+      markerMode: "hidden",
+      hasSpacing: true,
+      isFormattedFont: true,
+    };
+
+    function $noteDirectTexts(note: NoteNode): TextNode[] {
+      return note.getChildren().filter((child): child is TextNode => $isTextNode(child));
+    }
+
+    it("tags the spacers it inserts after the caller and each top-level char", async () => {
+      let noteKey: string;
+      const { editor } = await testEnvironment(undefined, collapsedViewOptions, () => {
+        const note = $createNoteNode("f", GENERATOR_NOTE_CALLER);
+        note.append(
+          $createImmutableNoteCallerNode("a", "1:1 text"),
+          $createCharNode("fr").append($createTextNode("1:1 ")),
+          $createCharNode("ft").append($createTextNode("text")),
+        );
+        noteKey = note.getKey();
+        $getRoot().append($createParaNode().append(note));
+      });
+
+      editor.getEditorState().read(() => {
+        const note = $getNodeByKey<NoteNode>(noteKey);
+        if (!note) throw new Error("Expected the note");
+        const spacers = $noteDirectTexts(note);
+        expect(spacers).toHaveLength(3);
+        spacers.forEach((spacer) => {
+          expect(spacer.getTextContent()).toBe(NBSP);
+          expect($isPresentationNbsp(spacer)).toBe(true);
+        });
+      });
+    });
+
+    it("tags a spacer it resets after the caller and after a char", async () => {
+      let noteKey: string;
+      const { editor } = await testEnvironment(undefined, collapsedViewOptions, () => {
+        const note = $createNoteNode("f", GENERATOR_NOTE_CALLER);
+        note.append(
+          $createImmutableNoteCallerNode("a", "1:1 text"),
+          $createTextNode("x"),
+          $createCharNode("fr").append($createTextNode("1:1 ")),
+          $createTextNode("y"),
+        );
+        noteKey = note.getKey();
+        $getRoot().append($createParaNode().append(note));
+      });
+
+      editor.getEditorState().read(() => {
+        const note = $getNodeByKey<NoteNode>(noteKey);
+        if (!note) throw new Error("Expected the note");
+        const spacers = $noteDirectTexts(note);
+        expect(spacers).toHaveLength(2);
+        spacers.forEach((spacer) => {
+          expect(spacer.getTextContent()).toBe(NBSP);
+          expect($isPresentationNbsp(spacer)).toBe(true);
+        });
+      });
+    });
+
+    it("leaves an existing untagged lone NBSP between two top-level chars untagged", async () => {
+      let noteKey: string;
+      let realNbsp: TextNode;
+      const { editor } = await testEnvironment(undefined, collapsedViewOptions, () => {
+        const note = $createNoteNode("f", GENERATOR_NOTE_CALLER);
+        realNbsp = $createTextNode(NBSP);
+        note.append(
+          $createImmutableNoteCallerNode("a", "1:1 text"),
+          $createCharNode("fr").append($createTextNode("1:1 ")),
+          realNbsp,
+          $createCharNode("ft").append($createTextNode("text")),
+        );
+        noteKey = note.getKey();
+        $getRoot().append($createParaNode().append(note));
+      });
+
+      editor.getEditorState().read(() => {
+        const note = $getNodeByKey<NoteNode>(noteKey);
+        if (!note) throw new Error("Expected the note");
+        const fr = note.getChildren().filter($isCharNode)[0];
+        const between = fr.getNextSibling();
+        expect($isTextNode(between)).toBe(true);
+        expect(between?.getTextContent()).toBe(NBSP);
+        expect($isPresentationNbsp(between)).toBe(false);
+      });
+    });
+
+    it("tags a note-direct text node once typing resets it", async () => {
+      let noteKey: string;
+      let spacerKey: string;
+      const { editor } = await testEnvironment(undefined, collapsedViewOptions, () => {
+        const note = $createNoteNode("f", GENERATOR_NOTE_CALLER);
+        const text = $createTextNode(NBSP);
+        note.append(
+          $createImmutableNoteCallerNode("a", "1:1 text"),
+          text,
+          $createCharNode("ft").append($createTextNode("text")),
+        );
+        noteKey = note.getKey();
+        spacerKey = text.getKey();
+        $getRoot().append($createParaNode().append(note));
+      });
+
+      await act(async () => {
+        editor.update(() => {
+          const text = $getNodeByKey<TextNode>(spacerKey);
+          if (!text) throw new Error("Expected the text node");
+          text.setTextContent(`${NBSP}a`);
+          text.selectEnd();
+        });
+      });
+
+      editor.getEditorState().read(() => {
+        const note = $getNodeByKey<NoteNode>(noteKey);
+        if (!note) throw new Error("Expected the note");
+        const spacers = $noteDirectTexts(note);
+        expect(spacers.length).toBeGreaterThan(0);
+        spacers.forEach((spacer) => {
+          expect(spacer.getTextContent()).toBe(NBSP);
+          expect($isPresentationNbsp(spacer)).toBe(true);
+        });
       });
     });
   });

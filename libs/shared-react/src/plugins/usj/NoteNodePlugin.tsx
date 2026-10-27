@@ -11,7 +11,6 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $createRangeSelection,
-  $createTextNode,
   $getNodeByKey,
   $getSelection,
   $isRangeSelection,
@@ -26,12 +25,14 @@ import {
 } from "lexical";
 import { useEffect, useRef } from "react";
 import {
+  $createMarkerTrailingSeparator,
   $findFirstAncestorNoteNode,
   $getNoteCallerPreviewText,
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
   $isSomeParaNode,
+  $markPresentationSpacer,
   CharNode,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   GENERATOR_NOTE_CALLER,
@@ -216,8 +217,11 @@ function $noteCharNodeTransform(node: CharNode): void {
 
   // Ensure NBSP after each note top-level CharNode
   const nextSibling = node.getNextSibling();
-  if (!$isTextNode(nextSibling)) node.insertAfter($createTextNode(NBSP));
-  else if (nextSibling.getTextContent() !== NBSP) nextSibling.setTextContent(NBSP);
+  if (!$isTextNode(nextSibling)) node.insertAfter($createMarkerTrailingSeparator());
+  else if (nextSibling.getTextContent() !== NBSP) {
+    nextSibling.setTextContent(NBSP);
+    $markPresentationSpacer(nextSibling);
+  }
 }
 
 /**
@@ -236,6 +240,7 @@ function $noteTextNodeTransform(node: TextNode): void {
   if (!$isMarkerNode(node) && $isNoteNode(parent)) {
     if (node.getTextContent() !== NBSP) {
       node.setTextContent(NBSP);
+      $markPresentationSpacer(node);
       node.selectEnd();
     }
   }
@@ -261,8 +266,11 @@ function $noteCallerNodeTransform(node: ImmutableNoteCallerNode): void {
 
   const nextSibling = node.getNextSibling();
   if (!$isTextNode(nextSibling) || $isMarkerNode(nextSibling))
-    node.insertAfter($createTextNode(NBSP));
-  else if (nextSibling.getTextContent() !== NBSP) nextSibling.setTextContent(NBSP);
+    node.insertAfter($createMarkerTrailingSeparator());
+  else if (nextSibling.getTextContent() !== NBSP) {
+    nextSibling.setTextContent(NBSP);
+    $markPresentationSpacer(nextSibling);
+  }
 }
 
 /**

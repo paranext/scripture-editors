@@ -42,8 +42,8 @@ import { textTypeState } from "../collab/delta.state.js";
 import { CharNode } from "./CharNode.js";
 import { $charGlyphNestedValue } from "./nestedGlyphs.utils.js";
 import { NBSP } from "./node-constants.js";
+import { $createMarkerTrailingSeparator } from "./node.utils.js";
 import {
-  $createTextNode,
   $getSelection,
   $getState,
   $isRangeSelection,
@@ -158,7 +158,7 @@ export function $syncOpenerSeparators(char: CharNode): void {
       const next = child.getNextSibling();
       if ($isTextNode(next)) next.setTextContent(NBSP + next.getTextContent());
     } else {
-      child.insertAfter($createTextNode(NBSP));
+      child.insertAfter($createMarkerTrailingSeparator());
     }
   });
 }
