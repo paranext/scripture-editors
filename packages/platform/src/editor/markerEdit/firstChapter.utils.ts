@@ -10,6 +10,7 @@
  * wants empty verses).
  */
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
+import { $dfs, $findMatchingParent } from "@lexical/utils";
 import {
   $getParaTagMarker,
   buildParaStack,
@@ -25,19 +26,25 @@ import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $isTextNode,
   $parseSerializedNode,
   LexicalNode,
 } from "lexical";
 import {
   $findFirstAncestorNoteNode,
+  $isAttributeDisplayRun,
+  $isAttributeRunNode,
   $isBookNode,
+  $isImmutableUnmatchedNode,
   $isImpliedParaNode,
+  $isMarkerNode,
   $isParaNode,
   $isSomeChapterNode,
   defaultStyleInfo,
   StyleInfo,
+  ZWSP,
 } from "shared";
-import { ViewOptions } from "shared-react";
+import { $isSomeVerseNode, ViewOptions } from "shared-react";
 
 /**
  * Whether the document's book holds chapters. A peripheral book (FRT, INT, BAK, OTH, CNC, GLO,
@@ -118,11 +125,40 @@ function $findChapterContentStart(styleInfo: StyleInfo): LexicalNode | undefined
 }
 
 /**
+ * Whether `node` is text of the document, as opposed to a marker glyph, whitespace, a zero-width
+ * space holding a caret, or the attribute text Standard view shows but never saves.
+ */
+function $isDocumentText(node: LexicalNode): boolean {
+  return (
+    $isTextNode(node) &&
+    !$isMarkerNode(node) &&
+    !$isImmutableUnmatchedNode(node) &&
+    !$isAttributeDisplayRun(node) &&
+    !$findMatchingParent(node, $isAttributeRunNode) &&
+    node.getTextContent().replaceAll(ZWSP, "").trim() !== ""
+  );
+}
+
+/**
+ * Whether the chapter content, from `start` to the end of the document, already holds text (see
+ * {@link $isDocumentText}) or a verse, as a book typed or imported without chapter markers does.
+ * Any text counts, a section heading or a remark included.
+ */
+function $holdsChapterContent(start: LexicalNode): boolean {
+  for (let block: LexicalNode | null = start; block; block = block.getNextSibling())
+    for (const { node } of $dfs(block))
+      if ($isSomeVerseNode(node) || $isDocumentText(node)) return true;
+  return false;
+}
+
+/**
  * Inserts chapter 1, with `verseCount` empty verses after it, where USFM puts it: after the front
- * matter, before any chapter content (see {@link $findChapterContentStart}). Where the markers show,
- * the caret goes at the end of the chapter line. Where they are hidden there is no chapter line, so
- * the caret goes after verse 1, or with no verses to the start of the paragraph that follows; with
- * neither, it stays where it was. Only where {@link $canInsertChapter} allows a chapter.
+ * matter, before any chapter content (see {@link $findChapterContentStart}). When that content
+ * already holds text or a verse, the chapter goes in without verses: they would go above the
+ * existing content, leaving all of it in the last verse. Where the markers show, the caret goes at
+ * the end of the chapter line. Where they are hidden there is no chapter line, so the caret goes
+ * after verse 1, or with no verses to the start of the paragraph that follows; with neither, it
+ * stays where it was. Only where {@link $canInsertChapter} allows a chapter.
  *
  * The nodes come from the same conversion that loads a document, so they match a loaded `\c 1` in
  * every view.
@@ -144,8 +180,14 @@ export function $insertFirstChapter({
 }): boolean {
   if (!$canInsertChapter(chapterNum)) return false;
 
+  const chapterContentStart = $findChapterContentStart(styleInfo);
+  const versesToAdd =
+    verseCount > 0 && chapterContentStart && $holdsChapterContent(chapterContentStart)
+      ? 0
+      : verseCount;
+
   const content: MarkerContent[] = [{ type: "chapter", marker: "c", number: `${chapterNum}` }];
-  for (let verse = 1; verse <= verseCount; verse += 1)
+  for (let verse = 1; verse <= versesToAdd; verse += 1)
     content.push({ type: "verse", marker: "v", number: `${verse}` });
   const serialized = usjEditorAdaptor.serializeEditorState(
     { type: USJ_TYPE, version: USJ_VERSION, content },
@@ -153,7 +195,6 @@ export function $insertFirstChapter({
   );
   const nodes = serialized.root.children.map((child) => $parseSerializedNode(child));
 
-  const chapterContentStart = $findChapterContentStart(styleInfo);
   for (const node of nodes) {
     if (chapterContentStart) chapterContentStart.insertBefore(node);
     else $getRoot().append(node);
