@@ -173,13 +173,16 @@ spacers (`$createMarkerTrailingSeparator`), the element-first char spacer, the o
 sync's spacer, and the empty-char placeholder. A real `~` in the document is also one NBSP, so the
 text cannot tell them apart. A node is presentation only when it carries one of the two tags
 (`marker-trailing-space` or `empty-char-placeholder`) AND its text is still exactly one NBSP;
-`$isPresentationNbsp` and `isSerializedPresentationNbsp` are the one definition. Outside Standard
-view the editor-to-USJ adaptor, the Tier-2 fragment, the collab ops producer and the OT length
-mirror all call it — extend it, never re-spell it as a byte test. The annotation content index
-(`$shouldIgnoreNodeForContentIndexes`) calls it in EVERY view, Standard included, because it takes
-no view options; in Standard view it can therefore be off by one next to a stranded untagged
-separator. Spacers are created in `token` mode so typing can never land in a tagged node and borrow
-its tag.
+`$isPresentationNbsp` and `isSerializedPresentationNbsp` are the one definition — extend it, never
+re-spell it as a byte test. Only the editor-to-USJ adaptor is view-gated: it applies the tag rule
+outside Standard view and keeps the byte test in Standard (below). Tier-2's content flattening
+(`contentFragmentText`) is gated the same way, since under Standard-view whitespace every NBSP byte
+flattens to a space. Every other consumer applies the tag rule in EVERY view, Standard included:
+the collab ops producer, the OT length mirror, Tier-2's `isStructuralRun` classifier, and the
+annotation content index (`$shouldIgnoreNodeForContentIndexes`, which takes no view options). In
+Standard view the ops producer, the length mirror and the content index can therefore count a
+stranded untagged separator that the USJ adaptor drops. Spacers are created in `token` mode so
+typing can never land in a tagged node and borrow its tag.
 
 **Standard view keeps the byte test.** There a data NBSP is displayed as a literal `~`, so a
 bare-NBSP node never holds content, and an untagged one that a split strands is still scaffolding.
@@ -189,8 +192,10 @@ When a node is ambiguous it is kept as content. The backstop is position: `creat
 strips a leading NBSP from a char span's first content item in editable non-Standard mode, so an
 untagged NBSP stranded in that slot is removed for where it sits.
 
-One exception is collab-only. The apply side judges only the NBSP text nodes it itself
-materialized from received ops, each against its parent span's FINAL shape after all of that
+One exception is collab-only. It is gated to REMOTE-sourced applies (`$applyUpdate`'s `source`,
+set from `EditorRef.applyUpdate`'s); a local apply, such as the footnote popover's Save through
+`replaceEmbedUpdate`, carries the editor's own ops and judges nothing. A remote apply judges only
+the NBSP text nodes it itself materialized from received ops, each against its parent span's FINAL shape after all of that
 span's ops are applied. It tags such a node as scaffolding if it is the only content of a char
 span, or sits right after the opener glyph and before an element — the two slots older peers fill
 with scaffolding sent as plain text. NBSP already in the tree is never re-tagged. So an authored
