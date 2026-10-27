@@ -451,9 +451,6 @@ export enum MarkerType {
 }
 
 // @public
-export const NBSP_STAND_IN_FONT_FAMILY = "PlatformEditorNbspStandIn";
-
-// @public
 export interface NodeOptions {
     [prop: string]: unknown;
 }

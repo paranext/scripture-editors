@@ -13,10 +13,9 @@ import { LexicalEditor } from "lexical";
  * (`unicode-range: U+1A`), so it changes nothing else. A browser draws a control character itself
  * unless the FIRST family in the font stack has a glyph for it, so it must lead every
  * `font-family` that applies to Scripture text: `generateUsjCss` puts it first in each family it
- * emits, and a host that sets its own Scripture font stack names it first there too. The editor adds
- * the face to its document itself.
- *
- * @public
+ * emits, and a host stylesheet that sets its own Scripture font stack names
+ * `PlatformEditorNbspStandIn` first there too — the name is part of the editor's contract with its
+ * hosts, so it must not change. The editor adds the face to its document itself.
  */
 export const NBSP_STAND_IN_FONT_FAMILY = "PlatformEditorNbspStandIn";
 

@@ -175,9 +175,10 @@ export interface ViewOptions {
    *
    * Inside the editor Standard view holds each such U+00A0 as an internal stand-in (U+001A,
    * `NBSP_STAND_IN` in shared), since its engine reads an on-screen U+00A0 as display spacing; the
-   * `NBSP_STAND_IN_FONT_FAMILY` font face draws it as the blank. The stand-in never leaves the
-   * editor: `getUsj`, `onUsjChange` and its delta ops, the note-op getters, the clipboard and drag
-   * data, annotation callbacks and note-caller previews all give U+00A0. Delta ops coming in
+   * `PlatformEditorNbspStandIn` font face draws it as the blank (a host stylesheet that sets its own
+   * Scripture `font-family` names that family first). The stand-in never leaves the editor:
+   * `getUsj`, `onUsjChange` and its delta ops, the note-op getters, the clipboard and drag data,
+   * annotation callbacks and note-caller previews all give U+00A0. Delta ops coming in
    * (`applyUpdate`, `replaceEmbedUpdate`) take a U+00A0 that is not a marker's separator as a stored
    * no-break space; going out, an NBSP the view shows for a space in a run is that space. Text read
    * from the editor's DOM still holds the stand-in; `toUsfmNbspSpelling` turns it back. No project

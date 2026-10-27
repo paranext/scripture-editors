@@ -405,13 +405,14 @@ depends on the project, through `ViewOptions.allowInvisibleCharacters` (Paratext
 - **Off (default):** `~`, Paratext's own USFM spelling, shown as `~`. The project cannot hold a
   literal tilde — ParatextData reads `~` back as U+00A0 — so the USJ never contains one.
 - **On:** the project stores U+00A0 itself and `~` is an ordinary character, so a stored U+00A0 is
-  held as `NBSP_STAND_IN` (U+001A, SUBSTITUTE) and `~` is never touched. The `NBSP_STAND_IN_FONT_FAMILY`
+  held as `NBSP_STAND_IN` (U+001A, SUBSTITUTE) and `~` is never touched. The `PlatformEditorNbspStandIn`
   font face (one empty glyph a quarter of an em wide, `unicode-range: U+1A`, added to the document
   by the editor) draws it as a blank the width of a space, so it looks like the no-break space it is.
   A browser draws a control character as a visible box unless the FIRST family in the element's
   font stack has a glyph for it, so that family leads every Scripture `font-family` —
   `generateUsjCss` emits it first, and `usj-nodes.css` (and every host copy of it) puts it in front
-  of `--usj-font-fallback`.
+  of `--usj-font-fallback`. The library does not export the name: a host stylesheet spells
+  `PlatformEditorNbspStandIn` itself, so the name is part of the contract and must not change.
 
 Why U+001A: no project text can hold it. ParatextData's `ScrText.GetText` turns U+0001–U+0008 and
 U+000E–U+001F into spaces on every read (measured), so the stand-in collides with nothing. Its
