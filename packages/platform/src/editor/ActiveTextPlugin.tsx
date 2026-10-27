@@ -6,6 +6,7 @@ import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $isTextNode,
   BaseSelection,
   BLUR_COMMAND,
   CLICK_COMMAND,
@@ -16,10 +17,16 @@ import {
 } from "lexical";
 import { useEffect, useRef } from "react";
 import { $getSelectedParaMarkerPara, $isImmutableTypedTextNode, $isMarkerNode, ZWSP } from "shared";
-import { $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-react";
+import { $isCaretHost, $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-react";
 
 const ACTIVE_CLASS = "psc-active-text";
-const EMPTY_CLASS = "psc-empty-text";
+export const EMPTY_CLASS = "psc-empty-text";
+/**
+ * Replaces {@link EMPTY_CLASS} on the empty verse the cursor is in. Its ellipsis is hidden but keeps
+ * its width, so placing the cursor there doesn't reflow the line. `usj-nodes.css` pairs it with the
+ * caret host right after the verse (EmptyVerseCaretGuardPlugin) to draw the caret after the number.
+ */
+export const ACTIVE_EMPTY_CLASS = "psc-empty-text-active";
 
 /**
  * Plugin that outlines the paragraph under the cursor and marks individual verses with no
@@ -28,6 +35,9 @@ const EMPTY_CLASS = "psc-empty-text";
 export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | undefined }): null {
   const [editor] = useLexicalComposerContext();
   const activeKeyRef = useRef<string>(undefined);
+  // Set from a blur until focus returns. Updates still commit while the editor is blurred (a caret
+  // guard removes its host on blur), and the selection they read is the one the user left.
+  const isBlurredRef = useRef(false);
   const isEnabled = viewOptions?.hasActiveTextFocusBox ?? false;
 
   useEffect(() => {
@@ -55,14 +65,29 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
         (event) => {
           const target = event.target;
           if (!(target instanceof Element)) return false;
-          const verseEl = target.closest(`.${EMPTY_CLASS}`);
+          const verseEl = target.closest(`.${EMPTY_CLASS}, .${ACTIVE_EMPTY_CLASS}`);
           if (!verseEl) return false;
           const node = $getNearestNodeFromDOMNode(verseEl);
           if (!$isSomeVerseNode(node)) return false;
           const para = node.getParent();
           if (!$isElementNode(para)) return false;
+          // Leave alone a click that selected something (a double or triple click), and one that
+          // landed inside an editable verse marker's own text (`\v 2`): only the ellipsis after
+          // it moves the caret.
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) {
+            if (!selection.isCollapsed()) return false;
+            const { anchor } = selection;
+            if (anchor.key === node.getKey() && anchor.offset < node.getTextContentSize())
+              return false;
+          }
+          // Into the caret host already there, if any: the element point in front of one is drawn
+          // in it only because the browser re-resolves it there. Not `$placeCaretAtBoundary`, which
+          // would put the caret in an editable next verse marker's own text.
           const after = node.getIndexWithinParent() + 1;
-          para.select(after, after);
+          const host = para.getChildAtIndex(after);
+          if ($isTextNode(host) && $isCaretHost(host)) host.select(0, 0);
+          else para.select(after, after);
           return false;
         },
         COMMAND_PRIORITY_LOW,
@@ -84,23 +109,29 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
           return { newActiveKey, activeVerseKey, emptyKeys, nonEmptyKeys };
         });
 
-        if (newActiveKey !== activeKeyRef.current) setActivePara(newActiveKey);
+        const isFocused = !isBlurredRef.current;
+        const activeParaKey = isFocused ? newActiveKey : undefined;
+        if (activeParaKey !== activeKeyRef.current) setActivePara(activeParaKey);
 
-        // The active verse (the one whose section currently contains the cursor) is treated as
-        // non-empty: the ellipsis placeholder hides while the user is positioned to type there,
-        // and reappears on the next update when the cursor moves to a different verse.
+        // The active verse (the one whose section currently contains the cursor) hides its
+        // ellipsis placeholder while the user is positioned to type there, and shows it again on
+        // the next update when the cursor moves to a different verse. It is marked rather than
+        // just unmarked so the stylesheet can keep the ellipsis's width: dropping it reflowed the
+        // line and drew the caret at the wrap.
         emptyKeys.forEach((key) => {
-          if (key === activeVerseKey) {
-            editor.getElementByKey(key)?.classList.remove(EMPTY_CLASS);
-          } else {
-            editor.getElementByKey(key)?.classList.add(EMPTY_CLASS);
-          }
+          const isActive = isFocused && key === activeVerseKey;
+          const classList = editor.getElementByKey(key)?.classList;
+          classList?.toggle(EMPTY_CLASS, !isActive);
+          classList?.toggle(ACTIVE_EMPTY_CLASS, isActive);
         });
-        nonEmptyKeys.forEach((key) => editor.getElementByKey(key)?.classList.remove(EMPTY_CLASS));
+        nonEmptyKeys.forEach((key) =>
+          editor.getElementByKey(key)?.classList.remove(EMPTY_CLASS, ACTIVE_EMPTY_CLASS),
+        );
       }),
       editor.registerCommand(
         BLUR_COMMAND,
         () => {
+          isBlurredRef.current = true;
           setActivePara(undefined);
           return false;
         },
@@ -109,6 +140,7 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
       editor.registerCommand(
         FOCUS_COMMAND,
         () => {
+          isBlurredRef.current = false;
           const newActiveKey = editor.getEditorState().read($getActiveParaKey);
           if (newActiveKey !== activeKeyRef.current) setActivePara(newActiveKey);
           return false;

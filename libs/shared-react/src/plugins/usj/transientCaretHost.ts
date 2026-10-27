@@ -15,6 +15,7 @@ import {
   createState,
   FOCUS_COMMAND,
   HISTORY_MERGE_TAG,
+  LexicalEditor,
   LexicalNode,
   NodeKey,
   SELECTION_CHANGE_COMMAND,
@@ -74,6 +75,58 @@ const caretHostState = createState("isCaretHost", {
 });
 
 /**
+ * The attribute a bare caret host's DOM element carries, so a stylesheet can target the host itself
+ * rather than whatever text follows a node (`usj-nodes.css` keeps the line still around an empty
+ * verse's host this way).
+ */
+export const CARET_HOST_ATTRIBUTE = "data-caret-host";
+
+/** Per editor, the one host-attribute listener its guards share, and how many guards hold it. */
+const hostAttributeSyncs = new WeakMap<
+  LexicalEditor,
+  { holders: number; unregister: () => void }
+>();
+
+/**
+ * Keeps {@link CARET_HOST_ATTRIBUTE} on each bare host's DOM element in `editor`, and returns the
+ * release. The DOM Lexical renders for a text node carries none of its state, so the mark is copied
+ * onto it whenever a text node is created or changes. Every guard on an editor asks for this, and
+ * one listener serves them all, so each commit is walked once.
+ */
+function retainHostAttributeSync(editor: LexicalEditor): () => void {
+  let sync = hostAttributeSyncs.get(editor);
+  if (!sync) {
+    const unregister = editor.registerMutationListener(
+      TextNode,
+      (mutations) => {
+        editor.getEditorState().read(() => {
+          for (const [key, mutation] of mutations) {
+            if (mutation === "destroyed") continue;
+            editor
+              .getElementByKey(key)
+              ?.toggleAttribute(CARET_HOST_ATTRIBUTE, $isCaretHost($getNodeByKey(key)));
+          }
+        });
+      },
+      { skipInitialization: true },
+    );
+    sync = { holders: 0, unregister };
+    hostAttributeSyncs.set(editor, sync);
+  }
+  sync.holders++;
+  const held = sync;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    held.holders--;
+    if (held.holders > 0) return;
+    held.unregister();
+    if (hostAttributeSyncs.get(editor) === held) hostAttributeSyncs.delete(editor);
+  };
+}
+
+/**
  * A new caret host: a single placeholder character, marked as a host.
  *
  * Mutating: call inside `editor.update()`.
@@ -95,6 +148,18 @@ export function $isCaretHost(node: LexicalNode | null | undefined): boolean {
 /** {@link $isCaretHost} for a node already known to be text. */
 function $isBareHost(node: TextNode): boolean {
   return $getState(node, caretHostState) && node.getTextContent() === CURSOR_PLACEHOLDER_CHAR;
+}
+
+/**
+ * Whether `node` carries the caret-host mark — a bare host, or one text has landed in that this
+ * update's transforms have not yet turned into content. A transform that must leave a host alone
+ * (`TextSpacingPlugin`'s) asks this rather than {@link $isCaretHost}, so its answer does not
+ * depend on whether the host's own transform ran first.
+ *
+ * Read-only: safe in any read.
+ */
+export function $hasCaretHostMark(node: LexicalNode | null | undefined): boolean {
+  return $isTextNode(node) && $getState(node, caretHostState);
 }
 
 /**
@@ -176,8 +241,9 @@ function $removeHostPlaceholder(node: TextNode): void {
  * and produces no delta op — and `HISTORY_MERGE_TAG`, so creating or removing a host is no step of
  * its own in undo and never clears the redo stack. The text that lands in a host is the user's
  * edit, so the transform that turns the host into that text adds no tags. The USJ serializer drops
- * a placeholder-only text node as well, and the collab coordinate systems give it zero length, so
- * a host cannot reach saved Scripture or a peer even if one somehow outlived a commit. All
+ * a placeholder-only text node as well, and the outgoing delta gives it zero length, so a host
+ * cannot reach saved Scripture or a peer even if one somehow outlived a commit. (Applying a
+ * peer's delta still counts a host as one unit, so a remote op past a host lands one unit off.) All
  * placeholder handling is scoped to nodes marked as hosts, and removes only a host's own
  * placeholder — a zero-width space is legitimate content in some scripts (Thai/Khmer/Lao line
  * breaks) and is never touched.
@@ -350,6 +416,7 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
         COMMAND_PRIORITY_EDITOR,
       ),
       editor.registerNodeTransform(TextNode, $stripPlaceholderOnEdit),
+      retainHostAttributeSync(editor),
     );
     // Drop the tracked key when the editor changes so it can't resolve into a different editor.
     return () => {

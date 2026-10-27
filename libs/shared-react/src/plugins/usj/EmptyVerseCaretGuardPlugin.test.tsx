@@ -1,11 +1,13 @@
 // Should only be used on nodes that are initialized in the test environment.
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
-import { $createImmutableVerseNode, ImmutableVerseNode } from "../../nodes/usj";
+import { $createImmutableVerseNode, $isSomeVerseNode, ImmutableVerseNode } from "../../nodes/usj";
 import { EmptyNoteCaretGuardPlugin } from "./EmptyNoteCaretGuardPlugin";
 import { EmptyVerseCaretGuardPlugin } from "./EmptyVerseCaretGuardPlugin";
 import { baseTestEnvironment, deleteTextAtSelection, settle } from "./react-test.utils";
+import { TextSpacingPlugin } from "./TextSpacingPlugin";
 import { TrailingNoteCaretGuardPlugin } from "./TrailingNoteCaretGuardPlugin";
+import { $isCaretHost, CARET_HOST_ATTRIBUTE } from "./transientCaretHost";
 import { createEmptyHistoryState, HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { act } from "@testing-library/react";
 import {
@@ -17,15 +19,27 @@ import {
   $isTextNode,
   $setSelection,
   BLUR_COMMAND,
+  COMMAND_PRIORITY_CRITICAL,
+  DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
   FOCUS_COMMAND,
   LexicalEditor,
+  LexicalNode,
   REDO_COMMAND,
   SELECTION_CHANGE_COMMAND,
   SKIP_DOM_SELECTION_TAG,
   TextNode,
   UNDO_COMMAND,
 } from "lexical";
-import { $createParaNode, CURSOR_CHANGE_TAG, CURSOR_PLACEHOLDER_CHAR, ParaNode } from "shared";
+import {
+  $createCharNode,
+  $createParaNode,
+  $wrapSelectionInTypedMarkNode,
+  CURSOR_CHANGE_TAG,
+  CURSOR_PLACEHOLDER_CHAR,
+  ParaNode,
+} from "shared";
 
 // jsdom implements no layout: Lexical reads a Range rect when it writes the DOM selection.
 if (typeof Range.prototype.getBoundingClientRect !== "function") {
@@ -232,53 +246,214 @@ describe("EmptyVerseCaretGuardPlugin", () => {
   });
 });
 
-describe("EmptyVerseCaretGuardPlugin host lifecycle", () => {
-  /**
-   * Verse 3 is empty and verse 4 follows it; the caret is hosted right after verse 3's marker.
-   * Every caret guard the platform editor mounts is mounted, since each instance runs the host
-   * lifecycle on the same nodes.
-   */
-  async function hostedEmptyVerse(extraPlugins?: JSX.Element) {
-    let para!: ParaNode;
-    const { editor } = await baseTestEnvironment(
-      () => {
-        para = $createParaNode("p");
-        $getRoot().append(
-          para.append($createImmutableVerseNode("3"), $createImmutableVerseNode("4")),
-        );
-      },
-      <>
-        <EmptyNoteCaretGuardPlugin />
-        <EmptyVerseCaretGuardPlugin />
-        <TrailingNoteCaretGuardPlugin />
-        {extraPlugins}
-      </>,
-    );
-    // The editor has focus, as it does while the user types: jsdom resets the DOM selection to the
-    // start of an editor Lexical has to focus itself (an undo does), which a browser does not.
-    await act(async () => {
-      editor.getRootElement()?.focus();
-    });
-    await settle();
-    await act(async () => {
-      editor.update(() => para.select(1, 1));
-    });
-    await dispatchSelectionChange(editor);
-    await settle();
-    const host = editor.getEditorState().read(() => para.getChildAtIndex(1));
-    if (!$isTextNode(host)) throw new Error("expected the guard to host the caret");
-    return { editor, para, host };
-  }
+/**
+ * Verse 3 is empty and verse 4 follows it; the caret is hosted right after verse 3's marker.
+ * Every caret guard the platform editor mounts is mounted, since each instance runs the host
+ * lifecycle on the same nodes. `extraPlugins` mount after the guards, as `Editor.tsx` mounts
+ * `TextSpacingPlugin`, and `pluginsBefore` before them.
+ */
+async function hostedEmptyVerse(extraPlugins?: JSX.Element, pluginsBefore?: JSX.Element) {
+  let para!: ParaNode;
+  const { editor } = await baseTestEnvironment(
+    () => {
+      para = $createParaNode("p");
+      $getRoot().append(
+        para.append($createImmutableVerseNode("3"), $createImmutableVerseNode("4")),
+      );
+    },
+    <>
+      {pluginsBefore}
+      <EmptyNoteCaretGuardPlugin />
+      <EmptyVerseCaretGuardPlugin />
+      <TrailingNoteCaretGuardPlugin />
+      {extraPlugins}
+    </>,
+  );
+  // The editor has focus, as it does while the user types: jsdom resets the DOM selection to the
+  // start of an editor Lexical has to focus itself (an undo does), which a browser does not.
+  await act(async () => {
+    editor.getRootElement()?.focus();
+  });
+  await settle();
+  await act(async () => {
+    editor.update(() => para.select(1, 1));
+  });
+  await dispatchSelectionChange(editor);
+  await settle();
+  const host = editor.getEditorState().read(() => para.getChildAtIndex(1));
+  if (!$isTextNode(host)) throw new Error("expected the guard to host the caret");
+  return { editor, para, host };
+}
 
-  async function insertText(editor: LexicalEditor, text: string) {
-    await act(async () => {
-      editor.update(() => {
-        const selection = $getSelection();
-        if ($isRangeSelection(selection)) selection.insertText(text);
+async function insertText(editor: LexicalEditor, text: string) {
+  await act(async () => {
+    editor.update(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) selection.insertText(text);
+    });
+  });
+}
+
+/** What a commit left in `para`, and the tags it carried. */
+interface Commit {
+  tags: Set<string>;
+  /** The text of each of the paragraph's text-node children, verse markers and the host aside. */
+  texts: string[];
+  hasHost: boolean;
+}
+
+/** Records every commit made while `run` runs, as {@link Commit}s. */
+async function commitsOf(
+  editor: LexicalEditor,
+  para: ParaNode,
+  run: () => Promise<void>,
+): Promise<Commit[]> {
+  const commits: Commit[] = [];
+  const unregister = editor.registerUpdateListener(({ editorState, tags }) => {
+    editorState.read(() => {
+      const children = para.getChildren();
+      commits.push({
+        tags,
+        texts: children
+          .filter((n): n is TextNode => $isTextNode(n) && !$isCaretHost(n))
+          .map((n) => n.getTextContent()),
+        hasHost: children.some($isCaretHost),
       });
     });
+  });
+  try {
+    await run();
+  } finally {
+    unregister();
   }
+  return commits;
+}
 
+/** The first commit that made a document change, which the host application hears about. */
+function documentCommit(commits: Commit[]): Commit {
+  const commit = commits.find((c) => !c.tags.has(CURSOR_CHANGE_TAG));
+  if (!commit) throw new Error("expected a commit the host application hears about");
+  return commit;
+}
+
+/** Pastes `nodes` at the caret, as a rich paste does: inserted, rather than typed into the host. */
+async function pasteNodes(editor: LexicalEditor, createNodes: () => LexicalNode[]) {
+  await act(async () => {
+    editor.update(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) selection.insertNodes(createNodes());
+    });
+  });
+}
+
+// `Editor.tsx` mounts `TextSpacingPlugin` after the caret guards, so the guards' transforms run
+// first. Each order is tested: the spacing rules must not depend on it.
+describe.each([
+  { order: "after the caret guards", after: <TextSpacingPlugin />, before: undefined },
+  { order: "before the caret guards", after: undefined, before: <TextSpacingPlugin /> },
+])("EmptyVerseCaretGuardPlugin with TextSpacingPlugin mounted $order", ({ after, before }) => {
+  const spacedEmptyVerse = () => hostedEmptyVerse(after, before);
+
+  it("keeps the host in an empty verse followed by another verse", async () => {
+    // A host sits directly before the next verse marker, which is where TextSpacingPlugin adds its
+    // structural trailing space — and a space would make the host look typed into, so it was
+    // stripped and removed, dropping the caret back to the hostless element point it exists to
+    // repair.
+    const { editor, para, host } = await spacedEmptyVerse();
+
+    editor.getEditorState().read(() => {
+      const children = para.getChildren();
+      expect(children.length).toBe(3);
+      expect(children[1].getTextContent()).toBe(CURSOR_PLACEHOLDER_CHAR);
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.isCollapsed()).toBe(true);
+      expect(selection.focus.key).toBe(host.getKey());
+    });
+  });
+
+  it("still spaces typed text before the next verse once it replaces the host", async () => {
+    const { editor, para } = await spacedEmptyVerse();
+
+    await insertText(editor, "a");
+
+    expect(editor.getEditorState().read(() => para.getChildAtIndex(1)?.getTextContent())).toBe(
+      "a ",
+    );
+  });
+
+  it("keeps a single trailing space on text that lands in the host", async () => {
+    const { editor, para } = await spacedEmptyVerse();
+
+    await insertText(editor, "word ");
+
+    expect(editor.getEditorState().read(() => para.getChildAtIndex(1)?.getTextContent())).toBe(
+      "word ",
+    );
+  });
+
+  it("spaces text pasted in front of the host against the next verse in the paste's own commit", async () => {
+    const { editor, para } = await spacedEmptyVerse();
+
+    const commits = await commitsOf(editor, para, async () => {
+      await pasteNodes(editor, () => [$createTextNode("pasted")]);
+      // The caret has left the host, which the browser's selectionchange then removes, in a
+      // commit the host application never hears about.
+      await dispatchSelectionChange(editor);
+    });
+
+    const paste = documentCommit(commits);
+    expect(paste.hasHost).toBe(true);
+    expect(paste.texts).toEqual(["pasted "]);
+    expect(commits.at(-1)?.texts).toEqual(["pasted "]);
+  });
+
+  it("removes a space pasted after the host, the verse's whole content, in the paste's own commit", async () => {
+    const { editor, para, host } = await spacedEmptyVerse();
+    await act(async () => {
+      editor.update(() => host.select(1, 1));
+    });
+
+    const commits = await commitsOf(editor, para, () =>
+      pasteNodes(editor, () => [$createTextNode(" ")]),
+    );
+
+    expect(documentCommit(commits).texts.filter((text) => text !== "")).toEqual([]);
+  });
+
+  it("spaces a char span pasted into the empty verse against the next verse in the paste's own commit", async () => {
+    const { editor, para } = await spacedEmptyVerse();
+
+    const commits = await commitsOf(editor, para, () =>
+      pasteNodes(editor, () => [$createCharNode("nd").append($createTextNode("LORD"))]),
+    );
+
+    // The structural space between a char span and the next verse is its own text node.
+    const paste = documentCommit(commits);
+    expect(paste.hasHost).toBe(true);
+    expect(paste.texts).toEqual([" "]);
+  });
+
+  it("saves no space into the empty verse when an annotation covers the resting host", async () => {
+    const { editor, para, host } = await spacedEmptyVerse();
+
+    const commits = await commitsOf(editor, para, async () => {
+      await act(async () => {
+        editor.update(() => {
+          const range = $createRangeSelection();
+          range.anchor.set(host.getKey(), 0, "text");
+          range.focus.set(host.getKey(), 1, "text");
+          $wrapSelectionInTypedMarkNode(range, "spelling", "a1");
+        });
+      });
+    });
+
+    expect(commits.length).toBeGreaterThan(0);
+    for (const commit of commits) expect(commit.texts).toEqual([]);
+  });
+});
+
+describe("EmptyVerseCaretGuardPlugin host lifecycle", () => {
   /** A Thai phrase whose zero-width space is a real word break. */
   const thai = `ภาษา${CURSOR_PLACEHOLDER_CHAR}ไทย`;
 
@@ -543,6 +718,153 @@ describe("EmptyVerseCaretGuardPlugin host lifecycle", () => {
     await insertText(editor, "a");
 
     expect(editor.getEditorState().read(() => para.getTextContent())).toBe("a");
+  });
+
+  it("marks the host's DOM element, and unmarks it once text lands in it", async () => {
+    const { editor, host } = await hostedEmptyVerse();
+    const element = () => editor.getElementByKey(host.getKey());
+    expect(element()?.hasAttribute(CARET_HOST_ATTRIBUTE)).toBe(true);
+
+    await insertText(editor, "a");
+
+    expect(element()?.hasAttribute(CARET_HOST_ATTRIBUTE)).toBe(false);
+  });
+
+  // Structure protection off (the Editor default, and Power mode): no StructureKeyboardPlugin
+  // handler runs, so the delete reaches the guard as it comes.
+  describe("a delete from the host, with structure protection off", () => {
+    function verseNumbers(editor: LexicalEditor, para: ParaNode): string[] {
+      return editor.getEditorState().read(() =>
+        para
+          .getChildren()
+          .filter($isSomeVerseNode)
+          .map((verse) => verse.getNumber()),
+      );
+    }
+
+    async function deleteCharacter(editor: LexicalEditor, isBackward: boolean) {
+      await act(async () => {
+        editor.dispatchCommand(DELETE_CHARACTER_COMMAND, isBackward);
+      });
+    }
+
+    it.each([0, 1])(
+      "reaches the next verse's marker going forward from offset %i",
+      async (offset) => {
+        const { editor, para, host } = await hostedEmptyVerse();
+        await act(async () => {
+          editor.update(() => host.select(offset, offset));
+        });
+
+        await deleteCharacter(editor, false);
+
+        expect(verseNumbers(editor, para)).toEqual(["3"]);
+      },
+    );
+
+    it.each([0, 1])(
+      "reaches the empty verse's own marker going backward from offset %i",
+      async (offset) => {
+        const { editor, para, host } = await hostedEmptyVerse();
+        await act(async () => {
+          editor.update(() => host.select(offset, offset));
+        });
+
+        await deleteCharacter(editor, true);
+
+        expect(verseNumbers(editor, para)).toEqual(["4"]);
+      },
+    );
+
+    it("merges the next paragraph in going forward from an empty verse that ends a paragraph", async () => {
+      // As Delete at the end of any paragraph does with protection off: the next paragraph's text
+      // joins this one, and its marker goes.
+      let first!: ParaNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          first = $createParaNode("p");
+          $getRoot().append(
+            first.append(
+              $createImmutableVerseNode("11"),
+              $createTextNode("eleven "),
+              $createImmutableVerseNode("12"),
+            ),
+            $createParaNode("q").append($createTextNode("next")),
+          );
+        },
+        <EmptyVerseCaretGuardPlugin />,
+      );
+      await act(async () => {
+        editor.update(() => first.select(3, 3));
+      });
+      await dispatchSelectionChange(editor);
+      expect(editor.getEditorState().read(() => first.getChildren().some($isCaretHost))).toBe(true);
+
+      await deleteCharacter(editor, false);
+
+      editor.getEditorState().read(() => {
+        expect($getRoot().getChildrenSize()).toBe(1);
+        expect(first.getTextContent()).toContain("next");
+      });
+    });
+
+    it.each([
+      ["word", false, DELETE_WORD_COMMAND],
+      ["word", true, DELETE_WORD_COMMAND],
+      ["line", false, DELETE_LINE_COMMAND],
+      ["line", true, DELETE_LINE_COMMAND],
+    ])(
+      "runs a %s delete (backward: %s) from the boundary, not the host",
+      async (_, isBackward, command) => {
+        const { editor, para } = await hostedEmptyVerse();
+        // Where each dispatch of the delete starts. jsdom can't extend a selection by word or line,
+        // so the re-dispatched delete is stopped here, before rich text runs it.
+        const starts: { inHost: boolean; anchor: [string, number, string] }[] = [];
+        const unregister = editor.registerCommand(
+          command,
+          () => {
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+            const { anchor } = selection;
+            starts.push({
+              inHost: $isCaretHost(anchor.getNode()),
+              anchor: [anchor.key, anchor.offset, anchor.type],
+            });
+            return starts.length > 1;
+          },
+          COMMAND_PRIORITY_CRITICAL,
+        );
+        try {
+          await act(async () => {
+            editor.dispatchCommand(command, isBackward);
+          });
+        } finally {
+          unregister();
+        }
+
+        expect(starts.map((start) => start.inHost)).toEqual([true, false]);
+        expect(starts[1].anchor).toEqual([para.getKey(), 1, "element"]);
+        expect(editor.getEditorState().read(() => para.getChildren().some($isCaretHost))).toBe(
+          false,
+        );
+      },
+    );
+
+    it("is one undo step, which brings the marker back", async () => {
+      const historyState = createEmptyHistoryState();
+      const { editor, para } = await hostedEmptyVerse(
+        <HistoryPlugin externalHistoryState={historyState} />,
+      );
+      const undoSteps = historyState.undoStack.length;
+
+      await deleteCharacter(editor, false);
+      expect(historyState.undoStack.length).toBe(undoSteps + 1);
+      await act(async () => {
+        editor.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+
+      expect(verseNumbers(editor, para)).toEqual(["3", "4"]);
+    });
   });
 
   it("keeps a blur from a hosted caret out of undo and the USJ-change handler", async () => {
