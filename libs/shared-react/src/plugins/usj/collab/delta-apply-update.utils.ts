@@ -37,9 +37,12 @@ import {
   $getRoot,
   $createTextNode,
   $isElementNode,
+  $getNodeByKey,
+  $getState,
   $isTextNode,
   $setState,
   LexicalNode,
+  NodeKey,
   TextFormatType,
   TextNode,
 } from "lexical";
@@ -71,6 +74,7 @@ import {
   $isParaNode,
   $isSomeChapterNode,
   $isSomeParaNode,
+  $isSynthesizedMarkerNode,
   $isUnknownNode,
   BOOK_MARKER,
   BookNode,
@@ -79,6 +83,7 @@ import {
   closingMarkerText,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   $markEmptyCharPlaceholder,
+  $markPresentationSpacer,
   getUnknownAttributes,
   getVisibleOpenMarkerText,
   ImpliedParaNode,
@@ -90,6 +95,7 @@ import {
   ParaNode,
   segmentState,
   SomeChapterNode,
+  textTypeState,
   UnknownNode,
 } from "shared";
 
@@ -144,6 +150,8 @@ export function $applyUpdate(
 ) {
   /** Tracks the current position in the OT document */
   let currentIndex = 0;
+  /** Char spans this call materialized text into, judged for scaffolding NBSP after all ops. */
+  const touchedChars = new Set<NodeKey>();
   ops.forEach((op) => {
     if ("retain" in op) {
       currentIndex += $retain(op, currentIndex, viewOptions, logger);
@@ -165,10 +173,20 @@ export function $applyUpdate(
           op.attributes,
           viewOptions,
           logger,
+          touchedChars,
         );
       } else if (typeof op.insert === "object" && op.insert !== null) {
         logger?.debug(`Insert embed: ${JSON.stringify(op.insert)}`);
-        if ($insertEmbedAtCurrentIndex(currentIndex, op, viewOptions, nodeOptions, logger)) {
+        if (
+          $insertEmbedAtCurrentIndex(
+            currentIndex,
+            op,
+            viewOptions,
+            nodeOptions,
+            logger,
+            touchedChars,
+          )
+        ) {
           currentIndex += 1;
         } else {
           // If embed insertion fails, currentIndex is not advanced to prevent de-sync.
@@ -185,6 +203,62 @@ export function $applyUpdate(
       logger?.error(`Unknown operation: ${JSON.stringify(op)}`);
     }
   });
+  $tagCollabScaffoldingNbsp(touchedChars);
+}
+
+/**
+ * Tag the presentation NBSP that older collab peers and persisted deltas send as plain `NBSP`
+ * text ops, so the save path and the ops producer drop it like their own scaffolding. Only the
+ * char spans this apply materialized text into are judged, and only once all ops have run, so
+ * each span is judged on its final shape. Within each span, its direct children are considered
+ * with the marker glyphs left out, and an untagged text node that is exactly `NBSP` is tagged
+ * only in one of the two slots nothing but scaffolding occupies:
+ * - the span's only content: tagged as the empty-char placeholder;
+ * - the span's first content, directly followed by an element (a nested char or note), a verse,
+ *   or a milestone: tagged as a token-mode marker-trailing spacer.
+ *
+ * Any other lone NBSP is content (an authored `~`) and stays untagged. Tagging changes only node
+ * state and mode, never text, so the apply coordinates are unaffected.
+ *
+ * Accepted cost: an authored span-only `~` (`\nd ~\nd*`), or a `~` leading an element-first
+ * span, that arrives THROUGH COLLAB is indistinguishable from an older peer's scaffolding and is
+ * dropped on save. A local load and save of the same content keeps it.
+ *
+ * Mutating: call inside `editor.update()` (from `$applyUpdate`, after its ops).
+ */
+function $tagCollabScaffoldingNbsp(chars: Set<NodeKey>): void {
+  for (const key of chars) {
+    const char = $getNodeByKey(key);
+    if (!$isCharNode(char) || !char.isAttached()) continue;
+
+    const contents = char.getChildren().filter((child) => !$isSynthesizedMarkerNode(child));
+    contents.forEach((node, index) => {
+      if (
+        !$isTextNode(node) ||
+        node.getTextContent() !== NBSP ||
+        $getState(node, textTypeState) !== undefined
+      )
+        return;
+
+      if (contents.length === 1) {
+        $markEmptyCharPlaceholder(node);
+        return;
+      }
+      const next = contents[index + 1];
+      if (index === 0 && ($isElementNode(next) || $isSomeVerseNode(next) || $isMilestoneNode(next)))
+        $markPresentationSpacer(node);
+    });
+  }
+}
+
+/**
+ * Record the char span that `textNode` was materialized into, if any.
+ *
+ * Reads only the node's parent; called from `$applyUpdate`'s materializers inside `editor.update()`.
+ */
+function $recordTouchedChar(textNode: TextNode, touchedChars: Set<NodeKey> | undefined): void {
+  const parent = textNode.getParent();
+  if (touchedChars && $isCharNode(parent)) touchedChars.add(parent.getKey());
 }
 
 function $retain(
@@ -892,6 +966,7 @@ function $insertTextAtCurrentIndex(
   attributes: AttributeMap | undefined,
   viewOptions: ViewOptions,
   logger: LoggerBasic | undefined,
+  touchedChars?: Set<NodeKey>,
 ): number {
   if (textToInsert === LF) {
     return $handleNewline(targetIndex, attributes, viewOptions, logger);
@@ -903,14 +978,27 @@ function $insertTextAtCurrentIndex(
       if (hasCharAttributes(attributes))
         throw new Error("Text + LF should not have char attributes");
 
-      deltaOTLength += $insertRichText(targetIndex, textWithoutLF, attributes, logger);
+      deltaOTLength += $insertRichText(
+        targetIndex,
+        textWithoutLF,
+        attributes,
+        logger,
+        touchedChars,
+      );
     }
     deltaOTLength += $handleNewline(targetIndex + deltaOTLength, attributes, viewOptions, logger);
     return deltaOTLength;
   } else if (hasCharAttributes(attributes)) {
-    return $handleCharText(targetIndex, textToInsert, attributes, viewOptions, logger);
+    return $handleCharText(
+      targetIndex,
+      textToInsert,
+      attributes,
+      viewOptions,
+      logger,
+      touchedChars,
+    );
   } else {
-    return $insertRichText(targetIndex, textToInsert, attributes, logger);
+    return $insertRichText(targetIndex, textToInsert, attributes, logger, touchedChars);
   }
 }
 
@@ -920,6 +1008,7 @@ function $handleCharText(
   attributes: AttributeMapWithChar,
   viewOptions: ViewOptions,
   logger: LoggerBasic | undefined,
+  touchedChars?: Set<NodeKey>,
 ): number {
   logger?.debug(
     `Attempting to insert CharNode with text "${textToInsert}" and attributes ${JSON.stringify(
@@ -997,7 +1086,16 @@ function $handleCharText(
   }
   const segment = typeof attributes.segment === "string" ? attributes.segment : undefined;
   const existingNodes = parentCharNode ? [parentCharNode] : undefined;
-  const charNodes = $createNestedChars(charAttr, viewOptions, textNode, segment, existingNodes);
+  const charNodes = $createNestedChars(
+    charAttr,
+    viewOptions,
+    textNode,
+    segment,
+    existingNodes,
+    false,
+    false,
+    touchedChars,
+  );
 
   // If charNodes is empty, it means we merged into existingNodes - no insertion needed
   if (charNodes.length === 0) {
@@ -1012,7 +1110,7 @@ function $handleCharText(
       )}. Falling back to rich text insertion.`,
     );
     // Fallback to rich text insertion
-    return $insertRichText(targetIndex, textToInsert, undefined, logger);
+    return $insertRichText(targetIndex, textToInsert, undefined, logger, touchedChars);
   }
 
   // Set unknownAttributes for non-char, non-segment attributes
@@ -1046,7 +1144,7 @@ function $handleCharText(
       }. Falling back to rich text.`,
     );
     // Fallback to rich text insertion if CharNode insertion fails
-    return $insertRichText(targetIndex, textToInsert, undefined, logger);
+    return $insertRichText(targetIndex, textToInsert, undefined, logger, touchedChars);
   }
 }
 
@@ -1060,6 +1158,7 @@ function $insertRichText(
   textToInsert: string,
   attributes: AttributeMap | undefined,
   logger: LoggerBasic | undefined,
+  touchedChars?: Set<NodeKey>,
 ): number {
   if (textToInsert.length <= 0) {
     logger?.debug("Attempted to insert empty string. No action taken.");
@@ -1069,6 +1168,12 @@ function $insertRichText(
   const root = $getRoot();
   let currentIndex = 0;
   let insertionPointFound = false;
+  let insertedTextNode: TextNode | undefined;
+  const $createInsertedTextNode = (): TextNode => {
+    insertedTextNode = $createTextNode(textToInsert);
+    $applyTextAttributes(attributes, insertedTextNode);
+    return insertedTextNode;
+  };
 
   function $findAndInsertRecursive(currentNode: LexicalNode): boolean {
     if (insertionPointFound) return true;
@@ -1078,8 +1183,7 @@ function $insertRichText(
       // Check if targetIndex is within this TextNode's range
       if (targetIndex >= currentIndex && targetIndex <= currentIndex + textLength) {
         const offsetInNode = targetIndex - currentIndex;
-        const newTextNode = $createTextNode(textToInsert);
-        $applyTextAttributes(attributes, newTextNode);
+        const newTextNode = $createInsertedTextNode();
 
         if (offsetInNode === 0) {
           currentNode.insertBefore(newTextNode);
@@ -1127,8 +1231,7 @@ function $insertRichText(
       // Try inserting at the beginning of the CharNode's content
       if (!insertionPointFound && targetIndex === offsetAtCharNodeStart) {
         // This implies inserting as the first child inside the CharNode
-        const newTextNode = $createTextNode(textToInsert);
-        $applyTextAttributes(attributes, newTextNode);
+        const newTextNode = $createInsertedTextNode();
         const firstChild = currentNode.getFirstChild();
         if (firstChild) {
           firstChild.insertBefore(newTextNode);
@@ -1151,8 +1254,7 @@ function $insertRichText(
       }
       // Try appending to the CharNode if targetIndex matches after children
       if (!insertionPointFound && targetIndex === currentIndex) {
-        const newTextNode = $createTextNode(textToInsert);
-        $applyTextAttributes(attributes, newTextNode);
+        const newTextNode = $createInsertedTextNode();
         currentNode.append(newTextNode);
         logger?.debug(
           `Appended text "${textToInsert}" to end of CharNode ` +
@@ -1165,8 +1267,7 @@ function $insertRichText(
       const offsetAtParaStart = currentIndex;
       // Try inserting at the beginning of the block node
       if (!insertionPointFound && targetIndex === offsetAtParaStart) {
-        const newTextNode = $createTextNode(textToInsert);
-        $applyTextAttributes(attributes, newTextNode);
+        const newTextNode = $createInsertedTextNode();
         const firstChild = currentNode.getFirstChild();
         if (firstChild) {
           firstChild.insertBefore(newTextNode);
@@ -1190,8 +1291,7 @@ function $insertRichText(
       // After children, currentIndex is at the end of the *content* of the ParaNode.
       // Try appending text if targetIndex matches (before para's own closing marker)
       if (!insertionPointFound && targetIndex === currentIndex) {
-        const newTextNode = $createTextNode(textToInsert);
-        $applyTextAttributes(attributes, newTextNode);
+        const newTextNode = $createInsertedTextNode();
         currentNode.append(newTextNode);
         logger?.debug(
           `Appended text "${textToInsert}" to end of container ` +
@@ -1221,8 +1321,7 @@ function $insertRichText(
         targetIndex
       }, final currentIndex: ${currentIndex}). Appending text to new ParaNode.`,
     );
-    const newTextNode = $createTextNode(textToInsert);
-    $applyTextAttributes(attributes, newTextNode);
+    const newTextNode = $createInsertedTextNode();
     const newParaNode = $createImpliedParaNode().append(newTextNode);
     root.append(newParaNode);
     insertionPointFound = true;
@@ -1236,6 +1335,7 @@ function $insertRichText(
     );
     return 0; // Text not inserted
   }
+  if (insertedTextNode) $recordTouchedChar(insertedTextNode, touchedChars);
   return textToInsert.length;
 }
 
@@ -1536,6 +1636,7 @@ function $insertEmbedAtCurrentIndex(
   viewOptions: ViewOptions,
   nodeOptions: UsjNodeOptions,
   logger: LoggerBasic | undefined,
+  touchedChars?: Set<NodeKey>,
 ): boolean {
   let newNodeToInsert: LexicalNode | undefined;
 
@@ -1547,9 +1648,9 @@ function $insertEmbedAtCurrentIndex(
   } else if (isInsertEmbedOpOfType("ms", op)) {
     newNodeToInsert = $createMilestone(op.insert.ms);
   } else if (isInsertEmbedOpOfType("note", op)) {
-    newNodeToInsert = $createNote(op, viewOptions, nodeOptions, logger);
+    newNodeToInsert = $createNote(op, viewOptions, nodeOptions, logger, touchedChars);
   } else if (isInsertEmbedOpOfType("unknown", op)) {
-    newNodeToInsert = $createUnknown(op, viewOptions, nodeOptions, logger);
+    newNodeToInsert = $createUnknown(op, viewOptions, nodeOptions, logger, touchedChars);
   } else if (isInsertEmbedOpOfType("unmatched", op)) {
     newNodeToInsert = $createImmutableUnmatched(op.insert.unmatched, viewOptions);
   }
@@ -1836,6 +1937,7 @@ function $createNote(
   viewOptions: ViewOptions,
   nodeOptions: UsjNodeOptions,
   logger: LoggerBasic | undefined,
+  touchedChars?: Set<NodeKey>,
 ) {
   const noteEmbed = op.insert;
   if (!noteEmbed.note) return;
@@ -1873,6 +1975,7 @@ function $createNote(
         mergeableNodesForContentOp(childOp.attributes.char, contentNodes),
         false,
         viewOptions.markerMode === "editable",
+        touchedChars,
       );
       contentNodes.push(...charNodes);
     } else {
@@ -1900,6 +2003,7 @@ function $createUnknown(
   viewOptions: ViewOptions,
   nodeOptions: UsjNodeOptions,
   logger: LoggerBasic | undefined,
+  touchedChars?: Set<NodeKey>,
 ): LexicalNode | undefined {
   const unknownData = op.insert.unknown;
   if (!unknownData) return;
@@ -1912,7 +2016,13 @@ function $createUnknown(
 
   const childOps = contents?.ops ?? [];
   if (childOps.length > 0) {
-    const childNodes = $createInlineNodesFromOps(childOps, viewOptions, nodeOptions, logger);
+    const childNodes = $createInlineNodesFromOps(
+      childOps,
+      viewOptions,
+      nodeOptions,
+      logger,
+      touchedChars,
+    );
     childNodes.forEach((child) => unknownNode.append(child));
   }
 
@@ -1927,6 +2037,7 @@ function $createInlineNodesFromOps(
   viewOptions: ViewOptions,
   nodeOptions: UsjNodeOptions,
   logger: LoggerBasic | undefined,
+  touchedChars?: Set<NodeKey>,
 ): LexicalNode[] {
   const nodes: LexicalNode[] = [];
 
@@ -1940,6 +2051,9 @@ function $createInlineNodesFromOps(
           textNode,
           undefined,
           mergeableNodesForContentOp(childOp.attributes.char, nodes),
+          false,
+          false,
+          touchedChars,
         );
         nodes.push(...charNodes);
       } else {
@@ -1951,13 +2065,13 @@ function $createInlineNodesFromOps(
     if (!childOp.insert || typeof childOp.insert !== "object") continue;
 
     if (isInsertEmbedOpOfType("unknown", childOp)) {
-      const nestedUnknown = $createUnknown(childOp, viewOptions, nodeOptions, logger);
+      const nestedUnknown = $createUnknown(childOp, viewOptions, nodeOptions, logger, touchedChars);
       if (nestedUnknown) nodes.push(nestedUnknown);
       continue;
     }
 
     if (isInsertEmbedOpOfType("note", childOp)) {
-      const nestedNote = $createNote(childOp, viewOptions, nodeOptions, logger);
+      const nestedNote = $createNote(childOp, viewOptions, nodeOptions, logger, touchedChars);
       if (nestedNote) nodes.push(nestedNote);
       continue;
     }
@@ -2039,6 +2153,8 @@ function $createNestedChars(
   // the text starts a new span or appends into an existing span's tail — an NBSP prepended to a
   // tail-append is fabricated content (`~` in the file), not a separator.
   addEditableSeparator = false,
+  // Collects the char span a text innerNode lands in, for `$tagCollabScaffoldingNbsp`.
+  touchedChars?: Set<NodeKey>,
 ): LexicalNode[] {
   if ($isTextNode(innerNode) && innerNode.getTextContentSize() === 0) {
     innerNode.setTextContent(EMPTY_CHAR_PLACEHOLDER_TEXT);
@@ -2075,11 +2191,13 @@ function $createNestedChars(
           undefined,
           true,
           addEditableSeparator,
+          touchedChars,
         );
         innerCharNodes.forEach((node) => lastNode.append(node));
       } else {
         // Tail-append into the existing span: mid-span content, NO separator.
         if (innerNode) lastNode.append(innerNode);
+        if ($isTextNode(innerNode)) $recordTouchedChar(innerNode, touchedChars);
       }
       return []; // Return empty array since we merged into existing node
     }
@@ -2123,6 +2241,7 @@ function $createNestedChars(
     // when it in turn nests inside an existing parent char (the merge case above).
     $addOpeningMarker(outerAttr.style, outermostCharNode, viewOptions, nestedInParent);
     $addCharNodeClosingMarker(outermostCharNode, outermostCharNode, viewOptions, nestedInParent);
+    if ($isTextNode(innerNode)) $recordTouchedChar(innerNode, touchedChars);
 
     return [outermostCharNode];
   } else {
@@ -2133,6 +2252,7 @@ function $createNestedChars(
     if ($isCharNode(lastNode) && $hasSameCharAttributes(cleanAttr, lastNode)) {
       // Tail-append into the existing span: mid-span content, NO separator.
       if (innerNode) lastNode.append(innerNode);
+      if ($isTextNode(innerNode)) $recordTouchedChar(innerNode, touchedChars);
       return []; // Return empty array since we merged into existing node
     }
 
@@ -2148,6 +2268,7 @@ function $createNestedChars(
     // Add markers inside the CharNode (as children)
     $addOpeningMarker(cleanAttr.style, charNode, viewOptions, nestedInParent);
     $addCharNodeClosingMarker(charNode, charNode, viewOptions, nestedInParent);
+    if ($isTextNode(innerNode)) $recordTouchedChar(innerNode, touchedChars);
 
     return [charNode];
   }
