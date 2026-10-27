@@ -342,8 +342,14 @@ function $handleTextNodes(
   // path is narrower still: only the span's OWN opener (its first child) qualifies, like the
   // reverse adaptor's `content[0]` strip, so the collab-flattened shape's nested opener keeps
   // emitting what peers already receive.
+  // A lone NBSP left once the separator is stripped is the author's `~`, not one of the layout's
+  // own lone-NBSP nodes, so `$isLoneNbspContent` (which reads the node's whole text) is asked only
+  // about text that kept every byte of its node.
+  let isSeparatorStripped = false;
   if (omitsCharGlyphs && !!parentCharNode && previousSibling === parentCharNode.getFirstChild()) {
-    text = text.slice($separatorPrefixLength(currentNode));
+    const separatorLength = $separatorPrefixLength(currentNode);
+    text = text.slice(separatorLength);
+    isSeparatorStripped = separatorLength > 0;
   }
 
   // Char-span attribute display runs (bare `|…`, no NBSP prefix — see usj-editor.adaptor's
@@ -392,7 +398,8 @@ function $handleTextNodes(
     // A lone NBSP is a separator, spacer or placeholder of the note's layout unless it is a
     // no-break space of the note's content (a `~` as a span's whole text, or between two spans) —
     // the same rule the editor→USJ conversion keeps content by.
-    if (!text || (text === NBSP && !$isLoneNbspContent(currentNode)) || isNodeAttributeText) return;
+    const isLayoutNbsp = text === NBSP && !isSeparatorStripped && !$isLoneNbspContent(currentNode);
+    if (!text || isLayoutNbsp || isNodeAttributeText) return;
     activeEmbed.contentsOps?.push(textOp);
   } else {
     // Attribute display text is presentation-only regardless of WHERE it rides — inside a char
