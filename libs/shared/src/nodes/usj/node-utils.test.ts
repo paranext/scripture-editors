@@ -6,6 +6,7 @@ import { $createCharNode, CharNode } from "./CharNode.js";
 import { $createImmutableChapterNode } from "./ImmutableChapterNode.js";
 import { usjBaseNodes } from "./index.js";
 import {
+  $createMarkerTrailingSeparator,
   $getElementOffsetFromLogicalIndex,
   $getLogicalContentItems,
   $getLogicalIndexOfChild,
@@ -905,11 +906,31 @@ describe("Editor Node Utilities", () => {
       });
     });
 
-    it("skips standalone NBSP spacer text nodes between content items", () => {
-      // Visible/hidden modes insert NBSP spacer text nodes between element items (e.g. between
-      // char nodes in a note). The editor→USJ conversion drops them, so they are not USJ
-      // content. A spacer only survives as its own node next to elements — Lexical merges
-      // adjacent plain text nodes, so an NBSP beside other text is not a separate node.
+    it("skips tagged NBSP spacer text nodes between content items", () => {
+      // Visible/hidden modes insert tagged NBSP spacer text nodes between element items (e.g.
+      // between char nodes in a note). The editor→USJ conversion drops them, so they are not USJ
+      // content.
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        $getRoot().append(
+          $createParaNode().append(
+            $createCharNode("nd").append($createTextNode("aaa")),
+            $createMarkerTrailingSeparator(),
+            $createCharNode("nd").append($createTextNode("bbb")),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        const items = $getFirstParaItems();
+
+        expect(items).toHaveLength(2);
+        expect(items[0].type).toBe("element");
+        expect(items[1].type).toBe("element");
+      });
+    });
+
+    it("keeps an untagged lone NBSP between content items as a text item", () => {
+      // The same bytes as a spacer but untagged: an authored lone `~`, which is USJ content.
       const { editor } = createBasicTestEnvironment(nodes, () => {
         $getRoot().append(
           $createParaNode().append(
@@ -923,9 +944,7 @@ describe("Editor Node Utilities", () => {
       editor.getEditorState().read(() => {
         const items = $getFirstParaItems();
 
-        expect(items).toHaveLength(2);
-        expect(items[0].type).toBe("element");
-        expect(items[1].type).toBe("element");
+        expect(items.map((item) => item.type)).toEqual(["element", "text", "element"]);
       });
     });
 

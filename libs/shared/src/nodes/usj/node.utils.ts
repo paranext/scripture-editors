@@ -945,9 +945,9 @@ function getSelectionStartNodeInner(selection: BaseSelection | null): LexicalNod
  * Checks whether a node is presentation-only and therefore not part of USJ content:
  * line breaks, marker scaffolding (editable and visible), marker-trailing-space or
  * attribute text (as a plain TextNode or as an opaque block's folded ImmutableTypedTextNode
- * display run, e.g. an UnknownNode's `\cat` byte display), and empty or NBSP-only spacer text
- * (which the editor→USJ conversion drops as well; ideally the USJ→editor conversion would
- * create such spacers as presentation-typed text nodes instead — follow-up work).
+ * display run, e.g. an UnknownNode's `\cat` byte display), tagged presentation NBSP (spacers and
+ * empty-char placeholders, see {@link $isPresentationNbsp}), and empty text — all of which the
+ * editor→USJ conversion drops as well.
  * @param node - The node to check.
  * @returns `true` if the node must be skipped when computing USJ content indexes.
  */
@@ -965,10 +965,14 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
     const textType = $getState(node, textTypeState);
     if (textType === MARKER_TRAILING_SPACE_TEXT_TYPE || textType === "attribute") return true;
 
+    // A tagged presentation NBSP (spacer or empty-char placeholder) is scaffolding; an untagged
+    // lone NBSP is content (an authored `~`), matching the editor→USJ conversion outside Standard
+    // view. Standard view displays a data NBSP as `~`, so no lone-NBSP data node exists there.
+    if ($isPresentationNbsp(node)) return true;
     const text = node.getTextContent();
-    // "" / NBSP are presentation-only; a bare cursor host (EmptyVerseCaretGuardPlugin) likewise
-    // carries no content, so it must not shift annotation content indexes while it rests.
-    if (text === "" || text === NBSP || isCursorPlaceholderOnly(text)) return true;
+    // "" is presentation-only; a bare cursor host (EmptyVerseCaretGuardPlugin) likewise carries
+    // no content, so it must not shift annotation content indexes while it rests.
+    if (text === "" || isCursorPlaceholderOnly(text)) return true;
   }
   return false;
 }

@@ -108,7 +108,21 @@ const cases: AgreementCase[] = [
     expected: [{ kind: "text", text: "content" }],
   },
   {
-    name: "an NBSP-only spacer between char spans is dropped",
+    name: "a tagged NBSP spacer between char spans is dropped",
+    $build: () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createCharNode("bd").append($createMarkerNode("bd"), $createTextNode(`${NBSP}bold`)),
+          $createMarkerTrailingSeparator(),
+          $createCharNode("it").append($createMarkerNode("it"), $createTextNode(`${NBSP}italic`)),
+        ),
+      );
+    },
+    expected: [{ kind: "char" }, { kind: "char" }],
+  },
+  {
+    // The same bytes as the spacer above, untagged: a lone `~` the author wrote is content.
+    name: "an untagged lone NBSP between char spans is content",
     $build: () => {
       $getRoot().append(
         $createParaNode("p").append(
@@ -118,18 +132,33 @@ const cases: AgreementCase[] = [
         ),
       );
     },
-    expected: [{ kind: "char" }, { kind: "char" }],
+    expected: [{ kind: "char" }, { kind: "text", text: NBSP }, { kind: "char" }],
+  },
+  {
+    // An annotation mark over the lone NBSP is spliced transparently on both sides, so the NBSP
+    // is still one text item rather than being split or dropped.
+    name: "a lone NBSP split by an annotation mark stays one text item",
+    $build: () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createCharNode("bd").append($createMarkerNode("bd"), $createTextNode(`${NBSP}bold`)),
+          $createTypedMarkNode({ spelling: ["s1"] }).append($createTextNode(NBSP)),
+          $createCharNode("it").append($createMarkerNode("it"), $createTextNode(`${NBSP}italic`)),
+        ),
+      );
+    },
+    expected: [{ kind: "char" }, { kind: "text", text: NBSP }, { kind: "char" }],
   },
   {
     // Formats differ around the spacer only to defeat Lexical's adjacent-simple-text merge (see
     // the first case); the spacer itself must be dropped by BOTH projections and the run must
     // coalesce across it.
-    name: "an NBSP-only spacer inside a text run is dropped and the run coalesces across it",
+    name: "a tagged NBSP spacer inside a text run is dropped and the run coalesces across it",
     $build: () => {
       $getRoot().append(
         $createParaNode("p").append(
           $createTextNode("first").toggleFormat("bold"),
-          $createTextNode(NBSP),
+          $createMarkerTrailingSeparator(),
           $createTextNode("second").toggleFormat("italic"),
         ),
       );

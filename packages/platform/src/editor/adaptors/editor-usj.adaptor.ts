@@ -28,6 +28,7 @@ import {
   ImmutableTypedTextNode,
   ImmutableUnmatchedNode,
   isSerializedImpliedParaNode,
+  isSerializedPresentationNbsp,
   isSerializedTypedMarkNode,
   isCursorPlaceholderOnly,
   LoggerBasic,
@@ -251,13 +252,18 @@ function createCharMarker(
   // separator here (see the `recurseNodes` TextNode branch).
   if (viewOptions?.markerMode === "editable" && !isStandardView(viewOptions) && content) {
     const [first] = content;
-    if (typeof first === "string" && first.startsWith(NBSP)) content[0] = first.slice(1);
+    if (typeof first === "string" && first.startsWith(NBSP)) {
+      content[0] = first.slice(1);
+      // A slot that held only the separator (stranded in its own node) leaves nothing behind;
+      // with nothing else left the span saves as an empty span does, with no content.
+      if (content[0] === "") content.shift();
+    }
   }
   return removeUndefinedProperties({
     type,
     marker,
     ...unknownAttributes,
-    content,
+    content: content && content.length > 0 ? content : undefined,
   });
 }
 
@@ -593,18 +599,15 @@ function recurseNodes(
           // Drop a bare caret host (EmptyVerseCaretGuardPlugin). A legitimate ZWSP inside real text
           // (Thai/Khmer line breaks) is not placeholder-only, so it still passes and is preserved.
           !isCursorPlaceholderOnly(serializedTextNode.text) &&
-          // A byte test, not (only) the separator state tag, and deliberately so: a lone-NBSP
-          // text node stands in for THREE presentation shapes — the tagged separators the
-          // forward adaptor builds, the empty-char placeholder, and an orphaned structural
-          // prefix a split or deletion strands in its own (untagged) node. The known cost is
-          // that a CONTENT string which is exactly one NBSP is dropped too; fixing that needs
-          // a per-context story for the untagged shapes, not a tag test alone. The forward
-          // side keeps its own output clear of the ambiguity: `createPara` leaves a
-          // spaces-only paragraph-leading string plain instead of rewriting a lone " " into
-          // exactly this shape, so in standard view only an authored lone-NBSP data string
-          // (displayed as `~`, never as a bare NBSP node) is at stake — leaving the drop to
-          // genuinely structural nodes.
-          serializedTextNode.text !== NBSP &&
+          // Presentation NBSP (spacers and empty-char placeholders) is excluded per view. In
+          // Standard view the test is by bytes: a data NBSP displays there as `~`, so a
+          // bare-NBSP node is always scaffolding, tagged or not. Elsewhere it is by tag: an
+          // untagged lone NBSP is content (an authored `~`), since every presentation builder
+          // tags its output. An untagged structural separator a split or deletion strands at a
+          // char span's start is caught instead by `createCharMarker`'s separator strip.
+          (isStandardView(viewOptions)
+            ? serializedTextNode.text !== NBSP
+            : !isSerializedPresentationNbsp(serializedTextNode)) &&
           !serializedTextNode.text.startsWith(NODE_ATTRIBUTE_PREFIX) &&
           // Char-span attribute display runs (bare `|…`, no NBSP prefix — see
           // usj-editor.adaptor's `addCharAttributes`) carry no NBSP prefix to strip against, so

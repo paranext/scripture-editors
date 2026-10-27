@@ -61,6 +61,7 @@ import {
   FORMATTED_VIEW_MODE,
   getViewOptions,
   NoteCallerOnClick,
+  PARAGRAPH_STRUCTURE_VIEW_MODE,
   STANDARD_VIEW_MODE,
   TextSpacingPlugin,
   UNFORMATTED_VIEW_MODE,
@@ -73,6 +74,7 @@ import {
   $createMilestoneNode,
   $createNoteNode,
   $createParaNode,
+  $createTypedMarkNode,
   $createVerseNode,
   $isParaNode,
   CHAPTER_MARKER,
@@ -1075,13 +1077,12 @@ describe("Note caller index vs the USJ note walk", () => {
       ]);
     });
 
-    // Known cost of the reverse adaptor's lone-NBSP byte test (documented at the test itself in
-    // editor-usj.adaptor.ts): outside standard view there is no display mapping to disguise a
-    // data NBSP, so a content string that is EXACTLY one NBSP is indistinguishable from an
-    // untagged structural spacer and is dropped. Pinned as-is: fixing it needs a per-context
-    // story for the untagged spacer shapes, not a byte-test tweak.
-    it("formatted view: drops a lone leading data NBSP (byte-test cost, pinned)", () => {
+    // Outside standard view a data NBSP is not display-mapped, so a content string that is
+    // EXACTLY one NBSP is byte-identical to a presentation spacer; only the spacer's tag tells
+    // them apart, and this untagged one is data.
+    it("formatted view: preserves a lone leading data NBSP", () => {
       expect(roundTripLeading(NBSP, FORMATTED_VIEW_MODE)).toEqual([
+        NBSP,
         { type: "verse", marker: "v", number: "1" },
         "in the days",
       ]);
@@ -1094,5 +1095,137 @@ describe("Note caller index vs the USJ note walk", () => {
         "in the days",
       ]);
     });
+  });
+});
+
+describe("lone NBSP", () => {
+  // Presentation NBSP nodes (spacers, empty-char placeholders) are recognized by their tag, so a
+  // content string that is exactly one NBSP is data and survives save outside Standard view.
+  // Standard view displays a data NBSP as `~`, so there a bare-NBSP node is always scaffolding.
+  const VIEW_MODES = [
+    FORMATTED_VIEW_MODE,
+    UNFORMATTED_VIEW_MODE,
+    PARAGRAPH_STRUCTURE_VIEW_MODE,
+    STANDARD_VIEW_MODE,
+  ];
+
+  function roundTrip(usj: Usj, viewMode: string): Usj | undefined {
+    initializeSerialize(undefined, undefined);
+    reset();
+    const viewOptions = getViewOptions(viewMode);
+    const state = serializeEditorState(usj, viewOptions);
+    initializeDeserialize(undefined);
+    return deserializeSerializedEditorState(state, viewOptions);
+  }
+
+  function paraUsj(content: MarkerContent[]): Usj {
+    return {
+      ...EMPTY_USJ,
+      content: [{ type: "para", marker: "p", content } as MarkerObject],
+    };
+  }
+
+  it.each(VIEW_MODES)("keeps a lone NBSP between char spans [%s]", (viewMode) => {
+    const usj = paraUsj([
+      { type: "verse", marker: "v", number: "1" },
+      { type: "char", marker: "wj", content: ["glory"] },
+      NBSP,
+      { type: "char", marker: "nd", content: ["Lord"] },
+    ]);
+
+    expect(roundTrip(usj, viewMode)).toEqual(usj);
+  });
+
+  // An empty char span carries no `content` key on save; pinned in every mode so the separator
+  // strip's empty-slot removal cannot change it.
+  it.each(VIEW_MODES)("round-trips an empty char span unchanged [%s]", (viewMode) => {
+    const usj = paraUsj([
+      { type: "verse", marker: "v", number: "1" },
+      "a ",
+      { type: "char", marker: "nd", content: [] },
+      " b",
+    ]);
+
+    const para = roundTrip(usj, viewMode)?.content[0] as MarkerObject;
+
+    expect(para.content?.[2]).toEqual({ type: "char", marker: "nd" });
+  });
+
+  it("drops a stranded untagged separator before a nested char (editable unformatted)", () => {
+    // An untagged NBSP node left alone at the start of a char span (a split or deletion can
+    // strand the structural separator in its own node) reads as content; the separator strip
+    // takes it and leaves no empty string behind.
+    const { editor: strandedEditor } = createBasicTestEnvironment(nodes, () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createCharNode("nd").append(
+            $createMarkerNode("nd"),
+            $createTextNode(NBSP),
+            $createCharNode("wj").append($createMarkerNode("wj"), $createTextNode(`${NBSP}x`)),
+            $createMarkerNode("nd", "closing"),
+          ),
+        ),
+      );
+    });
+    initializeDeserialize(undefined);
+
+    const result = editorUsjAdaptor.deserializeEditorState(
+      strandedEditor.getEditorState(),
+      getViewOptions(UNFORMATTED_VIEW_MODE),
+    );
+
+    const para = result?.content?.[0] as MarkerObject;
+    const nd = para.content?.[0] as MarkerObject;
+    expect(nd.content?.[0]).toEqual({ type: "char", marker: "wj", content: ["x"] });
+    expect(nd.content).not.toContain("");
+    expect(nd.content).not.toContain(NBSP);
+  });
+
+  it("saves a char span holding only a stranded separator as an empty span (editable unformatted)", () => {
+    const { editor: strandedEditor } = createBasicTestEnvironment(nodes, () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createCharNode("nd").append(
+            $createMarkerNode("nd"),
+            $createTextNode(NBSP),
+            $createMarkerNode("nd", "closing"),
+          ),
+        ),
+      );
+    });
+    initializeDeserialize(undefined);
+
+    const result = editorUsjAdaptor.deserializeEditorState(
+      strandedEditor.getEditorState(),
+      getViewOptions(UNFORMATTED_VIEW_MODE),
+    );
+
+    const para = result?.content?.[0] as MarkerObject;
+    expect(para.content?.[0]).toEqual({ type: "char", marker: "nd" });
+  });
+
+  it("drops a stranded untagged separator before an annotated run (standard view)", () => {
+    const { editor: strandedEditor } = createBasicTestEnvironment(nodes, () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createCharNode("nd").append(
+            $createMarkerNode("nd"),
+            $createTextNode(NBSP),
+            $createTypedMarkNode({ spelling: ["s1"] }).append($createTextNode("Lord")),
+            $createMarkerNode("nd", "closing"),
+          ),
+        ),
+      );
+    });
+    initializeDeserialize(undefined);
+
+    const result = editorUsjAdaptor.deserializeEditorState(
+      strandedEditor.getEditorState(),
+      getViewOptions(STANDARD_VIEW_MODE),
+    );
+
+    const para = result?.content?.[0] as MarkerObject;
+    const nd = para.content?.[0] as MarkerObject;
+    expect(nd.content).toEqual(["Lord"]);
   });
 });

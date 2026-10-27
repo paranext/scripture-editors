@@ -30,11 +30,6 @@ import {
 } from "../usj-editor.adaptor";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { NBSP } from "shared";
-import {
-  FORMATTED_VIEW_MODE,
-  PARAGRAPH_STRUCTURE_VIEW_MODE,
-  UNFORMATTED_VIEW_MODE,
-} from "shared-react";
 
 /** One constructed USJ document to drive through the round trip in every view configuration. */
 interface ConstructedUsjFixture {
@@ -302,32 +297,15 @@ const constructedFixtures: ConstructedUsjFixture[] = [
     }),
   },
   {
-    // A content string that is EXACTLY one NBSP, leading its paragraph.
+    // A content string that is EXACTLY one NBSP, leading its paragraph. It is byte-identical to a
+    // presentation spacer, which is told apart only by its tag, so this untagged one is data and
+    // round-trips exactly in every mode.
     name: "paragraph-leading lone data NBSP",
     usj: usjBook({
       type: "para",
       marker: "p",
       content: [NBSP, { type: "verse", marker: "v", number: "1" }, "in the days"],
     }),
-    expectedByMode: (() => {
-      // Documented normalization (pinned at `editor-usj-adaptor.test.tsx`, "formatted view: drops
-      // a lone leading data NBSP", and documented at the reverse adaptor's lone-NBSP byte test in
-      // editor-usj.adaptor.ts): outside standard view there is no display mapping to disguise a
-      // data NBSP, so a content string that is exactly one NBSP is indistinguishable from an
-      // untagged structural spacer and is dropped. The mechanism is "outside standard view", so
-      // it applies identically to all three non-standard modes; the two standard-view configs
-      // (which display the NBSP as `~`) preserve the byte and assert exact identity.
-      const loneNbspDropped = usjBook({
-        type: "para",
-        marker: "p",
-        content: [{ type: "verse", marker: "v", number: "1" }, "in the days"],
-      });
-      return {
-        [FORMATTED_VIEW_MODE]: loneNbspDropped,
-        [UNFORMATTED_VIEW_MODE]: loneNbspDropped,
-        [PARAGRAPH_STRUCTURE_VIEW_MODE]: loneNbspDropped,
-      };
-    })(),
   },
 ];
 

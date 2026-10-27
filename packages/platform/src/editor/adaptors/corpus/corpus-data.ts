@@ -211,6 +211,39 @@ ${USX_FOOTER}`,
     ),
   },
   {
+    // A content string that is EXACTLY one NBSP (a lone `~`) is data, byte-identical to the
+    // presentation spacers the editor builds between char spans. Only the spacers' tag tells
+    // them apart, so this one must survive save in every view.
+    name: "lone NBSP between body-text char spans",
+    usx: book(
+      `<para style="p"><verse number="1" style="v" /><char style="wj">glory</char>${NBSP}<char style="nd">Lord</char></para>`,
+    ),
+  },
+  {
+    // The collapsed note layout keeps tagged spacers between its top-level char spans; an
+    // authored lone `~` in the same slot is data and must not be mistaken for one.
+    name: "lone NBSP between char spans inside a note",
+    usx: book(
+      `<para style="p"><verse number="1" style="v" />Text<note caller="+" style="f"><char style="fq">a</char>${NBSP}<char style="ft">b</char></note> after.</para>`,
+    ),
+  },
+  {
+    // A char span whose whole content is one NBSP: the same bytes as the empty-char placeholder,
+    // which is tagged, so the data NBSP is kept.
+    name: "char span whose only content is NBSP",
+    usx: book(
+      `<para style="p"><verse number="1" style="v" />Tell the <char style="nd">${NBSP}</char> plainly.</para>`,
+    ),
+  },
+  {
+    // A leading NBSP before a nested char: the editable modes' structural separator sits in the
+    // same position, so the separator strip must take only the separator and keep the data NBSP.
+    name: "NBSP leading an element-first char span",
+    usx: book(
+      `<para style="p"><verse number="1" style="v" />Tell the <char style="nd">${NBSP}<char style="wj">x</char></char> plainly.</para>`,
+    ),
+  },
+  {
     // Book \id description text follows the same display mapping as body text: the reverse
     // adaptor inverts display whitespace on ALL text nodes (book children included), so the
     // forward adaptor must display-encode book text too or a stored NBSP corrupts to a plain
