@@ -21,6 +21,7 @@ import {
   $hasAllSameCharAttributes,
   $isCharNode,
   $isMarkerNode,
+  $isNewlyMarkedSpan,
   $isSeparatorPrefixHostText,
   $recordClipboardSpans,
   $syncDisplayRun,
@@ -98,7 +99,7 @@ function useCharNode(editor: LexicalEditor) {
  * stay apart there too (see `$areHeldApart`).
  *
  * The MIXED pairing — a glyph-less span beside a glyph-bearing one — must still merge, because
- * the marker-apply paths rely on it: `$wrapRunInCharNode` (usj-marker-action.utils.ts) wraps the
+ * span extension relies on it: `$wrapRunInCharNode` (usj-marker-action.utils.ts) wraps the
  * uncovered run in a deliberately glyph-less span and counts on this transform to reunite it with
  * the glyph-bearing neighbor whose identity it copied. But a plain child move would land the
  * content OUTSIDE the neighbor's glyph pair (`[\nd, "Lord", \nd*, " God"]` — bytes that
@@ -215,17 +216,36 @@ function $charNodeTransform(node: CharNode): void {
 
 /**
  * Whether `preceding` and `following`, two alike spans side by side, are two spans to keep: spans
- * the document already held apart ({@link $wereAlikeSpansBeforeUpdate}), or spans one paste or drop
+ * the document already held apart ({@link $wereAlikeSpansBeforeUpdate}), spans one paste or drop
  * brought in together ({@link $arrivedTogetherFromClipboard}) — the copied content held them apart,
- * as Standard view's paste, which keeps every span's glyphs, keeps them. A pasted span still
+ * as Standard view's paste, which keeps every span's glyphs, keeps them — or a span a marker apply
+ * just made beside one the document held ({@link $wasMarkedBesideExistingSpan}). A pasted span still
  * combines with an alike span the document held, so a piece of a span pasted inside or at the end of
  * a span of the same marker extends that span.
  */
 function $areHeldApart(preceding: CharNode, following: CharNode): boolean {
   return (
     $arrivedTogetherFromClipboard(preceding, following) ||
+    $wasMarkedBesideExistingSpan(preceding, following) ||
+    $wasMarkedBesideExistingSpan(following, preceding) ||
     $wereAlikeSpansBeforeUpdate(preceding, following)
   );
+}
+
+/**
+ * Whether `marked` is a span a marker apply created in this update ({@link $isNewlyMarkedSpan}) and
+ * `other` is a span the document already held. Marking text right after `\nd Lord\nd*` makes a
+ * second span, `\nd Lord\nd*\nd God\nd*`, as Paratext 9 and Standard view do: the user made a new
+ * span, not a longer one. The pieces one apply creates still combine with each other, and so does a
+ * span a split made in that update (it was not in the document). Extending an existing span is a
+ * different request (`extendCharacterMarker`), which records nothing and so still combines.
+ */
+function $wasMarkedBesideExistingSpan(marked: CharNode, other: CharNode): boolean {
+  if (!$isNewlyMarkedSpan(marked) || $isNewlyMarkedSpan(other)) return false;
+  const otherKey = other.getKey();
+  return $getEditor()
+    .getEditorState()
+    .read(() => $isCharNode($getNodeByKey(otherKey)));
 }
 
 /**
@@ -234,9 +254,9 @@ function $areHeldApart(preceding: CharNode, following: CharNode): boolean {
  * only left side by side (the text between them deleted, or the paragraphs they end and start
  * joined). Those stay two spans: for a word-level marker such as `\w` (each span one word, its
  * `lemma` that word's) combining them changes the text's word segmentation, and Standard view,
- * whose spans each keep their own glyphs, keeps them apart too. Spans an update creates — a run a
- * marker is applied to, a split's continuation, remote content — still combine with an alike
- * neighbor, as does a span whose marker or attributes an update changed to match its neighbor's.
+ * whose spans each keep their own glyphs, keeps them apart too. Spans an update creates — the run
+ * `extendCharacterMarker` covers, a split's continuation, remote content — still combine with an
+ * alike neighbor (except a span a marker apply made, see {@link $wasMarkedBesideExistingSpan}), as does a span whose marker or attributes an update changed to match its neighbor's.
  * So do two pieces of one span that a split cut apart ({@link $wereSplitFromOneSpan}): joining the
  * paragraphs back (Enter, then Backspace) restores the one span the document held.
  */
