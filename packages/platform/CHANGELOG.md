@@ -205,6 +205,12 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- Placing the caret in an empty verse no longer moves the next verse number onto a new line, and the
+  caret is drawn right after the empty verse's number. The verse holding the caret now carries
+  `psc-empty-text-active` instead of no class, and its caret host carries `data-caret-host`. A host
+  that vendors its own copy of `usj-nodes.css` needs the `psc-empty-text-active` and
+  `[data-caret-host]` rules and the `--psc-empty-verse-ellipsis-width` variable in it, or it keeps
+  the old reflow.
 - A paragraph that `applyUpdate` creates keeps a space at the start of its text. The editor used to
   drop it as it does for an Enter split, without reporting the change, so the document fell one
   character out of step with the ops applied.

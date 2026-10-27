@@ -1,5 +1,14 @@
-import { useTransientCaretHost } from "./transientCaretHost";
-import { $getSelection, $isElementNode, $isRangeSelection } from "lexical";
+import { $isCaretHost, useTransientCaretHost } from "./transientCaretHost";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import {
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  COMMAND_PRIORITY_LOW,
+  DELETE_CHARACTER_COMMAND,
+  LexicalEditor,
+} from "lexical";
+import { useEffect } from "react";
 import { $caretHostAtBoundary } from "shared";
 import { $isSomeVerseNode, SomeVerseNode } from "../../nodes/usj";
 
@@ -39,6 +48,31 @@ export function $emptyVerseNeedingHost(): SomeVerseNode | undefined {
 }
 
 /**
+ * A delete from a caret in an empty verse's host, run from the boundary the host stands for.
+ *
+ * Run as it is, a delete removes only the host's placeholder, whichever offset the caret is at and
+ * whichever way it goes: the emptied host is removed, a new one is put back, and the verse marker
+ * beyond is never reached. With structure protection on, `StructureKeyboardPlugin` arms that marker
+ * before any delete runs; with it off, this is all that reaches it.
+ *
+ * Mutating: call inside `editor.update()` (a command handler is).
+ */
+function $deleteFromEmptyVerseHost(editor: LexicalEditor, isBackward: boolean): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const host = selection.anchor.getNode();
+  if (!$isCaretHost(host) || !$isSomeVerseNode(host.getPreviousSibling())) return false;
+  const parent = host.getParentOrThrow();
+  const boundary = host.getIndexWithinParent();
+  host.remove();
+  parent.select(boundary, boundary);
+  // Every other delete handler judges this one too. Handled either way: the host is gone, so the
+  // delete it stood in for has been run.
+  editor.dispatchCommand(DELETE_CHARACTER_COMMAND, isBackward);
+  return true;
+}
+
+/**
  * Keeps a visible caret in a verse whose text has been fully deleted.
  *
  * A verse number is rendered by a childless `ImmutableVerseNode` decorator, so once a verse has no
@@ -48,7 +82,11 @@ export function $emptyVerseNeedingHost(): SomeVerseNode | undefined {
  * the verse. {@link useTransientCaretHost} owns the host's lifetime — created on arrival, removed on
  * departure or blur, stripped the moment real text is typed — and the exclusions that keep it out of
  * saved Scripture and out of collaborative traffic; this file supplies only the rule for WHERE one
- * is needed. `TrailingNoteCaretGuardPlugin` supplies the other rule.
+ * is needed, and the delete a host must not swallow. `TrailingNoteCaretGuardPlugin` supplies the
+ * other rule.
+ *
+ * The host is the verse marker's immediate next sibling, which `usj-nodes.css` relies on to draw the
+ * caret right after the number (the `[data-caret-host]` rules).
  *
  * Unlike the arrow-driven `CursorHandler` placeholder system (perf-react), this hosts a *resting*
  * caret and is aware of verse markers, so it fits the platform editor's immutable verse numbers.
@@ -56,6 +94,16 @@ export function $emptyVerseNeedingHost(): SomeVerseNode | undefined {
  * @returns Always `null`; this plugin renders no UI.
  */
 export function EmptyVerseCaretGuardPlugin(): null {
+  const [editor] = useLexicalComposerContext();
   useTransientCaretHost($emptyVerseNeedingHost);
+  useEffect(
+    () =>
+      editor.registerCommand(
+        DELETE_CHARACTER_COMMAND,
+        (isBackward) => $deleteFromEmptyVerseHost(editor, isBackward),
+        COMMAND_PRIORITY_LOW,
+      ),
+    [editor],
+  );
   return null;
 }

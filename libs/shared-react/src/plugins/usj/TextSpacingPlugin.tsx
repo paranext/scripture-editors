@@ -99,14 +99,24 @@ function useTextSpacing(editor: LexicalEditor) {
 function $textNodeTrailingSpaceTransform(node: TextNode): void {
   if (!node.isAttached()) return;
 
+  // A caret host (transientCaretHost.ts) is never saved, so it needs no structural space. Spacing
+  // one makes it look typed into: it is stripped, then deleted as empty-verse content, dropping the
+  // caret between the two verse markers. Text that just landed in a host waits for the host's own
+  // transform, or a typed trailing space would double.
+  if ($hasCaretHostMark(node)) {
+    // An edit in front of a host dirties the host, not the verse past it, and that verse is spaced
+    // against what is in front of the host (`$verseNodeTransform`).
+    const next = node.getNextSibling();
+    const previous = node.getPreviousSibling();
+    if ($isSomeVerseNode(next) && previous && !$isSomeVerseNode(previous)) next.markDirty();
+    return;
+  }
+
   const text = node.getTextContent();
-  // A caret host is not there as far as spacing goes: text pasted in front of one, before the next
-  // verse, is spaced against that verse.
-  const followingSibling = node.getNextSibling();
-  const nextSibling =
-    followingSibling && $hasCaretHostMark(followingSibling)
-      ? followingSibling.getNextSibling()
-      : followingSibling;
+  // Look past a caret host: text pasted in front of one is spaced against the verse beyond it, in
+  // the paste's commit. Otherwise the host, a TextNode, exempts it as same-run text until the host
+  // is removed, in a CURSOR_CHANGE commit the app never hears about.
+  const nextSibling = $siblingPastHost(node, "next");
   const parent = node.getParent();
   if (
     node.getMode() !== "normal" ||
@@ -120,8 +130,8 @@ function $textNodeTrailingSpaceTransform(node: TextNode): void {
     // An adjacent TextNode is the same logical text run (IME composition and annotation-wrap
     // splits leave runs as multiple nodes, e.g. a segmented composition node that Lexical
     // won't merge). No structural space belongs inside a run — inserting one corrupts the
-    // word itself (#513, complex scripts worst). This also protects a space-only node from
-    // the placeholder cleanup below: between two text nodes it is real content.
+    // word itself (#513, complex scripts worst). This also protects a space-only node in front
+    // of real text from the empty-verse cleanup below.
     $isTextNode(nextSibling) ||
     // An optbreak (`//`) — like a ref — is an inline UnknownNode carrying SIGNIFICANT surrounding
     // whitespace (Paratext 9 preserves the spaces around `//` byte-for-byte). Forcing a trailing
@@ -143,14 +153,7 @@ function $textNodeTrailingSpaceTransform(node: TextNode): void {
     // presentation. The transform still exempts whichever shape — loose attribute text or a
     // wrapper's children — is actually in the tree, so a pre-flip loose editor state stays exempt
     // too.
-    $isAttributeRunNode(parent) ||
-    // A transient caret host (transientCaretHost.ts) is never saved, so it has no structural space
-    // to maintain. Spacing one before the next verse also makes it look typed into, so the host
-    // strips its placeholder and the empty-verse rule below then deletes what is left, dropping
-    // the caret back to the hostless point between two verse markers. Text that has just landed in
-    // one is left too, until the host's own transform has removed the placeholder — whichever of
-    // the two transforms runs first — so a typed trailing space is never doubled.
-    $hasCaretHostMark(node)
+    $isAttributeRunNode(parent)
   )
     return;
 
@@ -165,12 +168,12 @@ function $textNodeTrailingSpaceTransform(node: TextNode): void {
   // Scope, deliberately limited: NBSP is excluded because it is meaningful content
   // (`$addTrailingSpace` likewise treats it as already-spaced), and multi-space text never reaches
   // here at all (the `text.endsWith(" ") && text.length > 1` guard above returns first) — hence
-  // matching only "" and " ". The previous sibling is read directly, so an empty verse whose
-  // preceding content sits inside an annotation wrapper is NOT detected; `$verseNodeTransform`
-  // resolves through wrappers for its own decision, and doing the same here is a possible
-  // follow-up.
+  // matching only "" and " ". The previous sibling is read past a caret host but not through an
+  // annotation wrapper, so an empty verse whose preceding content sits inside one is NOT detected;
+  // `$verseNodeTransform` resolves through wrappers for its own decision, and doing the same here
+  // is a possible follow-up.
   const isEmptyVerseContent =
-    $isSomeVerseNode(node.getPreviousSibling()) && (text === "" || text === " ");
+    $isSomeVerseNode($siblingPastHost(node, "previous")) && (text === "" || text === " ");
 
   // Remove a space that is an empty verse's entire content.
   if (isEmptyVerseContent) {
@@ -228,8 +231,16 @@ function $verseNodeTransform(node: SomeVerseNode): void {
   // on the content INSIDE them: resolve to the wrapper's last content child (nested wrappers
   // are transient but resolved for safety). An empty wrapper resolves to null and inserts
   // nothing.
+  //
+  // A caret host in front of the verse is passed over, wrapped or not: it is never saved, so the
+  // space belongs to what precedes it, and goes in front of it too, where it stays once the host
+  // is removed.
   let previousSibling: LexicalNode | null = node.getPreviousSibling();
+  const host = previousSibling && $hasCaretHostMark(previousSibling) ? previousSibling : undefined;
+  if (host) previousSibling = host.getPreviousSibling();
   while ($isTypedMarkNode(previousSibling)) previousSibling = previousSibling.getLastChild();
+  if (previousSibling && $hasCaretHostMark(previousSibling))
+    previousSibling = previousSibling.getPreviousSibling();
 
   // Insert the structural space ONLY before the predecessors whose canonical disk shape carries
   // one — an allowlist, not an exclusion list, because every predecessor class outside it
@@ -254,7 +265,14 @@ function $verseNodeTransform(node: SomeVerseNode): void {
       $isTypedMarkNode(previousSibling.getParent()) &&
       !$endsInSpace(previousSibling))
   )
-    node.insertBefore($createTextNode(" "));
+    (host ?? node).insertBefore($createTextNode(" "));
+}
+
+/** `node`'s sibling in `direction`, or the one beyond it when that sibling is a caret host. */
+function $siblingPastHost(node: LexicalNode, direction: "next" | "previous"): LexicalNode | null {
+  const sibling = direction === "next" ? node.getNextSibling() : node.getPreviousSibling();
+  if (!sibling || !$hasCaretHostMark(sibling)) return sibling;
+  return direction === "next" ? sibling.getNextSibling() : sibling.getPreviousSibling();
 }
 
 /** Whether `node`'s text already ends in a space or NBSP — the same test `$addTrailingSpace` uses

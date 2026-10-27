@@ -74,6 +74,13 @@ const caretHostState = createState("isCaretHost", {
 });
 
 /**
+ * The attribute a bare caret host's DOM element carries, so a stylesheet can target the host itself
+ * rather than whatever text follows a node (`usj-nodes.css` keeps the line still around an empty
+ * verse's host this way).
+ */
+export const CARET_HOST_ATTRIBUTE = "data-caret-host";
+
+/**
  * A new caret host: a single placeholder character, marked as a host.
  *
  * Mutating: call inside `editor.update()`.
@@ -188,8 +195,9 @@ function $removeHostPlaceholder(node: TextNode): void {
  * and produces no delta op — and `HISTORY_MERGE_TAG`, so creating or removing a host is no step of
  * its own in undo and never clears the redo stack. The text that lands in a host is the user's
  * edit, so the transform that turns the host into that text adds no tags. The USJ serializer drops
- * a placeholder-only text node as well, and the collab coordinate systems give it zero length, so
- * a host cannot reach saved Scripture or a peer even if one somehow outlived a commit. All
+ * a placeholder-only text node as well, and the outgoing delta gives it zero length, so a host
+ * cannot reach saved Scripture or a peer even if one somehow outlived a commit. (Applying a
+ * peer's delta still counts a host as one unit, so a remote op past a host lands one unit off.) All
  * placeholder handling is scoped to nodes marked as hosts, and removes only a host's own
  * placeholder — a zero-width space is legitimate content in some scripts (Thai/Khmer/Lao line
  * breaks) and is never touched.
@@ -362,6 +370,22 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
         COMMAND_PRIORITY_EDITOR,
       ),
       editor.registerNodeTransform(TextNode, $stripPlaceholderOnEdit),
+      // The DOM Lexical renders for a text node carries none of its state, so the mark is copied
+      // onto it (see CARET_HOST_ATTRIBUTE) every time a text node is created or changes.
+      editor.registerMutationListener(
+        TextNode,
+        (mutations) => {
+          editor.getEditorState().read(() => {
+            for (const [key, mutation] of mutations) {
+              if (mutation === "destroyed") continue;
+              editor
+                .getElementByKey(key)
+                ?.toggleAttribute(CARET_HOST_ATTRIBUTE, $isCaretHost($getNodeByKey(key)));
+            }
+          });
+        },
+        { skipInitialization: true },
+      ),
     );
     // Drop the tracked key when the editor changes so it can't resolve into a different editor.
     return () => {

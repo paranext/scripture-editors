@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { act } from "@testing-library/react";
-import { $getRoot, $createTextNode, $getSelection, LexicalNode } from "lexical";
+import {
+  $getRoot,
+  $createTextNode,
+  $getSelection,
+  $isRangeSelection,
+  $isTextNode,
+  BLUR_COMMAND,
+  CLICK_COMMAND,
+  FOCUS_COMMAND,
+  LexicalEditor,
+  LexicalNode,
+  SELECTION_CHANGE_COMMAND,
+} from "lexical";
 import {
   $createGutterMarkerNode,
   $createImmutableTypedTextNode,
@@ -18,6 +30,8 @@ import {
 } from "shared";
 import {
   $createImmutableVerseNode,
+  $isCaretHost,
+  EmptyVerseCaretGuardPlugin,
   getViewOptions,
   ImmutableVerseNode,
   PARAGRAPH_STRUCTURE_VIEW_MODE,
@@ -28,13 +42,23 @@ import {
 import { createBasicTestEnvironment } from "../../../../libs/shared/src/nodes/usj/test.utils";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
-import { baseTestEnvironment } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
+import {
+  baseTestEnvironment,
+  settle,
+} from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 import {
   $getActiveVerseKey,
   $getEmptyVerseStatus,
   $getParaFromSelection,
+  ACTIVE_EMPTY_CLASS,
   ActiveTextPlugin,
+  EMPTY_CLASS,
 } from "./ActiveTextPlugin";
+
+// jsdom has no `Range.getBoundingClientRect`; Lexical's post-commit scroll-into-view reads one once
+// the root has focus. Stub it the same way the sibling editor tests do.
+if (typeof Range.prototype.getBoundingClientRect !== "function")
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
 
 const nodes = [
   ParaNode,
@@ -500,5 +524,174 @@ describe("ActiveTextPlugin empty-verse classes", () => {
     const classList = editor.getElementByKey(v3.getKey())?.classList;
     expect(classList?.contains("psc-empty-text")).toBe(false);
     expect(classList?.contains("psc-empty-text-active")).toBe(false);
+  });
+});
+
+/**
+ * Focuses the editor for real, as it is while the user clicks: Lexical then writes each selection to
+ * the DOM, and an update made outside any event reads it back from there.
+ */
+async function focusEditor(editor: LexicalEditor) {
+  await act(async () => {
+    editor.getRootElement()?.focus();
+  });
+  await settle();
+}
+
+/**
+ * Dispatches the click Lexical turns a DOM click on `element` into, and returns the selection that
+ * click committed. The selectionchange its DOM write queues is withheld from Lexical: read back, it
+ * would resolve the caret again, and the test would grade that rather than the click.
+ */
+async function clickOn(
+  editor: LexicalEditor,
+  element: Element | null | undefined,
+  {
+    detail = 1,
+    $mousedown,
+  }: {
+    detail?: number;
+    /** Puts the caret where the click's mousedown resolved it, in the click's own update. */
+    $mousedown?: () => void;
+  } = {},
+) {
+  if (!element) throw new Error("expected an element to click");
+  const event = new MouseEvent("click", { detail });
+  Object.defineProperty(event, "target", { value: element });
+  const withhold = (e: Event) => e.stopPropagation();
+  window.addEventListener("selectionchange", withhold, true);
+  try {
+    await act(async () => {
+      editor.update(() => {
+        $mousedown?.();
+        editor.dispatchCommand(CLICK_COMMAND, event);
+      });
+    });
+    await settle();
+  } finally {
+    window.removeEventListener("selectionchange", withhold, true);
+  }
+}
+
+describe("ActiveTextPlugin with the empty-verse caret guard", () => {
+  /** Verse 3 is empty, verse 4 has text, and the caret is hosted right after verse 3's number. */
+  async function hostedEmptyVerse() {
+    let para!: ParaNode;
+    let v3!: SomeVerseNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("p");
+        v3 = $createImmutableVerseNode("3");
+        $getRoot().append(para.append(v3, $createImmutableVerseNode("4"), $createTextNode("four")));
+      },
+      <>
+        <EmptyVerseCaretGuardPlugin />
+        <ActiveTextPlugin viewOptions={getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE)} />
+      </>,
+    );
+    await focusEditor(editor);
+    await act(async () => {
+      editor.update(() => para.select(1, 1));
+    });
+    await act(async () => {
+      editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+    return { editor, para, v3 };
+  }
+
+  it("draws no focus box or active verse after a blur, though the blur's host removal commits", async () => {
+    const { editor, para, v3 } = await hostedEmptyVerse();
+    const paraClasses = () => editor.getElementByKey(para.getKey())?.classList;
+    const verseClasses = () => editor.getElementByKey(v3.getKey())?.classList;
+    expect(paraClasses()?.contains("psc-active-text")).toBe(true);
+    expect(verseClasses()?.contains(ACTIVE_EMPTY_CLASS)).toBe(true);
+
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
+    });
+
+    expect(editor.getEditorState().read(() => para.getChildren().some($isCaretHost))).toBe(false);
+    expect(paraClasses()?.contains("psc-active-text")).toBe(false);
+    expect(verseClasses()?.contains(ACTIVE_EMPTY_CLASS)).toBe(false);
+    expect(verseClasses()?.contains(EMPTY_CLASS)).toBe(true);
+
+    // Focus returning draws them again.
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, new FocusEvent("focus"));
+    });
+    await settle();
+    expect(paraClasses()?.contains("psc-active-text")).toBe(true);
+    expect(verseClasses()?.contains(ACTIVE_EMPTY_CLASS)).toBe(true);
+  });
+
+  it("puts the caret into the host when the active empty verse's ellipsis is clicked", async () => {
+    const { editor, para, v3 } = await hostedEmptyVerse();
+
+    // The click on the ellipsis lands on the element point in front of the host.
+    await clickOn(editor, editor.getElementByKey(v3.getKey()), {
+      $mousedown: () => para.select(1, 1),
+    });
+
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect($isCaretHost(selection.anchor.getNode())).toBe(true);
+      expect(selection.anchor.getNode().getPreviousSibling()?.is(v3)).toBe(true);
+    });
+  });
+
+  it("leaves a double-click's selection alone", async () => {
+    const { editor, para, v3 } = await hostedEmptyVerse();
+    await act(async () => {
+      editor.update(() => {
+        const four = para.getLastChild();
+        if ($isTextNode(four)) four.select(0, 4);
+      });
+    });
+
+    await clickOn(editor, editor.getElementByKey(v3.getKey()), { detail: 2 });
+
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.isCollapsed()).toBe(false);
+    });
+  });
+});
+
+describe("ActiveTextPlugin with editable verse markers", () => {
+  it("leaves a click inside an empty verse's marker text where it landed", async () => {
+    let v2!: VerseNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        // The visible marker text the adaptor gives an editable verse.
+        v2 = $createVerseNode("2", "\\v 2 ");
+        $getRoot().append(
+          $createParaNode("p").append(
+            ...$createParaMarkerPrefixNodes("editable", "p"),
+            v2,
+            $verseFor("editable", "3"),
+            $createTextNode("three"),
+          ),
+        );
+      },
+      <ActiveTextPlugin viewOptions={getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE)} />,
+    );
+    await focusEditor(editor);
+    // Lexical resolves the click to a caret inside `\v 2 `, which makes verse 2 the active one.
+    await act(async () => {
+      editor.update(() => v2.select(1, 1));
+    });
+    const element = editor.getElementByKey(v2.getKey());
+    expect(element?.classList.contains(ACTIVE_EMPTY_CLASS)).toBe(true);
+
+    await clickOn(editor, element);
+
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.anchor.key).toBe(v2.getKey());
+      expect(selection.anchor.offset).toBe(1);
+    });
   });
 });
