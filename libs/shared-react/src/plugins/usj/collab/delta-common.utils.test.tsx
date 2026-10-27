@@ -39,6 +39,7 @@ import {
   $isMilestoneNode,
   $isNoteNode,
   $isParaNode,
+  authoredNbspState,
   charIdState,
   GENERATOR_NOTE_CALLER,
   getVisibleOpenMarkerText,
@@ -1584,6 +1585,59 @@ describe("inserted-note key resolution across a preceding char attribute run", (
     ];
 
     expect(getInsertedNodeKey(insertOps, editorState)).toBe(note.getKey());
+  });
+});
+
+/**
+ * A char span whose whole text is one no-break space has the empty span's placeholder's shape. The
+ * ops stream tells the two apart by `$isLoneNbspContent` (an author's `~` carries
+ * `authoredNbspState`) and emits only the author's, so delta-doc counting must make the same call:
+ * otherwise every position after an author's `~`-only span is one short of the ops stream.
+ *
+ * The expected position is read off `getEditorDelta`, never from `$getOTPositionOfNode`, so the
+ * two sides of the comparison count independently.
+ */
+describe("delta-doc coordinates (a char span whose whole text is one no-break space)", () => {
+  let tailNode: LexicalNode | undefined;
+
+  function $buildLoneNbspSpanDoc(isAuthored: boolean) {
+    const nbsp = $createTextNode(NBSP);
+    if (isAuthored) $setState(nbsp, authoredNbspState, true);
+    const tail = $createTextNode(" tail");
+    tailNode = tail;
+    $getRoot().append(
+      $createImpliedParaNode().append(
+        $createTextNode("a "),
+        $createCharNode("nd").append(nbsp),
+        tail,
+      ),
+    );
+  }
+
+  /** Where `text` starts in the ops stream, each embed counting as one unit. */
+  function streamPositionOf(ops: DeltaOp[], text: string): number {
+    const stream = ops
+      .map(({ insert }) => (typeof insert === "string" ? insert : "\uFFFC"))
+      .join("");
+    const position = stream.indexOf(text);
+    if (position < 0) throw new Error(`the ops stream holds no ${JSON.stringify(text)}`);
+    return position;
+  }
+
+  it.each([
+    { shape: "an author's no-break space", isAuthored: true, streamLength: 3 },
+    { shape: "an empty span's placeholder", isAuthored: false, streamLength: 2 },
+  ])("counts $shape as the ops stream does", async ({ isAuthored, streamLength }) => {
+    const { editor } = await testEnvironment(() => $buildLoneNbspSpanDoc(isAuthored));
+    if (!tailNode) throw new Error("tailNode not initialized");
+    const tail = tailNode;
+    const editorState = editor.getEditorState();
+    const expected = streamPositionOf(getEditorDelta(editorState).ops, " tail");
+
+    const position = editorState.read(() => $getOTPositionOfNode(tail));
+
+    expect(expected).toBe(streamLength);
+    expect(position).toBe(expected);
   });
 });
 
