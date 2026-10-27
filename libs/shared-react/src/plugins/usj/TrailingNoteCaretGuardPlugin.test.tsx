@@ -6,7 +6,7 @@ import { getViewOptions } from "../../views/view-options.utils";
 import { STANDARD_VIEW_MODE } from "../../views/view-mode.model";
 import { ArrowNavigationPlugin } from "./ArrowNavigationPlugin";
 import { EmptyVerseCaretGuardPlugin } from "./EmptyVerseCaretGuardPlugin";
-import { baseTestEnvironment, pressKey, updateSelection } from "./react-test.utils";
+import { baseTestEnvironment, pressKey, settle, updateSelection } from "./react-test.utils";
 import { TrailingNoteCaretGuardPlugin } from "./TrailingNoteCaretGuardPlugin";
 import { act } from "@testing-library/react";
 import {
@@ -375,12 +375,42 @@ describe("TrailingNoteCaretGuardPlugin", () => {
 
     await restCaretPastNote(editor, para!);
     expect(hasCaretHost(editor, para!)).toBe(true);
+    // Let the selectionchange events jsdom queued for those writes arrive before the blur: one
+    // arriving after it would rest the caret past the note again and re-host it, as a real return
+    // to the editor should.
+    await settle();
 
     await act(async () => {
       editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
     });
 
     expect(hasCaretHost(editor, para!)).toBe(false);
+  });
+
+  it("leaves the caret past the note, not inside it, when blur removes the host", async () => {
+    let para: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("p");
+        $getRoot().append(para.append($createTextNode("before "), $createTrailingNote()));
+      },
+      <TrailingNoteCaretGuardPlugin />,
+    );
+    await restCaretPastNote(editor, para!);
+    await settle();
+
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
+    });
+
+    // Typing after the editor is refocused must land after the collapsed note, not in its hidden
+    // content.
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.anchor.getNode().getKey()).toBe(para.getKey());
+      expect(selection.anchor.offset).toBe(para.getChildrenSize());
+    });
   });
 
   it("removes the host once a range selection spans the note (so copy/cut can't include it)", async () => {
@@ -1193,6 +1223,28 @@ describe("TrailingNoteCaretGuardPlugin", () => {
           expect(note.getTextContent()).not.toContain(CURSOR_PLACEHOLDER_CHAR);
         });
         expect(allHosts(editor).length).toBe(1);
+      });
+
+      it("keeps the caret out of the note when blur removes the host", async () => {
+        const { editor, before, wj, note } = await unclosedSpanEnvironment(false);
+        await giveEditorACaret(editor, before);
+        const { paraDom, callerDom } = noteParagraphDom(editor);
+        await clickIntoUnfocusedEditor(editor, paraDom, callerDom, 0);
+        await settle();
+
+        await act(async () => {
+          editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
+        });
+
+        // Selecting the span's end would descend into its last child — the collapsed note — and a
+        // keystroke after the editor is refocused would edit the note's hidden content.
+        editor.getEditorState().read(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+          const caretNode = selection.focus.getNode();
+          expect(caretNode.is(note) || note.isParentOf(caretNode)).toBe(false);
+          expect(selection.focus.key).toBe(wj.getKey());
+        });
       });
 
       it("leaves a note alone when the span's closing glyph renders past it", async () => {

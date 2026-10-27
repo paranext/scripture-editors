@@ -1,6 +1,7 @@
 import { $isSomeVerseNode, SomeVerseNode } from "../../nodes/usj";
 import { $isOpaqueBlockNode, $rangeReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $placeCaretAtParaContentStart } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { $isCaretHost } from "./transientCaretHost";
 import { $findMatchingParent } from "@lexical/utils";
 import {
   $createTextNode,
@@ -258,7 +259,8 @@ export function $caretAtParaStart(selection: BaseSelection): boolean {
   if (!para || !$isElementNode(para)) return false;
   const leadingGlyphs = $isGutterMarkerNode(para.getFirstChild()) ? 1 : 0;
   if (node.is(para)) return anchor.offset <= leadingGlyphs;
-  if (anchor.offset !== 0) return false;
+  // Both offsets of a bare caret host are the same position (see $adjacentVerseMarker).
+  if (anchor.offset !== 0 && !$isCaretHost(node)) return false;
   // No content between the caret and the paragraph start.
   let current: LexicalNode | null = node;
   while (current && current.getKey() !== para.getKey()) {
@@ -295,7 +297,7 @@ export function $caretAtParaEnd(selection: BaseSelection): boolean {
   if (!para) return false;
   if ($isElementNode(node)) {
     if (anchor.offset !== node.getChildrenSize()) return false;
-  } else if (anchor.offset !== node.getTextContentSize()) {
+  } else if (anchor.offset !== node.getTextContentSize() && !$isCaretHost(node)) {
     return false;
   }
   let current: LexicalNode | null = node;
@@ -324,6 +326,11 @@ export function $caretAdjacentToVerseMarker(
  * The verse marker immediately before/after a collapsed caret, or undefined.
  * Node-returning sibling of `$caretAdjacentToVerseMarker`.
  *
+ * A caret anywhere in a bare caret host (transientCaretHost.ts) is next to both of the host's
+ * neighbors: the host holds only a zero-width placeholder, so both of its offsets are the same
+ * screen position, and stepping over the placeholder would delete the host instead of reaching
+ * the verse.
+ *
  * @param selection - The current selection; only a collapsed RangeSelection can be adjacent.
  * @param direction - `"backward"` looks before the caret; `"forward"` looks after it.
  * @returns The adjacent verse marker node, or undefined when none is adjacent.
@@ -342,12 +349,13 @@ export function $adjacentVerseMarker(
     const candidate = children[idx];
     return $isSomeVerseNode(candidate) ? candidate : undefined;
   }
+  const isInHost = $isCaretHost(node);
   if (direction === "backward") {
-    if (anchor.offset !== 0) return undefined;
+    if (anchor.offset !== 0 && !isInHost) return undefined;
     const prev = node.getPreviousSibling();
     return $isSomeVerseNode(prev) ? prev : undefined;
   }
-  if (anchor.offset !== node.getTextContentSize()) return undefined;
+  if (anchor.offset !== node.getTextContentSize() && !isInHost) return undefined;
   const next = node.getNextSibling();
   return $isSomeVerseNode(next) ? next : undefined;
 }
