@@ -71,6 +71,7 @@ import {
   $isSomeChapterNode,
   $isSomeParaNode,
   $isUnknownNode,
+  authoredNbspState,
   BOOK_MARKER,
   BookNode,
   charIdState,
@@ -997,6 +998,7 @@ function $handleCharText(
   const segment = typeof attributes.segment === "string" ? attributes.segment : undefined;
   const existingNodes = parentCharNode ? [parentCharNode] : undefined;
   const charNodes = $createNestedChars(charAttr, viewOptions, textNode, segment, existingNodes);
+  $markAppliedNbsp(textNode, textToInsert, viewOptions);
 
   // If charNodes is empty, it means we merged into existingNodes - no insertion needed
   if (charNodes.length === 0) {
@@ -1862,15 +1864,17 @@ function $createNote(
       // whether this op starts a fresh span (separator) or merges into the preceding span's tail
       // (mid-span content — an NBSP there is fabricated `~` in the file). Empty content stays
       // empty so it inserts the empty-char placeholder instead.
+      const textNode = $createTextNode(childOp.insert);
       const charNodes = $createNestedChars(
         childOp.attributes.char,
         viewOptions,
-        $createTextNode(childOp.insert),
+        textNode,
         undefined,
         mergeableNodesForContentOp(childOp.attributes.char, contentNodes),
         false,
         viewOptions.markerMode === "editable",
       );
+      $markAppliedNbsp(textNode, childOp.insert, viewOptions);
       contentNodes.push(...charNodes);
     } else {
       contentNodes.push($createTextNode(childOp.insert));
@@ -1938,6 +1942,7 @@ function $createInlineNodesFromOps(
           undefined,
           mergeableNodesForContentOp(childOp.attributes.char, nodes),
         );
+        $markAppliedNbsp(textNode, childOp.insert, viewOptions);
         nodes.push(...charNodes);
       } else {
         nodes.push($createTextNode(childOp.insert));
@@ -1984,6 +1989,25 @@ function $createImmutableUnmatched(
   // "normal" text there; every other mode keeps the constructor's atomic "token".
   if (viewOptions.markerMode === "editable") node.setMode("normal");
   return node;
+}
+
+/**
+ * Marks `textNode`, which holds an insert op's text and now sits in a char span, as the author's
+ * no-break space when that text has one ({@link authoredNbspState}), as the USJ→editor adaptor
+ * marks every text of a span it loads. The op producer leaves an empty span's placeholder out of
+ * its ops (an empty span travels as an empty insert), so a U+00A0 an op carries is always content.
+ * Unmarked, a span whose whole text is that U+00A0 reads as an empty span's placeholder in the
+ * marker modes without a separator after the opener, and saves as nothing. Editable marker mode
+ * keeps its separator in front of the content, so a lone NBSP there is never the placeholder and
+ * nothing is marked, as on a load.
+ * @param textNode - The text created from the op.
+ * @param opText - The op's own text, before an empty span's placeholder stood in for it.
+ * @param viewOptions - View options of the editor.
+ */
+function $markAppliedNbsp(textNode: TextNode, opText: string, viewOptions: ViewOptions): void {
+  if (viewOptions.markerMode === "editable" || !opText.includes(NBSP)) return;
+  if (!$isCharNode(textNode.getParent())) return;
+  $setState(textNode, authoredNbspState, true);
 }
 
 /**
