@@ -15,6 +15,7 @@ import {
   KEY_DOWN_COMMAND,
   LexicalNode,
   PASTE_COMMAND,
+  RangeSelection,
 } from "lexical";
 import { useEffect } from "react";
 import { $isImmutableTableNode, $isUnknownNode } from "shared";
@@ -208,9 +209,19 @@ export function $isOpaqueBlockNode(node: LexicalNode | null | undefined): boolea
  */
 export function $selectionReachesIntoOpaqueBlock(): boolean {
   const selection = $getSelection();
-  if (!$isRangeSelection(selection)) return false;
+  return $isRangeSelection(selection) && $rangeReachesIntoOpaqueBlock(selection);
+}
+
+/**
+ * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
+ * handler.
+ *
+ * {@link $selectionReachesIntoOpaqueBlock} for a range other than the live selection, such as a
+ * delete's extent measured on a copy before anything is removed.
+ */
+export function $rangeReachesIntoOpaqueBlock(range: RangeSelection): boolean {
   return (
-    $opaqueBlockAncestor(selection.anchor.getNode()) !== undefined ||
-    $opaqueBlockAncestor(selection.focus.getNode()) !== undefined
+    $opaqueBlockAncestor(range.anchor.getNode()) !== undefined ||
+    $opaqueBlockAncestor(range.focus.getNode()) !== undefined
   );
 }

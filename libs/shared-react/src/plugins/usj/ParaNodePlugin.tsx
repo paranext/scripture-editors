@@ -2,7 +2,13 @@ import { $removeLeadingSpace, wasNodeCreated } from "../../nodes/usj/node-react.
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getNodeByKey, $isElementNode, LexicalEditor } from "lexical";
 import { useEffect } from "react";
-import { $isGutterMarkerNode, $isParaNode, $isVisibleMarkerNode, ParaNode } from "shared";
+import {
+  $isGutterMarkerNode,
+  $isParaNode,
+  $isVisibleMarkerNode,
+  getApplyingUpdateSource,
+  ParaNode,
+} from "shared";
 import { $syncParaMarkerGlyph } from "./collab/delta-apply-update.utils";
 
 export function ParaNodePlugin(): null {
@@ -26,16 +32,21 @@ function useParaNode(editor: LexicalEditor) {
 
 /**
  * Remove any leading space if the node was just created, e.g. by hitting the enter key in the
- * middle of a paragraph — from its first text, past the gutter marker glyph that leads every
- * paragraph in the paragraph-structure view, so that view saves the break as the others do.
- * Update ParaNode to not contain text if it is a 'b' marker (blank line): text typed into an empty
- * one is removed. However, if the 'b' ParaNode already contained text, it can be modified
- * (backwards compatible with PT9 & USFM v3.0). A join of an empty one with the paragraph after it
- * keeps that paragraph: its marker replaces the blank line's.
+ * middle of a paragraph. Update ParaNode to not contain text if it is a 'b' marker (blank line):
+ * text typed into an empty one is removed. However, if the 'b' ParaNode already contained text, it
+ * can be modified (backwards compatible with PT9 & USFM v3.0). A join of an empty one with the
+ * paragraph after it keeps that paragraph: its marker replaces the blank line's.
+ *
+ * The leading space is looked for past a gutter marker glyph, so the paragraph-structure view saves
+ * the break as the others do: in the gutter view another ParaNode transform gives a new paragraph
+ * its glyph, and whether that transform runs before or after this one depends on the order the
+ * plugins registered in. A paragraph an applied update creates keeps its leading space: the apply
+ * reports its ops as given, so trimming here would leave this document out of step with the one
+ * that sent them.
  * @param node - ParaNode thats needs updating.
  */
 function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
-  if (wasNodeCreated(editor, node.getKey())) {
+  if (!getApplyingUpdateSource(editor) && wasNodeCreated(editor, node.getKey())) {
     const first = node.getFirstChild();
     $removeLeadingSpace($isGutterMarkerNode(first) ? first.getNextSibling() : first);
     // Lexical's history folds an update whose only dirty leaf is a text that kept its text into

@@ -2,7 +2,8 @@
  * Single entry point for setting or changing the marker of an EXISTING paragraph on a live
  * editor tree. Every flow that retags a paragraph (marker menu retag, toolbar block format,
  * remote collab retain) must keep three things in agreement — the `ParaNode` marker state, the
- * visible prefix glyph (editable marker mode), and the `[glyph, separator, content]` layout the
+ * visible prefix glyph (an editable marker, or the typed-text glyph markerMode "visible" and the
+ * gutter view render), and the `[glyph, separator, content]` layout the
  * marker-deletion transform polices — and this helper owns that decision so callers don't each
  * reimplement it.
  */
@@ -25,9 +26,10 @@ import { $syncParaMarkerGlyph, showParaMarkerPrefix, ViewOptions } from "shared-
  *   (`showParaMarkerPrefixes: false`): prefix-less is the canonical editable-mode shape there
  *   (the deletion transform stands down for the same reason), so the retag is a bare marker
  *   state change like any other glyph-less tree.
- * - No glyph, any other mode: bare marker state change. Visible/gutter marker rendering is
- *   adaptor-serialized typed text, not an injectable glyph — injecting would corrupt those
- *   trees.
+ * - No glyph, any other mode: bare marker state change. In the gutter view that is all it takes:
+ *   `ParaMarkerPrefixGuardPlugin`'s paragraph transform gives a glyph-less paragraph its glyph,
+ *   named for the new marker, in the same update. markerMode "visible" renders its prefix as
+ *   adaptor-serialized typed text, not an injectable glyph — injecting one would corrupt the tree.
  *
  * The glyph-present case needs no mode knowledge, but inject-vs-bare genuinely depends on the
  * marker mode — that is why `viewOptions` is a parameter. When omitted, the helper never
