@@ -1,8 +1,10 @@
 import { $isSomeVerseNode, SomeVerseNode } from "../../nodes/usj";
+import { $isOpaqueBlockNode, $rangeReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $placeCaretAtParaContentStart } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { $findMatchingParent } from "@lexical/utils";
 import {
   $createTextNode,
+  $isDecoratorNode,
   $isElementNode,
   $isNodeSelection,
   $isRangeSelection,
@@ -10,9 +12,11 @@ import {
   BaseSelection,
   LexicalNode,
   NodeKey,
+  PointType,
   RangeSelection,
 } from "lexical";
 import {
+  $caretHostAtBoundary,
   $getSelectableParaMarker,
   $getSelectedParaMarkerPara,
   $isGutterMarkerNode,
@@ -24,6 +28,7 @@ import {
   $isSynthesizedMarkerNode,
   $placeCaretAtBoundary,
   ParaLikeNode,
+  ParaNode,
   SomeParaNode,
 } from "shared";
 
@@ -52,6 +57,23 @@ export interface PointSnapshot {
   key: NodeKey;
   offset: number;
   type: "text" | "element";
+}
+
+/** A snapshot of a RangeSelection's two endpoints. */
+export interface RangeSnapshot {
+  anchor: PointSnapshot;
+  focus: PointSnapshot;
+}
+
+/**
+ * The endpoints of `selection` as they are now, unaffected by later moves of its points.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ */
+export function $rangeSnapshot({ anchor, focus }: RangeSelection): RangeSnapshot {
+  const point = ({ key, offset, type }: PointSnapshot): PointSnapshot => ({ key, offset, type });
+  return { anchor: point(anchor), focus: point(focus) };
 }
 
 /** Whether `point` (a live selection point, or another snapshot) is the one `snapshot` recorded. */
@@ -115,15 +137,87 @@ function $getParaAncestor(node: LexicalNode | null | undefined): LexicalNode | u
   return para ?? undefined;
 }
 
-/** True when the selection covers more than one paragraph block. */
+/**
+ * True when the selection covers more than one paragraph block, or covers a chapter marker — a
+ * root-level block of its own that no paragraph contains, so the paragraph count alone misses it.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ */
 export function $selectionSpansBlockBoundary(selection: BaseSelection): boolean {
   if (!$isRangeSelection(selection)) return false;
   const paraKeys = new Set<string>();
   for (const node of selection.getNodes()) {
+    if (!selection.isCollapsed() && $isSomeChapterNode(node)) return true;
     const para = $getParaAncestor(node);
     if (para) paraKeys.add(para.getKey());
   }
   return paraKeys.size > 1;
+}
+
+/**
+ * Moves a NON-collapsed selection's earlier endpoint off the element point in FRONT of its
+ * paragraph's gutter glyph — where a line delete's extension lands on a line with no verse — to the
+ * content boundary just past the glyph, so removing the range removes only the line's text. Without
+ * this the glyph goes too, and `ParaMarkerPrefixGuardPlugin` rebuilds it as a new node.
+ *
+ * Mutating: call inside `editor.update()` (a command listener already runs inside one).
+ */
+export function $narrowSelectionPastGutterGlyph(selection: RangeSelection): void {
+  if (selection.isCollapsed()) return;
+  $movePointPastGutterGlyph(selection.isBackward() ? selection.focus : selection.anchor);
+}
+
+/**
+ * Moves a COLLAPSED caret at `(para, 0)` — in front of its paragraph's gutter glyph, where an arrow
+ * key from the line before leaves it — to the content boundary just past the glyph, so a forward
+ * delete from it removes the line's first character rather than the glyph (which
+ * `ParaMarkerPrefixGuardPlugin` would rebuild as a new node, an edit with nothing to show for it).
+ * Left in place when only a display-only node follows the glyph (see
+ * {@link $shouldBlockStructuralEdit}, which refuses a forward delete there).
+ *
+ * Mutating: call inside `editor.update()` (a command listener already runs inside one). Also safe
+ * on a copy of the selection (`selection.clone()`) in a read, which moves nothing else.
+ *
+ * @returns Whether the caret was moved.
+ */
+export function $moveCaretPastGutterGlyph(selection: RangeSelection): boolean {
+  const para = $paraWithCaretInFrontOfGlyph(selection);
+  if (!para || $isDisplayOnlyPastGlyph(para)) return false;
+  $movePointPastGutterGlyph(selection.anchor);
+  const { key, offset, type } = selection.anchor;
+  selection.focus.set(key, offset, type);
+  return true;
+}
+
+/** The paragraph a collapsed caret sits in at `(para, 0)`, in front of its gutter glyph. */
+function $paraWithCaretInFrontOfGlyph(selection: BaseSelection): ParaNode | undefined {
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+  const { anchor } = selection;
+  const para = anchor.getNode();
+  if (anchor.type !== "element" || anchor.offset !== 0 || !$isParaNode(para)) return undefined;
+  return $isGutterMarkerNode(para.getFirstChild()) ? para : undefined;
+}
+
+/**
+ * Whether what follows `para`'s gutter glyph is display-only — a decorator such as a verse marker
+ * or a milestone, or a hidden construct such as a figure — so a forward delete from in front of the
+ * glyph would remove it, unseen, rather than any text.
+ */
+function $isDisplayOnlyPastGlyph(para: ParaNode): boolean {
+  const next = para.getChildAtIndex(1);
+  return $isDecoratorNode(next) || $isOpaqueBlockNode(next);
+}
+
+/** Moves `point` off `(para, 0)` in front of a gutter glyph to just past it; true if it moved. */
+function $movePointPastGutterGlyph(point: PointType): boolean {
+  const para = point.getNode();
+  if (point.type !== "element" || point.offset !== 0 || !$isParaNode(para)) return false;
+  if (!$isGutterMarkerNode(para.getFirstChild())) return false;
+  const host = $caretHostAtBoundary(para, 1);
+  if (host) point.set(host.getKey(), 0, "text");
+  else point.set(para.getKey(), 1, "element");
+  return true;
 }
 
 /**
@@ -269,6 +363,9 @@ function $hasNeighborBlock(selection: BaseSelection, direction: "backward" | "fo
 /**
  * Rule 1 (all input vectors): block when the given selection spans a block boundary or
  * touches a verse marker. Used by paste/cut/drop/IME guards.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
  */
 export function $shouldBlockSelectionReplacement(selection: BaseSelection): boolean {
   return $selectionContainsVerseMarker(selection) || $selectionSpansBlockBoundary(selection);
@@ -277,7 +374,11 @@ export function $shouldBlockSelectionReplacement(selection: BaseSelection): bool
 /**
  * Full keyboard decision: combines Rule 1 with collapsed-caret structural rules.
  *
- * @param selection - The current selection to evaluate.
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler. `selection` need not be the current one: a word or line delete's measured extent
+ * is judged by it before anything is removed.
+ *
+ * @param selection - The selection to evaluate.
  * @param intent - The structural edit the keystroke would cause (see {@link keyDownToIntent}).
  * @returns Whether the edit should be blocked in a structure-protected document.
  */
@@ -290,24 +391,52 @@ export function $shouldBlockStructuralEdit(selection: BaseSelection, intent: Edi
     case "insertParagraph":
       return true;
     case "deleteBackward":
+      // With no previous block there is nothing to merge into, but a gutter glyph would still be
+      // deleted (and restored at once, leaving an empty undo step) — so refuse that start too.
       return (
+        !!$getGutterParaWithCaretAtStart(selection) ||
         ($caretAtParaStart(selection) && $hasNeighborBlock(selection, "backward")) ||
         $caretAdjacentToVerseMarker(selection, "backward")
       );
-    case "deleteForward":
+    case "deleteForward": {
+      // In front of a line's gutter glyph a forward delete runs from just past it
+      // ({@link $moveCaretPastGutterGlyph}), so it is judged from there — and refused outright when
+      // nothing past the glyph is text it may start into.
+      const para = $paraWithCaretInFrontOfGlyph(selection);
+      if (para && $isDisplayOnlyPastGlyph(para)) return true;
+      const from = selection.clone();
+      $moveCaretPastGutterGlyph(from);
       return (
-        ($caretAtParaEnd(selection) && $hasNeighborBlock(selection, "forward")) ||
-        $caretAdjacentToVerseMarker(selection, "forward")
+        ($caretAtParaEnd(from) && $hasNeighborBlock(from, "forward")) ||
+        $caretAdjacentToVerseMarker(from, "forward")
       );
+    }
     case "insertText":
       return false;
   }
 }
 
 /**
+ * Whether protected structure refuses a word or line delete that would remove `extent`, the range
+ * its extension reaches: one that crosses a block or touches a verse ({@link
+ * $shouldBlockSelectionReplacement}), or one that ends partway into an opaque construct such as a
+ * figure's caption. `StructureKeyboardPlugin` and `HiddenContentDeleteGuardPlugin` both judge such a
+ * delete by this, so they agree.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler. `extent` need not be the current selection.
+ */
+export function $shouldRefuseExtendedDelete(extent: RangeSelection): boolean {
+  return $rangeReachesIntoOpaqueBlock(extent) || $shouldBlockSelectionReplacement(extent);
+}
+
+/**
  * The marker/section a delete keystroke would remove at a structural boundary, or undefined
  * when there is nothing it can remove there: ordinary editing, or a boundary
- * {@link $isUnmergeableParaStart} refuses.
+ * {@link $isUnmergeableParaStart} refuses. Follows `$shouldBlockStructuralEdit`'s merge and verse
+ * conditions, but resolves the target node instead of returning a boolean; its gutter-glyph
+ * refusals (the first block's glyph, a forward delete in front of one) have no target to arm, so
+ * they have no counterpart here.
  *
  * Backward: the adjacent verse, else the current paragraph (when it has a paragraph or the `\id`
  * line before it to merge into).

@@ -2,12 +2,16 @@ import {
   $isArmedSelection,
   $isUnmergeableParaStart,
   $mergeParaIntoPrevious,
+  $moveCaretPastGutterGlyph,
+  $narrowSelectionPastGutterGlyph,
   $paraDeleteEffect,
   $placeCaretAtEnd,
+  $rangeSnapshot,
   $sanitizeNodesForProtectedStructure,
   $selectionContainsVerseMarker,
   $shouldBlockSelectionReplacement,
   $shouldBlockStructuralEdit,
+  $shouldRefuseExtendedDelete,
   $structuralDeleteTarget,
   ArmedDelete,
   CONFIRMED_DELETE_TAG,
@@ -18,7 +22,7 @@ import {
 import { $generateNodesFromDOM } from "@lexical/html";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import DOMPurify from "dompurify";
-import { mergeRegister } from "@lexical/utils";
+import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createNodeSelection,
@@ -33,20 +37,25 @@ import {
   CONTROLLED_TEXT_INSERTION_COMMAND,
   CUT_COMMAND,
   DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
   DRAGSTART_COMMAND,
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
   PASTE_COMMAND,
+  RangeSelection,
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { $isSomeVerseNode } from "../../nodes/usj";
 import {
   $getSelectableParaMarker,
   $getSelectedParaMarkerPara,
+  $isBookNode,
   $isSomeParaNode,
   $selectParaMarker,
   MARKER_TEXT_TYPE,
 } from "shared";
+import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 
@@ -62,6 +71,20 @@ const MARKER_TEXT_LEFT_PROPERTY = "--para-merge-armed-text-left";
 const MARKER_TEXT_WIDTH_PROPERTY = "--para-merge-armed-text-width";
 
 /**
+ * Records a range selection's endpoints and returns a function that puts them back, so a refused
+ * delete leaves the selection as it was even after the delete extended or narrowed it.
+ *
+ * Mutating (the returned function): call inside `editor.update()`.
+ */
+function $restorerFor(selection: RangeSelection): () => void {
+  const { anchor, focus } = $rangeSnapshot(selection);
+  return () => {
+    selection.anchor.set(anchor.key, anchor.offset, anchor.type);
+    selection.focus.set(focus.key, focus.offset, focus.type);
+  };
+}
+
+/**
  * Governs structural keystrokes (Backspace/Delete/Enter/typing) at verse- and paragraph-marker
  * boundaries. In `"protected"` mode, blocks them and sanitizes paste/drop payloads so structural
  * markers (paragraph breaks, verse markers, chapter markers) cannot be inserted — text, inline
@@ -70,6 +93,10 @@ const MARKER_TEXT_WIDTH_PROPERTY = "--para-merge-armed-text-width";
  * In `"off"` mode, no handlers are registered and editing is fully native.
  * Registers a KEY_DOWN handler at COMMAND_PRIORITY_HIGH, mirroring ArrowNavigationPlugin, and
  * the CUT refusal at COMMAND_PRIORITY_CRITICAL so it outranks the handlers that perform a cut.
+ * Under `"protected"`, it also performs word and line deletes itself (DELETE_WORD_COMMAND /
+ * DELETE_LINE_COMMAND at COMMAND_PRIORITY_HIGH), since only the extended range shows what they
+ * would remove — except inside an opaque block, left to `OpaqueBlockGuardPlugin`, and on the `\id`
+ * line, which it judges from the caret and then hands on (see `$guardExtendingDelete`).
  *
  * A paragraph merge (Backspace at a paragraph's start, Delete at the end of the one before, or
  * either on a selected gutter marker) is two-step too: the first press marks the marker it
@@ -305,11 +332,79 @@ export function StructureKeyboardPlugin({
       const intent = isBackward ? "deleteBackward" : "deleteForward";
       if (structureProtectionMode === "protected") {
         const selection = $getSelection();
-        return !!selection && $shouldBlockStructuralEdit(selection, intent);
+        if (!selection) return false;
+        if ($shouldBlockStructuralEdit(selection, intent)) return true;
+        // In front of a line's glyph (where ArrowRight from the line before leaves the caret), an
+        // allowed forward delete runs from just past it, where it was judged, so Lexical's own
+        // handler removes the line's first character rather than the glyph.
+        if (!isBackward && $isRangeSelection(selection)) $moveCaretPastGutterGlyph(selection);
+        return false;
       }
       if ($hasUpdateTag(CONFIRMED_DELETE_TAG)) return false;
       return $handleTwoStepDelete(intent, undefined);
     };
+
+    // A word or line delete (Alt/Ctrl+Backspace, Cmd+Backspace, macOS Ctrl+K) EXTENDS the selection
+    // before removing it, so the keydown check above — which sees only the caret — never sees what
+    // it is about to delete: Cmd+Backspace on a line that starts with a verse reaches back across
+    // the verse into the previous paragraph, and Ctrl+K at a line's end pulls the next paragraph up.
+    // Under "protected", this does the whole delete itself, the way the `\id` line's
+    // `$clampLineDeletionPastBookPrefix` does: extend ONCE, judge that range, then remove exactly it
+    // or refuse. Handing back to Lexical's own deleteWord/deleteLine instead would extend a second
+    // time from a re-seated caret, which on a wrapped line can reach somewhere other than what was
+    // judged. (`HiddenContentDeleteGuardPlugin` measures the same extent first, on a copy, and
+    // hands the delete on when it finds no hidden content; this second measurement is deliberate.)
+    // The removed range is first narrowed past the display glyphs it starts in front of (the `\id`
+    // prefix, a line's gutter glyph), and a range of nothing but glyphs is refused. A caret on the
+    // `\id` line gets the same caret check and is then handed on: a line delete to
+    // `$clampLineDeletionPastBookPrefix`, which clamps it past the prefix, and a word delete to
+    // Lexical's own, which cannot leave that line from anywhere the caret check allows.
+    //
+    // Registered at HIGH alongside OpaqueBlockGuardPlugin's refusal of the same commands, so it
+    // stands aside for an opaque block itself rather than relying on mount order to lose that tie.
+    // As defense in depth, an extent that ends partway into an opaque block is refused too
+    // ($shouldRefuseExtendedDelete); in the paragraph-structure view hidden constructs are not
+    // rendered, so an extension cannot land inside one there.
+    const $guardExtendingDelete =
+      (granularity: "word" | "lineboundary") =>
+      (isBackward: boolean): boolean => {
+        if (structureProtectionMode !== "protected" || !editor.isEditable()) return false;
+        if ($selectionReachesIntoOpaqueBlock()) return false;
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return false;
+        const intent = isBackward ? "deleteBackward" : "deleteForward";
+        const restore = $restorerFor(selection);
+
+        if (selection.isCollapsed()) {
+          // Judged before the caret moves, so a refusal leaves it where it was.
+          if ($shouldBlockStructuralEdit(selection, intent)) return true;
+          if ($findMatchingParent(selection.anchor.getNode(), $isBookNode)) return false;
+          if (!isBackward) $moveCaretPastGutterGlyph(selection);
+          selection.modify("extend", isBackward, granularity);
+          // Nothing to extend into at this granularity (a line that ends in a hidden construct,
+          // say): Lexical's own fallback deletes one character, so extend by one instead and judge
+          // that range like any other — one character from a line's end is the next line.
+          if (selection.isCollapsed()) selection.modify("extend", isBackward, "character");
+          if (selection.isCollapsed()) {
+            restore();
+            return true;
+          }
+        }
+
+        // A range is removed as it stands, so it is judged as it stands (Rule 1).
+        if ($shouldRefuseExtendedDelete(selection)) {
+          restore();
+          return true;
+        }
+        $narrowSelectionPastBookPrefix(selection);
+        $narrowSelectionPastGutterGlyph(selection);
+        if (selection.isCollapsed()) {
+          restore();
+          return true;
+        }
+        selection.removeText();
+        return true;
+      };
 
     // Drop the latch as soon as the live selection no longer encodes the armed target
     // (arrow key, click, typing, etc.). Reads only; never mutates the editor.
@@ -326,6 +421,16 @@ export function StructureKeyboardPlugin({
       editor.registerCommand(
         DELETE_CHARACTER_COMMAND,
         $handleDeleteCharacter,
+        COMMAND_PRIORITY_HIGH,
+      ),
+      editor.registerCommand(
+        DELETE_WORD_COMMAND,
+        $guardExtendingDelete("word"),
+        COMMAND_PRIORITY_HIGH,
+      ),
+      editor.registerCommand(
+        DELETE_LINE_COMMAND,
+        $guardExtendingDelete("lineboundary"),
         COMMAND_PRIORITY_HIGH,
       ),
       // CUT at CRITICAL, unlike KEY_DOWN above: a refusal has to outrank the actor it refuses,

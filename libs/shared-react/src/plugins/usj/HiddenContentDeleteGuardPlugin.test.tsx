@@ -41,12 +41,14 @@ import {
 } from "lexical";
 import { ReactNode } from "react";
 import {
+  $createGutterMarkerNode,
   $createImmutableChapterNode,
   $createNoteNode,
   $createParaNode,
   $createUnknownNode,
   $isUnknownNode,
   LoggerBasic,
+  NBSP,
   ParaNode,
   UnknownNode,
 } from "shared";
@@ -1689,5 +1691,137 @@ describe("HiddenContentDeleteGuardPlugin", () => {
     expect(handler).toHaveBeenCalledWith(
       expect.objectContaining({ items: [{ tag: "sidebar", marker: "esb" }] }),
     );
+  });
+
+  describe("protected structure around a line's gutter marker", () => {
+    /** A paragraph led by its gutter marker glyph, as the paragraph-structure view shows it. */
+    const $createMarkedPara = (marker: string) =>
+      $createParaNode(marker).append($createGutterMarkerNode(`\\${marker}${NBSP}`));
+
+    it("steps aside for Delete in front of an empty line's marker, with a sidebar after it", async () => {
+      let heading: ParaNode;
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment(
+        () => {
+          heading = $createMarkedPara("s1");
+          $getRoot().append(
+            $createParaNode("p").append($createTextNode("first")),
+            heading,
+            $createSidebarNode(),
+            $createParaNode("q1").append($createTextNode("second")),
+          );
+        },
+        handler,
+        { structureProtectionMode: "protected" },
+      );
+      const treeBefore = readTree(editor);
+      // Where ArrowRight from the line above leaves the caret: in front of the marker.
+      await sutUpdate(editor, () => heading!.select(0, 0));
+
+      await pressThroughDom(editor, "Delete");
+      await act(async () => {
+        editor.dispatchCommand(DELETE_CHARACTER_COMMAND, false);
+      });
+      await settle();
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(readTree(editor)).toEqual(treeBefore);
+    });
+
+    it("steps aside for a word delete over a verse it measured, even with a figure at the caret", async () => {
+      let line: ParaNode;
+      let text: TextNode;
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment(
+        () => {
+          line = $createMarkedPara("q1");
+          text = $createTextNode("Blessed");
+          $getRoot().append(
+            $createParaNode("p").append($createTextNode("first")),
+            line.append($createImmutableVerseNode("2"), $createFigureNode(), text),
+          );
+        },
+        handler,
+        { structureProtectionMode: "protected" },
+      );
+      const treeBefore = readTree(editor);
+      updateSelection(editor, text!, 0);
+      // As measured in Chrome: the hidden figure takes no space, so the word extension steps back
+      // over it and the verse to the boundary just past the marker.
+      const restore = stubSelectionModify(editor, (selection) =>
+        selection.focus.set(line.getKey(), 1, "element"),
+      );
+
+      try {
+        await act(async () => {
+          editor.dispatchCommand(DELETE_WORD_COMMAND, true);
+        });
+        await settle();
+      } finally {
+        restore();
+      }
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(readTree(editor)).toEqual(treeBefore);
+    });
+
+    it("steps aside for a word delete with no keydown from a caret the structure refuses", async () => {
+      let first: TextNode;
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment(
+        () => {
+          first = $createTextNode("first");
+          $getRoot().append(
+            $createParaNode("p").append(first),
+            $createSidebarNode(),
+            $createParaNode("p").append($createTextNode("second")),
+          );
+        },
+        handler,
+        { structureProtectionMode: "protected" },
+      );
+      const treeBefore = readTree(editor);
+      updateSelection(editor, first!, "first".length);
+
+      await act(async () => {
+        editor.dispatchCommand(DELETE_WORD_COMMAND, false);
+      });
+      await settle();
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(readTree(editor)).toEqual(treeBefore);
+    });
+
+    it("copies the line's marker in a cut when the structure is not protected", async () => {
+      let line: ParaNode;
+      let text: TextNode;
+      const { editor } = await guardedEnvironment(
+        () => {
+          line = $createMarkedPara("q2");
+          text = $createTextNode("nor stand");
+          $getRoot().append(line.append(text));
+        },
+        answering("delete"),
+        { structureProtectionMode: "guarded" },
+      );
+      // A triple-click's selection: from in front of the marker to the line's end.
+      await sutUpdate(editor, () => {
+        const selection = $createRangeSelection();
+        selection.anchor.set(line.getKey(), 0, "element");
+        selection.focus.set(text.getKey(), "nor stand".length, "text");
+        $setSelection(selection);
+      });
+
+      const cut = clipboardEvent("cut");
+      await act(async () => {
+        editor.dispatchCommand(CUT_COMMAND, cut);
+      });
+      await settle();
+
+      expect(cut.clipboardData?.setData).toHaveBeenCalledWith(
+        "text/plain",
+        expect.stringContaining("q2"),
+      );
+    });
   });
 });
