@@ -50,6 +50,7 @@ import {
   $isNoteNode,
   getMarker as bundledGetMarker,
   LoggerBasic,
+  NBSP,
   NoteNode,
 } from "shared";
 import { DeltaOp, DeltaOpInsertNoteEmbed, ViewOptions } from "shared-react";
@@ -843,4 +844,66 @@ describe("the popover's protected note shell", () => {
     const para = popover.editorRef.getUsj()?.content[0];
     expect(typeof para === "object" ? para.content?.length : undefined).toBe(1);
   }, 30000);
+});
+
+describe("popover save keeps an authored lone `~`", () => {
+  /**
+   * A note with the two lone-`~` shapes that share their slot with the layout's own lone NBSPs: an
+   * `\fq` span holding only `~` (the empty span's placeholder slot), and an `\fk` span whose `~`
+   * leads a nested `\+wj` (the element-first spacer's slot). Distinct markers, since adjacent
+   * attribute-identical spans merge when materialized from ops.
+   */
+  const loneNbspNoteUsj: MarkerObject = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [
+      { type: "char", marker: "fr", content: ["1:1 "], closed: "false" } as ClosableMarkerObject,
+      { type: "char", marker: "fq", content: [NBSP] },
+      {
+        type: "char",
+        marker: "fk",
+        content: [NBSP, { type: "char", marker: "wj", content: ["x"] }],
+      },
+      { type: "char", marker: "ft", content: ["text"], closed: "false" } as ClosableMarkerObject,
+    ],
+  };
+
+  const loneNbspUsj: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+      { type: "chapter", marker: "c", number: "1" },
+      {
+        type: "para",
+        marker: "p",
+        content: [{ type: "verse", marker: "v", number: "1" }, "first ", loneNbspNoteUsj, "end"],
+      },
+    ],
+  };
+
+  it.each(["standard", "formatted", "paragraph-structure", "unformatted"] as const)(
+    "keeps span-only and element-leading `~`s through the popover's load and save in %s view",
+    async (viewName) => {
+      const hostView = editorView(viewName);
+      const { host, popoverNoteOps } = await roundtripNote(
+        hostView,
+        0,
+        loneNbspNoteUsj,
+        loneNbspUsj,
+      );
+      const hostNoteKey = host.lexical
+        .getEditorState()
+        .read(() => requireDefined($findNotes()[0], "host note").getKey());
+
+      await act(async () => {
+        host.editorRef.replaceEmbedUpdate(hostNoteKey, popoverNoteOps);
+      });
+
+      const savedUsj = requireDefined(host.editorRef.getUsj(), "host USJ after save");
+      expect(findUsjNotes(savedUsj)[0]).toEqual(loneNbspNoteUsj);
+    },
+    30000,
+  );
 });
