@@ -171,12 +171,15 @@ protected. Assert what the DOCUMENT does under a keystroke.
 The editor puts NBSP text nodes in its tree that are not document content: the collapsed-note
 spacers (`$createMarkerTrailingSeparator`), the element-first char spacer, the opener-separator
 sync's spacer, and the empty-char placeholder. A real `~` in the document is also one NBSP, so the
-text cannot tell them apart. Outside Standard view a node is presentation only when it carries one
-of the two tags (`marker-trailing-space` or `empty-char-placeholder`) AND its text is still exactly
-one NBSP; `$isPresentationNbsp` and `isSerializedPresentationNbsp` are the one definition. The
-editor-to-USJ adaptor, the annotation content index, the Tier-2 fragment, the collab ops producer
-and the OT length mirror all call it — extend it, never re-spell it as a byte test. Spacers are
-created in `token` mode so typing can never land in a tagged node and borrow its tag.
+text cannot tell them apart. A node is presentation only when it carries one of the two tags
+(`marker-trailing-space` or `empty-char-placeholder`) AND its text is still exactly one NBSP;
+`$isPresentationNbsp` and `isSerializedPresentationNbsp` are the one definition. Outside Standard
+view the editor-to-USJ adaptor, the Tier-2 fragment, the collab ops producer and the OT length
+mirror all call it — extend it, never re-spell it as a byte test. The annotation content index
+(`$shouldIgnoreNodeForContentIndexes`) calls it in EVERY view, Standard included, because it takes
+no view options; in Standard view it can therefore be off by one next to a stranded untagged
+separator. Spacers are created in `token` mode so typing can never land in a tagged node and borrow
+its tag.
 
 **Standard view keeps the byte test.** There a data NBSP is displayed as a literal `~`, so a
 bare-NBSP node never holds content, and an untagged one that a split strands is still scaffolding.
@@ -186,10 +189,13 @@ When a node is ambiguous it is kept as content. The backstop is position: `creat
 strips a leading NBSP from a char span's first content item in editable non-Standard mode, so an
 untagged NBSP stranded in that slot is removed for where it sits.
 
-One exception is collab-only. When the apply side materializes a lone NBSP it received, it tags the
-NBSP as scaffolding if it is the only content of a char span, or sits right after the opener glyph
-and before an element — the two slots older peers fill with scaffolding sent as plain text. So an
-authored `\nd ~\nd*` that arrives through collab is dropped; a local load and save keeps it.
+One exception is collab-only. The apply side judges only the NBSP text nodes it itself
+materialized from received ops, each against its parent span's FINAL shape after all of that
+span's ops are applied. It tags such a node as scaffolding if it is the only content of a char
+span, or sits right after the opener glyph and before an element — the two slots older peers fill
+with scaffolding sent as plain text. NBSP already in the tree is never re-tagged. So an authored
+`\nd ~\nd*`, or a `~` that leads an element-first span, that arrives through collab is dropped; a
+local load and save keeps it.
 
 ### `\cat` is the attribute marker the stylesheet does not declare
 
