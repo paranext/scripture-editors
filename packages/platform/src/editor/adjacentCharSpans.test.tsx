@@ -1,13 +1,32 @@
 /**
  * Two adjacent char spans of one marker are two spans: two `\w` words, each with its own `lemma`,
  * or two `\nd` names. Paratext never joins them, and neither may the editor when content holding
- * them arrives as ops, in any view a user edits Scripture in.
+ * them arrives — pasted from a copy, or applied as ops — in any view a user edits Scripture in.
  */
-import { EDITING_VIEWS, editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
+import {
+  EDITING_VIEWS,
+  EditingViewName,
+  editorView,
+  mountInView,
+  MountedEditor,
+} from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, $isElementNode, $isTextNode, LexicalNode, TextNode } from "lexical";
-import { $getOTPositionOfNode } from "shared-react";
+import {
+  $createRangeSelection,
+  $getRoot,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  $isTextNode,
+  $setSelection,
+  COPY_COMMAND,
+  LexicalEditor,
+  LexicalNode,
+  PASTE_COMMAND,
+  TextNode,
+} from "lexical";
+import { $getOTPositionOfNode, StructureProtectionMode } from "shared-react";
 import { describe, expect, it } from "vitest";
 
 function doc(content: MarkerContent[]): Usj {
@@ -53,6 +72,159 @@ function $textNodeHolding(text: string): TextNode {
   if (hits.length !== 1) throw new Error(`"${text}" is in ${hits.length} text nodes, not one`);
   return hits[0];
 }
+
+/** Selects from `startOffset` into the text node holding `start` to `endOffset` into the one
+ * holding `end`, in its own committed update so the DOM selection follows before a copy. */
+async function select(
+  editor: LexicalEditor,
+  [start, startOffset]: [string, number],
+  [end, endOffset]: [string, number] = [start, startOffset],
+): Promise<void> {
+  await act(async () =>
+    editor.update(
+      () => {
+        const anchor = $textNodeHolding(start);
+        const focus = $textNodeHolding(end);
+        const selection = $createRangeSelection();
+        selection.anchor.set(anchor.getKey(), startOffset, "text");
+        selection.focus.set(focus.getKey(), endOffset, "text");
+        $setSelection(selection);
+      },
+      { discrete: true },
+    ),
+  );
+}
+
+function clipboardEvent(store: Map<string, string>, type: "copy" | "paste"): ClipboardEvent {
+  const event = new ClipboardEvent(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", {
+    value: {
+      get types() {
+        return [...store.keys()];
+      },
+      files: [],
+      getData: (format: string) => store.get(format) ?? "",
+      setData: (format: string, data: string) => store.set(format, data),
+    },
+  });
+  return event;
+}
+
+async function settle(): Promise<void> {
+  await act(async () => {
+    for (let i = 0; i < 3; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+async function copy(editor: LexicalEditor): Promise<Map<string, string>> {
+  const store = new Map<string, string>();
+  await act(async () =>
+    editor.update(() => {
+      if (!$isRangeSelection($getSelection())) throw new Error("no range selection to copy");
+      editor.dispatchCommand(COPY_COMMAND, clipboardEvent(store, "copy"));
+    }),
+  );
+  await settle();
+  return store;
+}
+
+async function paste(editor: LexicalEditor, payload: Map<string, string>): Promise<void> {
+  await act(async () =>
+    editor.update(() => {
+      editor.dispatchCommand(PASTE_COMMAND, clipboardEvent(new Map(payload), "paste"));
+    }),
+  );
+  await settle();
+}
+
+/** What the editor's copy of `spans` (selected from inside the text either side of them) holds,
+ * in `view`. */
+async function copyOf(spans: MarkerContent[], view: EditingViewName): Promise<Map<string, string>> {
+  const source = await mountInView(doc(spans), editorView(view));
+  await select(source.lexical, ["pre ", 3], [" post", 1]);
+  const copied = await copy(source.lexical);
+  source.unmount();
+  return copied;
+}
+
+/** Pastes `payload` at the end of the paragraph of an editor holding no spans, and returns the
+ * spans the paragraph then holds. */
+async function spansAfterPasting(
+  payload: Map<string, string>,
+  view: EditingViewName,
+  structureProtectionMode?: StructureProtectionMode,
+): Promise<MarkerContent[]> {
+  const target = await mountInView(doc([]), editorView(view), { structureProtectionMode });
+  await select(target.lexical, [" post", " post".length]);
+  await paste(target.lexical, payload);
+  const spans = spansOf(target);
+  target.unmount();
+  return spans;
+}
+
+const separateSpans: [string, MarkerContent[]][] = [
+  ["two \\w words", [char("w", "a"), char("w", "b")]],
+  [
+    "two \\w words of different lemmas",
+    [char("w", "a", { lemma: "x" }), char("w", "b", { lemma: "y" })],
+  ],
+  ["two \\nd names", [char("nd", "A"), char("nd", "B")]],
+];
+
+/** The rows whose spans differ in nothing but their text. The HTML flavor of a copy carries a
+ * span's marker but none of its other attributes, so a lemma cannot survive a paste of it. */
+const markerOnlySpans = separateSpans.filter(([, spans]) =>
+  spans.every((span) => typeof span === "object" && !("lemma" in span)),
+);
+
+const hiddenMarkerViews = EDITING_VIEWS.filter(({ name }) => name !== "standard");
+
+describe("pasting adjacent spans of one marker", () => {
+  describe.each(EDITING_VIEWS)("in $name view", ({ name: view }) => {
+    it.each(separateSpans)("keeps %s from the editor's own copy apart", async (_, spans) => {
+      const copied = await copyOf(spans, view);
+
+      expect(await spansAfterPasting(copied, view)).toEqual(spans);
+    });
+  });
+
+  describe("in standard view", () => {
+    it.each(separateSpans)("keeps %s from USFM text apart", async (_, spans) => {
+      const usfm = (await copyOf(spans, "standard")).get("text/plain");
+      if (!usfm?.includes("\\")) throw new Error(`Standard view copied no USFM: ${usfm}`);
+
+      expect(await spansAfterPasting(new Map([["text/plain", usfm]]), "standard")).toEqual(spans);
+    });
+  });
+
+  describe.each(hiddenMarkerViews)("in $name view", ({ name: view }) => {
+    it.each(markerOnlySpans)("keeps %s from the copy's HTML apart", async (_, spans) => {
+      const html = (await copyOf(spans, view)).get("text/html");
+      if (!html) throw new Error("the copy holds no HTML");
+
+      expect(await spansAfterPasting(new Map([["text/html", html]]), view)).toEqual(spans);
+    });
+
+    it.each(markerOnlySpans)("keeps %s apart in a protected document", async (_, spans) => {
+      const copied = await copyOf(spans, view);
+
+      expect(await spansAfterPasting(copied, view, "protected")).toEqual(spans);
+    });
+
+    it("joins a piece of a span pasted inside a span of the same marker", async () => {
+      const source = await mountInView(doc([char("nd", "LORD")]), editorView(view));
+      await select(source.lexical, ["LORD", 1], ["LORD", 3]);
+      const copied = await copy(source.lexical);
+      source.unmount();
+
+      const target = await mountInView(doc([char("nd", "LORD")]), editorView(view));
+      await select(target.lexical, ["LORD", 2]);
+      await paste(target.lexical, copied);
+
+      expect(spansOf(target)).toEqual([char("nd", "LOORRD")]);
+    });
+  });
+});
 
 describe("applying ops for a span right before a span of the same marker", () => {
   describe.each(EDITING_VIEWS)("in $name view", ({ name: view }) => {

@@ -5,10 +5,12 @@ import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import {
   $applyNodeReplacement,
   $getEditor,
+  $isElementNode,
   DOMConversionMap,
   DOMConversionOutput,
   DOMExportOutput,
   EditorConfig,
+  EditorState,
   ElementNode,
   LexicalEditor,
   LexicalNode,
@@ -382,6 +384,52 @@ export function $wereSplitFromOneSpan(a: CharNode, b: CharNode): boolean {
   const aKey = a.getKey();
   const bKey = b.getKey();
   return (origins.get(aKey) ?? aKey) === (origins.get(bKey) ?? bKey);
+}
+
+/**
+ * For each editor, the char spans that its current update's clipboard insertions (a paste, a drop)
+ * brought in, and the committed state that update started from — which is how a later update
+ * knows the record is not its own.
+ */
+const clipboardSpans = new WeakMap<LexicalEditor, { from: EditorState; keys: Set<NodeKey> }>();
+
+/**
+ * Record the char spans in `nodes`, nested ones included, as content one clipboard insertion is
+ * about to insert in this update, so {@link $arrivedTogetherFromClipboard} can tell two of them
+ * apart from spans an edit made.
+ *
+ * Call it inside the editor update that inserts `nodes`.
+ * @param nodes - The nodes the insertion inserts.
+ */
+export function $recordClipboardSpans(nodes: LexicalNode[]): void {
+  const editor = $getEditor();
+  const from = editor.getEditorState();
+  let record = clipboardSpans.get(editor);
+  if (record?.from !== from) {
+    record = { from, keys: new Set() };
+    clipboardSpans.set(editor, record);
+  }
+  const { keys } = record;
+  const collect = (node: LexicalNode): void => {
+    if ($isCharNode(node)) keys.add(node.getKey());
+    if ($isElementNode(node)) node.getChildren().forEach(collect);
+  };
+  nodes.forEach(collect);
+}
+
+/**
+ * Whether `a` and `b` both came in from the clipboard in this update ({@link $recordClipboardSpans}),
+ * so the copied content held them as two spans.
+ *
+ * Call it inside an editor update or read.
+ * @param a - A char span.
+ * @param b - Another char span.
+ */
+export function $arrivedTogetherFromClipboard(a: CharNode, b: CharNode): boolean {
+  const editor = $getEditor();
+  const record = clipboardSpans.get(editor);
+  if (record?.from !== editor.getEditorState()) return false;
+  return record.keys.has(a.getKey()) && record.keys.has(b.getKey());
 }
 
 export function isSerializedCharNode(
