@@ -99,15 +99,9 @@ describe.each([true, false])("allowInvisibleCharacters %s", (allow) => {
       await expectNbspKept(content);
     });
 
-    // A paragraph-structure editor reads a char span whose whole text is one U+00A0 from applied
-    // ops as an empty span's placeholder: unlike a load, the apply does not mark it the author's
-    // (`authoredNbspState`), so the save drops it.
-    (mainView === "paragraph-structure" ? it.fails : it)(
-      "keeps a stored no-break space as the whole text of a char span",
-      async () => {
-        await expectNbspKept([char("ft", [NBSP])]);
-      },
-    );
+    it("keeps a stored no-break space as the whole text of a char span", async () => {
+      await expectNbspKept([char("ft", [NBSP])]);
+    });
 
     it("keeps a space run as spaces", async () => {
       const main = await mountInView(
