@@ -21,17 +21,25 @@ import { Tier2Context } from "./tier2Rebuild.utils";
 import { $settledUsj } from "./virtualSettle.utils";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $createTextNode, $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
+import {
+  $createTextNode,
+  $getRoot,
+  $isElementNode,
+  LexicalEditor,
+  LexicalNode,
+  TextNode,
+} from "lexical";
 import {
   $createCharNode,
   $createMarkerNode,
   $createParaNode,
   $isCharNode,
+  $isMarkerNode,
   CharNode,
   getMarker as bundledGetMarker,
   getPendedDisplayOwners,
+  MarkerNode,
   NBSP,
-  $isMarkerNode,
 } from "shared";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
@@ -79,12 +87,22 @@ async function unformattedTestEnvironmentFromUsj(usj: Usj) {
 }
 
 /** The first MarkerNode in the tree whose marker is `marker`. */
-function $findMarkerGlyph(marker: string) {
+function $findMarkerGlyph(marker: string): MarkerNode | undefined {
   return $getRoot()
     .getAllTextNodes()
     .find(
-      (node) => $isMarkerNode(node) && node.getMarker() === marker && node.getType() === "marker",
+      (node): node is MarkerNode =>
+        $isMarkerNode(node) && node.getMarker() === marker && node.getType() === "marker",
     );
+}
+
+/** The text node whose content is exactly `text`; throws when absent. */
+function $findTextNode(text: string): TextNode {
+  const found = $getRoot()
+    .getAllTextNodes()
+    .find((node) => node.getTextContent() === text);
+  if (!found) throw new Error(`text node ${JSON.stringify(text)} not found`);
+  return found;
 }
 
 /** Depth-first search for the first CharNode with `marker` anywhere under `root`. */
@@ -211,7 +229,7 @@ describe("unformatted view: content NBSP across a settle", () => {
     expect(usjOf(editor)).toEqual(mirror);
   });
 
-  it("preserves a lone NBSP between char spans when a marker edit settles the paragraph", async () => {
+  it("preserves a lone NBSP between char spans when a typed literal rebuilds the paragraph", async () => {
     const { editor } = await unformattedTestEnvironmentFromUsj({
       type: "USJ",
       version: "3.1",
@@ -220,30 +238,26 @@ describe("unformatted view: content NBSP across a settle", () => {
           type: "para",
           marker: "p",
           content: [
+            { type: "verse", marker: "v", number: "1" },
             { type: "char", marker: "wj", content: ["glory"] },
             NBSP,
             { type: "char", marker: "nd", content: ["Lord"] },
+            " tail",
           ],
         },
       ],
     });
     await act(async () =>
       editor.update(() => {
-        const glyph = $findMarkerGlyph("p");
-        if (!glyph || !$isMarkerNode(glyph)) throw new Error("p glyph not found");
-        $pendGlyphEdit(glyph, "\\q1");
+        const tail = $findTextNode(" tail");
+        tail.setTextContent(" tail \\nd x\\nd* end");
       }),
     );
-    await act(async () => {
-      editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
-    });
     const para = usjOf(editor)?.content[0] as MarkerObject;
-    expect(para.marker).toBe("q1");
-    expect(para.content).toEqual([
-      { type: "char", marker: "wj", content: ["glory"] },
-      NBSP,
-      { type: "char", marker: "nd", content: ["Lord"] },
-    ]);
+    const items = para.content ?? [];
+    const wjIndex = items.findIndex((item) => typeof item !== "string" && item.marker === "wj");
+    expect(items[wjIndex + 1]).toBe(NBSP);
+    expect(items[wjIndex + 2]).toMatchObject({ marker: "nd", content: ["Lord"] });
   });
 
   it("an empty char span still settles to an empty span", async () => {
@@ -260,20 +274,23 @@ describe("unformatted view: content NBSP across a settle", () => {
     });
     await act(async () =>
       editor.update(() => {
-        const glyph = $findMarkerGlyph("p");
-        if (!glyph || !$isMarkerNode(glyph)) throw new Error("p glyph not found");
-        $pendGlyphEdit(glyph, "\\q1");
+        const omega = $findTextNode(" omega");
+        omega.setTextContent(" omega \\wj x\\wj* end");
       }),
     );
-    await act(async () => {
-      editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
-    });
     const para = usjOf(editor)?.content[0] as MarkerObject;
-    expect(para.marker).toBe("q1");
-    const nd = para.content?.find(
+    const items = para.content ?? [];
+    const nd = items.find(
       (item): item is MarkerObject => typeof item !== "string" && item.marker === "nd",
     );
+    expect(nd).toBeDefined();
     expect(nd?.content ?? []).toEqual([]);
+    expect(items.some((item) => typeof item !== "string" && item.marker === "wj")).toBe(true);
+    for (const item of items)
+      if (typeof item === "string") {
+        expect(item).not.toContain(NBSP);
+        expect(item).not.toContain("~");
+      }
   });
 
   it("the read-only settle and the live settle agree on the lone NBSP", async () => {
@@ -295,7 +312,7 @@ describe("unformatted view: content NBSP across a settle", () => {
     await act(async () =>
       editor.update(() => {
         const glyph = $findMarkerGlyph("p");
-        if (!glyph || !$isMarkerNode(glyph)) throw new Error("p glyph not found");
+        if (!glyph) throw new Error("p glyph not found");
         $pendGlyphEdit(glyph, "\\q1");
       }),
     );
@@ -344,7 +361,8 @@ describe("unformatted view: content NBSP across a settle", () => {
         const alpha = $getRoot()
           .getAllTextNodes()
           .find((node) => node.getTextContent().includes("alpha"));
-        alpha?.setTextContent(`${alpha.getTextContent()} \\nd Lord\\nd* end`);
+        if (!alpha) throw new Error("alpha text node not found");
+        alpha.setTextContent(`${alpha.getTextContent()} \\nd Lord\\nd* end`);
       }),
     );
     const note = JSON.stringify(usjOf(editor));

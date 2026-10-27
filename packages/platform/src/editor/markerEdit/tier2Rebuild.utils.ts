@@ -988,7 +988,8 @@ function $appendNodesFragment(
       consumeCharLead();
       pushText(out, node, " ");
     } else if ($isTextNode(node)) {
-      // Glyph-adjacent structural text (the para-prefix separator, attribute runs — whose own
+      // Glyph-adjacent structural text (the para-prefix separator, tagged presentation NBSP nodes
+      // — spacers and empty-char placeholders — and attribute runs, whose own
       // leading NBSP is the file's real separator byte before `|…`) keeps the blanket
       // NBSP-to-space flattening in every view; everything else is a content run, where the
       // flattening is view-dependent (see `contentFragmentText`).
