@@ -252,19 +252,34 @@ describe("the stand-in for a stored no-break space", () => {
     });
 
     it("keeps U+00A0 in a chapter's published number through a settle of the chapter line", async () => {
+      const chapter: MarkerObject = {
+        type: "chapter",
+        marker: "c",
+        number: "1",
+        pubnumber: `I${NBSP}A`,
+      };
       const usj: Usj = {
         type: "USJ",
         version: "3.1",
         content: [
           { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
-          { type: "chapter", marker: "c", number: "1", pubnumber: `I${NBSP}A` },
+          chapter,
           { type: "para", marker: "p", content: ["text"] },
           { type: "para", marker: "p", content: ["depart here"] },
         ],
       };
       const mounted = await mountInView(usj, standardOn);
-      expect(mounted.ref.current?.getUsj()?.content[1]).toEqual(usj.content[1]);
-      expectNoStandIn(mounted.lexical.getEditorState().toJSON().root.children[1]);
+      expect(shownText(mounted.lexical)).toContain(`I${NBSP_STAND_IN}A`);
+      await select(mounted.lexical, `I${NBSP_STAND_IN}A`, 3);
+      await act(async () => {
+        mounted.lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "B");
+      });
+      await commit(mounted);
+
+      expect(mounted.ref.current?.getUsj()?.content[1]).toEqual({
+        ...chapter,
+        pubnumber: `I${NBSP}AB`,
+      });
     });
   });
 

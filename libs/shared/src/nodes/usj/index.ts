@@ -42,6 +42,7 @@ export * from "./node-constants.js";
 export * from "./node.utils.js";
 export * from "./NoteNode.js";
 export * from "./ParaNode.js";
+export * from "./nbspDisplaySpelling.utils.js";
 export * from "./pendedDisplayOwners.utils.js";
 export * from "./spaceRuns.utils.js";
 export * from "./VerseBlockNode.js";
