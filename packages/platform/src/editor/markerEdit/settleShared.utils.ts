@@ -46,8 +46,10 @@ export const ATOMIC_SENTINEL = "￼";
  *    stripping one leading NBSP off text that is LONGER than just that one character.
  * 2. ELEMENT-FIRST content (a nested char/note/milestone/verse comes first): `createChar` instead
  *    inserts a whole SEPARATE text node containing NOTHING BUT that one NBSP (a pure spacer, never
- *    merged with anything). Extraction drops such a node WHOLESALE (`text !== NBSP`), but the node
- *    itself is real, structural evidence that a separator IS present — as opposed to a live tree
+ *    merged with anything). Extraction drops such a node: in Standard view by its bytes (`text !==
+ *    NBSP`); outside it by its presentation tag (`isSerializedPresentationNbsp`), or, if the node is
+ *    untagged, by the positional strip of a leading NBSP from the span's first content item. The
+ *    node itself is real, structural evidence that a separator IS present — as opposed to a live tree
  *    missing one, e.g. right after a user deletes the text between an opening glyph and a sentinel
  *    span. Left UNSTRIPPED here (returned as-is, so the caller's `toFragmentText` turns it into a
  *    plain " "), so the signature still tells "has a separator" apart from "has none at all" for
