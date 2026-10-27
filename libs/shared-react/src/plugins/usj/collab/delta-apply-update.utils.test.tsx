@@ -62,11 +62,13 @@ import {
   $isSynthesizedMarkerNode,
   $isUnknownNode,
   charIdState,
+  closingMarkerText,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   GENERATOR_NOTE_CALLER,
   getEditableCallerText,
   getVisibleOpenMarkerText,
   NBSP,
+  openingMarkerText,
   removeUndefinedProperties,
   segmentState,
   SerializedNoteNode,
@@ -2826,147 +2828,254 @@ describe("Delta Utils $applyUpdate", () => {
 
     // Older peers and persisted deltas send presentation NBSP as plain `NBSP` text ops. The
     // apply side tags it only when it lands in a slot nothing but scaffolding occupies.
+    // Apply coordinates count an editable-mode glyph's text (an opening glyph includes its
+    // trailing space: `\wj ` is 4, `\+wj ` is 5; closers `\wj*` is 4, `\+wj*` is 5); a
+    // formatted-mode glyph counts nothing.
     describe.each([
-      ["editable", { ...defaultViewOptions, markerMode: "editable" } as ViewOptions],
-      ["formatted", { ...defaultViewOptions, markerMode: "visible" } as ViewOptions],
-    ])("old-peer scaffolding NBSP (%s)", (_mode, viewOptions) => {
-      it("tags an NBSP that is a char span's only content as the placeholder", async () => {
-        const { editor } = await testEnvironment(() => {
-          $getRoot().append($createParaNode());
+      [
+        "editable",
+        { ...defaultViewOptions, markerMode: "editable" } as ViewOptions,
+        // `\wj ` + "glory" + `\wj*` = 13: the end of the first span.
+        13,
+        // `\nd ` + NBSP + `\nd*` + the first para's close = 10: the second para's start.
+        10,
+        // `\nd ` + NBSP + `\+wj ` + "x" + `\+wj*` + " t" = 18: inside " tail".
+        18,
+      ],
+      ["formatted", { ...defaultViewOptions, markerMode: "visible" } as ViewOptions, 5, 2, 4],
+    ])(
+      "old-peer scaffolding NBSP (%s)",
+      (_mode, viewOptions, betweenSpansIndex, secondParaIndex, insideTailIndex) => {
+        /** A char span with this mode's real opening and closing glyphs around `children`. */
+        function $createGlyphedCharNode(
+          marker: string,
+          nested: boolean,
+          ...children: LexicalNode[]
+        ) {
+          const editable = viewOptions.markerMode === "editable";
+          return $createCharNode(marker).append(
+            editable
+              ? $createMarkerNode(marker, "opening", nested)
+              : $createImmutableTypedTextNode("marker", openingMarkerText(marker, nested)),
+            ...children,
+            editable
+              ? $createMarkerNode(marker, "closing", nested)
+              : $createImmutableTypedTextNode("marker", closingMarkerText(marker, nested)),
+          );
+        }
+
+        it("tags an NBSP that is a char span's only content as the placeholder", async () => {
+          const { editor } = await testEnvironment(() => {
+            $getRoot().append($createParaNode());
+          });
+          const ops: DeltaOp[] = [
+            { insert: NBSP, attributes: { char: { style: "nd", cid: "1" } } },
+          ];
+
+          await sutApplyUpdate(editor, ops, viewOptions);
+
+          editor.getEditorState().read(() => {
+            const para = $getRoot().getFirstChild();
+            if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+            const char = para.getFirstChild();
+            if (!$isCharNode(char)) throw new Error("Expected a CharNode");
+            const contents = char.getChildren().filter((n) => !$isSynthesizedMarkerNode(n));
+            expect(contents).toHaveLength(1);
+            expect($isPresentationNbsp(contents[0])).toBe(true);
+          });
         });
-        const ops: DeltaOp[] = [{ insert: NBSP, attributes: { char: { style: "nd", cid: "1" } } }];
 
-        await sutApplyUpdate(editor, ops, viewOptions);
-
-        editor.getEditorState().read(() => {
-          const para = $getRoot().getFirstChild();
-          if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
-          const char = para.getFirstChild();
-          if (!$isCharNode(char)) throw new Error("Expected a CharNode");
-          const contents = char.getChildren().filter((n) => !$isSynthesizedMarkerNode(n));
-          expect(contents).toHaveLength(1);
-          expect($isPresentationNbsp(contents[0])).toBe(true);
-        });
-      });
-
-      it("tags a note span's NBSP before a nested char as a token-mode spacer", async () => {
-        const { editor } = await testEnvironment();
-        const ops: DeltaOp[] = [
-          {
-            insert: {
-              note: {
-                style: "f",
-                caller: GENERATOR_NOTE_CALLER,
-                contents: {
-                  ops: [
-                    { insert: NBSP, attributes: { char: { style: "nd" } } },
-                    { insert: "x", attributes: { char: [{ style: "nd" }, { style: "wj" }] } },
-                  ],
+        it("tags a note span's NBSP before a nested char as a token-mode spacer", async () => {
+          const { editor } = await testEnvironment();
+          const ops: DeltaOp[] = [
+            {
+              insert: {
+                note: {
+                  style: "f",
+                  caller: GENERATOR_NOTE_CALLER,
+                  contents: {
+                    ops: [
+                      { insert: NBSP, attributes: { char: { style: "nd" } } },
+                      { insert: "x", attributes: { char: [{ style: "nd" }, { style: "wj" }] } },
+                    ],
+                  },
                 },
               },
             },
-          },
-        ];
+          ];
 
-        await sutApplyUpdate(editor, ops, viewOptions);
+          await sutApplyUpdate(editor, ops, viewOptions);
 
-        editor.getEditorState().read(() => {
-          const nd = $getRoot()
-            .getAllTextNodes()
-            .map((n) => n.getParent())
-            .find((n) => $isCharNode(n) && n.getMarker() === "nd");
-          if (!$isCharNode(nd)) throw new Error("Expected the nd CharNode");
-          const [spacer, nested] = nd.getChildren().filter((n) => !$isSynthesizedMarkerNode(n));
-          if (!$isTextNode(spacer)) throw new Error("Expected the spacer TextNode");
-          expect($isCharNode(nested)).toBe(true);
-          expect($isPresentationNbsp(spacer)).toBe(true);
-          expect(spacer.getMode()).toBe("token");
+          editor.getEditorState().read(() => {
+            const nd = $getRoot()
+              .getAllTextNodes()
+              .map((n) => n.getParent())
+              .find((n) => $isCharNode(n) && n.getMarker() === "nd");
+            if (!$isCharNode(nd)) throw new Error("Expected the nd CharNode");
+            const [spacer, nested] = nd.getChildren().filter((n) => !$isSynthesizedMarkerNode(n));
+            if (!$isTextNode(spacer)) throw new Error("Expected the spacer TextNode");
+            expect($isCharNode(nested)).toBe(true);
+            expect($isPresentationNbsp(spacer)).toBe(true);
+            expect(spacer.getMode()).toBe("token");
+          });
         });
-      });
 
-      it("keeps an NBSP inserted between two char spans as content", async () => {
-        const { editor } = await testEnvironment(() => {
-          $getRoot().append(
-            $createParaNode().append(
-              $createCharNode("wj").append($createTextNode("glory")),
-              $createCharNode("nd").append($createTextNode("Lord")),
-            ),
-          );
+        it("keeps an NBSP inserted between two char spans as content", async () => {
+          const { editor } = await testEnvironment(() => {
+            $getRoot().append(
+              $createParaNode().append(
+                $createGlyphedCharNode("wj", false, $createTextNode("glory")),
+                $createGlyphedCharNode("nd", false, $createTextNode("Lord")),
+              ),
+            );
+          });
+          const ops: DeltaOp[] = [{ retain: betweenSpansIndex }, { insert: NBSP }];
+
+          await sutApplyUpdate(editor, ops, viewOptions);
+
+          editor.getEditorState().read(() => {
+            const para = $getRoot().getFirstChild();
+            if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+            const [first, lone, second] = para.getChildren();
+            expect($isCharNode(first)).toBe(true);
+            expect($isCharNode(second)).toBe(true);
+            if (!$isTextNode(lone)) throw new Error("Expected the lone NBSP TextNode");
+            expect(lone.getTextContent()).toBe(NBSP);
+            expect($getState(lone, textTypeState)).toBeUndefined();
+            expect($isPresentationNbsp(lone)).toBe(false);
+          });
         });
-        const ops: DeltaOp[] = [{ retain: "glory".length }, { insert: NBSP }];
 
-        await sutApplyUpdate(editor, ops, viewOptions);
-
-        editor.getEditorState().read(() => {
-          const para = $getRoot().getFirstChild();
-          if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
-          const [first, lone, second] = para.getChildren();
-          expect($isCharNode(first)).toBe(true);
-          expect($isCharNode(second)).toBe(true);
-          if (!$isTextNode(lone)) throw new Error("Expected the lone NBSP TextNode");
-          expect(lone.getTextContent()).toBe(NBSP);
-          expect($getState(lone, textTypeState)).toBeUndefined();
-          expect($isPresentationNbsp(lone)).toBe(false);
-        });
-      });
-
-      // The accepted cost: an authored span-only `~` that arrives through collab is
-      // indistinguishable from an older peer's placeholder, so it is dropped as scaffolding.
-      it("tags a received `\\fq ~\\fq*` in a note as presentation NBSP", async () => {
-        const { editor } = await testEnvironment();
-        const ops: DeltaOp[] = [
-          {
-            insert: {
-              note: {
-                style: "f",
-                caller: GENERATOR_NOTE_CALLER,
-                contents: { ops: [{ insert: NBSP, attributes: { char: { style: "fq" } } }] },
+        // The accepted cost: an authored span-only `~` that arrives through collab is
+        // indistinguishable from an older peer's placeholder, so it is dropped as scaffolding.
+        it("tags a received `\\fq ~\\fq*` in a note as presentation NBSP", async () => {
+          const { editor } = await testEnvironment();
+          const ops: DeltaOp[] = [
+            {
+              insert: {
+                note: {
+                  style: "f",
+                  caller: GENERATOR_NOTE_CALLER,
+                  contents: { ops: [{ insert: NBSP, attributes: { char: { style: "fq" } } }] },
+                },
               },
             },
-          },
-        ];
+          ];
 
-        await sutApplyUpdate(editor, ops, viewOptions);
+          await sutApplyUpdate(editor, ops, viewOptions);
 
-        editor.getEditorState().read(() => {
-          const fq = $getRoot()
-            .getAllTextNodes()
-            .map((n) => n.getParent())
-            .find((n) => $isCharNode(n) && n.getMarker() === "fq");
-          if (!$isCharNode(fq)) throw new Error("Expected the fq CharNode");
-          const contents = fq.getChildren().filter((n) => !$isSynthesizedMarkerNode(n));
-          expect(contents).toHaveLength(1);
-          expect($isPresentationNbsp(contents[0])).toBe(true);
+          editor.getEditorState().read(() => {
+            const fq = $getRoot()
+              .getAllTextNodes()
+              .map((n) => n.getParent())
+              .find((n) => $isCharNode(n) && n.getMarker() === "fq");
+            if (!$isCharNode(fq)) throw new Error("Expected the fq CharNode");
+            const contents = fq.getChildren().filter((n) => !$isSynthesizedMarkerNode(n));
+            expect(contents).toHaveLength(1);
+            expect($isPresentationNbsp(contents[0])).toBe(true);
+          });
         });
-      });
 
-      it("leaves a locally loaded `\\nd ~\\nd*` untagged after an unrelated apply", async () => {
-        const { editor } = await testEnvironment(() => {
-          $getRoot().append(
-            $createParaNode().append($createCharNode("nd").append($createTextNode(NBSP))),
-            $createParaNode().append($createTextNode("hello")),
-          );
+        it("leaves a locally loaded `\\nd ~\\nd*` untagged after an unrelated apply", async () => {
+          const { editor } = await testEnvironment(() => {
+            $getRoot().append(
+              $createParaNode().append($createGlyphedCharNode("nd", false, $createTextNode(NBSP))),
+              $createParaNode().append($createTextNode("hello")),
+            );
+          });
+          const ops: DeltaOp[] = [
+            { retain: secondParaIndex },
+            { insert: "x", attributes: { char: { style: "wj", cid: "1" } } },
+          ];
+
+          await sutApplyUpdate(editor, ops, viewOptions);
+
+          editor.getEditorState().read(() => {
+            const lone = $getRoot()
+              .getAllTextNodes()
+              .find((n) => n.getTextContent() === NBSP);
+            if (!$isTextNode(lone)) throw new Error("Expected the local lone NBSP TextNode");
+            expect($isCharNode(lone.getParent())).toBe(true);
+            expect($getState(lone, textTypeState)).toBeUndefined();
+            expect($isPresentationNbsp(lone)).toBe(false);
+            expect($getRoot().getTextContent()).toContain("x");
+          });
         });
-        // nd's NBSP (1) + the first para's close (1) puts the second para's start at 2.
-        const ops: DeltaOp[] = [
-          { retain: 2 },
-          { insert: "x", attributes: { char: { style: "wj", cid: "1" } } },
-        ];
 
-        await sutApplyUpdate(editor, ops, viewOptions);
+        // A peer typing elsewhere in a span must not re-judge the span's authored `~`: only the
+        // text nodes the apply itself materialized are candidates for scaffolding.
+        it("leaves a locally loaded element-first `~` untagged when a peer types in the same span", async () => {
+          const { editor } = await testEnvironment(() => {
+            $getRoot().append(
+              $createParaNode().append(
+                $createGlyphedCharNode(
+                  "nd",
+                  false,
+                  $createTextNode(NBSP),
+                  $createGlyphedCharNode("wj", true, $createTextNode("x")),
+                  $createTextNode(" tail"),
+                ),
+              ),
+            );
+          });
+          const ops: DeltaOp[] = [
+            { retain: insideTailIndex },
+            { insert: "y", attributes: { char: { style: "nd" } } },
+          ];
 
-        editor.getEditorState().read(() => {
-          const lone = $getRoot()
-            .getAllTextNodes()
-            .find((n) => n.getTextContent() === NBSP);
-          if (!$isTextNode(lone)) throw new Error("Expected the local lone NBSP TextNode");
-          expect($isCharNode(lone.getParent())).toBe(true);
-          expect($getState(lone, textTypeState)).toBeUndefined();
-          expect($isPresentationNbsp(lone)).toBe(false);
-          expect($getRoot().getTextContent()).toContain("x");
+          await sutApplyUpdate(editor, ops, viewOptions);
+
+          editor.getEditorState().read(() => {
+            const lone = $getRoot()
+              .getAllTextNodes()
+              .find((n) => n.getTextContent() === NBSP);
+            if (!$isTextNode(lone)) throw new Error("Expected the local lone NBSP TextNode");
+            expect($getState(lone, textTypeState)).toBeUndefined();
+            expect($isPresentationNbsp(lone)).toBe(false);
+            expect(lone.getMode()).toBe("normal");
+            const typed = $getRoot()
+              .getAllTextNodes()
+              .find((n) => n.getTextContent() === "y");
+            // The typed text merged into the same span as the authored `~`.
+            expect(typed?.getParent()).toBe(lone.getParent());
+          });
         });
-      });
-    });
+
+        it("leaves a locally loaded element-first `~` untagged when a peer splits the span's text", async () => {
+          const { editor } = await testEnvironment(() => {
+            $getRoot().append(
+              $createParaNode().append(
+                $createGlyphedCharNode(
+                  "nd",
+                  false,
+                  $createTextNode(NBSP),
+                  $createGlyphedCharNode("wj", true, $createTextNode("x")),
+                  $createTextNode(" tail"),
+                ),
+              ),
+            );
+          });
+          const ops: DeltaOp[] = [{ retain: insideTailIndex }, { insert: "y" }];
+
+          await sutApplyUpdate(editor, ops, viewOptions);
+
+          editor.getEditorState().read(() => {
+            const lone = $getRoot()
+              .getAllTextNodes()
+              .find((n) => n.getTextContent() === NBSP);
+            if (!$isTextNode(lone)) throw new Error("Expected the local lone NBSP TextNode");
+            expect($getState(lone, textTypeState)).toBeUndefined();
+            expect($isPresentationNbsp(lone)).toBe(false);
+            expect(lone.getMode()).toBe("normal");
+            const typed = $getRoot()
+              .getAllTextNodes()
+              .find((n) => n.getTextContent().includes("y"));
+            // The split path inserted the typed text inside the same span as the authored `~`.
+            expect(typed?.getParent()).toBe(lone.getParent());
+          });
+        });
+      },
+    );
 
     it("(dc) should insert char text inside text and apply attributes after", async () => {
       const { editor } = await testEnvironment(() => {
