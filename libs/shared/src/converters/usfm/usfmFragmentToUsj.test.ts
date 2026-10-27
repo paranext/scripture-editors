@@ -164,6 +164,87 @@ describe("usfmFragmentToUsjContent — core", () => {
     ]);
   });
 
+  describe("reads the NBSP spelling inside an attribute value as NBSP, as in body text", () => {
+    for (const nbspSpelling of ["~", NBSP_STAND_IN]) {
+      const other = nbspSpelling === "~" ? NBSP_STAND_IN : "~";
+      const label = nbspSpelling === "~" ? "~" : "the stand-in";
+
+      it(`in a milestone's attributes, spelled ${label}`, () => {
+        expect(
+          usfmFragmentToUsjContent(
+            `\\p a\\qt-s |who="A${nbspSpelling}B${other}C"\\*b \\ts-s |x${nbspSpelling}y\\*`,
+            {
+              nbspSpelling,
+            },
+          ),
+        ).toEqual([
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              "a",
+              { type: "ms", marker: "qt-s", who: `A${NBSP}B${other}C` },
+              "b ",
+              { type: "ms", marker: "ts-s", sid: `x${NBSP}y` },
+            ],
+          },
+        ]);
+      });
+
+      it(`in a repaired list a milestone absorbs, spelled ${label}`, () => {
+        expect(
+          usfmFragmentToUsjContent(`\\p \\qt-s\\*|who="A${nbspSpelling}B"\\*`, { nbspSpelling }),
+        ).toEqual([
+          {
+            type: "para",
+            marker: "p",
+            content: [{ type: "ms", marker: "qt-s", who: `A${NBSP}B` }],
+          },
+        ]);
+      });
+
+      it(`in a figure's attributes, spelled ${label}`, () => {
+        expect(
+          usfmFragmentToUsjContent(
+            `\\p \\fig c${nbspSpelling}d|src="a${nbspSpelling}b.jpg" size="col"\\fig*`,
+            {
+              nbspSpelling,
+            },
+          ),
+        ).toEqual([
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              {
+                type: "figure",
+                marker: "fig",
+                file: `a${NBSP}b.jpg`,
+                size: "col",
+                content: [`c${NBSP}d`],
+              },
+            ],
+          },
+        ]);
+      });
+
+      it(`in a peripheral's attributes, spelled ${label}`, () => {
+        expect(
+          usfmFragmentToUsjContent(`\\periph T${nbspSpelling}P|id="a${nbspSpelling}b"\\mt1 X`, {
+            nbspSpelling,
+          }),
+        ).toEqual([
+          {
+            type: "periph",
+            alt: `T${NBSP}P`,
+            id: `a${NBSP}b`,
+            content: [{ type: "para", marker: "mt1", content: ["X"] }],
+          },
+        ]);
+      });
+    }
+  });
+
   it("regularizes whitespace runs in text", () => {
     expect(usfmFragmentToUsjContent("\\p a  b\tc\nd")).toEqual([
       { type: "para", marker: "p", content: ["a b c d"] },

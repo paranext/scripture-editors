@@ -246,6 +246,12 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- In Standard view, a no-break space in an attribute value (a char span's `|lemma`, a milestone's
+  `who`, a figure's `src`, a note's `\cat`, a verse's `\va`/`\vp`, a chapter's `\ca`/`\cp`) shows
+  as the body text spells one (`~`, or a blank where `ViewOptions.allowInvisibleCharacters` is on)
+  and stays a no-break space through a settle of its paragraph, an edit to the value, copy and
+  paste, and an unwrap of its span; it was saved as a plain space. Unformatted view's settle keeps
+  it too.
 - The caller of an unclosed note (which renders expanded, its caller as text) can be deleted; the
   note keeps an empty caller and shows both separators (`\f  \fr …`), as Paratext 9 does.
 - Typing a note's own closer (`\f*`) into an unclosed note closes it there; what followed the

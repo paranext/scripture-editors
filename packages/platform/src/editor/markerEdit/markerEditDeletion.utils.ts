@@ -23,6 +23,7 @@ import {
 } from "lexical";
 import {
   $createMarkerNode,
+  $getNbspDisplaySpelling,
   $createMarkerTrailingSeparator,
   $isCharNode,
   $isMarkerNode,
@@ -485,10 +486,14 @@ export function $paraMarkerDeletionTransform(para: ParaNode, context: MarkerEdit
  * excluded there: it is derived USJ metadata (ParatextData emits `closed="false"` on char spans
  * with no explicit closing marker — extremely common on footnote-content chars like `\fr`/`\ft`),
  * not user bytes, and paranext-core's USFM writer likewise never emits it as an attribute. */
-function unknownAttributesText(char: CharNode): string | undefined {
+function $unknownAttributesText(char: CharNode): string | undefined {
   const attributes = char.getUnknownAttributes();
   if (!attributes) return undefined;
-  const text = canonicalAttributeText(attributes, defaultMarkerAttribute(char.getMarker()));
+  const text = canonicalAttributeText(
+    attributes,
+    defaultMarkerAttribute(char.getMarker()),
+    $getNbspDisplaySpelling(),
+  );
   return text === "" ? undefined : text;
 }
 
@@ -507,7 +512,7 @@ export function $unwrapCharNode(char: CharNode): void {
   // PT9 leaves an unknown-attribute span's attributes as literal bytes on unwrap. The char node
   // is about to be dropped, so reconstruct the canonical `|…` suffix as plain text after the
   // content (where the closer glyph used to be) so the bytes survive serialization.
-  const attributesText = unknownAttributesText(char);
+  const attributesText = $unknownAttributesText(char);
   if (attributesText) children.push($createTextNode(attributesText));
   // Reinsert AFTER the span (in order), then drop the span — never insertBefore. The tree comes
   // out identical either way, but not the caret: a collapsed ELEMENT point at the span's own

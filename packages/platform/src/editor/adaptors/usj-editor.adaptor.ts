@@ -74,6 +74,7 @@ import {
   MilestoneNode,
   MS_MARKER_OBJECT_PROPS,
   NBSP,
+  nbspValueToDisplay,
   NOTE_MARKER_OBJECT_PROPS,
   NOTE_VERSION,
   NoteNode,
@@ -290,6 +291,16 @@ function setLogger(logger: LoggerBasic | undefined) {
  */
 function isStandardView(): boolean {
   return hasStandardViewWhitespace(_viewOptions);
+}
+
+/**
+ * What an attribute value's no-break space displays as: the body text's spelling in Standard view
+ * (`getNbspSpelling`), where an on-screen U+00A0 is display spacing, and U+00A0 itself elsewhere.
+ * `MarkerEditPlugin` registers the same answer for the display-run syncs
+ * (`registerNbspDisplaySpelling`), which redraw these runs from node state.
+ */
+function attributeNbspSpelling(): string | undefined {
+  return isStandardView() ? getNbspSpelling(_viewOptions) : undefined;
 }
 
 function createBook(
@@ -849,6 +860,7 @@ function createUnknown(
       tag,
       marker,
       unknownAttributes,
+      attributeNbspSpelling(),
     );
     if (opening) children.push(createImmutableTypedText("marker", opening));
     if (attributes) children.push(createImmutableTypedText("attribute", attributes));
@@ -1011,7 +1023,11 @@ function addCharAttributes(
   nodes: SerializedLexicalNode[],
 ) {
   if (_viewOptions?.markerMode !== "editable" || !unknownAttributes) return;
-  const text = canonicalAttributeText(unknownAttributes, defaultMarkerAttribute(marker));
+  const text = canonicalAttributeText(
+    unknownAttributes,
+    defaultMarkerAttribute(marker),
+    attributeNbspSpelling(),
+  );
   if (text) nodes.push(createText(text, "attribute"));
 }
 
@@ -1035,7 +1051,11 @@ function addAttributes(markerObject: MarkerObject, nodes: SerializedLexicalNode[
     unknownAttributes,
     milestoneAttributeOrder(markerObject),
   );
-  const text = canonicalAttributeText(attributes, milestoneDefaultAttribute(marker ?? ""));
+  const text = canonicalAttributeText(
+    attributes,
+    milestoneDefaultAttribute(marker ?? ""),
+    attributeNbspSpelling(),
+  );
   if (!text) return;
 
   const attributesText = NBSP + text;
@@ -1097,7 +1117,7 @@ function addVerseAttributeRun(
   nodes.push(
     createAttributeRun(marker, [
       createMarker(marker, "opening"),
-      createText(NBSP + value, "attribute"),
+      createText(NBSP + nbspValueToDisplay(value, attributeNbspSpelling()), "attribute"),
       createMarker(marker, "closing"),
     ]),
   );
@@ -1119,7 +1139,7 @@ function addNoteCategoryRun(category: string | undefined, nodes: SerializedLexic
   nodes.push(
     createAttributeRun("cat", [
       createMarker("cat", "opening"),
-      createText(NBSP + category, "attribute"),
+      createText(NBSP + nbspValueToDisplay(category, attributeNbspSpelling()), "attribute"),
       createMarker("cat", "closing"),
     ]),
   );
@@ -1139,7 +1159,7 @@ function addChapterAttributeRuns(
     nodes.push(
       createAttributeRun("ca", [
         createMarker("ca", "opening"),
-        createText(NBSP + altnumber, "attribute"),
+        createText(NBSP + nbspValueToDisplay(altnumber, attributeNbspSpelling()), "attribute"),
         createMarker("ca", "closing"),
       ]),
     );
@@ -1147,7 +1167,7 @@ function addChapterAttributeRuns(
     nodes.push(
       createAttributeRun("cp", [
         createMarker("cp", "opening"),
-        createText(NBSP + pubnumber, "attribute"),
+        createText(NBSP + nbspValueToDisplay(pubnumber, attributeNbspSpelling()), "attribute"),
       ]),
     );
 }

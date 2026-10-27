@@ -512,7 +512,7 @@ function tokenize(
       continue;
     }
     if (kind === MarkerType.Milestone || (kind === undefined && isMilestoneHeuristicName(name))) {
-      const milestone = scanMilestone(fragment, rawStart, name, index);
+      const milestone = scanMilestone(fragment, rawStart, name, index, nbspSpelling);
       if (milestone) {
         tokens.push(milestone.token);
         if (milestone.ejectedText) pushText(milestone.ejectedText);
@@ -693,11 +693,20 @@ function pairsCoverList(text: string, pairs: RegExpExecArray[] | RegExpMatchArra
   return text.slice(cursor).trim() === "";
 }
 
+/**
+ * The attributes `attributeText` (the bytes after a `|`) spells, or `undefined` when they do not
+ * parse. `nbspSpelling`, when given, is the fragment's spelling of a no-break space, and each one
+ * in a value is read as U+00A0, as in body text; callers whose bytes were already read that way
+ * (a char span's content) leave it out.
+ */
 function parseAttributeText(
   attributeText: string,
   marker: string,
   defaultAttributeName = DEFAULT_MARKER_ATTRIBUTES[marker],
+  nbspSpelling?: string,
 ): { [attributeName: string]: string } | undefined {
+  const toValue = (value: string) =>
+    nbspSpelling === undefined ? value : value.replaceAll(nbspSpelling, NBSP);
   const regularizedText = attributeText.replace(ATTRIBUTE_LINE_BREAK_RUN_REGEX, " ");
   // Null-prototype accumulator: on a plain `{}`, `attributes["__proto__"] = value` hits
   // Object.prototype's accessor and is a silent no-op, so an attribute literally named
@@ -723,7 +732,7 @@ function parseAttributeText(
     // data, here it is bytes Paratext reads as text.
     if (pairs.some((pair) => pair[2] === "")) return undefined;
     for (const [, name, value] of pairs) {
-      if (!RESERVED_NODE_KEYS.has(name)) attributes[name] = value;
+      if (!RESERVED_NODE_KEYS.has(name)) attributes[name] = toValue(value);
     }
     return Object.keys(attributes).length > 0 ? attributes : undefined;
   }
@@ -733,7 +742,7 @@ function parseAttributeText(
   // The USFM 3 spec calls that space structural, but Paratext keeps it as content, and this
   // pipeline round-trips through ParatextData.
   if (regularizedText.trim() && defaultAttributeName)
-    return { [defaultAttributeName]: regularizedText };
+    return { [defaultAttributeName]: toValue(regularizedText) };
   return undefined;
 }
 
@@ -803,6 +812,7 @@ function scanAbsorbableAttributes(
   fragment: string,
   start: number,
   name: string,
+  nbspSpelling: string,
 ): { attributes: { [attributeName: string]: string }; next: number } | undefined {
   let index = start;
   while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
@@ -813,6 +823,7 @@ function scanAbsorbableAttributes(
     fragment.slice(index + 1, closeIndex),
     name,
     milestoneDefaultAttribute(name),
+    nbspSpelling,
   );
   if (!attributes) return undefined;
   return { attributes, next: closeIndex + 2 };
@@ -827,6 +838,7 @@ function scanMilestone(
   _rawStart: number,
   name: string,
   index: number,
+  nbspSpelling: string,
 ): { token: Token; next: number; ejectedText?: string } | undefined {
   const closeIndex = fragment.indexOf("\\", index);
   if (closeIndex === -1 || fragment.slice(closeIndex, closeIndex + 2) !== "\\*") return undefined;
@@ -840,6 +852,7 @@ function scanMilestone(
       between.slice(pipeIndex + 1),
       name,
       milestoneDefaultAttribute(name),
+      nbspSpelling,
     );
     // A list with CONTENT that will not parse becomes CONTENT, and a milestone cannot hold
     // content — so the milestone ends immediately and the bytes follow it as siblings. Resuming
@@ -891,7 +904,7 @@ function scanMilestone(
   // any the milestone already carries: the list the author just fixed is the one they mean. Only
   // the clean path absorbs: when content was ejected above, the `\*` is deliberately left to scan
   // as an unmatched closer, so there is no "past the closer" position to absorb from.
-  const absorbed = scanAbsorbableAttributes(fragment, closeIndex + 2, name);
+  const absorbed = scanAbsorbableAttributes(fragment, closeIndex + 2, name, nbspSpelling);
   if (absorbed)
     return {
       token: {
@@ -1195,7 +1208,9 @@ export function usfmFragmentToUsjContent(
     if (atBlockBoundary && value.endsWith("\n")) value = value.slice(0, -1);
     const pipeIndex = value.indexOf("|");
     const parsed =
-      pipeIndex >= 0 ? parseAttributeText(value.slice(pipeIndex + 1), PERIPH_MARKER) : undefined;
+      pipeIndex >= 0
+        ? parseAttributeText(value.slice(pipeIndex + 1), PERIPH_MARKER, undefined, nbspSpelling)
+        : undefined;
     const parsedTitle = pipeIndex >= 0 ? value.slice(0, pipeIndex) : value;
     const refused =
       pipeIndex >= 0 && (!parsed || (!!parsedTitle && !!parsed[PERIPH_TITLE_ATTRIBUTE]));
@@ -1393,7 +1408,12 @@ export function usfmFragmentToUsjContent(
         const pipeIndex = figCapture.value.indexOf("|");
         const attributes =
           pipeIndex >= 0
-            ? parseAttributeText(figCapture.value.slice(pipeIndex + 1), FIGURE_MARKER)
+            ? parseAttributeText(
+                figCapture.value.slice(pipeIndex + 1),
+                FIGURE_MARKER,
+                undefined,
+                nbspSpelling,
+              )
             : undefined;
         if (attributes) {
           // Clean span: emit the faithful figure. USFM's `src` attribute is `file` in

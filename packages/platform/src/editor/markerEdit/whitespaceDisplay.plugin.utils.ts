@@ -48,6 +48,7 @@ import {
   MARKER_TRAILING_SPACE_TEXT_TYPE,
   NBSP,
   NBSP_STAND_IN,
+  nbspValueToDisplay,
   textTypeState,
 } from "shared";
 import {
@@ -1057,15 +1058,22 @@ function $isNoteInternalDisplaySeparator(node: TextNode): boolean {
  * `\cat People\cat*` on the clipboard for a range the user never selected, with no `\f` opener in
  * front of the run that followed (`\f -\cat People\cat*`). The sibling caller rule
  * guards its own boundary the same way.
+ *
+ * The category's no-break spaces are spelled `nbspSpelling`, as the rest of the copy's display
+ * text spells them, so the caller's one respelling covers these bytes too.
  */
-function $collapsedNoteCategoryBytes(node: TextNode, isLast: boolean): string {
+function $collapsedNoteCategoryBytes(
+  node: TextNode,
+  isLast: boolean,
+  nbspSpelling: string,
+): string {
   if (isLast) return "";
   if (node.getTextContent() !== NBSP) return "";
   const note = node.getParent();
   if (!$isNoteNode(note)) return "";
   if (!$isImmutableNoteCallerNode(node.getPreviousSibling())) return "";
   const category = note.getCategory();
-  return category ? `\\cat ${category}\\cat*` : "";
+  return category ? `\\cat ${nbspValueToDisplay(category, nbspSpelling)}\\cat*` : "";
 }
 
 /** The nearest enclosing `NoteNode`'s USJ caller value, falling back to the auto-generated-caller
@@ -1170,7 +1178,8 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
       }
       text += $isNoteInternalDisplaySeparator(node)
         ? ""
-        : nodeText.replaceAll(NBSP, " ") + $collapsedNoteCategoryBytes(node, node === lastNode);
+        : nodeText.replaceAll(NBSP, " ") +
+          $collapsedNoteCategoryBytes(node, node === lastNode, nbspSpelling);
     } else if (
       ($isDecoratorNode(node) || $isLineBreakNode(node)) &&
       (node !== lastNode || !selection.isCollapsed())

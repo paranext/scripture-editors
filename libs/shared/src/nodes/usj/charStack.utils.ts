@@ -41,6 +41,7 @@ import {
 } from "./markerSeparators.utils.js";
 import { $isNestedCharNode } from "./nestedGlyphs.utils.js";
 import { canonicalAttributeText } from "./attributeDisplay.utils.js";
+import { $getNbspDisplaySpelling } from "./nbspDisplaySpelling.utils.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { defaultMarkerAttribute } from "../../converters/usfm/usfmFragmentToUsj.js";
 import { NBSP } from "./node-constants.js";
@@ -165,7 +166,11 @@ function $ownsDisplayRun(char: CharNode): boolean {
 function $removeCharKeepingAttributeBytes(char: CharNode, contentEnd: LexicalNode): void {
   const attributes = char.getUnknownAttributes();
   const bytes = attributes
-    ? canonicalAttributeText(attributes, defaultMarkerAttribute(char.getMarker()))
+    ? canonicalAttributeText(
+        attributes,
+        defaultMarkerAttribute(char.getMarker()),
+        $getNbspDisplaySpelling(),
+      )
     : "";
   if (bytes !== "") contentEnd.insertAfter($createTextNode(bytes));
   char.remove();

@@ -445,8 +445,18 @@ fragments, paste, drop, copy (the copy writes U+00A0 itself when the spelling is
 typed U+00A0 (kept as the spelling when it is not `~`; a space otherwise, as in Paratext 9). A
 layer that spelled it on its own would load under one spelling and save under another.
 
-Known gap, in both settings: an attribute value's U+00A0 (`\w g|lemma="h~i"\w*`) is shown in its
-attribute run as a raw U+00A0, and a settle of its paragraph reads that as a space.
+An attribute value — a char span's `|lemma`, a milestone's `who`, a figure's `src`, a note's `\cat`,
+a verse's `\va`/`\vp`, a chapter's `\ca`/`\cp` — is text on screen too, so its U+00A0 takes the same
+spelling (`\w g|lemma="h~i"\w*`). The adaptor spells it as it builds each run
+(`canonicalAttributeText`/`unknownDisplayParts`/`nbspValueToDisplay` with the spelling); the
+display-run syncs, which redraw a run from node state and never see view options, read the spelling
+`MarkerEditPlugin` registers for the editor (`registerNbspDisplaySpelling`,
+`$getNbspDisplaySpelling`), as do the other writers that turn attribute state into display text (an
+unwrapped or emptied span's leftover `|…` bytes, a collapsed note's copied `\cat`). The tokenizer
+reads the spelling back as U+00A0 inside milestone, figure and `\periph` attribute values, as it
+already did in body text, char spans and the attribute markers. Outside Standard view a value shows
+U+00A0 itself; the Unformatted view's settle respells it past the run's leading separator
+(`attributeFragmentText`), as it does content.
 
 ---
 
