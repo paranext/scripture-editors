@@ -556,7 +556,7 @@ function $getVerseOp(currentNode: SomeVerseNode): DeltaOp & { insert: { verse: O
 
 function $getMilestoneOp(
   currentNode: MilestoneNode,
-): DeltaOp & { insert: { milestone: OTMilestoneEmbed } } {
+): DeltaOp & { insert: { ms: OTMilestoneEmbed } } {
   const milestone: OTMilestoneEmbed = { style: currentNode.__marker };
   if (currentNode.__sid) {
     milestone.sid = currentNode.__sid;
@@ -568,7 +568,7 @@ function $getMilestoneOp(
     milestone.attributeOrder = currentNode.__attributeOrder;
   }
   $assignUnknownAttributes(milestone, currentNode);
-  return { insert: { milestone } };
+  return { insert: { ms: milestone } };
 }
 
 function $getImmutableUnmatchedOp(

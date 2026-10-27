@@ -1557,12 +1557,12 @@ function $insertNodeAtCharacterOffset(
 }
 
 /**
- * Whether `op` inserts a milestone under the `milestone` key, the one this library's op producer
- * writes (`$getMilestoneOp` in editor-delta.adaptor.ts), rather than the OT model's `ms`. Both are
- * read, so a milestone in ops this library produced (a note editor's carried text, a peer's
- * edits) is applied rather than dropped.
+ * Whether `op` inserts a milestone under the `milestone` key rather than the OT model's `ms`.
+ * Older builds of this library's op producer (`$getMilestoneOp` in editor-delta.adaptor.ts)
+ * emitted that key, so ops a peer running one of them sends, or ops a host stored, still apply
+ * their milestones rather than dropping them.
  */
-function isMilestoneEmbedOpAsProduced(
+function isLegacyMilestoneEmbedOp(
   op: DeltaOp,
 ): op is DeltaOp & { insert: { milestone: OTMilestoneEmbed | null } } {
   return op.insert != null && typeof op.insert === "object" && "milestone" in op.insert;
@@ -1584,7 +1584,7 @@ function $insertEmbedAtCurrentIndex(
     newNodeToInsert = $createVerse(op.insert.verse, viewOptions);
   } else if (isInsertEmbedOpOfType("ms", op)) {
     newNodeToInsert = $createMilestone(op.insert.ms);
-  } else if (isMilestoneEmbedOpAsProduced(op)) {
+  } else if (isLegacyMilestoneEmbedOp(op)) {
     newNodeToInsert = $createMilestone(op.insert.milestone);
   } else if (isInsertEmbedOpOfType("note", op)) {
     newNodeToInsert = $createNote(op, viewOptions, nodeOptions);

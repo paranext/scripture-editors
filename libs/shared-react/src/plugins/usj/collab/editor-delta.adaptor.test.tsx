@@ -124,7 +124,7 @@ describe("getEditorDelta", () => {
     const delta = getEditorDelta(editor.getEditorState());
 
     expect(delta.ops).toEqual([
-      { insert: { milestone: { style: "ts-s", sid: "TS1" } } },
+      { insert: { ms: { style: "ts-s", sid: "TS1" } } },
       { insert: LF, attributes: { para: { style: "q1" } } },
     ]);
   });
@@ -166,7 +166,7 @@ describe("getEditorDelta", () => {
     });
 
     expect(ops).toEqual([
-      { insert: { milestone: { style: "qt-s", sid: "q1" } } },
+      { insert: { ms: { style: "qt-s", sid: "q1" } } },
       { insert: LF, attributes: { para: { style: "q1" } } },
     ]);
   });
@@ -193,7 +193,7 @@ describe("getEditorDelta", () => {
     });
 
     expect(ops).toEqual([
-      { insert: { milestone: { style: "qt-s", sid: "q1" } } },
+      { insert: { ms: { style: "qt-s", sid: "q1" } } },
       { insert: LF, attributes: { para: { style: "q1" } } },
     ]);
   });
@@ -1312,7 +1312,7 @@ describe("getEditorDelta", () => {
           },
         },
       },
-      { insert: { milestone: { style: "ts-s", sid: "TS1" } } },
+      { insert: { ms: { style: "ts-s", sid: "TS1" } } },
       { insert: LF, attributes: { para: { style: "q1" } } },
     ]);
   });
@@ -1564,7 +1564,7 @@ describe("getEditorDelta", () => {
       expect(delta.ops[2]).toEqual({
         insert: { verse: { style: "v", number: "1", ...unknownAttrs } },
       });
-      expect(delta.ops[5]).toEqual({ insert: { milestone: { style: "ts", ...unknownAttrs } } });
+      expect(delta.ops[5]).toEqual({ insert: { ms: { style: "ts", ...unknownAttrs } } });
       expect(delta.ops.at(-1)).toEqual({
         insert: LF,
         attributes: { para: { style: "p", ...unknownAttrs } },

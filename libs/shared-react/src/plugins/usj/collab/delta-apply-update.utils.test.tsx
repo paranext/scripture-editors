@@ -24,7 +24,7 @@ import { CharNodePlugin } from "../CharNodePlugin";
 import { baseTestEnvironment, removeNoteCallerOnClick } from "../react-test.utils";
 import { getDefaultViewOptions, ViewOptions } from "../../../views/view-options.utils";
 import { $applyUpdate } from "./delta-apply-update.utils";
-import { DeltaOp, LF } from "./delta-common.utils";
+import { DeltaOp, isInsertEmbedOpOfType, LF } from "./delta-common.utils";
 import { getEditorDelta } from "./editor-delta.adaptor";
 import { act } from "@testing-library/react";
 import {
@@ -45,6 +45,7 @@ import {
   $createImmutableTypedTextNode,
   $createImpliedParaNode,
   $createMarkerNode,
+  $createMilestoneNode,
   $createNoteNode,
   $createParaNode,
   $createVerseNode,
@@ -3051,7 +3052,7 @@ describe("Delta Utils $applyUpdate", () => {
       });
     });
 
-    it("should insert a milestone embed under the key the op producer writes", async () => {
+    it("should insert a milestone embed under the `milestone` key older op producers wrote", async () => {
       const { editor } = await testEnvironment(() => {
         $getRoot().append($createParaNode().append($createTextNode("ab")));
       });
@@ -5171,6 +5172,50 @@ describe("Delta Utils $applyUpdate", () => {
       const serializedEditorState = editor.getEditorState().toJSON();
       cleanupSerializedEditorState(serializedEditorState, null);
       expect(serializedEditorState).toEqual(editorStateGen1v1ImpliedPara);
+    });
+
+    it("should roundtrip a milestone and its attributes through produced ops", async () => {
+      const { editor: host } = await testEnvironment(() => {
+        $getRoot().append(
+          $createParaNode("q1").append(
+            $createTextNode("before "),
+            $createMilestoneNode("qt-s", "q1", undefined, { who: "Jesus" }),
+            $createTextNode("words"),
+            $createMilestoneNode("qt-e", undefined, "q1"),
+            $createTextNode(" after"),
+          ),
+        );
+      });
+      const hostOps: DeltaOp[] = getEditorDelta(host.getEditorState()).ops;
+
+      // The producer writes the key `OTEmbedTypes` declares, so a host reading ops through the
+      // public type guard sees both milestones.
+      expect(hostOps.filter((op) => isInsertEmbedOpOfType("ms", op))).toEqual([
+        { insert: { ms: { style: "qt-s", sid: "q1", who: "Jesus" } } },
+        { insert: { ms: { style: "qt-e", eid: "q1" } } },
+      ]);
+
+      const { editor: replica } = await testEnvironment();
+      await sutApplyUpdate(replica, hostOps);
+
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(0);
+      replica.getEditorState().read(() => {
+        const para = $getRoot().getFirstChild();
+        if (!$isParaNode(para)) throw new Error("para is not a ParaNode");
+        expect(para.getMarker()).toBe("q1");
+        const [before, start, words, end, after] = para.getChildren();
+        expect(before.getTextContent()).toBe("before ");
+        if (!$isMilestoneNode(start)) throw new Error("start is not a MilestoneNode");
+        expect(start.getMarker()).toBe("qt-s");
+        expect(start.getSid()).toBe("q1");
+        expect(start.getUnknownAttributes()).toEqual({ who: "Jesus" });
+        expect(words.getTextContent()).toBe("words");
+        if (!$isMilestoneNode(end)) throw new Error("end is not a MilestoneNode");
+        expect(end.getMarker()).toBe("qt-e");
+        expect(end.getEid()).toBe("q1");
+        expect(after.getTextContent()).toBe(" after");
+      });
+      expect(getEditorDelta(replica.getEditorState()).ops).toEqual(hostOps);
     });
   });
 
