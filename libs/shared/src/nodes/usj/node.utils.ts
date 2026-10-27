@@ -25,6 +25,7 @@ import {
 } from "lexical";
 import {
   charIdState,
+  EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE,
   MARKER_TRAILING_SPACE_TEXT_TYPE,
   textTypeState,
 } from "../collab/delta.state.js";
@@ -1018,6 +1019,68 @@ export function $withCharContentNbspPrefix(node: TextNode): void {
  */
 export function $isMarkerTrailingSeparator(node: LexicalNode | null | undefined): boolean {
   return $isTextNode(node) && $getState(node, textTypeState) === MARKER_TRAILING_SPACE_TEXT_TYPE;
+}
+
+/**
+ * Creates the engine-owned NBSP placeholder that holds an otherwise empty editable char span open.
+ * Tagged with {@link EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE} and left in normal mode so the user can type
+ * into it.
+ *
+ * Mutating factory (creates a node): call inside `editor.update()`.
+ */
+export function $createEmptyCharPlaceholder(): TextNode {
+  const placeholder = $createTextNode(EMPTY_CHAR_PLACEHOLDER_TEXT);
+  $markEmptyCharPlaceholder(placeholder);
+  return placeholder;
+}
+
+/**
+ * Tags an existing text node as an empty-char placeholder (see {@link $createEmptyCharPlaceholder}).
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+export function $markEmptyCharPlaceholder(node: TextNode): void {
+  $setState(node, textTypeState, EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE);
+}
+
+/**
+ * Tags an existing text node as an engine-owned marker-trailing separator and puts it in token
+ * mode, matching {@link $createMarkerTrailingSeparator}.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+export function $markPresentationSpacer(node: TextNode): void {
+  $setState(node, textTypeState, MARKER_TRAILING_SPACE_TEXT_TYPE);
+  node.setMode("token");
+}
+
+/**
+ * Whether `node` is a presentation-only NBSP: a text node tagged as a marker-trailing separator or
+ * an empty-char placeholder whose text is still exactly one NBSP. An untagged NBSP node is real
+ * content (a lone `~`), and a tagged node that was typed into is content too.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $isPresentationNbsp(node: LexicalNode | null | undefined): boolean {
+  if (!$isTextNode(node)) return false;
+  const textType = $getState(node, textTypeState);
+  return isPresentationTextType(textType) && node.getTextContent() === NBSP;
+}
+
+/**
+ * The serialized twin of {@link $isPresentationNbsp}: the same rule over a serialized node's
+ * `textType` node state and `text`. Pure.
+ */
+export function isSerializedPresentationNbsp(node: SerializedLexicalNode): boolean {
+  return (
+    isPresentationTextType(serializedTextType(node)) && (node as { text?: unknown }).text === NBSP
+  );
+}
+
+function isPresentationTextType(textType: string | undefined): boolean {
+  return (
+    textType === MARKER_TRAILING_SPACE_TEXT_TYPE || textType === EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE
+  );
 }
 
 /**

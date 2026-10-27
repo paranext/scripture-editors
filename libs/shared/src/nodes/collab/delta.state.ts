@@ -22,6 +22,9 @@ export const textTypeState = createState("textType", {
  * `$isMarkerTrailingSeparator` (node.utils.ts) — as does the forward adaptor building the
  * serialized twin for a paragraph's own prefix.
  *
+ * Together with {@link EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE}, this is one of the two tags the shared
+ * `$isPresentationNbsp` / `isSerializedPresentationNbsp` predicates (node.utils.ts) recognize.
+ *
  * It is NOT the only spelling in the codebase: four sites write the tag as a raw string, so
  * changing this value means changing them too. One is a CREATOR — the forward adaptor's table-cell
  * separator (usj-editor.adaptor.ts), whose sibling paragraph-prefix creator a few lines away does
@@ -30,3 +33,11 @@ export const textTypeState = createState("textType", {
  * unwrap that reads the tag off a SERIALIZED node's `$.textType` (virtualSettle.utils.ts).
  */
 export const MARKER_TRAILING_SPACE_TEXT_TYPE = "marker-trailing-space";
+
+/**
+ * `textTypeState` value tagging the engine-owned NBSP placeholder that holds an otherwise empty
+ * editable char span open. Unlike the marker-trailing separator it stays in normal mode so the
+ * user can type into it; once it holds anything beyond the bare NBSP it is content, not a
+ * placeholder (see `$isPresentationNbsp` in node.utils.ts).
+ */
+export const EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE = "empty-char-placeholder";
