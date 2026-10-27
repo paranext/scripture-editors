@@ -11,6 +11,7 @@
  * it cannot be split, so Enter there starts a new paragraph after it, Shift+Enter does nothing, and
  * a paste or a drop goes in as it would be typed there.
  */
+import { getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
 import { EditorRef } from "../editor.model";
 import { getEnterMenuItems, getMarkerMenuItems } from "../markerMenu/markerItemSource";
 import {
@@ -1184,6 +1185,26 @@ describe("a chapter inserted into a book with no chapters", () => {
     });
 
     expect(ref.current?.getUsj()?.content).toEqual([BOOK, CHAPTER_1]);
+  });
+
+  // The editor's own marker menu, shown when the host has no marker UI of its own, runs the same
+  // marker action as `insertMarker`.
+  it("is inserted after the front matter by the `\\c` marker action", async () => {
+    const title: MarkerContent = { type: "para", marker: "mt1", content: ["Genesis"] };
+    const text: MarkerContent = { type: "para", marker: "p", content: ["Text"] };
+    const { ref, lexical } = await mountEmptyBook(GEN_1_1, requireStandardViewOptions(), {
+      ...emptyBook,
+      content: [BOOK, title, text],
+    });
+
+    await act(async () => {
+      getUsjMarkerAction("c", { current: undefined }).action({
+        editor: lexical,
+        reference: GEN_1_1,
+      });
+    });
+
+    expect(ref.current?.getUsj()?.content).toEqual([BOOK, title, CHAPTER_1, text]);
   });
 
   it("is inserted with empty verses by `insertFirstChapter`", async () => {

@@ -252,7 +252,10 @@ describe("USJ Marker Action Utils", () => {
     );
   }
 
+  // In chapter 1 a missing chapter is the first chapter, which goes after the front matter (see
+  // `firstChapter.utils.ts`); in any later chapter `\c` still goes in at the caret.
   it("should insert the current chapter number (not incremented) when no chapter node exists yet", () => {
+    const chapter2Reference = { ...reference, chapterNum: 2 };
     const { editor } = createBasicTestEnvironment(nodes, $initialEditorStateWithNoChapterNode);
     const markerAction = getUsjMarkerAction(
       "c",
@@ -266,14 +269,14 @@ describe("USJ Marker Action Utils", () => {
     );
     updateSelection(editor, secondVerseTextNode);
 
-    markerAction.action({ editor, reference });
+    markerAction.action({ editor, reference: chapter2Reference });
 
     editor.getEditorState().read(() => {
       const children = $getRoot().getChildren();
       expect(children.length).toBe(4);
       if (!$isImmutableChapterNode(children[2])) throw new Error("Inserted node is not a chapter");
-      // reference.chapterNum is 1 — must be inserted as-is, not incremented to 2.
-      expect(children[2].getNumber()).toBe("1");
+      // The reference's chapter is 2 — must be inserted as-is, not incremented to 3.
+      expect(children[2].getNumber()).toBe("2");
       if (!$isParaNode(children[3]))
         throw new Error("Inserted node after inserted chapter is not a ParaNode");
     });

@@ -4,8 +4,9 @@
  * removes a second one, so nothing here applies to them.
  *
  * Every way of asking for the chapter inserts it the same way: the `\` menu's `\c` pick
- * (`$applyMarkerMenuSelection`), `EditorRef.insertMarker("c")` (the host's menu outside Standard
- * view), and `EditorRef.insertFirstChapter` (the host's "Add chapter number" button, which also
+ * (`$applyMarkerMenuSelection`), the `\c` marker action (`getUsjMarkerAction`, behind both
+ * `EditorRef.insertMarker("c")`, the host's menu outside Standard view, and the editor's own marker
+ * menu), and `EditorRef.insertFirstChapter` (the host's "Add chapter number" button, which also
  * wants empty verses).
  */
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
