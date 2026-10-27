@@ -52,6 +52,7 @@ import {
   $isUnknownNode,
   $isVerseNode,
   $isMarkerTrailingSeparator,
+  $isPresentationNbsp,
   $milestoneAttributeRunPieces,
   $verseAttributeRunPieces,
   closingMarkerText,
@@ -168,11 +169,12 @@ export function toFragmentText(text: string): string {
  *   byte. It is spelled `~` — the tokenizer's input convention (`usjText` maps `~` back to NBSP,
  *   PT9 UsfmParser) — so a settle that rewrites the paragraph round-trips it instead of
  *   corrupting it to a plain space. Two structural shapes still flatten to " " even here:
- *   a node that is EXACTLY one NBSP (the engine-owned spacer / empty-char placeholder shape,
- *   which serialization also treats as structural — the lone-NBSP byte test in
- *   editor-usj.adaptor.ts), and the one structural leading NBSP fused onto a char span's first
+ *   a TAGGED presentation node (the engine-owned spacer / empty-char placeholder, recognized by
+ *   `$isPresentationNbsp`, which the caller routes through {@link toFragmentText} before this
+ *   function sees it), and the one structural leading NBSP fused onto a char span's first
  *   content child (`structuralLead` — the positional twin of `createCharMarker`'s non-standard
- *   first-string strip in editor-usj.adaptor.ts).
+ *   first-string strip in editor-usj.adaptor.ts). An untagged node that is exactly one NBSP is
+ *   real data: it spells `~`, like any other content NBSP.
  *
  * ONE definition for every fragment producer: the mutating rebuilds and the read-only settle both
  * build their fragments through `$appendNodesFragment` below, so the mirror can never flatten a
@@ -185,7 +187,6 @@ export function contentFragmentText(
   structuralLead = false,
 ): string {
   if (hasStandardViewWhitespace(viewOptions)) return toFragmentText(text);
-  if (text === NBSP) return " ";
   const hasLead = structuralLead && text.startsWith(NBSP);
   const body = hasLead ? text.slice(1) : text;
   return (hasLead ? " " : "") + body.replaceAll(NBSP, "~");
@@ -992,7 +993,9 @@ function $appendNodesFragment(
       // NBSP-to-space flattening in every view; everything else is a content run, where the
       // flattening is view-dependent (see `contentFragmentText`).
       const isStructuralRun =
-        $isMarkerTrailingSeparator(node) || $getState(node, textTypeState) === "attribute";
+        $isMarkerTrailingSeparator(node) ||
+        $isPresentationNbsp(node) ||
+        $getState(node, textTypeState) === "attribute";
       const structuralLead = consumeCharLead() && !isStructuralRun;
       pushText(
         out,

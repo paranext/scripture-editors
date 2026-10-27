@@ -10,7 +10,11 @@
 import editorUsjAdaptor, {
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
-import { initialize as initializeSerialize, reset } from "../adaptors/usj-editor.adaptor";
+import {
+  initialize as initializeSerialize,
+  reset,
+  serializeEditorState,
+} from "../adaptors/usj-editor.adaptor";
 import { $pendGlyphEdit } from "./markerEdit.test-helpers";
 import { COMMIT_PENDING_MARKERS_COMMAND, MarkerEditPlugin } from "./MarkerEditPlugin";
 import { Tier2Context } from "./tier2Rebuild.utils";
@@ -27,6 +31,7 @@ import {
   getMarker as bundledGetMarker,
   getPendedDisplayOwners,
   NBSP,
+  $isMarkerNode,
 } from "shared";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
@@ -58,6 +63,28 @@ async function unformattedTestEnvironment($initialEditorState: () => void) {
 function usjOf(editor: LexicalEditor): Usj | undefined {
   initializeDeserialize(undefined);
   return editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), unformattedViewOptions);
+}
+
+/** Mounts an unformatted-view editor whose initial state is `usj` run through the real loader, so
+ * the nodes carry exactly the tags (or lack of them) a loaded document gets. */
+async function unformattedTestEnvironmentFromUsj(usj: Usj) {
+  initializeSerialize(undefined, undefined);
+  initializeDeserialize(undefined);
+  reset();
+  const state = serializeEditorState(usj, unformattedViewOptions);
+  return baseTestEnvironment(
+    JSON.stringify({ root: state.root }),
+    <MarkerEditPlugin viewOptions={unformattedViewOptions} />,
+  );
+}
+
+/** The first MarkerNode in the tree whose marker is `marker`. */
+function $findMarkerGlyph(marker: string) {
+  return $getRoot()
+    .getAllTextNodes()
+    .find(
+      (node) => $isMarkerNode(node) && node.getMarker() === marker && node.getType() === "marker",
+    );
 }
 
 /** Depth-first search for the first CharNode with `marker` anywhere under `root`. */
@@ -182,5 +209,146 @@ describe("unformatted view: content NBSP across a settle", () => {
       editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
     });
     expect(usjOf(editor)).toEqual(mirror);
+  });
+
+  it("preserves a lone NBSP between char spans when a marker edit settles the paragraph", async () => {
+    const { editor } = await unformattedTestEnvironmentFromUsj({
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            { type: "char", marker: "wj", content: ["glory"] },
+            NBSP,
+            { type: "char", marker: "nd", content: ["Lord"] },
+          ],
+        },
+      ],
+    });
+    await act(async () =>
+      editor.update(() => {
+        const glyph = $findMarkerGlyph("p");
+        if (!glyph || !$isMarkerNode(glyph)) throw new Error("p glyph not found");
+        $pendGlyphEdit(glyph, "\\q1");
+      }),
+    );
+    await act(async () => {
+      editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
+    });
+    const para = usjOf(editor)?.content[0] as MarkerObject;
+    expect(para.marker).toBe("q1");
+    expect(para.content).toEqual([
+      { type: "char", marker: "wj", content: ["glory"] },
+      NBSP,
+      { type: "char", marker: "nd", content: ["Lord"] },
+    ]);
+  });
+
+  it("an empty char span still settles to an empty span", async () => {
+    const { editor } = await unformattedTestEnvironmentFromUsj({
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "para",
+          marker: "p",
+          content: ["alpha ", { type: "char", marker: "nd", content: [] }, " omega"],
+        },
+      ],
+    });
+    await act(async () =>
+      editor.update(() => {
+        const glyph = $findMarkerGlyph("p");
+        if (!glyph || !$isMarkerNode(glyph)) throw new Error("p glyph not found");
+        $pendGlyphEdit(glyph, "\\q1");
+      }),
+    );
+    await act(async () => {
+      editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
+    });
+    const para = usjOf(editor)?.content[0] as MarkerObject;
+    expect(para.marker).toBe("q1");
+    const nd = para.content?.find(
+      (item): item is MarkerObject => typeof item !== "string" && item.marker === "nd",
+    );
+    expect(nd?.content ?? []).toEqual([]);
+  });
+
+  it("the read-only settle and the live settle agree on the lone NBSP", async () => {
+    const { editor } = await unformattedTestEnvironmentFromUsj({
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            { type: "char", marker: "wj", content: ["glory"] },
+            NBSP,
+            { type: "char", marker: "nd", content: ["Lord"] },
+          ],
+        },
+      ],
+    });
+    await act(async () =>
+      editor.update(() => {
+        const glyph = $findMarkerGlyph("p");
+        if (!glyph || !$isMarkerNode(glyph)) throw new Error("p glyph not found");
+        $pendGlyphEdit(glyph, "\\q1");
+      }),
+    );
+    const serializedState = editor.getEditorState().toJSON();
+    const pendedKeys = getPendedDisplayOwners(editor) ?? new Set<string>();
+    const mirror = editor
+      .getEditorState()
+      .read(() => $settledUsj(serializedState, pendedKeys, context));
+    expect(mirror).toBeDefined();
+    expect((mirror?.content[0] as MarkerObject).content).toContain(NBSP);
+
+    await act(async () => {
+      editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
+    });
+    expect(usjOf(editor)).toEqual(mirror);
+  });
+
+  it("preserves a lone NBSP between char spans inside a note across a note-scoped settle", async () => {
+    const { editor } = await unformattedTestEnvironmentFromUsj({
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            "text",
+            {
+              type: "note",
+              marker: "f",
+              caller: "+",
+              content: [
+                { type: "char", marker: "ft", content: ["alpha"] },
+                NBSP,
+                { type: "char", marker: "fq", content: ["beta"] },
+              ],
+            },
+            " after",
+          ],
+        },
+      ],
+    });
+    // Typing a terminated literal into the note's text settles the note's own scope.
+    await act(async () =>
+      editor.update(() => {
+        const alpha = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("alpha"));
+        alpha?.setTextContent(`${alpha.getTextContent()} \\nd Lord\\nd* end`);
+      }),
+    );
+    const note = JSON.stringify(usjOf(editor));
+    expect(note).toContain('"marker":"nd"');
+    expect(note).toContain(`"${NBSP}",{"type":"char","marker":"fq"`);
   });
 });
