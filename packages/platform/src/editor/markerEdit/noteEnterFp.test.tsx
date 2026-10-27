@@ -1388,12 +1388,7 @@ describe("multi-line plain-text paste inside note content", () => {
     });
   });
 
-  it("normalizes a data-NBSP at the start of a note's SECOND \\fp line to a plain space, not `~` — the same leading-NBSP-per-line pass the main paste path uses", async () => {
-    // `normalizePastedNbsp`'s leading-NBSP pass is `gm`-flagged: `^` matches right after every
-    // `\n`, not just at the very start of the whole paste (whitespaceDisplay.plugin.utils.test.tsx
-    // pins the identical outcome for the main external-paste path). A leading NBSP reads as a
-    // structural separator with nothing in front of it to match against, the same as a partial
-    // selection starting exactly at a char span's own leading separator.
+  it("keeps a data-NBSP at the start of a note's SECOND \\fp line as data (`~`), as the main paste path does", async () => {
     const { editor } = await renderStandardEditorWithUnclosedNote();
 
     await pasteAt(editor, `first\n${NBSP}second`, $selectFtEnd);
@@ -1402,9 +1397,7 @@ describe("multi-line plain-text paste inside note content", () => {
       const note = findOnlyNote($getRoot());
       const chars = note.getChildren().filter($isCharNode);
       expect(chars.map((c) => c.getMarker())).toEqual(["ft", "fp"]);
-      // Leading NBSP on the second line became a plain space, not data (`~`).
-      expect(chars[1].getTextContent()).toContain(" second");
-      expect(chars[1].getTextContent()).not.toContain("~");
+      expect(chars[1].getTextContent()).toContain("~second");
     });
   });
 

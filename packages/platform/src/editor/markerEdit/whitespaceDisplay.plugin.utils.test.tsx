@@ -66,6 +66,7 @@ import {
   $isTypedMarkNode,
   $isUnknownNode,
   NBSP,
+  NBSP_STAND_IN,
   NoteNode,
   ParaNode,
   textTypeState,
@@ -1733,11 +1734,13 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
         );
       });
 
-      it("maps EVERY member of a leading NBSP run to a plain space, not just the first", () => {
-        // A Standard-view paragraph-leading space run is stored as all-NBSP, so a run at a line's
-        // start is display spacing from its first member to its last, never data.
-        expect(normalizePastedNbsp(`${NBSP}${NBSP}word`)).toBe("  word");
-        expect(normalizePastedNbsp(`a\n${NBSP}${NBSP}${NBSP}word`)).toBe("a\n   word");
+      it("keeps an NBSP at the start of the paste or of a line as data, alone or in a run", () => {
+        // No copy this editor makes puts display spacing at a line start (its copy writes a space
+        // for every display NBSP), so a line-leading NBSP is the user's no-break space.
+        expect(normalizePastedNbsp(NBSP)).toBe("~");
+        expect(normalizePastedNbsp(`${NBSP}${NBSP}word`)).toBe("~~word");
+        expect(normalizePastedNbsp(`a\n${NBSP}${NBSP}${NBSP}word`)).toBe("a\n~~~word");
+        expect(normalizePastedNbsp(`${NBSP} word`, NBSP_STAND_IN)).toBe(`${NBSP_STAND_IN} word`);
       });
     });
 
@@ -1899,7 +1902,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       expect(roundTripped).not.toContain("~");
     });
 
-    it("normalizes a leading NBSP with no preceding marker literal (a partial selection starting at a char span's structural separator)", async () => {
+    it("keeps a leading NBSP with no preceding marker literal as data", async () => {
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         const para = $createParaNode("p");
@@ -1919,8 +1922,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       expect(handled).toBe(true);
       editor.getEditorState().read(() => {
         const content = $getRoot().getTextContent();
-        expect(content).toContain(" Lord");
-        expect(content).not.toContain("~Lord");
+        expect(content).toContain("~Lord");
       });
     });
 
@@ -2028,11 +2030,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       });
     });
 
-    it("a leading NBSP on a SECOND line (right after an internal `\\n`, not string-start) also normalizes to a space, under the `gm`-flagged leading-NBSP pass", async () => {
-      // `normalizePastedNbsp`'s leading-NBSP pass uses the `gm` flags, so `^` matches after
-      // every `\n`, not just at the very start of the whole paste — a later paragraph of a
-      // multi-line paste can itself start mid-span (a partial selection spanning a paragraph
-      // boundary) and reads as the same structural separator the string-start case does.
+    it("keeps a leading NBSP on a SECOND line (right after an internal `\\n`) as data, as at the start of the paste", async () => {
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         const para = $createParaNode("p");
@@ -2056,9 +2054,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
         const paras = $getRoot().getChildren().filter($isParaNode);
         expect(paras).toHaveLength(2);
         expect(paras[0].getTextContent()).toContain("before one");
-        // The second line's leading NBSP became a plain space, not data — no `~` anywhere.
-        expect(paras[1].getTextContent()).toContain(" twoafter");
-        expect(paras[1].getTextContent()).not.toContain("~");
+        expect(paras[1].getTextContent()).toContain("~twoafter");
       });
     });
 
