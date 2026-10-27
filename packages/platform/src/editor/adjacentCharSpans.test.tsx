@@ -1,7 +1,8 @@
 /**
  * Two adjacent char spans of one marker are two spans: two `\w` words, each with its own `lemma`,
  * or two `\nd` names. Paratext never joins them, and neither may the editor when content holding
- * them arrives — pasted from a copy, or applied as ops — in any view a user edits Scripture in.
+ * them arrives — pasted from a copy, or applied as ops — or when a marker is applied to the text
+ * right after a span of the same marker, in any view a user edits Scripture in.
  */
 import {
   EDITING_VIEWS,
@@ -250,6 +251,158 @@ describe("applying ops for a span right before a span of the same marker", () =>
       );
 
       expect(spansOf(mounted)).toEqual([inserted, char("w", "b", { lemma: "y" })]);
+    });
+  });
+});
+
+const scrRef = { book: "GEN", chapterNum: 1, verseNum: 1 };
+
+type Endpoint = [string, number];
+type MarkingCase = [string, string, MarkerContent[], Endpoint, Endpoint, MarkerContent[]];
+
+/** The two ways a user applies a character marker to a selection: the marker menu, and the
+ * host's insert-marker call the toolbar makes. */
+const applyPaths: [string, (mounted: MountedEditor, marker: string) => void][] = [
+  [
+    "the marker menu",
+    (mounted, marker) =>
+      mounted.ref.current?.applyMarkerMenuSelection(
+        { marker, kind: "character", isBasic: false },
+        { trigger: "backslash", literalPrefixLanded: false },
+      ),
+  ],
+  ["insertMarker", (mounted, marker) => mounted.ref.current?.insertMarker(marker)],
+];
+
+async function spansAfterMarking(
+  view: EditingViewName,
+  apply: (mounted: MountedEditor, marker: string) => void,
+  [, marker, content, start, end]: MarkingCase,
+): Promise<MarkerContent[]> {
+  const mounted = await mountInView(doc(content), editorView(view), { scrRef });
+  await select(mounted.lexical, start, end);
+  act(() => apply(mounted, marker));
+  await settle();
+  const spans = spansOf(mounted);
+  mounted.unmount();
+  return spans;
+}
+
+/** Text marked right after a span of the same marker, the selection not reaching into it: a new
+ * span, as in Paratext 9 and Standard view. */
+const besideCases: MarkingCase[] = [
+  [
+    "\\nd on the word right after an \\nd span",
+    "nd",
+    [char("nd", "Lord"), "God"],
+    ["God", 0],
+    ["God", 3],
+    [char("nd", "Lord"), char("nd", "God")],
+  ],
+  [
+    "\\w on the word right after a \\w word",
+    "w",
+    [char("w", "a"), "b"],
+    ["b", 0],
+    ["b", 1],
+    [char("w", "a"), char("w", "b")],
+  ],
+  [
+    "\\w on a space and a word right after a \\w word",
+    "w",
+    [char("w", "a"), " b"],
+    [" b", 0],
+    [" b", 2],
+    [char("w", "a"), char("w", "b")],
+  ],
+];
+
+/** The same, with the selection starting at the end of the span's own text — where a selection
+ * dragged from right after the span's closer can start. */
+const besideFromSpanEndCases: MarkingCase[] = [
+  [
+    "\\nd on the word after an \\nd span, selected from the span's end",
+    "nd",
+    [char("nd", "Lord"), "God"],
+    ["Lord", 4],
+    ["God", 3],
+    [char("nd", "Lord"), char("nd", "God")],
+  ],
+];
+
+/** Text marked over part of a span of the same marker: the span is extended to cover the
+ * selection. Paratext 9 mangles the line in this case (it can replace the selection with a closing
+ * marker); the editor extends the span instead (TJ, 2026-10-27). */
+const overlapCases: MarkingCase[] = [
+  [
+    "\\nd over the end of an \\nd span and the word after it",
+    "nd",
+    [char("nd", "Lord"), "God"],
+    ["Lord", 2],
+    ["God", 3],
+    [char("nd", "LordGod")],
+  ],
+  [
+    "\\nd over a whole \\nd span and the word after it",
+    "nd",
+    [char("nd", "Lord"), "God"],
+    ["Lord", 0],
+    ["God", 3],
+    [char("nd", "LordGod")],
+  ],
+];
+
+describe("marking text beside a span of the same marker", () => {
+  describe.each(EDITING_VIEWS)("in $name view", ({ name: view }) => {
+    describe.each(applyPaths)("through %s", (_, apply) => {
+      it.each(besideCases)("keeps %s a span of its own", async (...markingCase) => {
+        expect(await spansAfterMarking(view, apply, markingCase)).toEqual(markingCase[5]);
+      });
+    });
+  });
+
+  describe.each(hiddenMarkerViews)("in $name view", ({ name: view }) => {
+    describe.each(applyPaths)("through %s", (_, apply) => {
+      it.each(besideFromSpanEndCases)("keeps %s a span of its own", async (...markingCase) => {
+        expect(await spansAfterMarking(view, apply, markingCase)).toEqual(markingCase[5]);
+      });
+
+      // Paratext 9 mangles the line here; the span is extended instead.
+      it.each(overlapCases)("extends the span for %s", async (...markingCase) => {
+        expect(await spansAfterMarking(view, apply, markingCase)).toEqual(markingCase[5]);
+      });
+    });
+
+    // Each selected piece takes the marker where it sits, the part inside the span nested in it.
+    it.each(applyPaths)(
+      "marks a selection leaving a span of another marker through %s",
+      async (_, apply) => {
+        const spans = await spansAfterMarking(view, apply, [
+          "",
+          "w",
+          [char("nd", "Lord"), "God"],
+          ["Lord", 2],
+          ["God", 3],
+          [],
+        ]);
+
+        expect(spans).toEqual([
+          { type: "char", marker: "nd", content: ["Lo", char("w", "rd")] },
+          char("w", "God"),
+        ]);
+      },
+    );
+
+    it("extends a span over the word right after it on an explicit extend", async () => {
+      const mounted = await mountInView(doc([char("nd", "Lord"), "God"]), editorView(view));
+      await select(mounted.lexical, ["God", 0], ["God", 3]);
+
+      act(() => {
+        mounted.ref.current?.extendCharacterMarker("nd");
+      });
+      await settle();
+
+      expect(spansOf(mounted)).toEqual([char("nd", "LordGod")]);
     });
   });
 });

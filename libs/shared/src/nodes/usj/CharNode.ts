@@ -432,6 +432,48 @@ export function $arrivedTogetherFromClipboard(a: CharNode, b: CharNode): boolean
   return record.keys.has(a.getKey()) && record.keys.has(b.getKey());
 }
 
+/**
+ * For each editor, the char spans that its current update's marker apply (the marker menu,
+ * `insertMarker`) created, and the committed state that update started from — which is how a later
+ * update knows the record is not its own.
+ */
+const newlyMarkedSpans = new WeakMap<LexicalEditor, { from: EditorState; keys: Set<NodeKey> }>();
+
+/**
+ * Record `node`, when it is a char span, as one a marker apply is creating in this update, so
+ * {@link $isNewlyMarkedSpan} can tell it from a span the document already held. Every span one apply
+ * creates is recorded, so the pieces of one marked run are recognized as made together.
+ *
+ * Call it inside the editor update that creates `node`.
+ * @param node - The node the marker apply created.
+ * @returns `node`, so a node factory can record what it builds inline.
+ */
+export function $recordNewlyMarkedSpan<T extends LexicalNode>(node: T): T {
+  if (!$isCharNode(node)) return node;
+  const editor = $getEditor();
+  const from = editor.getEditorState();
+  let record = newlyMarkedSpans.get(editor);
+  if (record?.from !== from) {
+    record = { from, keys: new Set() };
+    newlyMarkedSpans.set(editor, record);
+  }
+  record.keys.add(node.getKey());
+  return node;
+}
+
+/**
+ * Whether a marker apply created `span` in this update ({@link $recordNewlyMarkedSpan}).
+ *
+ * Call it inside an editor update or read.
+ * @param span - A char span.
+ */
+export function $isNewlyMarkedSpan(span: CharNode): boolean {
+  const editor = $getEditor();
+  const record = newlyMarkedSpans.get(editor);
+  if (record?.from !== editor.getEditorState()) return false;
+  return record.keys.has(span.getKey());
+}
+
 export function isSerializedCharNode(
   node: SerializedLexicalNode | null | undefined,
 ): node is SerializedCharNode {

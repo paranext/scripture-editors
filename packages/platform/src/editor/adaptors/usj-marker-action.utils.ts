@@ -36,6 +36,7 @@ import {
   $isVisibleMarkerNode,
   $liftOutOfCharStack,
   $normalizeSelectionOutOfGlyphText,
+  $recordNewlyMarkedSpan,
   $setCharNodeMarker,
   authoredNbspState,
   CharNode,
@@ -323,7 +324,12 @@ export function getUsjMarkerAction(
       const { content, highlightInserted } = markerAction.action(currentEditor);
 
       const serializedLexicalNode = createLexicalUsjNode(content, usjEditorAdaptor, viewOptions);
-      const nodeToInsert = $createNodeFromSerializedNode(serializedLexicalNode);
+      // Every span this apply creates is recorded, so `CharNodePlugin` keeps it apart from an alike
+      // span the document already held beside it: marking the word after `\nd Lord\nd*` makes a
+      // second span, as in Paratext 9.
+      const $createMarkedNode = () =>
+        $recordNewlyMarkedSpan($createNodeFromSerializedNode(serializedLexicalNode));
+      const nodeToInsert = $createMarkedNode();
 
       if ($isRangeSelection(selection)) {
         const node = selection.anchor.getNode();
@@ -331,6 +337,16 @@ export function getUsjMarkerAction(
         const innermostChar = $innermostCharAncestor(node);
         const sameNode = selection.anchor.key === selection.focus.key;
         if (
+          $isCharNode(nodeToInsert) &&
+          viewOptions?.markerMode !== "editable" &&
+          $selectsTextInAndOutsideSpanOf(selection, marker)
+        ) {
+          // A selection reaching into a span of the same marker, and past it, extends that span
+          // over the selection. Paratext 9 mangles the line here (in some cases it replaces the
+          // selection with a closing marker), so this deliberately does not follow it (TJ,
+          // 2026-10-27). Standard view, where the selection holds the span's glyphs, keeps its wrap.
+          $extendCharacterMarkerAtSelection(selection, marker, undefined, viewOptions);
+        } else if (
           $isCharNode(nodeToInsert) &&
           innermostChar &&
           sameNode &&
@@ -356,9 +372,7 @@ export function getUsjMarkerAction(
           $applyNonNestAcrossNodes(selection, nodeToInsert, viewOptions?.markerMode === "editable");
         } else if (selection.getTextContent().length > 0) {
           // If the selection has text content, wrap the text selection in an inline node
-          $wrapTextSelectionInInlineNode(selection, () =>
-            $createNodeFromSerializedNode(serializedLexicalNode),
-          );
+          $wrapTextSelectionInInlineNode(selection, $createMarkedNode);
         } else if ($isElementNode(nodeToInsert) && !nodeToInsert.isInline()) {
           // If the selection is empty, insert a new paragraph and replace it with the USJ node
           const paragraph = selection.insertParagraph();
@@ -804,12 +818,22 @@ function $wrapTextSelectionInInlineNode(
 ): void {
   const nodes = selection.getNodes();
   const [startOffset, endOffset] = getSelectionOffsets(selection);
+  const anchorNode = selection.anchor.getNode();
+  const focusNode = selection.focus.getNode();
 
   let currentWrapper: LexicalNode | undefined;
 
   nodes.forEach((node, index) => {
     // Skip if node is already wrapped
     if ($isElementNode(currentWrapper) && currentWrapper.isParentOf(node)) {
+      return;
+    }
+
+    // A span the selection starts or ends inside is only partly selected: its selected text is
+    // listed (and wrapped) on its own. Wrapping the span itself would move it into a wrapper placed
+    // inside it, which never terminates.
+    if ($isElementNode(node) && (node.isParentOf(anchorNode) || node.isParentOf(focusNode))) {
+      currentWrapper = undefined;
       return;
     }
 
@@ -874,6 +898,29 @@ function getSelectionOffsets(selection: RangeSelection): [number, number] {
 }
 
 /**
+ * Whether `selection` holds text inside a span of `marker` and text outside one — a selection that
+ * overlaps part of such a span, or holds one whole and more besides. A selection wholly inside one,
+ * or touching one only at its edge, is neither.
+ *
+ * Read-only: safe inside `editor.update()` before any mutation.
+ */
+function $selectsTextInAndOutsideSpanOf(selection: RangeSelection, marker: string): boolean {
+  const nodes = selection.getNodes();
+  const [startOffset, endOffset] = getSelectionOffsets(selection);
+  let isInSpan = false;
+  let isOutsideSpan = false;
+  nodes.forEach((node, index) => {
+    if (!$isTextNode(node) || $isMarkerNode(node) || $isInsideNote(node)) return;
+    const start = index === 0 ? startOffset : 0;
+    const end = index === nodes.length - 1 ? endOffset : node.getTextContentSize();
+    if (end <= start) return;
+    if ($getMatchingCharNode(node, marker)) isInSpan = true;
+    else isOutsideSpan = true;
+  });
+  return isInSpan && isOutsideSpan;
+}
+
+/**
  * Whether a marker action never acts on `node`: mark nodes and note contents are always skipped.
  *
  * @param node - The node to check.
@@ -918,7 +965,9 @@ function handleTextNode(
   const start = isFirst ? startOffset : 0;
   const end = isLast ? endOffset : textLength;
 
-  if (start === 0 && end === 0) return;
+  // A boundary node the selection holds none of — a selection starting at the very end of a span's
+  // text — is not a target.
+  if (start === end) return;
 
   const splitNodes = node.splitText(start, end);
 
