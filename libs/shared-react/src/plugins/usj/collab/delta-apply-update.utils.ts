@@ -7,6 +7,7 @@ import {
   $isEmbedNode,
   $isOTTextNode,
   DeltaOp,
+  DeltaSource,
   EmbedNode,
   isInsertEmbedOpOfType,
   LF,
@@ -82,6 +83,7 @@ import {
   CharNode,
   closingMarkerText,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
+  EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE,
   $markEmptyCharPlaceholder,
   $markPresentationSpacer,
   getUnknownAttributes,
@@ -139,6 +141,12 @@ For CharNodes, we use the following logic:
  * @param viewOptions - View options of the editor.
  * @param nodeOptions - Node options for USJ nodes.
  * @param logger - Logger to use, if any.
+ * @param source - Where the ops came from. Only a `"remote"` apply (the default: a collab peer or
+ *   a persisted delta) tags the lone NBSP it materialized in a scaffolding slot as presentation
+ *   (see `$tagCollabScaffoldingNbsp`); a `"local"` apply, such as the footnote popover's Save,
+ *   carries this editor's own ops, so an authored `~` in those slots stays content.
+ *
+ * Mutating: call inside `editor.update()`.
  *
  * @see https://github.com/ottypes/rich-text
  */
@@ -147,11 +155,15 @@ export function $applyUpdate(
   viewOptions: ViewOptions,
   nodeOptions: UsjNodeOptions,
   logger?: LoggerBasic,
+  source: DeltaSource = "remote",
 ) {
   /** Tracks the current position in the OT document */
   let currentIndex = 0;
-  /** Text nodes this call materialized, judged for scaffolding NBSP after all ops. */
-  const materializedTexts = new Set<NodeKey>();
+  /**
+   * Text nodes a remote apply materialized, judged for scaffolding NBSP after all ops. Left
+   * undefined for a local apply, which judges nothing: its lone NBSP is authored content.
+   */
+  const materializedTexts = source === "remote" ? new Set<NodeKey>() : undefined;
   ops.forEach((op) => {
     if ("retain" in op) {
       currentIndex += $retain(op, currentIndex, viewOptions, logger);
@@ -203,7 +215,7 @@ export function $applyUpdate(
       logger?.error(`Unknown operation: ${JSON.stringify(op)}`);
     }
   });
-  $tagCollabScaffoldingNbsp(materializedTexts);
+  if (materializedTexts) $tagCollabScaffoldingNbsp(materializedTexts);
 }
 
 /**
@@ -223,9 +235,10 @@ export function $applyUpdate(
  *
  * Accepted cost: an authored span-only `~` (`\nd ~\nd*`), or a `~` leading an element-first
  * span, that arrives THROUGH COLLAB is indistinguishable from an older peer's scaffolding and is
- * dropped on save. A local load and save of the same content keeps it.
+ * dropped on save. A local load and save of the same content keeps it, and so does a `"local"`
+ * apply (the footnote popover's Save), which never runs this.
  *
- * Mutating: call inside `editor.update()` (from `$applyUpdate`, after its ops).
+ * Mutating: call inside `editor.update()` (from a remote `$applyUpdate`, after its ops).
  */
 function $tagCollabScaffoldingNbsp(texts: Set<NodeKey>): void {
   for (const key of texts) {
@@ -2164,7 +2177,8 @@ function $createNestedChars(
   // the text starts a new span or appends into an existing span's tail — an NBSP prepended to a
   // tail-append is fabricated content (`~` in the file), not a separator.
   addEditableSeparator = false,
-  // Collects a text innerNode this apply materialized, for `$tagCollabScaffoldingNbsp`.
+  // Collects a text innerNode this apply materialized, for `$tagCollabScaffoldingNbsp`. Present
+  // only for a remote apply; undefined for a local one.
   materializedTexts?: Set<NodeKey>,
 ): LexicalNode[] {
   if ($isTextNode(innerNode) && innerNode.getTextContentSize() === 0) {
@@ -2172,12 +2186,16 @@ function $createNestedChars(
     $markEmptyCharPlaceholder(innerNode);
   }
   // Prepend the structural separator to a text innerNode about to become a fresh span's first
-  // content (never to the empty-char placeholder, which stands alone).
+  // content. Never to the empty-char placeholder, which stands alone. Nor, in a remote apply, to
+  // a lone NBSP: that may be an older peer's placeholder or spacer, which
+  // `$tagCollabScaffoldingNbsp` judges after all ops in its bare shape. A local apply's lone NBSP
+  // is an authored `~` and takes the separator like any other first content.
   const $prependEditableSeparator = (): void => {
     if (
       addEditableSeparator &&
       $isTextNode(innerNode) &&
-      innerNode.getTextContent() !== EMPTY_CHAR_PLACEHOLDER_TEXT
+      $getState(innerNode, textTypeState) !== EMPTY_CHAR_PLACEHOLDER_TEXT_TYPE &&
+      !(materializedTexts && innerNode.getTextContent() === NBSP)
     )
       innerNode.setTextContent(NBSP + innerNode.getTextContent());
   };

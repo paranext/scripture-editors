@@ -40,9 +40,17 @@ import {
   $isNoteNode,
   getMarker as bundledGetMarker,
   LoggerBasic,
+  NBSP,
   NoteNode,
 } from "shared";
-import { DeltaOp, DeltaOpInsertNoteEmbed, getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
+import {
+  DeltaOp,
+  DeltaOpInsertNoteEmbed,
+  FORMATTED_VIEW_MODE,
+  getViewOptions,
+  STANDARD_VIEW_MODE,
+  UNFORMATTED_VIEW_MODE,
+} from "shared-react";
 
 function requireDefined<T>(value: T | undefined | null, message: string): T {
   if (value === undefined || value === null) throw new Error(message);
@@ -542,4 +550,66 @@ describe("popover note ops round-trip (canonical glyph-free contract)", () => {
       ["third paragraph"],
     ]);
   }, 30000);
+});
+
+describe("popover save keeps an authored lone `~`", () => {
+  /**
+   * A note with the two scaffolding-shaped authored `~`s: an `\fq` span holding only `~`, and an
+   * `\fk` span whose `~` leads a nested `\+wj`. (Distinct markers: adjacent attribute-identical
+   * spans merge when materialized from ops.)
+   */
+  const loneNbspNoteUsj: MarkerObject = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [
+      { type: "char", marker: "fr", content: ["1:1 "], closed: "false" } as ClosableMarkerObject,
+      { type: "char", marker: "fq", content: [NBSP] },
+      {
+        type: "char",
+        marker: "fk",
+        content: [NBSP, { type: "char", marker: "wj", content: ["x"] }],
+      },
+      { type: "char", marker: "ft", content: ["text"], closed: "false" } as ClosableMarkerObject,
+    ],
+  };
+
+  const loneNbspUsj: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+      { type: "chapter", marker: "c", number: "1" },
+      {
+        type: "para",
+        marker: "p",
+        content: [{ type: "verse", marker: "v", number: "1" }, "first ", loneNbspNoteUsj, "end"],
+      },
+    ],
+  };
+
+  // Outside Standard view a lone `~` is a bare NBSP text node, the shape the remote-apply
+  // scaffolding tagger judges. Standard view spells it as a literal `~` and is never at risk.
+  it.each([FORMATTED_VIEW_MODE, UNFORMATTED_VIEW_MODE])(
+    "keeps span-only and element-leading `~`s through replaceEmbedUpdate in %s view (a local save)",
+    async (viewMode) => {
+      const view = requireDefined(getViewOptions(viewMode), `${viewMode} view options`);
+      const host = await renderEditor({ ...hostOptions, view }, loneNbspUsj);
+      const hostUsj = requireDefined(host.editorRef.getUsj(), "host USJ");
+      expect(findUsjNotes(hostUsj)[0]).toEqual(loneNbspNoteUsj);
+
+      const noteOps = requireDefined(host.editorRef.getNoteOps(0), "host note ops") as DeltaOp[];
+      expect(JSON.stringify(noteOps)).toContain(NBSP);
+      const hostNoteKey = host.lexical
+        .getEditorState()
+        .read(() => requireDefined($findNotes()[0], "host note").getKey());
+      await act(async () => {
+        host.editorRef.replaceEmbedUpdate(hostNoteKey, noteOps);
+      });
+
+      const savedUsj = requireDefined(host.editorRef.getUsj(), "host USJ after save");
+      expect(findUsjNotes(savedUsj)[0]).toEqual(loneNbspNoteUsj);
+    },
+    30000,
+  );
 });

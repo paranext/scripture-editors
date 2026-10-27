@@ -109,6 +109,7 @@ import {
   ContextMenuPlugin,
   DeltaOnChangePlugin,
   DeltaOp,
+  DeltaSource,
   DisableHistoryShortcutsPlugin,
   EditableMarkerMenuHarness,
   EditablePlugin,
@@ -472,6 +473,57 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     );
   }, [viewOptions, markerLookup, stableLogger]);
 
+  /**
+   * Apply delta ops to this editor and report the change.
+   *
+   * @param source - The change source: tags the update and is what `onUsjChange` reports.
+   * @param opsSource - Where the ops came from, which `$applyUpdate` uses to decide whether a lone
+   *   NBSP in a scaffolding slot may be an older collab peer's presentation NBSP (remote only).
+   *   Differs from `source` only for the footnote popover's Save, which reports as a remote
+   *   (programmatic) change but carries this editor's own ops.
+   */
+  const applyOps = (ops: DeltaOp[], source: DeltaSource, opsSource: DeltaSource) => {
+    // Delta ops address content by its position in the USJ, which this layout's regrouping
+    // changes, so applying them would edit the wrong nodes rather than fail. A remote op is not
+    // a caller error, and throwing into a host's op loop would tear it down, so report and drop
+    // it - a read-only view refreshes by being handed new USJ, not by replaying deltas.
+    if (isBlockVerse && source === "remote") {
+      loggerRef.current?.error(
+        "Editor: ignoring a remote update in the block verse layout; reload the view with the " +
+          "new USJ instead.",
+      );
+      return;
+    }
+    // Block verse only, not `effectiveIsReadonly`: a read-only pane in a collaborative session is
+    // a supported flow, and it stays current by having remote deltas applied to it. Throwing here
+    // would tear down the host's op loop for the same reason the remote branch above reports and
+    // drops instead of throwing.
+    assertNotBlockVerse("apply an update");
+    editorRef.current?.update(
+      () => {
+        if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
+        $applyUpdate(ops, viewOptions, nodeOptions, stableLogger, opsSource);
+      },
+      { discrete: true },
+    );
+    const editorState = editorRef.current?.getEditorState();
+    if (!editorState) return;
+
+    const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
+    if (newUsj) {
+      const isEdited = !deepEqual(editedUsjRef.current, newUsj);
+      if (isEdited) editedUsjRef.current = newUsj;
+      if (isEdited || !deepEqual(usj, newUsj)) {
+        // "apply" coordinates: `$applyUpdate` placed the inserted node by interpreting the
+        // retain with its own traversals (every embed opaque), so the reverse lookup must
+        // count the same way to find the node that was actually inserted.
+        const insertedNodeKey = getInsertedNodeKey(ops, editorState, "apply");
+        lastNotifiedUsjRef.current = newUsj;
+        onUsjChange?.(newUsj, ops, source, insertedNodeKey);
+      }
+    }
+  };
+
   // Built as a plain object (rebuilt per render, same as the previous inline useImperativeHandle
   // factory) and assigned to editorApiRef UNCONDITIONALLY below — never inside the
   // useImperativeHandle factory, which React only invokes when the consumer actually attached a
@@ -553,49 +605,16 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       }
     },
     applyUpdate(ops, source = "remote") {
-      // Delta ops address content by its position in the USJ, which this layout's regrouping
-      // changes, so applying them would edit the wrong nodes rather than fail. A remote op is not
-      // a caller error, and throwing into a host's op loop would tear it down, so report and drop
-      // it - a read-only view refreshes by being handed new USJ, not by replaying deltas.
-      if (isBlockVerse && source === "remote") {
-        loggerRef.current?.error(
-          "Editor: ignoring a remote update in the block verse layout; reload the view with the " +
-            "new USJ instead.",
-        );
-        return;
-      }
-      // Block verse only, not `effectiveIsReadonly`: a read-only pane in a collaborative session is
-      // a supported flow, and it stays current by having remote deltas applied to it. Throwing here
-      // would tear down the host's op loop for the same reason the remote branch above reports and
-      // drops instead of throwing.
-      assertNotBlockVerse("apply an update");
-      editorRef.current?.update(
-        () => {
-          if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
-          $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
-        },
-        { discrete: true },
-      );
-      const editorState = editorRef.current?.getEditorState();
-      if (!editorState) return;
-
-      const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
-      if (newUsj) {
-        const isEdited = !deepEqual(editedUsjRef.current, newUsj);
-        if (isEdited) editedUsjRef.current = newUsj;
-        if (isEdited || !deepEqual(usj, newUsj)) {
-          // "apply" coordinates: `$applyUpdate` placed the inserted node by interpreting the
-          // retain with its own traversals (every embed opaque), so the reverse lookup must
-          // count the same way to find the node that was actually inserted.
-          const insertedNodeKey = getInsertedNodeKey(ops, editorState, "apply");
-          lastNotifiedUsjRef.current = newUsj;
-          onUsjChange?.(newUsj, ops, source, insertedNodeKey);
-        }
-      }
+      applyOps(ops, source, source);
     },
     replaceEmbedUpdate(embedNodeKey, insertEmbedOps) {
       const ops = editorRef.current?.read(() => $getReplaceEmbedOps(embedNodeKey, insertEmbedOps));
-      if (ops) this.applyUpdate(ops);
+      // Reported as a "remote" (programmatic) change, as it always has been: hosts key their
+      // local-edit recency and op inspection off that. But the ops are this editor's own note ops
+      // coming back from the footnote popover, not a collab peer's, so they are applied as
+      // "local": an authored `~` in a span stays content rather than being tagged as an older
+      // peer's scaffolding.
+      if (ops) applyOps(ops, "remote", "local");
       // A missing/stale key must be LOUD: this is the footnote popover's save path, and a key
       // invalidated by a full `setUsj` re-render (every Lexical key regenerates) otherwise turns
       // Save into a silent no-op that looks like it worked.

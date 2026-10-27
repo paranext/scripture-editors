@@ -24,7 +24,7 @@ import { CharNodePlugin } from "../CharNodePlugin";
 import { baseTestEnvironment, removeNoteCallerOnClick } from "../react-test.utils";
 import { getDefaultViewOptions, ViewOptions } from "../../../views/view-options.utils";
 import { $applyUpdate } from "./delta-apply-update.utils";
-import { DeltaOp, LF } from "./delta-common.utils";
+import { DeltaOp, DeltaSource, LF } from "./delta-common.utils";
 import { getEditorDelta } from "./editor-delta.adaptor";
 import { act } from "@testing-library/react";
 import {
@@ -2976,6 +2976,75 @@ describe("Delta Utils $applyUpdate", () => {
           });
         });
 
+        // A local apply (the footnote popover's Save) carries this editor's own ops, so the same
+        // shape is an authored `~` and stays content.
+        it("keeps a `\\fq ~\\fq*` in a note as content when the apply is local", async () => {
+          const { editor } = await testEnvironment();
+          const ops: DeltaOp[] = [
+            {
+              insert: {
+                note: {
+                  style: "f",
+                  caller: GENERATOR_NOTE_CALLER,
+                  contents: { ops: [{ insert: NBSP, attributes: { char: { style: "fq" } } }] },
+                },
+              },
+            },
+          ];
+
+          await sutApplyUpdate(editor, ops, viewOptions, defaultNodeOptions, "local");
+
+          editor.getEditorState().read(() => {
+            const fq = $getRoot()
+              .getAllTextNodes()
+              .map((n) => n.getParent())
+              .find((n) => $isCharNode(n) && n.getMarker() === "fq");
+            if (!$isCharNode(fq)) throw new Error("Expected the fq CharNode");
+            const contents = fq.getChildren().filter((n) => !$isSynthesizedMarkerNode(n));
+            expect(contents).toHaveLength(1);
+            if (!$isTextNode(contents[0])) throw new Error("Expected the fq content TextNode");
+            expect($getState(contents[0], textTypeState)).toBeUndefined();
+            // Editable mode leads a span's first content with its structural separator.
+            expect(contents[0].getTextContent()).toBe(
+              viewOptions.markerMode === "editable" ? NBSP + NBSP : NBSP,
+            );
+          });
+        });
+
+        it("leaves an element-first `~` untagged when the apply is local", async () => {
+          const ops: DeltaOp[] = [
+            {
+              insert: {
+                note: {
+                  style: "f",
+                  caller: GENERATOR_NOTE_CALLER,
+                  contents: {
+                    ops: [
+                      { insert: NBSP, attributes: { char: { style: "nd" } } },
+                      { insert: "x", attributes: { char: [{ style: "nd" }, { style: "wj" }] } },
+                    ],
+                  },
+                },
+              },
+            },
+          ];
+          const { editor } = await testEnvironment();
+
+          await sutApplyUpdate(editor, ops, viewOptions, defaultNodeOptions, "local");
+
+          editor.getEditorState().read(() => {
+            const nd = $getRoot()
+              .getAllTextNodes()
+              .map((n) => n.getParent())
+              .find((n) => $isCharNode(n) && n.getMarker() === "nd");
+            if (!$isCharNode(nd)) throw new Error("Expected the nd CharNode");
+            const [lone] = nd.getChildren().filter((n) => !$isSynthesizedMarkerNode(n));
+            if (!$isTextNode(lone)) throw new Error("Expected the lone NBSP TextNode");
+            expect($getState(lone, textTypeState)).toBeUndefined();
+            expect(lone.getMode()).toBe("normal");
+          });
+        });
+
         it("leaves a locally loaded `\\nd ~\\nd*` untagged after an unrelated apply", async () => {
           const { editor } = await testEnvironment(() => {
             $getRoot().append(
@@ -5601,10 +5670,11 @@ async function sutApplyUpdate(
   ops: DeltaOp[],
   viewOptions: ViewOptions = defaultViewOptions,
   nodeOptions: UsjNodeOptions = defaultNodeOptions,
+  source?: DeltaSource,
 ) {
   await act(async () => {
     editor.update(() => {
-      $applyUpdate(ops, viewOptions, nodeOptions, console);
+      $applyUpdate(ops, viewOptions, nodeOptions, console, source);
     });
   });
 }
