@@ -1225,6 +1225,39 @@ describe("$applyMarkerMenuSelection", () => {
       ]);
     });
 
+    it("keeps the introduction together when the stylesheet gives `\\c` no rank", async () => {
+      // The rank check rejects an `\mt2` after introduction prose. Read as rank 0, a `\c` would not
+      // close the introduction, so the `\mt2` would look like it starts the chapter content.
+      const styleInfo: StyleInfo = {
+        ...defaultStyleInfo,
+        markers: {
+          ...defaultStyleInfo.markers,
+          c: { ...defaultStyleInfo.markers.c, rank: undefined },
+        },
+      };
+      const { editor } = await emptyBookAtCaret(
+        (idText) => idText.selectEnd(),
+        () =>
+          $getRoot().append(
+            $createParaNodeWithText("mt1", "Jonah"),
+            $createParaNodeWithText("ip", "Introduction"),
+            $createParaNodeWithText("mt2", "Outline"),
+            $createParaNodeWithText("p", "Text"),
+          ),
+      );
+
+      await pick(editor, offeredChapterItem(editor), makeDeps(styleInfo));
+
+      expect(editor.getEditorState().read($blocks)).toEqual([
+        "book:id",
+        "para:mt1",
+        "para:ip",
+        "para:mt2",
+        "chapter:c",
+        "para:p",
+      ]);
+    });
+
     it("puts the caret on the new chapter line", async () => {
       const { editor } = await emptyBookAtCaret((idText) => idText.selectEnd());
 
