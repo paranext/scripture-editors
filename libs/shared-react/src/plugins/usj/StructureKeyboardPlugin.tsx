@@ -69,6 +69,8 @@ export const PARA_MERGE_ARMED_CLASS_NAME = "para-merge-armed";
 const MARKER_TEXT_LEFT_PROPERTY = "--para-merge-armed-text-left";
 /** How wide an armed gutter marker's text is, without its trailing space. */
 const MARKER_TEXT_WIDTH_PROPERTY = "--para-merge-armed-text-width";
+
+/**
  * Records a range selection's endpoints and returns a function that puts them back, so a refused
  * delete leaves the selection as it was even after the delete extended or narrowed it.
  *
