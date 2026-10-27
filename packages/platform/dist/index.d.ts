@@ -428,6 +428,11 @@ export declare interface EditorRef {
    * update is reported through the logger and dropped rather than thrown, so a collaborator's op
    * loop is not torn down; refresh such a view by handing it new USJ instead.
    *
+   * A `"remote"` apply (the default) treats the ops as a collab peer's: a lone NBSP it lands as a
+   * char span's only content, or directly after the span's opener and before an element, is taken
+   * for an older peer's presentation NBSP and dropped on save. Pass `"local"` for ops this editor
+   * (or a sibling editor of the same document) produced, so an authored `~` there is kept.
+   *
    * @throws Will throw an error if the editor uses the block verse layout and `source` is
    *   `"local"`.
    */
