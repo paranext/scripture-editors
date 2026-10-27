@@ -9,7 +9,10 @@ import {
   $caretAtParaEnd,
   $caretAtParaStart,
   $isArmedSelection,
+  $isParaEmpty,
+  $isUnmergeableParaStart,
   $mergeParaIntoPrevious,
+  $paraDeleteEffect,
   $sanitizeNodesForProtectedStructure,
   $selectionContainsVerseMarker,
   $selectionSpansBlockBoundary,
@@ -401,6 +404,18 @@ describe("$structuralDeleteTarget", () => {
     });
   });
 
+  it("returns undefined at the start of a para after a chapter (nothing it can merge into)", async () => {
+    let t1: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      t1 = $createTextNode("first");
+      $getRoot().append($createChapterNode("2"), $createParaNode("p").append(t1));
+    });
+    updateSelection(editor, t1!, 0);
+    editor.getEditorState().read(() => {
+      expect($structuralDeleteTarget($getSelection()!, "deleteBackward")).toBeUndefined();
+    });
+  });
+
   it("returns undefined mid-text", async () => {
     let t1: TextNode;
     const { editor } = await baseTestEnvironment(() => {
@@ -449,7 +464,7 @@ describe("$isArmedSelection", () => {
     });
   });
 
-  it("para: true when a non-collapsed range's anchor and focus both resolve to the armed para", async () => {
+  it("para: true while the caret stays where a paragraph with no marker was armed, false once it moves", async () => {
     let para: ParaNode;
     let t1: TextNode;
     const { editor } = await baseTestEnvironment(() => {
@@ -457,15 +472,23 @@ describe("$isArmedSelection", () => {
       t1 = $createTextNode("hello");
       $getRoot().append(para.append(t1));
     });
+    const caretAt = (offset: number) => ({ key: t1!.getKey(), offset, type: "text" as const });
+    const armed = {
+      key: para!.getKey(),
+      kind: "para" as const,
+      intent: "deleteBackward" as const,
+      anchor: caretAt(0),
+      focus: caretAt(0),
+    };
+
+    updateSelection(editor, t1!, 0);
+    editor.getEditorState().read(() => {
+      expect($isArmedSelection($getSelection(), armed)).toBe(true);
+    });
+
     updateSelection(editor, t1!, 0, t1!, 5);
     editor.getEditorState().read(() => {
-      expect(
-        $isArmedSelection($getSelection(), {
-          key: para!.getKey(),
-          kind: "para",
-          intent: "deleteBackward",
-        }),
-      ).toBe(true);
+      expect($isArmedSelection($getSelection(), armed)).toBe(false);
     });
   });
 
@@ -686,6 +709,43 @@ describe("$mergeParaIntoPrevious", () => {
       expect($isMarkerNode(anchor.getNode()) || $isMarkerTrailingSeparator(anchor.getNode())).toBe(
         false,
       );
+    });
+  });
+});
+
+describe("$isParaEmpty", () => {
+  it("is true for a paragraph with nothing but its gutter marker, or with no children", async () => {
+    const { editor } = await baseTestEnvironment();
+    await sutUpdate(editor, () => {
+      expect($isParaEmpty($createParaNode("s1").append($createGutterMarkerNode("\\s1 ")))).toBe(
+        true,
+      );
+      expect($isParaEmpty($createParaNode("p"))).toBe(true);
+    });
+  });
+
+  it("is false once the paragraph has text after its marker", async () => {
+    const { editor } = await baseTestEnvironment();
+    await sutUpdate(editor, () => {
+      const para = $createParaNode("s1").append(
+        $createGutterMarkerNode("\\s1 "),
+        $createTextNode("Heading"),
+      );
+      expect($isParaEmpty(para)).toBe(false);
+    });
+  });
+});
+
+describe("$paraDeleteEffect", () => {
+  it("names a Backspace merge, a Delete merge and an empty paragraph's removal", async () => {
+    const { editor } = await baseTestEnvironment();
+    await sutUpdate(editor, () => {
+      const full = $createParaNode("p").append($createTextNode("second"));
+      const empty = $createParaNode("p").append($createGutterMarkerNode("\\p "));
+      expect($paraDeleteEffect(full, "deleteBackward")).toBe("joinPreviousPara");
+      expect($paraDeleteEffect(full, "deleteForward")).toBe("joinNextPara");
+      expect($paraDeleteEffect(empty, "deleteBackward")).toBe("removeEmptyPara");
+      expect($paraDeleteEffect(empty, "deleteForward")).toBe("removeEmptyPara");
     });
   });
 });
@@ -937,6 +997,42 @@ describe("empty verse carets", () => {
       expect($selectionContainsVerseMarker(selection)).toBe(true);
       expect($shouldBlockStructuralEdit(selection, "insertText")).toBe(true);
       expect($shouldBlockStructuralEdit(selection, "deleteBackward")).toBe(true);
+    });
+  });
+});
+
+describe("$isUnmergeableParaStart", () => {
+  it("is true at the start of a para after a chapter, and false mid-text", async () => {
+    let t1: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      t1 = $createTextNode("first");
+      $getRoot().append($createChapterNode("2"), $createParaNode("p").append(t1));
+    });
+    updateSelection(editor, t1!, 0);
+    editor.getEditorState().read(() => {
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(true);
+    });
+    updateSelection(editor, t1!, 2);
+    editor.getEditorState().read(() => {
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(false);
+    });
+  });
+
+  it("is false at the start of a para that can merge, and of the first block", async () => {
+    let t1: TextNode;
+    let t2: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      t1 = $createTextNode("first");
+      t2 = $createTextNode("second");
+      $getRoot().append($createParaNode("p").append(t1), $createParaNode("p").append(t2));
+    });
+    updateSelection(editor, t2!, 0);
+    editor.getEditorState().read(() => {
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(false);
+    });
+    updateSelection(editor, t1!, 0);
+    editor.getEditorState().read(() => {
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(false);
     });
   });
 });

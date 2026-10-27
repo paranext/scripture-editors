@@ -16,7 +16,7 @@ import {
   ParaMarkerPrefixCursorGuardPlugin,
 } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
-import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
+import { PARA_MERGE_ARMED_CLASS_NAME, StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
 import {
   baseTestEnvironment,
@@ -628,66 +628,164 @@ function paragraphsOf(editor: LexicalEditor) {
   );
 }
 
-describe.each(["off", "guarded"] as const)(
-  "ParaMarkerSelectionPlugin — Backspace/Delete merge the paragraph into the previous one (%s)",
-  (structureProtectionMode) => {
-    it.each(["Backspace", "Delete"])(
-      "%s merges in one press, dropping the marker and leaving the caret at the join",
-      async (key) => {
-        const { editor, li2 } = await deletionEnvironment(structureProtectionMode);
-        await selectMarkerOf(editor, li2);
+/** Asserts the `li2` paragraph merged into the `p` one, with the caret at the join. */
+function expectMergedAtJoin(editor: LexicalEditor) {
+  expect(paragraphsOf(editor)).toEqual([
+    { marker: "p", glyphs: 1, text: "firstsecond" },
+    { marker: "q1", glyphs: 1, text: "third" },
+  ]);
+  expect(selectedMarkerOf(editor)).toBeUndefined();
+  expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
+  // The two texts normalize into one node, so the join is offset 5 of "firstsecond".
+  editor.getEditorState().read(() => {
+    const selection = $getSelection();
+    expect($isRangeSelection(selection) && selection.isCollapsed()).toBe(true);
+    if (!$isRangeSelection(selection)) return;
+    expect(selection.anchor.getNode().getTextContent()).toBe("firstsecond");
+    expect(selection.anchor.offset).toBe("first".length);
+  });
+}
 
-        const event = await pressKey(editor, key);
-
-        expect(event.defaultPrevented).toBe(true);
-        expect(paragraphsOf(editor)).toEqual([
-          { marker: "p", glyphs: 1, text: "firstsecond" },
-          { marker: "q1", glyphs: 1, text: "third" },
-        ]);
-        expect(selectedMarkerOf(editor)).toBeUndefined();
-        expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
-        // The two texts normalize into one node, so the join is offset 5 of "firstsecond".
-        editor.getEditorState().read(() => {
-          const selection = $getSelection();
-          expect($isRangeSelection(selection) && selection.isCollapsed()).toBe(true);
-          if (!$isRangeSelection(selection)) return;
-          expect(selection.anchor.getNode().getTextContent()).toBe("firstsecond");
-          expect(selection.anchor.offset).toBe("first".length);
-        });
-      },
-    );
-
-    it("is undone, exactly, by a single Undo", async () => {
-      const { editor, li2 } = await deletionEnvironment(structureProtectionMode);
+describe('ParaMarkerSelectionPlugin — Backspace/Delete merge the paragraph into the previous one ("off")', () => {
+  it.each(["Backspace", "Delete"])(
+    "%s merges in one press, dropping the marker and leaving the caret at the join",
+    async (key) => {
+      const { editor, li2 } = await deletionEnvironment("off");
       await selectMarkerOf(editor, li2);
-      const before = documentJson(editor);
-      await pressKey(editor, "Backspace");
-      expect(documentJson(editor)).not.toBe(before);
 
-      await act(async () => {
-        editor.dispatchCommand(UNDO_COMMAND, undefined);
-      });
+      const event = await pressKey(editor, key);
 
-      expect(documentJson(editor)).toBe(before);
+      expect(event.defaultPrevented).toBe(true);
+      expectMergedAtJoin(editor);
+    },
+  );
+
+  it("is undone, exactly, by a single Undo", async () => {
+    const { editor, li2 } = await deletionEnvironment("off");
+    await selectMarkerOf(editor, li2);
+    const before = documentJson(editor);
+    await pressKey(editor, "Backspace");
+    expect(documentJson(editor)).not.toBe(before);
+
+    await act(async () => {
+      editor.dispatchCommand(UNDO_COMMAND, undefined);
     });
 
+    expect(documentJson(editor)).toBe(before);
+  });
+});
+
+describe('ParaMarkerSelectionPlugin — Backspace/Delete on a selected marker take two presses ("guarded")', () => {
+  it.each(["Backspace", "Delete"])(
+    "the first %s keeps the marker selected and shows the merge warning; the second merges",
+    async (key) => {
+      const { editor, li2 } = await deletionEnvironment("guarded");
+      await selectMarkerOf(editor, li2);
+      const before = documentJson(editor);
+
+      const first = await pressKey(editor, key);
+
+      expect(first.defaultPrevented).toBe(true);
+      expect(documentJson(editor)).toBe(before);
+      expect(selectedMarkerOf(editor)).toBe("li2");
+      const root = editor.getRootElement();
+      expect(root?.classList.contains("verse-delete-armed")).toBe(true);
+      expect(root?.getAttribute("data-verse-delete-kind")).toBe("joinPreviousPara");
+
+      const second = await pressKey(editor, key);
+
+      expect(second.defaultPrevented).toBe(true);
+      expectMergedAtJoin(editor);
+    },
+  );
+
+  it("is undone, exactly, by a single Undo", async () => {
+    const { editor, li2 } = await deletionEnvironment("guarded");
+    await selectMarkerOf(editor, li2);
+    const before = documentJson(editor);
+    await pressKey(editor, "Backspace");
+    await pressKey(editor, "Backspace");
+    expect(documentJson(editor)).not.toBe(before);
+
+    await act(async () => {
+      editor.dispatchCommand(UNDO_COMMAND, undefined);
+    });
+
+    expect(documentJson(editor)).toBe(before);
+  });
+
+  it("Backspace at the start of a paragraph's text selects its marker, not its text, then merges", async () => {
+    const { editor, li2, secondText } = await deletionEnvironment("guarded");
+    await sutUpdate(editor, () => secondText.select(0, 0));
+    const before = documentJson(editor);
+
+    await pressKey(editor, "Backspace");
+
+    expect(documentJson(editor)).toBe(before);
+    expect(selectedMarkerOf(editor)).toBe("li2");
+    const glyphKey = editor.getEditorState().read(() => li2.getFirstChildOrThrow().getKey());
+    const glyphElement = editor.getElementByKey(glyphKey);
+    expect(glyphElement?.classList.contains(PARA_MERGE_ARMED_CLASS_NAME)).toBe(true);
+    expect(
+      editor.getElementByKey(li2.getKey())?.classList.contains(PARA_MERGE_ARMED_CLASS_NAME),
+    ).toBe(false);
+
+    await pressKey(editor, "Backspace");
+
+    expectMergedAtJoin(editor);
+  });
+
+  it("Delete at the end of a paragraph marks the next paragraph's marker, keeps the caret, then merges it up", async () => {
+    const { editor, li2, firstText } = await deletionEnvironment("guarded");
+    await sutUpdate(editor, () => firstText.select(5, 5));
+
+    await pressKey(editor, "Delete");
+
+    // The caret stays at the end of the first paragraph, so typing or an arrow key after the arm
+    // acts there, not in the next paragraph.
+    expect(selectedMarkerOf(editor)).toBeUndefined();
+    editor.getEditorState().read(() => $expectSelectionToBe(firstText, 5));
+    const glyphKey = editor.getEditorState().read(() => li2.getFirstChildOrThrow().getKey());
+    expect(editor.getElementByKey(glyphKey)?.classList.contains(PARA_MERGE_ARMED_CLASS_NAME)).toBe(
+      true,
+    );
+    expect(editor.getRootElement()?.getAttribute("data-verse-delete-kind")).toBe("joinNextPara");
+
+    await pressKey(editor, "Delete");
+
+    expectMergedAtJoin(editor);
+  });
+
+  it("the other key after the first press cancels without merging", async () => {
+    const { editor, li2 } = await deletionEnvironment("guarded");
+    await selectMarkerOf(editor, li2);
+    const before = documentJson(editor);
+
+    await pressKey(editor, "Backspace");
+    await pressKey(editor, "Delete");
+
+    expect(documentJson(editor)).toBe(before);
+    expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
+  });
+});
+
+describe.each(["off", "guarded"] as const)(
+  "ParaMarkerSelectionPlugin — nothing to merge into (%s)",
+  (structureProtectionMode) => {
     it.each([
       ["the first paragraph of the book", false],
       ["the first paragraph after a chapter number", true],
-    ])(
-      "on %s, with nothing to merge into, changes nothing and keeps the marker selected",
-      async (_name, afterChapter) => {
-        const { editor, p } = await deletionEnvironment(structureProtectionMode, { afterChapter });
-        await selectMarkerOf(editor, p);
-        const before = documentJson(editor);
+    ])("on %s, changes nothing and keeps the marker selected", async (_name, afterChapter) => {
+      const { editor, p } = await deletionEnvironment(structureProtectionMode, { afterChapter });
+      await selectMarkerOf(editor, p);
+      const before = documentJson(editor);
 
-        const event = await pressKey(editor, "Backspace");
+      const event = await pressKey(editor, "Backspace");
 
-        expect(event.defaultPrevented).toBe(true);
-        expect(documentJson(editor)).toBe(before);
-        expect(selectedMarkerOf(editor)).toBe("p");
-      },
-    );
+      expect(event.defaultPrevented).toBe(true);
+      expect(documentJson(editor)).toBe(before);
+      expect(selectedMarkerOf(editor)).toBe("p");
+    });
   },
 );
 
@@ -801,6 +899,45 @@ describe("ParaMarkerSelectionPlugin — deletion without a Backspace/Delete keyd
     });
 
     expect(event.defaultPrevented).toBe(true);
+    expect(paragraphsOf(editor)).toEqual(merged);
+  });
+
+  it("under guarded, a selected marker's delete arms on the first input and merges on the second", async () => {
+    const { editor, li2 } = await deletionEnvironment("guarded");
+    await selectMarkerOf(editor, li2);
+    const before = documentJson(editor);
+    const deleteInput = () =>
+      new InputEvent("beforeinput", { inputType: "deleteContentBackward", cancelable: true });
+
+    const first = deleteInput();
+    await act(async () => {
+      editor.dispatchCommand(BEFORE_INPUT_COMMAND, first);
+    });
+
+    expect(first.defaultPrevented).toBe(true);
+    expect(documentJson(editor)).toBe(before);
+    expect(selectedMarkerOf(editor)).toBe("li2");
+
+    await act(async () => {
+      editor.dispatchCommand(BEFORE_INPUT_COMMAND, deleteInput());
+    });
+
+    expect(paragraphsOf(editor)).toEqual(merged);
+  });
+
+  it("under guarded, a selected marker's DELETE_CHARACTER_COMMAND arms first and merges on the second", async () => {
+    const { editor, li2 } = await deletionEnvironment("guarded");
+    await selectMarkerOf(editor, li2);
+    const before = documentJson(editor);
+
+    await act(async () => {
+      editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+    });
+    expect(documentJson(editor)).toBe(before);
+
+    await act(async () => {
+      editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+    });
     expect(paragraphsOf(editor)).toEqual(merged);
   });
 
