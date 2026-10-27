@@ -33,6 +33,7 @@ import {
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
+  $isPresentationNbsp,
   $isSomeParaNode,
   $markPresentationSpacer,
   CharNode,
@@ -243,9 +244,19 @@ function $noteTextNodeTransform(node: TextNode): void {
   const parent = node.getParent();
   if (!$isMarkerNode(node) && $isNoteNode(parent)) {
     if (node.getTextContent() !== NBSP) {
-      node.setTextContent(NBSP);
-      $markPresentationSpacer(node);
-      node.selectEnd();
+      // Typing at a token-mode spacer lands in a new sibling text node. That slot already has its
+      // spacer, so drop the typed node rather than reset it into a second spacer beside the first.
+      const adjacentSpacer = [node.getPreviousSibling(), node.getNextSibling()].find(
+        $isPresentationNbsp,
+      );
+      if ($isTextNode(adjacentSpacer)) {
+        node.remove();
+        adjacentSpacer.selectEnd();
+      } else {
+        node.setTextContent(NBSP);
+        $markPresentationSpacer(node);
+        node.selectEnd();
+      }
     }
   }
 
@@ -260,7 +271,8 @@ function $noteTextNodeTransform(node: TextNode): void {
     }
   }
 
-  const previewText = $getNoteCallerPreviewText(children);
+  // Re-read the children: the reset above may have removed a typed node.
+  const previewText = $getNoteCallerPreviewText(noteNode.getChildren());
   if (noteCaller.getPreviewText() !== previewText) noteCaller.setPreviewText(previewText);
 }
 

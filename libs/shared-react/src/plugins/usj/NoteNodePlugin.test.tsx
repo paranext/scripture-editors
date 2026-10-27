@@ -17,7 +17,9 @@ import {
   TextNode,
   $isTextNode,
   $getNodeByKey,
+  $getSelection,
   $getState,
+  $isRangeSelection,
 } from "lexical";
 import {
   $createCharNode,
@@ -443,7 +445,7 @@ describe("NoteNodePlugin", () => {
       });
     });
 
-    it("tags a note-direct text node once typing resets it", async () => {
+    it("tags a note-direct text node once typing resets it, one spacer per slot", async () => {
       let noteKey: string;
       let spacerKey: string;
       const { editor } = await testEnvironment(undefined, collapsedViewOptions, () => {
@@ -459,20 +461,32 @@ describe("NoteNodePlugin", () => {
         $getRoot().append($createParaNode().append(note));
       });
 
-      await act(async () => {
-        editor.update(() => {
-          const text = $getNodeByKey<TextNode>(spacerKey);
-          if (!text) throw new Error("Expected the text node");
-          text.setTextContent(`${NBSP}a`);
-          text.selectEnd();
+      // Two keystrokes at the caller's spacer. After the first, the reset spacer is a token-mode
+      // node, so the second lands in a NEW sibling text node.
+      const typeAtSpacer = async (keystroke: string) => {
+        await act(async () => {
+          editor.update(
+            () => {
+              const spacer = $getNodeByKey<TextNode>(spacerKey);
+              if (!spacer) throw new Error("Expected the spacer");
+              spacer.select(1, 1);
+              const selection = $getSelection();
+              if (!$isRangeSelection(selection)) throw new Error("Expected a range selection");
+              selection.insertText(keystroke);
+            },
+            { discrete: true },
+          );
         });
-      });
+      };
+      await typeAtSpacer("a");
+      await typeAtSpacer("b");
 
       editor.getEditorState().read(() => {
         const note = $getNodeByKey<NoteNode>(noteKey);
         if (!note) throw new Error("Expected the note");
         const spacers = $noteDirectTexts(note);
-        expect(spacers.length).toBeGreaterThan(0);
+        // One after the caller, one after the `\ft` span: no keystroke leaves an extra spacer.
+        expect(spacers).toHaveLength(2);
         spacers.forEach((spacer) => {
           expect(spacer.getTextContent()).toBe(NBSP);
           expect($isPresentationNbsp(spacer)).toBe(true);
