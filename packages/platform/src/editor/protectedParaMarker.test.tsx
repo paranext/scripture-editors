@@ -41,7 +41,11 @@ import {
   openingMarkerText,
   ParaNode,
 } from "shared";
-import { getViewOptions, PARAGRAPH_STRUCTURE_VIEW_MODE } from "shared-react";
+import {
+  getViewOptions,
+  HiddenContentDeleteHandler,
+  PARAGRAPH_STRUCTURE_VIEW_MODE,
+} from "shared-react";
 import { vi } from "vitest";
 
 // jsdom has no `Range.getBoundingClientRect`; Lexical's post-commit scroll-into-view reads one once
@@ -110,7 +114,10 @@ interface Mounted {
   canUndo: () => boolean;
 }
 
-async function mountLocked(usj: Usj = lockedUsj): Promise<Mounted> {
+async function mountLocked(
+  usj: Usj = lockedUsj,
+  onHiddenContentDelete?: HiddenContentDeleteHandler,
+): Promise<Mounted> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
   let canUndo = false;
@@ -122,6 +129,7 @@ async function mountLocked(usj: Usj = lockedUsj): Promise<Mounted> {
         options={{
           view: getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE),
           structureProtectionMode: "protected",
+          onHiddenContentDelete,
         }}
         onStateChange={(state) => {
           canUndo = state.canUndo;
