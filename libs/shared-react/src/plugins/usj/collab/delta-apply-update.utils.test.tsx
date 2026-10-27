@@ -3051,6 +3051,75 @@ describe("Delta Utils $applyUpdate", () => {
       });
     });
 
+    it("should insert a milestone embed under the key the op producer writes", async () => {
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append($createParaNode().append($createTextNode("ab")));
+      });
+      const ops: DeltaOp[] = [
+        { retain: 1 },
+        { insert: { milestone: { style: "qt-s", sid: "q1" } } },
+      ];
+
+      await sutApplyUpdate(editor, ops);
+
+      editor.getEditorState().read(() => {
+        const p = $getRoot().getFirstChild();
+        if (!$isParaNode(p)) throw new Error("p is not a ParaNode");
+        const [before, milestone, after] = p.getChildren();
+        expect(before.getTextContent()).toBe("a");
+        if (!$isMilestoneNode(milestone)) throw new Error("milestone is not a MilestoneNode");
+        expect(milestone.getMarker()).toBe("qt-s");
+        expect(milestone.getSid()).toBe("q1");
+        expect(after.getTextContent()).toBe("b");
+      });
+    });
+
+    it("should insert plain text after a nested char span's end outside every span", async () => {
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append(
+          $createParaNode().append(
+            $createCharNode("nd").append(
+              $createTextNode("L "),
+              $createCharNode("wj").append($createTextNode("M")),
+            ),
+          ),
+        );
+      });
+
+      await sutApplyUpdate(editor, [{ retain: 3 }, { insert: " y" }]);
+
+      editor.getEditorState().read(() => {
+        const p = $getRoot().getFirstChild();
+        if (!$isParaNode(p)) throw new Error("p is not a ParaNode");
+        const [nd, text] = p.getChildren();
+        if (!$isCharNode(nd)) throw new Error("nd is not a CharNode");
+        expect(nd.getTextContent()).toBe("L M");
+        expect(text.getTextContent()).toBe(" y");
+      });
+    });
+
+    it("should count an editable char span's glyphs when placing the ops after it", async () => {
+      const viewOptions: ViewOptions = { ...defaultViewOptions, markerMode: "editable" };
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append($createParaNode());
+      });
+      const ops: DeltaOp[] = [
+        { insert: "L", attributes: { char: { style: "nd" } } },
+        { insert: " y" },
+      ];
+
+      await sutApplyUpdate(editor, ops, viewOptions);
+
+      editor.getEditorState().read(() => {
+        const p = $getRoot().getFirstChild();
+        if (!$isParaNode(p)) throw new Error("p is not a ParaNode");
+        const [nd, text] = p.getChildren();
+        if (!$isCharNode(nd)) throw new Error("nd is not a CharNode");
+        expect(nd.getTextContent()).toBe(`\\nd${NBSP}L\\nd*`);
+        expect(text.getTextContent()).toBe(" y");
+      });
+    });
+
     it("(dc) should insert milestone embeds before and in text", async () => {
       const text = "“So you say,” answered Jesus.";
       const { editor } = await testEnvironment(() => {

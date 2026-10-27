@@ -294,6 +294,25 @@ export function $getOTPositionOfNode(
 }
 
 /**
+ * The OT length of `node` and everything in it, in `"apply"` coordinates (see
+ * {@link OTCoordinateSystem}): what a `delete` of `$applyUpdate` has to span to remove it. Every
+ * embed is one opaque unit, every other text counts its raw length (marker glyphs included), and a
+ * para-like node adds its closing unit.
+ *
+ * @param node - The node to measure.
+ * @returns Its length.
+ */
+export function $getApplyLength(node: LexicalNode): number {
+  if ($isEmbedNode(node)) return 1;
+  if ($isTextNode(node)) return node.getTextContentSize();
+  if (!$isElementNode(node)) return 0;
+  const contentLength = node
+    .getChildren()
+    .reduce((total, child) => total + $getApplyLength(child), 0);
+  return $isParaLikeNode(node) ? contentLength + 1 : contentLength;
+}
+
+/**
  * Get the key of the inserted node from the OT delta operations.
  * @param ops - The OT delta operations with potential insertion.
  * @param editorState - The current editor state.

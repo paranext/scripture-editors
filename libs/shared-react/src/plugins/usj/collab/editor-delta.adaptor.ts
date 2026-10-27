@@ -107,6 +107,17 @@ export function getEditorDelta(editorState: EditorState): Delta {
   return update;
 }
 
+/** Options for {@link $getParticularNodeOps}. */
+export interface NodeOpsOptions {
+  /**
+   * Leave the editable marker glyphs of char spans and their separators out of the ops everywhere,
+   * as a note's contents always do, so the ops carry content only: the shape every view applies
+   * the same way. Without it, a char span outside a note carries its glyphs as text, the shape of
+   * this editor's own delta document (`getEditorDelta`). Only editable marker mode has glyphs.
+   */
+  contentOnly?: boolean;
+}
+
 /**
  * Get the operational transform (OT) delta operations for a specific node or range of nodes.
  * Pass nothing to get all nodes.
@@ -114,9 +125,14 @@ export function getEditorDelta(editorState: EditorState): Delta {
  * @param startNode - The node to start the search, if omitted, it will start at the root node.
  * @param endNode - The node to end the search, if omitted, it will find all descendants of the
  *   startingNode.
+ * @param options - What the ops carry; see {@link NodeOpsOptions}.
  * @returns An array of DeltaOp objects representing the OT operations for the specified nodes.
  */
-export function $getParticularNodeOps(startNode?: LexicalNode, endNode?: LexicalNode) {
+export function $getParticularNodeOps(
+  startNode?: LexicalNode,
+  endNode?: LexicalNode,
+  { contentOnly = false }: NodeOpsOptions = {},
+) {
   const ops: DeltaOp[] = [];
   const dfsNodes = $dfs(startNode, endNode);
   const openParaLikeNodes: ParaLikeNode[] = [];
@@ -134,6 +150,7 @@ export function $getParticularNodeOps(startNode?: LexicalNode, endNode?: Lexical
         openCharNodes,
         openEmbeds,
         charContentProduced,
+        contentOnly,
       ),
     );
   }
@@ -148,6 +165,7 @@ export function $getParticularNodeOps(startNode?: LexicalNode, endNode?: Lexical
         openCharNodes,
         openEmbeds,
         charContentProduced,
+        contentOnly,
       ),
     );
   }
@@ -166,6 +184,7 @@ function $getNodeOps(
   openCharNodes: CharNode[],
   openEmbeds: OpenEmbedContext[],
   charContentProduced: Set<CharNode>,
+  contentOnly: boolean,
 ): DeltaOp[] {
   if (!currentNode) return [];
 
@@ -173,7 +192,7 @@ function $getNodeOps(
   const nextDfsNode = dfsNodes[currentIndex + 1];
   $handleBlockNodes(currentNode, ops, openParaLikeNodes);
 
-  $handleTextNodes(currentNode, ops, openCharNodes, openEmbeds, charContentProduced);
+  $handleTextNodes(currentNode, ops, openCharNodes, openEmbeds, charContentProduced, contentOnly);
 
   $handleCharNodes(
     currentNode,
@@ -225,6 +244,7 @@ function $handleTextNodes(
   openCharNodes: CharNode[],
   openEmbeds: OpenEmbedContext[],
   charContentProduced: Set<CharNode>,
+  contentOnly: boolean,
 ) {
   if (!$isTextNode(currentNode)) return;
   // An editable VerseNode's own `__text` is its marker glyph (`\v 1 `) — VerseNode extends
@@ -285,9 +305,11 @@ function $handleTextNodes(
   // match, it is the same asymmetry the ops stream honored before the earlier loose-glyph
   // exclusion was removed.
   const isInNote = $findFirstAncestorNoteNode(currentNode) !== undefined;
+  // Content-only ops (`NodeOpsOptions.contentOnly`) treat every char span as a note's contents do.
+  const omitsCharGlyphs = isInNote || contentOnly;
   if (
     $isMarkerNode(currentNode) &&
-    (isInNote ||
+    (omitsCharGlyphs ||
       $isOwnParaPrefixGlyph(currentNode) ||
       $hasAttributeRunAncestor(currentNode) ||
       $isDisplayRunPiece(currentNode))
@@ -320,7 +342,7 @@ function $handleTextNodes(
   // path is narrower still: only the span's OWN opener (its first child) qualifies, like the
   // reverse adaptor's `content[0]` strip, so the collab-flattened shape's nested opener keeps
   // emitting what peers already receive.
-  if (isInNote && !!parentCharNode && previousSibling === parentCharNode.getFirstChild()) {
+  if (omitsCharGlyphs && !!parentCharNode && previousSibling === parentCharNode.getFirstChild()) {
     text = text.slice($separatorPrefixLength(currentNode));
   }
 

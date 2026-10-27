@@ -141,6 +141,7 @@ import {
   $getNoteByKeyOrIndex,
   $getNoteIndex,
   $getOTPositionOfNode,
+  $getApplyLength,
   $getParticularNodeOps,
   $getRangeFromUsjSelection,
   $collapseParaMarkerSelection,
@@ -342,14 +343,18 @@ function $rememberExpandedNote(
   if (noteNode && !noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
 }
 
-/** The ops for whatever follows `noteNode` in its paragraph (see `EditorRef.getOpsAfterNote`). */
+/**
+ * The ops for whatever follows `noteNode` in its paragraph (see `EditorRef.getOpsAfterNote`).
+ * They carry content only, as a note's own contents do: the editor they are applied to may be in
+ * another view, so a char span must not bring this view's marker glyphs along as text.
+ */
 function $getOpsAfterNote(noteNode: NoteNode): DeltaOp[] {
   const following = noteNode.getNextSiblings();
   const first = following.at(0);
   const last = following.at(-1);
   if (!first || !last) return [];
   const end = $isElementNode(last) ? (last.getLastDescendant() ?? last) : last;
-  return $getParticularNodeOps(first, end);
+  return $getParticularNodeOps(first, end, { contentOnly: true });
 }
 
 /**
@@ -1787,16 +1792,17 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
             if (!noteNode) return undefined;
             const notePosition = $getOTPositionOfNode(noteNode, "apply");
-            return { ops: $getOpsAfterNote(noteNode), notePosition };
+            // Measured on the nodes rather than the ops: the ops leave out marker glyphs and
+            // display runs that the delete has to remove too.
+            const length = noteNode
+              .getNextSiblings()
+              .reduce((total, node) => total + $getApplyLength(node), 0);
+            return { ops: $getOpsAfterNote(noteNode), notePosition, length };
           })
         : undefined;
       if (!found) return undefined;
-      const { ops, notePosition } = found;
+      const { ops, notePosition, length } = found;
       if (ops.length === 0 || notePosition === undefined) return ops;
-      const length = ops.reduce(
-        (total, op) => total + (typeof op.insert === "string" ? op.insert.length : 1),
-        0,
-      );
       applyOps([{ retain: notePosition + 1 }, { delete: length }], "remote", HISTORY_MERGE_TAG);
       return opsForHost(ops, viewOptions);
     },

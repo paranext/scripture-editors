@@ -4,6 +4,7 @@ import { $createWholeNote } from "../../../nodes/usj/note.utils";
 import { UsjNodeOptions } from "../../../nodes/usj/usj-node-options.model";
 import { showParaMarkerPrefix, ViewOptions } from "../../../views/view-options.utils";
 import {
+  $getApplyLength,
   $isEmbedNode,
   $isOTTextNode,
   DeltaOp,
@@ -997,12 +998,32 @@ function $handleCharText(
   }
   const segment = typeof attributes.segment === "string" ? attributes.segment : undefined;
   const existingNodes = parentCharNode ? [parentCharNode] : undefined;
-  const charNodes = $createNestedChars(charAttr, viewOptions, textNode, segment, existingNodes);
+  // In editable marker mode a span carries its glyphs, and the separator after its opener, as
+  // text: a fresh span gets the separator as it does on a load, and the ops that follow are
+  // counted past everything the insert added.
+  const isEditable = viewOptions.markerMode === "editable";
+  const charNodes = $createNestedChars(
+    charAttr,
+    viewOptions,
+    textNode,
+    segment,
+    existingNodes,
+    false,
+    isEditable,
+  );
   $markAppliedNbsp(textNode, textToInsert, viewOptions);
 
   // If charNodes is empty, it means we merged into existingNodes - no insertion needed
   if (charNodes.length === 0) {
-    return textToInsert.length; // Successfully merged into existing CharNode
+    if (!isEditable) return textToInsert.length;
+    // The text, with any nested span the merge built around it.
+    let added: LexicalNode = textNode;
+    let parent = added.getParent();
+    while ($isCharNode(parent) && parent !== parentCharNode) {
+      added = parent;
+      parent = added.getParent();
+    }
+    return $getApplyLength(added);
   }
 
   const charNode = charNodes.find($isCharNode);
@@ -1039,6 +1060,7 @@ function $handleCharText(
   }
 
   if (allInserted) {
+    if (isEditable) return charNodes.reduce((total, node) => total + $getApplyLength(node), 0);
     return textToInsert.length; // CharNode itself has no OT length, just its text content
   } else {
     logger?.error(
@@ -1090,8 +1112,11 @@ function $insertRichText(
           const parent = currentNode.getParent();
           if ($isCharNode(parent) && !hasCharAttributes(attributes)) {
             // Plain text (no char attributes) should not be inserted inside CharNodes
-            // Instead, insert after the CharNode at the parent level
-            parent.insertAfter(newTextNode);
+            // Instead, insert after the CharNode at the parent level: after the outermost one, so
+            // text that follows a nested span's end leaves the span that holds it too.
+            let outermost: CharNode = parent;
+            for (let up = parent.getParent(); $isCharNode(up); up = up.getParent()) outermost = up;
+            outermost.insertAfter(newTextNode);
           } else {
             // Normal case: insert after this TextNode
             currentNode.insertAfter(newTextNode);
@@ -1531,6 +1556,18 @@ function $insertNodeAtCharacterOffset(
   return wasInserted;
 }
 
+/**
+ * Whether `op` inserts a milestone under the `milestone` key, the one this library's op producer
+ * writes (`$getMilestoneOp` in editor-delta.adaptor.ts), rather than the OT model's `ms`. Both are
+ * read, so a milestone in ops this library produced (a note editor's carried text, a peer's
+ * edits) is applied rather than dropped.
+ */
+function isMilestoneEmbedOpAsProduced(
+  op: DeltaOp,
+): op is DeltaOp & { insert: { milestone: OTMilestoneEmbed | null } } {
+  return op.insert != null && typeof op.insert === "object" && "milestone" in op.insert;
+}
+
 function $insertEmbedAtCurrentIndex(
   targetIndex: number,
   op: DeltaOp,
@@ -1547,6 +1584,8 @@ function $insertEmbedAtCurrentIndex(
     newNodeToInsert = $createVerse(op.insert.verse, viewOptions);
   } else if (isInsertEmbedOpOfType("ms", op)) {
     newNodeToInsert = $createMilestone(op.insert.ms);
+  } else if (isMilestoneEmbedOpAsProduced(op)) {
+    newNodeToInsert = $createMilestone(op.insert.milestone);
   } else if (isInsertEmbedOpOfType("note", op)) {
     newNodeToInsert = $createNote(op, viewOptions, nodeOptions);
   } else if (isInsertEmbedOpOfType("unknown", op)) {
