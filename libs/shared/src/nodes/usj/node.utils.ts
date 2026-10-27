@@ -410,6 +410,39 @@ export function $hasSameCharAttributes(
 }
 
 /**
+ * Check if the given char attributes are ALL the same as the ones in the CharNode: the marker and
+ * cid that {@link $hasSameCharAttributes} compares, and every other attribute too. Two spans that
+ * differ only in another attribute are still two spans — each `\w` word keeps its own `lemma` —
+ * so joining them would drop one span's value.
+ * @param charAttributes - The marker and cid to compare.
+ * @param unknownAttributes - The other attributes to compare, `undefined` for none.
+ * @param charNode - The character node to compare against.
+ * @returns `true` if all the attributes are the same, `false` otherwise.
+ */
+export function $hasAllSameCharAttributes(
+  charAttributes: { style: string; cid?: string },
+  unknownAttributes: UnknownAttributes | undefined,
+  charNode: CharNode,
+): boolean {
+  return (
+    $hasSameCharAttributes(charAttributes, charNode) &&
+    haveSameUnknownAttributes(unknownAttributes, charNode.getUnknownAttributes())
+  );
+}
+
+/** Whether `a` and `b` set the same attributes to the same values; a value of `undefined` sets
+ * nothing, so no attributes at all and an empty set are the same. */
+function haveSameUnknownAttributes(
+  a: UnknownAttributes | undefined,
+  b: UnknownAttributes | undefined,
+): boolean {
+  const definedKeys = (attributes: UnknownAttributes | undefined) =>
+    Object.keys(attributes ?? {}).filter((key) => attributes?.[key] !== undefined);
+  const aKeys = definedKeys(a);
+  return aKeys.length === definedKeys(b).length && aKeys.every((key) => a?.[key] === b?.[key]);
+}
+
+/**
  * Find a common ancestor of a and b and return the common ancestor,
  * or undefined if there is no common ancestor between the two nodes.
  *

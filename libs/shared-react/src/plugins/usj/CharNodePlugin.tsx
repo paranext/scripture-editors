@@ -1,6 +1,5 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
-import { deepEqual } from "fast-equals";
 import {
   $getEditor,
   $getNodeByKey,
@@ -16,7 +15,7 @@ import {
 } from "lexical";
 import { useEffect } from "react";
 import {
-  $hasSameCharAttributes,
+  $hasAllSameCharAttributes,
   $isCharNode,
   $isMarkerNode,
   $isSeparatorPrefixHostText,
@@ -171,8 +170,7 @@ function $charNodeTransform(node: CharNode): void {
   const nextNode = node.getNextSibling();
   if (
     $isCharNode(nextNode) &&
-    $hasSameCharAttributes({ style, cid }, nextNode) &&
-    deepEqual(unknownAttributes, nextNode.getUnknownAttributes()) &&
+    $hasAllSameCharAttributes({ style, cid }, unknownAttributes, nextNode) &&
     !$wereAlikeSpansBeforeUpdate(node, nextNode)
   ) {
     // Combine with next CharNode since it has the same attributes. A glyph-bearing partner
@@ -189,8 +187,7 @@ function $charNodeTransform(node: CharNode): void {
   const prevNode = node.getPreviousSibling();
   if (
     $isCharNode(prevNode) &&
-    $hasSameCharAttributes({ style, cid }, prevNode) &&
-    deepEqual(unknownAttributes, prevNode.getUnknownAttributes()) &&
+    $hasAllSameCharAttributes({ style, cid }, unknownAttributes, prevNode) &&
     !$wereAlikeSpansBeforeUpdate(prevNode, node)
   ) {
     // Combine with previous CharNode since it has the same attributes.
@@ -222,18 +219,10 @@ function $wereAlikeSpansBeforeUpdate(preceding: CharNode, following: CharNode): 
       const previousPreceding = $getNodeByKey(preceding.getKey());
       const previousFollowing = $getNodeByKey(following.getKey());
       if (!$isCharNode(previousPreceding) || !$isCharNode(previousFollowing)) return false;
-      return (
-        $hasSameCharAttributes(
-          {
-            style: previousPreceding.getMarker(),
-            cid: $getState(previousPreceding, charIdState),
-          },
-          previousFollowing,
-        ) &&
-        deepEqual(
-          previousPreceding.getUnknownAttributes(),
-          previousFollowing.getUnknownAttributes(),
-        )
+      return $hasAllSameCharAttributes(
+        { style: previousPreceding.getMarker(), cid: $getState(previousPreceding, charIdState) },
+        previousPreceding.getUnknownAttributes(),
+        previousFollowing,
       );
     });
 }

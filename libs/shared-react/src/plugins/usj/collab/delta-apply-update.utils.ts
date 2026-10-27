@@ -59,6 +59,7 @@ import {
   $createParaNode,
   $createUnknownNode,
   $createVerseNode,
+  $hasAllSameCharAttributes,
   $hasSameCharAttributes,
   $isBookNode,
   $isCharNode,
@@ -978,7 +979,7 @@ function $handleCharText(
   if (Array.isArray(charAttr)) {
     if (parentCharNode) {
       const first = charAttr[0];
-      if (first && $hasSameCharAttributes(first, parentCharNode)) {
+      if (first && $isSameSpanAs(first, parentCharNode)) {
         // Only nest the remaining char attributes
         charAttr = charAttr.slice(1);
         // If only one left, treat as single
@@ -991,7 +992,7 @@ function $handleCharText(
     }
   } else if (parentCharNode) {
     // Single char attribute - check if it matches parent
-    if (!$hasSameCharAttributes(charAttr, parentCharNode)) {
+    if (!$isSameSpanAs(charAttr, parentCharNode)) {
       // Parent doesn't match, don't use it
       parentCharNode = undefined;
     }
@@ -2071,7 +2072,7 @@ function mergeableNodesForContentOp(
 
 // Helper to create nested CharNodes from OTCharAttribute (array or single)
 // Returns an array of nodes: [opening marker?, CharNode, closing marker?]
-// If existingNodes is provided, will merge with the last CharNode if style/cid match
+// If existingNodes is provided, will merge with the last CharNode if all its attributes match
 /**
  * Defensively normalize an OT char style to a CLEAN marker. Nesting is conveyed by the char
  * ARRAY's position (outermost-first), never by a `+` in the style — the `+` belongs only to the
@@ -2081,6 +2082,16 @@ function mergeableNodesForContentOp(
  */
 function cleanCharStyle<T extends OTCharItem>(item: T): T {
   return item.style.startsWith("+") ? { ...item, style: item.style.slice(1) } : item;
+}
+
+/**
+ * Whether the char op item `attr` continues `span` rather than starting a span of its own: the
+ * same marker and cid, and every other attribute the same too. Two adjacent `\w` words' ops differ
+ * only in their `lemma`, so a match on marker and cid alone would build both words as one span and
+ * lose the second word's lemma.
+ */
+function $isSameSpanAs(attr: OTCharItem, span: CharNode): boolean {
+  return $hasAllSameCharAttributes(attr, getUnknownAttributes(attr, OT_CHAR_PROPS), span);
 }
 
 function $createNestedChars(
@@ -2120,7 +2131,7 @@ function $createNestedChars(
     // Check if we can merge with existing CharNode
     const outerAttr = cleanAttrs[0];
     const lastNode = existingNodes?.[existingNodes.length - 1];
-    if ($isCharNode(lastNode) && $hasSameCharAttributes(outerAttr, lastNode)) {
+    if ($isCharNode(lastNode) && $isSameSpanAs(outerAttr, lastNode)) {
       // Merge into existing CharNode by creating inner nodes only. The inner spans nest inside
       // that existing outer char, so their outermost gets the `+` too (nestedInParent = true).
       if (cleanAttrs.length > 1) {
@@ -2183,7 +2194,7 @@ function $createNestedChars(
     // Single char attribute
     // Check if we can merge with existing CharNode
     const lastNode = existingNodes?.[existingNodes.length - 1];
-    if ($isCharNode(lastNode) && $hasSameCharAttributes(cleanAttr, lastNode)) {
+    if ($isCharNode(lastNode) && $isSameSpanAs(cleanAttr, lastNode)) {
       // Tail-append into the existing span: mid-span content, NO separator.
       if (innerNode) $appendSpanContent(lastNode, [innerNode]);
       return []; // Return empty array since we merged into existing node

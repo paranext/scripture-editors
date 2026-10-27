@@ -582,6 +582,46 @@ forEachView(EDITING_VIEWS, ({ name, view: hostView }) => {
       expect(findUsjNotes(hostUsj)[2]).toEqual(twoFpNoteUsj);
     }, 30000);
 
+    // Two adjacent `\w` spans are two words, each with its own `lemma`; their ops differ only in
+    // that attribute. Built as one span, the second word's lemma is gone from the note.
+    it("is idempotent for a note with two adjacent \\w spans of different lemmas", async () => {
+      const twoWordsNoteUsj: MarkerObject = {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [
+          { type: "char", marker: "ft", content: ["n "] },
+          { type: "char", marker: "w", lemma: "x", content: ["a"] } as MarkerObject,
+          { type: "char", marker: "w", lemma: "y", content: ["b"] } as MarkerObject,
+        ],
+      };
+      const hostUsj: Usj = {
+        ...sampleUsj,
+        content: [
+          ...sampleUsj.content.slice(0, 2),
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "verse", marker: "v", number: "1" },
+              "first ",
+              twoWordsNoteUsj,
+              "end",
+            ],
+          },
+        ],
+      };
+      const { host, popoverNoteOps } = await roundtripNote(hostView, 0, twoWordsNoteUsj, hostUsj);
+
+      const hostNoteKey = host.lexical
+        .getEditorState()
+        .read(() => requireDefined($findNotes()[0], "host note").getKey());
+      await act(async () => {
+        host.editorRef.replaceEmbedUpdate(hostNoteKey, popoverNoteOps);
+      });
+      expect(host.editorRef.getUsj()).toEqual(hostUsj);
+    }, 30000);
+
     // Only Standard view has an `\fp` break to create; elsewhere Enter in a note does nothing.
     it.runIf(name === "standard")(
       "keeps two engine-created \\fp paragraphs separate through the popover save path",
