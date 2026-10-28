@@ -2,8 +2,10 @@
 // (jsdom rewrites `import.meta.url` to an http URL, which breaks the stylesheet read; this test
 // only reads a file, so the node environment is the correct one anyway.)
 import { readFileSync } from "node:fs";
+import { CARET_HOST_ATTRIBUTE } from "shared-react";
 import { describe, expect, it } from "vitest";
 import { NBSP_STAND_IN_FONT_FAMILY } from "./editor/markerEdit/nbspStandInFont";
+import { ACTIVE_EMPTY_CLASS, EMPTY_CLASS } from "./editor/ActiveTextPlugin";
 
 /**
  * Pins the `+`-caller counter rules in `usj-nodes.css` to the `data-note-kind` classification the
@@ -107,5 +109,64 @@ describe("usj-nodes.css gutter paragraph marker", () => {
     expect(flatCss).toContain(
       ".psc-gutter-markers .para > .marker:not(.verse):not(.chapter):first-child,",
     );
+  });
+});
+
+/**
+ * Pins the empty-verse caret rules. The rules hold the line still when the caret lands in an empty
+ * verse and draw the caret right after its number, which only layout shows, so jsdom can't test
+ * them; what is pinned here is that each load-bearing declaration stays on the selector the editor
+ * renders for. paranext-core vendors this sheet, so these strings are contract too.
+ */
+describe("usj-nodes.css empty-verse caret", () => {
+  const css = readFileSync(new URL("./usj-nodes.css", import.meta.url), "utf-8");
+  /** The stylesheet without comments, whitespace runs collapsed. */
+  const flatCss = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ");
+  const activeVerse = `.psc-gutter-markers .verse:not(.marker).${ACTIVE_EMPTY_CLASS}`;
+  const host = `[${CARET_HOST_ATTRIBUTE}]`;
+
+  /** The declarations of the rule whose whole selector list is `selector`. */
+  function declarations(selector: string): string[] {
+    const start = flatCss.indexOf(`} ${selector} {`);
+    if (start < 0) throw new Error(`no rule for ${selector}`);
+    const body = flatCss.slice(start + selector.length + 4, flatCss.indexOf("}", start + 1));
+    return body
+      .split(";")
+      .map((declaration) => declaration.trim())
+      .filter((declaration) => declaration !== "");
+  }
+
+  it("sizes the empty verse's ellipsis box from the width variable", () => {
+    expect(flatCss).toContain("--psc-empty-verse-ellipsis-width: 18px;");
+    expect(
+      declarations(
+        `.psc-gutter-markers .verse:not(.marker).${EMPTY_CLASS}::after, ${activeVerse}::after`,
+      ),
+    ).toEqual([
+      "display: inline-block",
+      "inline-size: var(--psc-empty-verse-ellipsis-width)",
+      "text-align: center",
+    ]);
+  });
+
+  it("keeps the active empty verse's ellipsis, hidden, in its box", () => {
+    expect(
+      declarations(
+        `.psc-gutter-markers .verse.${EMPTY_CLASS}::after, .psc-gutter-markers .verse.${ACTIVE_EMPTY_CLASS}::after`,
+      ),
+    ).toContain('content: "…"');
+    expect(declarations(`${activeVerse}::after`)).toContain("color: transparent");
+  });
+
+  it("pulls the host back over the hidden ellipsis by the same width", () => {
+    expect(declarations(`${activeVerse} + ${host}`)).toEqual([
+      "margin-inline-start: calc(-1 * var(--psc-empty-verse-ellipsis-width))",
+      "margin-inline-end: var(--psc-empty-verse-ellipsis-width)",
+    ]);
+  });
+
+  it("keeps a host after any verse from adding a line break", () => {
+    expect(declarations(`.verse + ${host}`)).toEqual(["text-wrap-mode: nowrap"]);
+    expect(declarations(`.verse + ${host}::after`)).toEqual(['content: "\\2060"']);
   });
 });

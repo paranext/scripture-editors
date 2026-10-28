@@ -24,6 +24,7 @@ import {
   $structuralDeleteTarget,
   keyDownToIntent,
 } from "./structureKeyboard.utils";
+import { $createCaretHostNode } from "./transientCaretHost";
 import {
   $createNodeSelection,
   $createRangeSelection,
@@ -152,6 +153,39 @@ describe("structureKeyboard.utils", () => {
       expect($caretAtParaEnd($getSelection()!)).toBe(false);
     });
   });
+
+  it.each([0, 1])(
+    "a caret host ending a paragraph is at its end from either offset (%i)",
+    async (offset) => {
+      let host: TextNode;
+      const { editor } = await baseTestEnvironment(() => {
+        host = $createCaretHostNode();
+        $getRoot().append($createParaNode("p").append($createImmutableVerseNode("3"), host));
+      });
+      updateSelection(editor, host!, offset);
+      editor.getEditorState().read(() => {
+        expect($caretAtParaEnd($getSelection()!)).toBe(true);
+      });
+    },
+  );
+
+  it.each([0, 1])(
+    "a caret host starting a paragraph is at its start from either offset (%i)",
+    async (offset) => {
+      let host: TextNode;
+      const { editor } = await baseTestEnvironment(() => {
+        host = $createCaretHostNode();
+        $getRoot().append(
+          $createParaNode("q").append($createTextNode("prev")),
+          $createParaNode("p").append(host, $createImmutableVerseNode("4")),
+        );
+      });
+      updateSelection(editor, host!, offset);
+      editor.getEditorState().read(() => {
+        expect($caretAtParaStart($getSelection()!)).toBe(true);
+      });
+    },
+  );
 
   it("empty paragraph: caret is both at start and at end", async () => {
     let para: ParaNode;
@@ -346,6 +380,27 @@ describe("$adjacentVerseMarker", () => {
     editor.getEditorState().read(() => {
       expect($adjacentVerseMarker($getSelection()!, "backward")).toBeUndefined();
       expect($adjacentVerseMarker($getSelection()!, "forward")).toBeUndefined();
+    });
+  });
+});
+
+describe("$adjacentVerseMarker from inside a caret host", () => {
+  // The empty-verse guard rests the caret in a placeholder-only text node between two verse
+  // markers. Either offset in it is the same screen position, right next to both verses.
+  it.each([0, 1])("sees both neighboring verses from offset %i", async (offset) => {
+    let v3: ReturnType<typeof $createImmutableVerseNode>;
+    let v4: ReturnType<typeof $createImmutableVerseNode>;
+    let host: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      v3 = $createImmutableVerseNode("3");
+      v4 = $createImmutableVerseNode("4");
+      host = $createCaretHostNode();
+      $getRoot().append($createParaNode("p").append(v3, host, v4));
+    });
+    updateSelection(editor, host!, offset);
+    editor.getEditorState().read(() => {
+      expect($adjacentVerseMarker($getSelection()!, "backward")?.getKey()).toBe(v3!.getKey());
+      expect($adjacentVerseMarker($getSelection()!, "forward")?.getKey()).toBe(v4!.getKey());
     });
   });
 });

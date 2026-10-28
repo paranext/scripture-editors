@@ -187,6 +187,7 @@ export interface EditorRef {
     getSelection(): SelectionRange | undefined;
     getUsj(): Usj | undefined;
     highlightNote(noteKeyOrIndex: string | number | undefined): void;
+    insertFirstChapter(verseCount?: number): boolean;
     insertMarker(marker: string): string | undefined;
     // @deprecated
     insertNote(marker: string, caller?: string, selection?: SelectionRange): void;
@@ -357,6 +358,7 @@ export type MarkerLookup = (marker: string) => Marker | undefined;
 
 // @public
 export interface MarkerMenuContext {
+    canInsertChapter?: boolean;
     hasTextSelection: boolean;
     inMarkerText: boolean;
     noteMarker?: string;

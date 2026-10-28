@@ -102,6 +102,13 @@ export async function baseTestEnvironment(
   return { editor: editor! };
 }
 
+/** Let the selectionchange events jsdom queued for earlier writes arrive now, not mid-test. */
+export async function settle(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 /**
  * Builds the `\id` line the way `createBook` shapes it in markerMode "editable": one immutable
  * `\id <code> ` glyph decorator, then `children` as the line's own content, in order. Returns the

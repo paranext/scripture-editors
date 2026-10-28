@@ -17,6 +17,8 @@
  * `OnSelectionChangePlugin`.
  */
 import { MarkerMenuContext } from "./markerItemSource";
+import { $canInsertChapterAtSelection } from "../markerEdit/firstChapter.utils";
+import { $getParaTagMarker } from "../markerEdit/markerValidation.utils";
 import { $findMatchingParent } from "@lexical/utils";
 import {
   $getRoot,
@@ -31,7 +33,6 @@ import {
   $findFirstAncestorNoteNode,
   $getSelectedParaMarker,
   $isBookNode,
-  $isChapterNode,
   $isCharNode,
   $isMarkerTrailingSeparator,
   $isParaNode,
@@ -68,19 +69,18 @@ function $collectOpenCharMarkers(node: LexicalNode): string[] {
 
 /**
  * Root's block-level children before the top-level element containing `node`, in document
- * order: `ParaNode`/chapter/`BookNode` markers (the stack replay in
- * `markerItemSource.ts` filters to styleType-paragraph entries itself - `c`/`id` ARE
- * paragraph-typed in the sheet). Chapters match via `$isSomeChapterNode` — the same
- * predicate the validation walk uses — so a decorator `ImmutableChapterNode` contributes
- * its `\c` just like the mutable variant.
+ * order: the paragraph tag each opens, read by `$getParaTagMarker` — the same helper the
+ * validation walk uses — so a decorator `ImmutableChapterNode` contributes its `\c` just like the
+ * mutable variant.
  *
- * A `node` on an editable chapter line counts that chapter too: a paragraph applied there starts
- * after the chapter line (see `chapterLine.utils.ts`), so it is the chapter that precedes it.
+ * A `node` on a chapter line counts that chapter too: a paragraph applied there starts after the
+ * chapter line (see `chapterLine.utils.ts`), so it is the chapter that precedes it.
  */
 function $collectPreviousParaMarkers(node: LexicalNode): string[] {
   const topLevel = node.getTopLevelElement();
   const markers: string[] = [];
   for (const child of $getRoot().getChildren()) {
+    const marker = $getParaTagMarker(child);
     if (topLevel && child.is(topLevel)) {
       // A paragraph's own marker isn't "before itself", so the general break below is right for
       // it — but the `\id` line's caret has the BookNode as its own top-level element, and the
@@ -89,12 +89,10 @@ function $collectPreviousParaMarkers(node: LexicalNode): string[] {
       // before checking what follows it). Otherwise a caret in the line reports an empty stack,
       // and the Enter palette offers every paragraph marker, including ones invalid straight
       // after `\id`.
-      if ($isBookNode(child) || $isChapterNode(child)) markers.push(child.getMarker());
+      if ($isBookNode(child) || $isSomeChapterNode(child)) markers.push(child.getMarker());
       break;
     }
-    if ($isBookNode(child) || $isSomeChapterNode(child) || $isParaNode(child)) {
-      markers.push(child.getMarker());
-    }
+    if (marker !== undefined) markers.push(marker);
   }
   return markers;
 }
@@ -225,9 +223,12 @@ function $getMenuFocus(
  *
  * @param editor - The editor being read, to anchor at a selected paragraph marker's glyph; without
  *   it, a marker selection reports no `anchorRect`.
+ * @param chapterNum - The chapter the document is, which decides `canInsertChapter`; without it,
+ *   no chapter can be inserted.
  */
 export function $getMarkerMenuContext(
   editor?: LexicalEditor,
+  chapterNum?: number,
 ): MarkerMenuContextSnapshot | undefined {
   const selection = $getSelection();
   const focus = $getMenuFocus(selection);
@@ -268,6 +269,7 @@ export function $getMarkerMenuContext(
     // (see $isPointInMarkerGlyphText) — Enter there opens the paragraph menu exactly as at the
     // end of a plain-text paragraph.
     inMarkerText: $isPointInMarkerGlyphText(focusNode, offset),
+    canInsertChapter: $canInsertChapterAtSelection(chapterNum),
     anchorRect: getGlyphRect(editor, $getSelectedParaMarker(selection)) ?? getAnchorRect(),
   };
 }

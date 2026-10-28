@@ -1,5 +1,5 @@
 import { releaseTagsAfterNextCommit } from "./editorUpdate.utils";
-import { $tagCaretHostCommit, useTransientCaretHost } from "./transientCaretHost";
+import { useTransientCaretHost } from "./transientCaretHost";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
@@ -282,15 +282,8 @@ export function TrailingNoteCaretGuardPlugin(): null {
   const endKeyPressedAt = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    // Command handlers already run inside an update, so the tag has to be added to that one rather
-    // than opened around a new one. Neither arrival changes content, so tagging the whole commit
-    // costs nothing that is not already excluded — but only a commit the repair actually moved a
-    // node in is tagged, since Lexical carries a tag on a selection-only commit over to the user's
-    // next edit (see CaretHostRepair).
-    const $repairPast = (note: NoteNode): void => {
-      if ($repairCaret(note)) $tagCaretHostCommit();
-    };
-
+    // Command handlers already run inside an update, so $repairCaret tags that one rather than
+    // opening a new one (see CaretHostRepair).
     return mergeRegister(
       editor.registerCommand<KeyboardEvent>(
         KEY_DOWN_COMMAND,
@@ -311,19 +304,19 @@ export function TrailingNoteCaretGuardPlugin(): null {
             // The caret belongs past the note, where the guard hosts it, not on the note.
             const selected = $selectedTrailingNote();
             if (selected) {
-              $repairPast(selected);
+              $repairCaret(selected);
               return false;
             }
           }
           if ($takeCollapsedNotesIntoRange()) {
-            // Only the selection moves, so the commit is tagged and the tag released like the
-            // caret repairs below.
+            // Only the selection moves, so the commit is tagged and the tag released after it:
+            // left on, it would ride along on the user's next edit (see CaretHostRepair).
             $addUpdateTag(CURSOR_CHANGE_TAG);
             releaseTagsAfterNextCommit(editor, CURSOR_CHANGE_TAG);
             return false;
           }
           const note = $trailingNoteUnderUnresolvedSelection(editor.getRootElement());
-          if (note) $repairPast(note);
+          if (note) $repairCaret(note);
           return false;
         },
         COMMAND_PRIORITY_EDITOR,
@@ -332,7 +325,7 @@ export function TrailingNoteCaretGuardPlugin(): null {
         CLICK_COMMAND,
         (event) => {
           const note = $trailingNoteUnderClick(event);
-          if (note) $repairPast(note);
+          if (note) $repairCaret(note);
           return false;
         },
         COMMAND_PRIORITY_EDITOR,

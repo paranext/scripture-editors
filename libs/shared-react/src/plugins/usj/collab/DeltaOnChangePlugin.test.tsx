@@ -10,6 +10,7 @@ import {
   typeTextAtSelection,
 } from "../react-test.utils";
 import { DeltaOp } from "./delta-common.utils";
+import { $createCaretHostNode } from "../transientCaretHost";
 import { DeltaOnChangePlugin } from "./DeltaOnChangePlugin";
 import {
   $createTextNode,
@@ -32,6 +33,7 @@ import {
   blackListedChangeTags,
   charIdState,
   CURSOR_CHANGE_TAG,
+  EMPTY_CHAR_PLACEHOLDER_TEXT,
   EXTERNAL_USJ_MUTATION_TAG,
   ImmutableChapterNode,
   ImpliedParaNode,
@@ -397,6 +399,60 @@ describe("OnChangePlugin", () => {
       const { editor, calls } = await setup();
       await sutUpdate(editor, $makeMultiNodeChange, { tag: EXTERNAL_USJ_MUTATION_TAG });
       expect(calls).toHaveLength(0);
+    });
+
+    it("emits only the insert when text replaces a caret host between two verses", async () => {
+      // The empty-verse guard hosts the caret in a placeholder-only text node, which delta-doc
+      // coordinates count as zero length. The first keystroke turns it into the typed text, and
+      // diffing from the placeholder's raw text would also delete a unit — the next verse.
+      let host: TextNode;
+      const { editor } = await testEnvironment(() => {
+        host = $createCaretHostNode();
+        $getRoot().append(
+          $createImpliedParaNode().append(
+            $createImmutableVerseNode("2"),
+            host,
+            $createImmutableVerseNode("3"),
+            $createTextNode("three"),
+          ),
+        );
+      });
+
+      await sutUpdate(editor, () => {
+        // What the host's strip leaves once "a" is typed into it.
+        // Defined by the test environment.
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        host!.setTextContent("a");
+      });
+
+      expect(updateOps.some((op) => "delete" in op)).toBe(false);
+      expect(updateOps.filter((op) => "insert" in op)).toEqual([{ insert: "a" }]);
+    });
+
+    it("emits only the insert when text replaces an empty char span's stand-in", async () => {
+      // An otherwise empty char span holds a stand-in NBSP, which delta-doc coordinates also count
+      // as zero length. Diffing from it would delete the next verse just as a caret host would.
+      let standIn: TextNode;
+      const { editor } = await testEnvironment(() => {
+        standIn = $createTextNode(EMPTY_CHAR_PLACEHOLDER_TEXT);
+        $getRoot().append(
+          $createImpliedParaNode().append(
+            $createImmutableVerseNode("2"),
+            $createCharNode("nd").append(standIn),
+            $createImmutableVerseNode("3"),
+            $createTextNode("three"),
+          ),
+        );
+      });
+
+      await sutUpdate(editor, () => {
+        // Defined by the test environment.
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        standIn!.setTextContent("a");
+      });
+
+      expect(updateOps.some((op) => "delete" in op)).toBe(false);
+      expect(updateOps.filter((op) => "insert" in op).map((op) => op.insert)).toEqual(["a"]);
     });
 
     // The transient caret hosts (an emptied verse's, and a trailing note's) tag every mutation they

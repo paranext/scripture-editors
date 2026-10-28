@@ -16,9 +16,10 @@
  */
 import { isUsjMarkerSupported } from "../adaptors/usj-marker-action.utils";
 import {
+  buildParaStack,
+  getMarkerStyleInfo,
   isParagraphTagValid,
-  ParaStackEntry,
-  pushParaTagIfValid,
+  toStackEntry,
 } from "../markerEdit/markerValidation.utils";
 import { MarkerStyleInfo, StyleInfo } from "shared";
 
@@ -45,6 +46,13 @@ export interface MarkerMenuContext {
   hasTextSelection: boolean;
   /** Caret is inside visible marker glyph text (extension lets Enter pass through). */
   inMarkerText: boolean;
+  /**
+   * Set when a chapter marker can be inserted here: the document is chapter 1 of a book that holds
+   * chapters and has no `\c` yet, as in a book that has no chapters, and the caret is not in a note
+   * or over a text selection. Every other chapter document already carries its own `\c`, and the
+   * host's save removes a second one.
+   */
+  canInsertChapter?: boolean;
 }
 
 /**
@@ -92,39 +100,14 @@ function withoutBasicToken(description?: string): string | undefined {
  * `id`; PT9 does not filter deprecated markers, and neither do we).
  *
  * `\c` (chapter) is also skipped: the sheet types it `styleType: "paragraph"`, but it is a
- * structural marker inserted via its own `getUsjMarkerAction` chapter action, not a paragraph
- * style to retag/split into. Offering it in the paragraph menu let it be picked from the Enter
- * split menu, where `$splitParagraphWithMarker("c")` produced a malformed `<para marker="c">`.
+ * structural marker, not a paragraph style to retag or split into, and the Enter menu splits with
+ * whatever it is given. The `\` menu offers it separately, only where a chapter can be inserted
+ * ({@link chapterItem}).
  */
 function includeMarker(marker: string, extraValidMarkers?: readonly string[]): boolean {
   return (
     !marker.startsWith("zpa") && marker !== "c" && isUsjMarkerSupported(marker, extraValidMarkers)
   );
-}
-
-function toStackEntry(styleInfo: StyleInfo, marker: string): ParaStackEntry | undefined {
-  // `Object.hasOwn`, not a bare index: a document paragraph marked `\toString` (or any other
-  // `Object.prototype` member name) would otherwise resolve to the inherited function and build a
-  // stack entry for a marker the stylesheet never declared.
-  const entry = Object.hasOwn(styleInfo.markers, marker) ? styleInfo.markers[marker] : undefined;
-  if (!entry) return undefined;
-  return { marker, rank: entry.rank ?? 0, occursUnder: entry.occursUnder ?? [] };
-}
-
-/**
- * Replays previousParaMarkers (forward order) into a validity stack — PT9
- * GetValidParagraphTags's build pass, which calls
- * `TagValidator.IsParagraphTagValid(stack, tag, addTag: true)` for each
- * previous tag (MarkerItemSource.cs:183-194). Only the stack the replay leaves
- * behind matters here, so each tag's verdict is discarded.
- */
-function buildParaStack(styleInfo: StyleInfo, previousParaMarkers: string[]): ParaStackEntry[] {
-  const stack: ParaStackEntry[] = [];
-  for (const marker of previousParaMarkers) {
-    const tag = toStackEntry(styleInfo, marker);
-    if (tag) pushParaTagIfValid(stack, tag);
-  }
-  return stack;
 }
 
 function toItem(entry: MarkerStyleInfo, kind: MarkerMenuItem["kind"]): MarkerMenuItem {
@@ -265,15 +248,21 @@ function compareBasicFirst(a: MarkerMenuItem, b: MarkerMenuItem): number {
   return a.isBasic ? -1 : 1;
 }
 
+/**
+ * Close tags, then character and note items. `chapter` joins the character and note items in their
+ * own order, but only when the source has something of its own to offer: an empty character source
+ * still falls back to the paragraph list.
+ */
 function characterItems(
   styleInfo: StyleInfo,
   context: MarkerMenuContext,
   extraValidMarkers?: readonly string[],
+  chapter?: MarkerMenuItem,
 ): MarkerMenuItem[] {
-  return [
-    ...closeTagItems(styleInfo, context.openCharMarkers),
-    ...characterItemsRaw(styleInfo, context, extraValidMarkers),
-  ].sort(compareBasicFirst);
+  const closeTags = closeTagItems(styleInfo, context.openCharMarkers);
+  const items = characterItemsRaw(styleInfo, context, extraValidMarkers);
+  if (closeTags.length === 0 && items.length === 0) return [];
+  return [...closeTags, ...withChapterItem(items, chapter)].sort(compareBasicFirst);
 }
 
 /**
@@ -289,9 +278,32 @@ export function getMarkerMenuItems(
   context: MarkerMenuContext,
   extraValidMarkers?: readonly string[],
 ): MarkerMenuItem[] {
-  if (context.source === "paragraph") return paragraphItems(styleInfo, context, extraValidMarkers);
-  const items = characterItems(styleInfo, context, extraValidMarkers);
-  return items.length > 0 ? items : paragraphItems(styleInfo, context, extraValidMarkers);
+  const chapter = chapterItem(styleInfo, context);
+  if (context.source === "character") {
+    const items = characterItems(styleInfo, context, extraValidMarkers, chapter);
+    if (items.length > 0) return items;
+  }
+  return withChapterItem(paragraphItems(styleInfo, context, extraValidMarkers), chapter);
+}
+
+/**
+ * The `\c` entry, when the caret is where a chapter can be inserted
+ * ({@link MarkerMenuContext.canInsertChapter}). Offered from both `\` sources, since an empty
+ * book's only caret position, the `\id` line, is character source. Picking it inserts the chapter
+ * line itself (`$applyMarkerMenuSelection`), never a paragraph retag or split.
+ */
+function chapterItem(styleInfo: StyleInfo, context: MarkerMenuContext): MarkerMenuItem | undefined {
+  if (!context.canInsertChapter) return undefined;
+  const entry = getMarkerStyleInfo(styleInfo, "c");
+  return entry ? toItem(entry, "paragraph") : undefined;
+}
+
+/** `items` (already sorted) with `chapter` added in its sorted place. */
+function withChapterItem(
+  items: MarkerMenuItem[],
+  chapter: MarkerMenuItem | undefined,
+): MarkerMenuItem[] {
+  return chapter ? [...items, chapter].sort(compareItems) : items;
 }
 
 /**

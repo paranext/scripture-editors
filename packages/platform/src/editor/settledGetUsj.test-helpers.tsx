@@ -100,6 +100,15 @@ export async function mountExpandedNoteEditor(
   return mountInView(usj, expandedNoteViewOptions(), options);
 }
 
+/** Like `mountStandardViewEditor`, but under `view` — e.g. a view with the markers hidden. */
+export async function mountViewEditor(
+  usj: Usj,
+  view: ViewOptions,
+  options: MountOptions = {},
+): Promise<MountedEditor> {
+  return mountEditor(usj, view, options);
+}
+
 /** Load `usj` into a fresh headless editor under `viewOptions`; mirrors
  * tier2Rebuild.corpus.test.tsx's `loadEditor`. */
 function loadHeadless(usj: Usj, viewOptions: ViewOptions): LexicalEditor {

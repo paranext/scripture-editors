@@ -131,6 +131,14 @@ refused. The public surface grew substantially; nothing was removed.
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
 - `EditorProps.onParaMarkerMenuRequest` — fired on unmodified Enter or Alt+↓ while a paragraph marker is
   selected, so the host can open its paragraph dropdown.
+- `EditorRef.insertFirstChapter(verseCount?)` — starts chapter 1 in a book with no chapters: `\c 1`
+  and optional empty verses after the book's front matter, the same place the `\` menu's `\c` puts
+  it. The verses are left out when the chapter content already holds anything (text, a verse, a
+  note, a milestone or a figure), which they would otherwise go above. A no-break space counts as
+  whitespace in every view. Returns `false`, changing nothing, outside chapter 1 or once the
+  document has a chapter.
+- `MarkerMenuContext.canInsertChapter` — set in chapter 1 of a document with no chapter yet, where
+  `getMarkerMenuItems` offers `\c`.
 
 ### Changed
 
@@ -154,6 +162,12 @@ refused. The public surface grew substantially; nothing was removed.
   that writes the USJ back with `usjToUsxString` gets the version its source served. A `setUsj`
   whose document differs only in `version` reloads, as any other differing document does. Loading
   a document whose version is not `USJ_VERSION` no longer logs a warning.
+- **A book with no chapters can start chapter 1 from the `\` menu.** In chapter 1 with no chapter
+  yet, the menu offers `\c`; picking it, or `EditorRef.insertMarker("c")`, inserts `\c 1` after the
+  book's front matter (the `\id` line, running header, table of contents, titles and introduction)
+  and before the first paragraph that needs a chapter, such as a `\s1` or a `\p`, whatever the
+  caret position. `\c` stays out of the Enter menu, and out of the `\` menu in every other chapter,
+  which already has its marker. `insertMarker("c")` used to do nothing in the `\id` line.
 - **Paragraphs the editor creates in the paragraph-structure view get their gutter marker.** An
   Enter split or a multi-line paste used to create a paragraph with no marker glyph, which the
   marker-prefix guard then reset to `\p`; the new paragraph now keeps its marker (an Enter in a `\li2`
@@ -263,6 +277,12 @@ refused. The public surface grew substantially; nothing was removed.
   and stays a no-break space through a settle of its paragraph, an edit to the value, copy and
   paste, and an unwrap of its span; it was saved as a plain space. Unformatted view's settle keeps
   it too.
+- Placing the caret in an empty verse no longer moves the next verse number onto a new line, and the
+  caret is drawn right after the empty verse's number. The verse holding the caret now carries
+  `psc-empty-text-active` instead of no class, and its caret host carries `data-caret-host`. A host
+  that vendors its own copy of `usj-nodes.css` needs the `psc-empty-text-active` and
+  `[data-caret-host]` rules and the `--psc-empty-verse-ellipsis-width` variable in it, or it keeps
+  the old reflow.
 - A paragraph that `applyUpdate` creates keeps a space at the start of its text. The editor used to
   drop it as it does for an Enter split, without reporting the change, so the document fell one
   character out of step with the ops applied.

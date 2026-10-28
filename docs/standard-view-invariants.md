@@ -214,6 +214,19 @@ What follows from that:
   SPLIT: the tail after the caret becomes a new paragraph inserted directly after the book, with an
   open character span closed on the left and reopened in it. Typed `\p`, `\ip` or `\c ` bytes end
   the line the same way, where the file bytes would.
+- **In a book with no chapters, the `\` menu also offers `\c`**, and nowhere else does
+  (`canInsertChapter`: chapter 1 with no chapter yet). Every other chapter already has its `\c`, and
+  the host's save removes a second one, so a `\c` offered there would always be undone. The pick
+  does NOT split the line: chapter 1 goes before the first paragraph that needs a chapter, one the
+  PT9 paragraph validator rejects where it stands but accepts right after a `\c` (a `\s1`, a `\p`),
+  wherever the caret is. Everything before that is front matter, including an introduction
+  paragraph the validator rejects only on rank. A paragraph the stylesheet does not declare, or
+  declares valid anywhere, starts the chapter. `EditorRef.insertMarker("c")` and
+  `EditorRef.insertFirstChapter` put it in the same place (`markerEdit/firstChapter.utils.ts`).
+  A peripheral book (FRT, INT, BAK, OTH, CNC, GLO, TDX, NDX) never takes one; the Extra books
+  (XXA–XXG) do. The menu, its pick and `insertMarker("c")` also refuse inside a note or over a text
+  selection (`$canInsertChapterAtSelection`), and `insertMarker("c")` then does nothing rather than
+  insert a `\c` at the caret. `insertFirstChapter` does not act at the caret, so it skips those two checks.
 - **The line settles.** `$rebuildBook` is the fourth settle scope beside paragraphs, note content
   and chapters; like the note scope it re-tokenizes only the content and preserves the book node,
   its code and its prefix, which are never re-derived from displayed bytes. Without it, typed

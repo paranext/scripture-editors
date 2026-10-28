@@ -1,10 +1,10 @@
 /**
- * The repair step's report of whether it moved a node.
+ * The repair step's tagging of its own update.
  *
- * Its callers tag their commit `CURSOR_CHANGE_TAG`, which keeps that commit out of the host
- * application's USJ-change handler. Lexical clears an update's tags only when the commit dirties a
- * node, so a tag on a repair that only moved the caret would ride along on the user's NEXT commit
- * and hide that edit from the host — which is why the repair has to say which kind it was.
+ * It tags the commit `CURSOR_CHANGE_TAG`, which keeps that commit out of the host application's
+ * USJ-change handler, and `HISTORY_MERGE_TAG`. Lexical clears an update's tags only when the commit
+ * dirties a node, so tags on a repair that only moved the caret would ride along on the user's NEXT
+ * commit and hide that edit from the host — which is why the repair tags only when it moved a node.
  */
 import { $createImmutableVerseNode } from "../../nodes/usj";
 import { baseTestEnvironment } from "./react-test.utils";
@@ -17,6 +17,7 @@ import {
   $hasAncestor,
   $isRangeSelection,
   $isTextNode,
+  HISTORY_MERGE_TAG,
   LexicalEditor,
   SELECTION_CHANGE_COMMAND,
   TextNode,
@@ -101,54 +102,54 @@ async function mountRepair(): Promise<{
   return { editor, para: anchorPara, repair };
 }
 
-describe("the transient caret host's repair", () => {
-  it("reports that it moved a node when it materializes a host", async () => {
-    const { editor, para, repair } = await mountRepair();
-    let moved: boolean | undefined;
+/** The tags of every commit `run` makes. */
+async function tagsOfCommits(editor: LexicalEditor, run: () => void): Promise<string[][]> {
+  const tags: string[][] = [];
+  const unregister = editor.registerUpdateListener((payload) => {
+    tags.push([...payload.tags]);
+  });
+  await act(async () => {
+    editor.update(run, { discrete: true });
+  });
+  unregister();
+  return tags;
+}
 
-    await act(async () => {
-      editor.update(
-        () => {
-          const anchor = para.getFirstChild();
-          if (!anchor) throw new Error("expected an anchor");
-          moved = repair(anchor);
-        },
-        { discrete: true },
-      );
+describe("the transient caret host's repair", () => {
+  it("tags the update when it materializes a host", async () => {
+    const { editor, para, repair } = await mountRepair();
+
+    const tags = await tagsOfCommits(editor, () => {
+      const anchor = para.getFirstChild();
+      if (!anchor) throw new Error("expected an anchor");
+      repair(anchor);
     });
 
-    expect(moved).toBe(true);
+    expect(tags.flat()).toEqual(expect.arrayContaining([CURSOR_CHANGE_TAG, HISTORY_MERGE_TAG]));
     expect(hostCount(editor)).toBe(1);
   });
 
-  it("reports that it moved nothing when it adopts the host already there", async () => {
+  it("tags nothing when it adopts the host already there", async () => {
     const { editor, para, repair } = await mountRepair();
     const $repairFromAnchor = () => {
       const anchor = para.getFirstChild();
       if (!anchor) throw new Error("expected an anchor");
-      return repair(anchor);
+      repair(anchor);
     };
     await act(async () => {
       editor.update(() => $repairFromAnchor(), { discrete: true });
     });
-    let moved: boolean | undefined;
 
     // A second arrival at the same position — a click once an earlier arrival has put a host
     // there — finds that host and only puts the caret back into it.
-    await act(async () => {
-      editor.update(
-        () => {
-          moved = $repairFromAnchor();
-        },
-        { discrete: true },
-      );
-    });
+    const tags = await tagsOfCommits(editor, $repairFromAnchor);
 
-    expect(moved).toBe(false);
+    expect(tags.flat()).not.toContain(CURSOR_CHANGE_TAG);
+    expect(tags.flat()).not.toContain(HISTORY_MERGE_TAG);
     expect(hostCount(editor)).toBe(1);
   });
 
-  it("reports that it moved a node when it drops a host the caret has left", async () => {
+  it("tags the update when it drops a host the caret has left", async () => {
     const { editor, para, repair } = await mountRepair();
     await act(async () => {
       editor.update(
@@ -160,24 +161,18 @@ describe("the transient caret host's repair", () => {
         { discrete: true },
       );
     });
-    let moved: boolean | undefined;
 
-    // The caret leaves, and the repair is driven with nothing to host.
-    await act(async () => {
-      editor.update(
-        () => {
-          // The caret leaves the host for text in the next paragraph.
-          const elsewhere = $getRoot().getLastChild();
-          const text = $isParaNode(elsewhere) ? elsewhere.getFirstChild() : undefined;
-          if (!$isTextNode(text)) throw new Error("expected text to put the caret in");
-          text.select(1, 1);
-          moved = repair(undefined);
-        },
-        { discrete: true },
-      );
+    // The caret leaves the host for text in the next paragraph, and the repair is driven with
+    // nothing to host.
+    const tags = await tagsOfCommits(editor, () => {
+      const elsewhere = $getRoot().getLastChild();
+      const text = $isParaNode(elsewhere) ? elsewhere.getFirstChild() : undefined;
+      if (!$isTextNode(text)) throw new Error("expected text to put the caret in");
+      text.select(1, 1);
+      repair(undefined);
     });
 
-    expect(moved).toBe(true);
+    expect(tags.flat()).toEqual(expect.arrayContaining([CURSOR_CHANGE_TAG, HISTORY_MERGE_TAG]));
     expect(hostCount(editor)).toBe(0);
   });
 
