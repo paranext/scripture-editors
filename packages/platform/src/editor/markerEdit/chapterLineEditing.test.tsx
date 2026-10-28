@@ -52,11 +52,13 @@ import {
   getVisibleOpenMarkerText,
   NBSP,
   StyleInfo,
+  ZWSP,
 } from "shared";
 import {
   FORMATTED_VIEW_MODE,
   getViewOptions,
   PARAGRAPH_STRUCTURE_VIEW_MODE,
+  STANDARD_VIEW_MODE,
   ViewMode,
 } from "shared-react";
 import { describe, expect, it } from "vitest";
@@ -1238,6 +1240,123 @@ describe("a chapter inserted into a book with no chapters", () => {
     ]);
   });
 
+  // Verses go above the chapter content, so over existing content they would leave all of it in
+  // the last verse.
+  describe("over content already in the chapter, as a book without chapter markers has", () => {
+    const V1: MarkerContent = { type: "verse", marker: "v", number: "1" };
+    const V2: MarkerContent = { type: "verse", marker: "v", number: "2" };
+
+    async function insertWithVerses(content: MarkerContent[], view = requireStandardViewOptions()) {
+      const { ref } = await mountEmptyBook(GEN_1_1, view, { ...emptyBook, content });
+      await act(async () => {
+        ref.current?.insertFirstChapter(2);
+      });
+      return ref.current?.getUsj()?.content;
+    }
+
+    it("adds no verses above text", async () => {
+      const text: MarkerContent = { type: "para", marker: "p", content: ["Text"] };
+
+      expect(await insertWithVerses([BOOK, text])).toEqual([BOOK, CHAPTER_1, text]);
+    });
+
+    // `\b` needs a chapter, so the chapter content starts there, and `\ip` after it is text in
+    // that content, whatever it would be ahead of a chapter.
+    it("adds no verses above text after the paragraph the chapter content starts with", async () => {
+      const title: MarkerContent = { type: "para", marker: "mt1", content: ["Genesis"] };
+      const blank: MarkerContent = { type: "para", marker: "b" };
+      const intro: MarkerContent = { type: "para", marker: "ip", content: ["Intro text"] };
+
+      expect(await insertWithVerses([BOOK, title, blank, intro])).toEqual([
+        BOOK,
+        title,
+        CHAPTER_1,
+        blank,
+        intro,
+      ]);
+    });
+
+    it("adds no verses above a verse", async () => {
+      const para: MarkerContent = { type: "para", marker: "p", content: [V1] };
+
+      expect(await insertWithVerses([BOOK, para])).toEqual([BOOK, CHAPTER_1, para]);
+    });
+
+    it("adds verses above a paragraph whose text is only whitespace and a zero-width space", async () => {
+      const blank: MarkerContent = { type: "para", marker: "p", content: [`${ZWSP} `] };
+
+      expect(await insertWithVerses([BOOK, blank])).toEqual([BOOK, CHAPTER_1, V1, V2, blank]);
+    });
+
+    // A heading already belongs to the chapter, so it counts as content like any other text.
+    it("adds no verses above a section heading", async () => {
+      const heading: MarkerContent = { type: "para", marker: "s1", content: ["The Creation"] };
+
+      expect(await insertWithVerses([BOOK, heading])).toEqual([BOOK, CHAPTER_1, heading]);
+    });
+
+    // Only the chapter content counts: text in the front matter above it does not.
+    it("adds verses below a titled front matter", async () => {
+      const title: MarkerContent = { type: "para", marker: "mt1", content: ["Genesis"] };
+      const empty: MarkerContent = { type: "para", marker: "p" };
+
+      expect(await insertWithVerses([BOOK, title, empty])).toEqual([
+        BOOK,
+        title,
+        CHAPTER_1,
+        V1,
+        V2,
+        empty,
+      ]);
+    });
+
+    // Standard view shows the `\p` as text, which is a marker, not the chapter's text.
+    it("adds verses above an empty paragraph", async () => {
+      const empty: MarkerContent = { type: "para", marker: "p" };
+
+      expect(await insertWithVerses([BOOK, empty])).toEqual([BOOK, CHAPTER_1, V1, V2, empty]);
+    });
+  });
+
+  // Content with no text of its own still holds the chapter's place, in every view.
+  describe.each<ViewMode>([STANDARD_VIEW_MODE, FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE])(
+    "over content without text (%s view)",
+    (viewMode) => {
+      const V1: MarkerContent = { type: "verse", marker: "v", number: "1" };
+      const V2: MarkerContent = { type: "verse", marker: "v", number: "2" };
+
+      async function insertWithVerses(content: MarkerContent[]) {
+        const view = requireDefined(getViewOptions(viewMode), "no view options");
+        const { ref } = await mountEmptyBook(GEN_1_1, view, { ...emptyBook, content });
+        await act(async () => {
+          ref.current?.insertFirstChapter(2);
+        });
+        return ref.current?.getUsj()?.content;
+      }
+
+      // `MarkerObject` doesn't declare a figure's `file`, so this can't be an inline literal in the
+      // typed list below.
+      const uncaptionedFigure = { type: "figure", marker: "fig", file: "a.jpg" };
+
+      it.each<[string, MarkerContent]>([
+        ["a figure with no caption", uncaptionedFigure],
+        ["a milestone", { type: "ms", marker: "ts" }],
+        ["an empty footnote", { type: "note", marker: "f", caller: "+" }],
+      ])("adds no verses above %s", async (_name, item) => {
+        const para: MarkerContent = { type: "para", marker: "p", content: [item] };
+
+        expect(await insertWithVerses([BOOK, para])).toEqual([BOOK, CHAPTER_1, para]);
+      });
+
+      // Standard view shows each no-break space as `~`, which is still whitespace.
+      it("adds verses above a paragraph of no-break spaces", async () => {
+        const spaces: MarkerContent = { type: "para", marker: "p", content: [NBSP + NBSP] };
+
+        expect(await insertWithVerses([BOOK, spaces])).toEqual([BOOK, CHAPTER_1, V1, V2, spaces]);
+      });
+    },
+  );
+
   // Where the markers are hidden the chapter is a decorator, with no line to put the caret on.
   describe.each<ViewMode>([FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE])(
     "with the markers hidden (%s view)",
@@ -1293,6 +1412,17 @@ describe("a chapter inserted into a book with no chapters", () => {
           CHAPTER_1,
           { type: "para", marker: "p", content: ["New Text"] },
         ]);
+      });
+
+      it("adds no verses above text", async () => {
+        const text: MarkerContent = { type: "para", marker: "p", content: ["Text"] };
+        const { ref } = await mountHiddenMarkers({ ...emptyBook, content: [BOOK, text] });
+
+        await act(async () => {
+          ref.current?.insertFirstChapter(2);
+        });
+
+        expect(ref.current?.getUsj()?.content).toEqual([BOOK, CHAPTER_1, text]);
       });
 
       it("leaves the caret where it was when nothing follows the chapter", async () => {
