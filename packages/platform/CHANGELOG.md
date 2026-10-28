@@ -440,3 +440,32 @@ refused. The public surface grew substantially; nothing was removed.
   paragraphs back.
 - Plain text pasted inside a char span or a note stays inside it. Lexical's own paste split the
   span around the text, or put the text after the note.
+- Marking the text right after a char span with the span's own marker makes a second span in the
+  views that hide markers, as in Standard view and Paratext 9: `\nd` on "God" after `\nd Lord\nd*`
+  saved `\nd LordGod\nd*`. A selection that reaches into part of such a span and past it extends
+  the span over the selection instead of nesting a copy inside it (Paratext 9 mangles the line
+  there).
+- Applying a character marker to a selection that starts or ends inside a char span, or holds a
+  whole span from the text around it, no longer freezes the editor. A span the selection holds
+  whole moves into the new span (`\wj \+nd Lord\+nd* \wj*`), including one selected from its
+  opening glyph to its closing glyph in Standard view, which lost the span (`\wj Lord\wj**`).
+- Standard view refuses to apply a character marker across a marker border — a selection whose two
+  ends sit in different spans, so it holds part of a span's glyphs — and logs a warning instead of
+  changing anything. It nested a copy of the span, left an empty span, an unmatched closer or the
+  glyph's bytes as text, or lost the span. Marking text beside a span, inside one, or a whole span
+  from the text around it still works, and so does applying a footnote or cross-reference content
+  marker across a nested span, which closes and reopens the spans it crosses.
+- Applying a character marker to a selection holding a whole note (`\wj` over a verse with a
+  footnote in it) moves the note into the new span, its content untouched. It marked the note's
+  content instead, and in Standard view replaced the note's `\ft`.
+- Marking a whole span together with the text after it keeps the space between them; it moved to
+  before the new span, and in Standard view was lost. A selection that starts with a space leaves
+  the space outside the new span, where Standard view keeps it; it was dropped from the file there,
+  joining the words either side.
+- In the unformatted view, a note's `\ft ~\ft*` or `\fk ~\+wj x\+wj*\fk*` keeps its `~` in
+  `getNoteOps` and `getEditorDelta`, and through the footnote popover's save and the footnotes
+  pane's round trip, which lost it.
+- Delta-doc positions after a char span whose whole text is an author's no-break space
+  (`\nd ~\nd*`) count that `~`, as the ops stream does; in the views without a separator after the
+  opener they were one short, so a keystroke after such a span went out with a retain one too
+  small.
