@@ -853,6 +853,7 @@ function $wrapTextSelectionInInlineNode(
   );
   const nodes = allNodes.filter((node) => !wholeNodes.some((whole) => whole.isParentOf(node)));
 
+  const hasMoreThanSpaces = selection.getTextContent().trim() !== "";
   let currentWrapper: LexicalNode | undefined;
 
   nodes.forEach((node) => {
@@ -885,6 +886,19 @@ function $wrapTextSelectionInInlineNode(
 
     if (!targetNode) {
       currentWrapper = undefined;
+      return;
+    }
+
+    // A piece holding only spaces does not start a new span when the selection holds more than
+    // spaces: it stays where it is, outside the span. Standard view does not save spaces right
+    // after an opening marker, so taking it in dropped the space from the file.
+    if (
+      !currentWrapper &&
+      $isTextNode(targetNode) &&
+      !$isMarkerNode(targetNode) &&
+      targetNode.getTextContent().trim() === "" &&
+      hasMoreThanSpaces
+    ) {
       return;
     }
 
@@ -1115,7 +1129,7 @@ function $wrapNode(node: LexicalNode, wrapper: LexicalNode, isFreshWrapper: bool
     } else {
       wrapper.append(node);
     }
-    $moveLeadingSpaceToPreviousNode(node, wrapper);
+    if (isFreshWrapper) $moveLeadingSpaceToPreviousNode(node, wrapper);
     // The span's first content carries the display separator after the opening glyph (`\nd one`,
     // not `\ndone`) — the structural NBSP convention in markerSeparators.utils.ts. Only the FIRST
     // wrapped node takes it (later nodes of a multi-node selection are mid-span content), and only
@@ -1140,8 +1154,9 @@ function $moveLeadingSpaceToPreviousNode(node: LexicalNode, wrapper: LexicalNode
   // selection walked the selected space out of the span and left an empty `\nd \nd*` pair in the
   // file while the screen showed nothing happened (a silent no-op, which Standard view forbids).
   if ($isTextNode(node) && wrapper.isInline() && text.startsWith(" ") && text.trimStart() !== "") {
-    text = text.trimStart();
-    node.setTextContent(text);
+    // Moves a selection point in the text back with it, so one at its end stays in range.
+    $removeLeadingSpace(node);
+    text = node.getTextContent();
     const previousNode = wrapper.getPreviousSibling();
     $addTrailingSpace(previousNode);
     if (!$isTextNode(previousNode)) wrapper.insertBefore($createTextNode(" "));

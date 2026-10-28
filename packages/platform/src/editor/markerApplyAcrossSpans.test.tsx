@@ -228,3 +228,25 @@ describe("applying a marker across a span's border in standard view", () => {
     });
   });
 });
+
+describe("applying a marker over a whole span and the text either side of it", () => {
+  describe.each(EDITING_VIEWS)("in $name view", ({ name: view }) => {
+    it.each(applyPaths)(
+      "keeps the space between the span and the word after it through %s",
+      async (_, apply) => {
+        const { paragraph } = await applied(view, apply, "wj", ["a ", 0], ["God", 2]);
+
+        expect(paragraph).toEqual([char("wj", "a ", char("nd", "Lord"), " Go"), "d b"]);
+      },
+    );
+
+    it.each(applyPaths)(
+      "leaves the space the selection starts with outside the new span through %s",
+      async (_, apply) => {
+        const { paragraph } = await applied(view, apply, "wj", ["a ", 1], ["God", 2]);
+
+        expect(paragraph).toEqual(["a ", char("wj", char("nd", "Lord"), " Go"), "d b"]);
+      },
+    );
+  });
+});
