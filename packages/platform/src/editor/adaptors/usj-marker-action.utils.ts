@@ -16,6 +16,7 @@ import {
   ElementNode,
   LexicalEditor,
   LexicalNode,
+  PointType,
   RangeSelection,
   TextNode,
 } from "lexical";
@@ -348,6 +349,19 @@ export function getUsjMarkerAction(
           $extendCharacterMarkerAtSelection(selection, marker, undefined, viewOptions);
         } else if (
           $isCharNode(nodeToInsert) &&
+          sameNode &&
+          !selection.isCollapsed() &&
+          $isMarkerNode(node)
+        ) {
+          // A selection inside one marker glyph holds none of the text, only the glyph's bytes.
+          // Marking those took them for text, and for a footnote content marker (`\fq`) the
+          // re-read glyph and the new span undid each other without end.
+          logger?.warn(
+            `Marker action "${marker}" was not applied: the selection holds only a marker's ` +
+              "bytes, no text.",
+          );
+        } else if (
+          $isCharNode(nodeToInsert) &&
           innermostChar &&
           sameNode &&
           !isNestInPlaceCharNode(nodeToInsert, styleInfo)
@@ -370,6 +384,18 @@ export function getUsjMarkerAction(
           // text takes the new style, each crossed span keeps its uncovered tail. Ineligible
           // shapes (decorators in range, cross-container selections, …) keep the generic wrap.
           $applyNonNestAcrossNodes(selection, nodeToInsert, viewOptions?.markerMode === "editable");
+        } else if (
+          $isCharNode(nodeToInsert) &&
+          viewOptions?.markerMode === "editable" &&
+          $selectionCrossesSpanBorder(selection)
+        ) {
+          // Standard view shows a span's glyphs, so a selection can hold part of them. Wrapping one
+          // whose ends sit in different spans has no shape that keeps both spans whole — it turned
+          // glyph bytes into text, lost the span, or left an unmatched marker — so it is refused.
+          logger?.warn(
+            `Marker action "${marker}" was not applied: the selection crosses the border of a ` +
+              "character marker.",
+          );
         } else if (selection.getTextContent().length > 0) {
           // If the selection has text content, wrap the text selection in an inline node
           $wrapTextSelectionInInlineNode(selection, $createMarkedNode);
@@ -816,38 +842,81 @@ function $wrapTextSelectionInInlineNode(
   selection: RangeSelection,
   createNode: () => LexicalNode,
 ): void {
-  const nodes = selection.getNodes();
   const [startOffset, endOffset] = getSelectionOffsets(selection);
-  const anchorNode = selection.anchor.getNode();
-  const focusNode = selection.focus.getNode();
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  // A span the selection holds all of is wrapped as one node, so its own children are not listed
+  // again: `getNodes` lists a span AFTER its children, and wrapping them first put the wrapper
+  // inside the span — the span's glyphs then belonged to the wrapper and the span itself was lost.
+  // A range from before a span's opening glyph to after its closing glyph is expressed on the span
+  // itself, and `getNodes` lists only its children then, so the span is added.
+  const listedNodes = selection.getNodes();
+  const pointElement = start.getNode();
+  const allNodes =
+    start.key === end.key &&
+    $isWrappableElement(pointElement) &&
+    $startsWithOpeningGlyph(pointElement) &&
+    !listedNodes.includes(pointElement) &&
+    $isWhollySelected(pointElement, start, end)
+      ? [pointElement, ...listedNodes]
+      : listedNodes;
+  // A note the selection holds all of moves into the new span the same way, contents untouched:
+  // marking the text inside it marked the note's content, and replaced its `\ft` in Standard view.
+  const wholeNodes = allNodes.filter(
+    (node): node is ElementNode =>
+      ($isWrappableElement(node) || $isNoteNode(node)) && $isWhollySelected(node, start, end),
+  );
+  const nodes = allNodes.filter((node) => !wholeNodes.some((whole) => whole.isParentOf(node)));
 
+  const hasMoreThanSpaces = selection.getTextContent().trim() !== "";
   let currentWrapper: LexicalNode | undefined;
 
-  nodes.forEach((node, index) => {
+  nodes.forEach((node) => {
     // Skip if node is already wrapped
     if ($isElementNode(currentWrapper) && currentWrapper.isParentOf(node)) {
       return;
     }
 
-    // A span the selection starts or ends inside is only partly selected: its selected text is
-    // listed (and wrapped) on its own. Wrapping the span itself would move it into a wrapper placed
-    // inside it, which never terminates.
-    if ($isElementNode(node) && (node.isParentOf(anchorNode) || node.isParentOf(focusNode))) {
+    // A span the selection holds only part of — it starts or ends inside it — is not moved: its
+    // selected children are listed (and wrapped) on their own. Moving a node into a wrapper that
+    // sits inside it never terminates, so that is refused whatever the selection's shape.
+    if (
+      $isElementNode(node) &&
+      (!wholeNodes.includes(node) ||
+        (currentWrapper !== undefined && node.isParentOf(currentWrapper)))
+    ) {
       currentWrapper = undefined;
       return;
     }
 
-    // Get the target node to wrap
-    const targetNode = $getTargetNode(
-      node,
-      index === 0,
-      index === nodes.length - 1,
-      startOffset,
-      endOffset,
-    );
+    // Get the target node to wrap. Offsets apply only to the text nodes the selection's points
+    // name; an element point's offset is a child index.
+    const targetNode = $isNoteNode(node)
+      ? node
+      : $getTargetNode(
+          node,
+          start.type === "text" && node.getKey() === start.key,
+          end.type === "text" && node.getKey() === end.key,
+          startOffset,
+          endOffset,
+        );
 
     if (!targetNode) {
       currentWrapper = undefined;
+      return;
+    }
+
+    // A piece holding only spaces does not start a new span when the selection holds more than
+    // spaces: it stays where it is, outside the span. Standard view does not save spaces right
+    // after an opening marker, so taking it in dropped the space from the file.
+    if (
+      !currentWrapper &&
+      $isTextNode(targetNode) &&
+      !$isMarkerNode(targetNode) &&
+      targetNode.getTextContent().trim() === "" &&
+      hasMoreThanSpaces
+    ) {
       return;
     }
 
@@ -895,6 +964,88 @@ function getSelectionOffsets(selection: RangeSelection): [number, number] {
   const anchorOffset = selection.anchor.offset;
   const focusOffset = selection.focus.offset;
   return selection.isBackward() ? [focusOffset, anchorOffset] : [anchorOffset, focusOffset];
+}
+
+/**
+ * Whether a range selection's two points sit in different char spans, so it holds part of a span's
+ * marker glyphs, or one of its points sits between two bytes of a span's closing glyph, whose
+ * bytes the selection would take away from the closer. A point inside a glyph is inside its span;
+ * a point at a span's outer edge — before its opening glyph, after its closing glyph — is outside
+ * it, so a selection holding a whole span from the text around it does not cross.
+ *
+ * Read-only: safe inside `editor.update()` before any mutation.
+ */
+function $selectionCrossesSpanBorder(selection: RangeSelection): boolean {
+  if (selection.isCollapsed()) return false;
+  if ($isPointInsideClosingGlyph(selection.anchor) || $isPointInsideClosingGlyph(selection.focus))
+    return true;
+  const anchorSpans = $spansHoldingPoint(selection.anchor);
+  const focusSpans = $spansHoldingPoint(selection.focus);
+  return (
+    anchorSpans.length !== focusSpans.length ||
+    anchorSpans.some((span, index) => !span.is(focusSpans[index]))
+  );
+}
+
+/** Whether `point` sits between two bytes of a char span's closing glyph. */
+function $isPointInsideClosingGlyph(point: PointType): boolean {
+  const node = point.getNode();
+  return (
+    point.type === "text" &&
+    $isMarkerNode(node) &&
+    node.getMarkerSyntax() !== "opening" &&
+    $isCharNode(node.getParent()) &&
+    point.offset > 0 &&
+    point.offset < node.getTextContentSize()
+  );
+}
+
+/** The char spans `point` sits inside, innermost first. */
+function $spansHoldingPoint(point: PointType): CharNode[] {
+  const node = point.getNode();
+  let holder: LexicalNode | null = node;
+  if (point.type === "text" && $isMarkerNode(node) && $isCharNode(node.getParent())) {
+    const isAtOuterEdge =
+      node.getMarkerSyntax() === "opening"
+        ? point.offset === 0
+        : point.offset === node.getTextContentSize();
+    holder = isAtOuterEdge ? (node.getParent()?.getParent() ?? null) : node.getParent();
+  } else if (
+    point.type === "element" &&
+    $isCharNode(node) &&
+    (point.offset === 0 || point.offset === node.getChildrenSize())
+  ) {
+    holder = node.getParent();
+  }
+  const spans: CharNode[] = [];
+  for (let current = holder; current; current = current.getParent())
+    if ($isCharNode(current)) spans.push(current);
+  return spans;
+}
+
+/** Whether a marker apply's wrap can move `node` into its wrapper as one piece. */
+function $isWrappableElement(node: LexicalNode): node is ElementNode {
+  return $isElementNode(node) && node.isInline() && !$isSkippedByMarkerAction(node);
+}
+
+/** Whether `element`'s first child is an opening marker glyph, so its start is before the glyph. */
+function $startsWithOpeningGlyph(element: ElementNode): boolean {
+  const first = element.getFirstChild();
+  return $isMarkerNode(first) && first.getMarkerSyntax() === "opening";
+}
+
+/**
+ * Whether the range from `start` to `end` holds all of `element`: neither point is inside it,
+ * except a point on the element itself at its very start (for `start`) or very end (for `end`).
+ */
+function $isWhollySelected(element: ElementNode, start: PointType, end: PointType): boolean {
+  const startNode = start.getNode();
+  const endNode = end.getNode();
+  if (element.isParentOf(startNode) || element.isParentOf(endNode)) return false;
+  if (element.is(startNode) && !(start.type === "element" && start.offset === 0)) return false;
+  return (
+    !element.is(endNode) || (end.type === "element" && end.offset === element.getChildrenSize())
+  );
 }
 
 /**
@@ -1012,7 +1163,7 @@ function $wrapNode(node: LexicalNode, wrapper: LexicalNode, isFreshWrapper: bool
     } else {
       wrapper.append(node);
     }
-    $moveLeadingSpaceToPreviousNode(node, wrapper);
+    if (isFreshWrapper) $moveLeadingSpaceToPreviousNode(node, wrapper);
     // The span's first content carries the display separator after the opening glyph (`\nd one`,
     // not `\ndone`) — the structural NBSP convention in markerSeparators.utils.ts. Only the FIRST
     // wrapped node takes it (later nodes of a multi-node selection are mid-span content), and only
@@ -1037,8 +1188,9 @@ function $moveLeadingSpaceToPreviousNode(node: LexicalNode, wrapper: LexicalNode
   // selection walked the selected space out of the span and left an empty `\nd \nd*` pair in the
   // file while the screen showed nothing happened (a silent no-op, which Standard view forbids).
   if ($isTextNode(node) && wrapper.isInline() && text.startsWith(" ") && text.trimStart() !== "") {
-    text = text.trimStart();
-    node.setTextContent(text);
+    // Moves a selection point in the text back with it, so one at its end stays in range.
+    $removeLeadingSpace(node);
+    text = node.getTextContent();
     const previousNode = wrapper.getPreviousSibling();
     $addTrailingSpace(previousNode);
     if (!$isTextNode(previousNode)) wrapper.insertBefore($createTextNode(" "));
