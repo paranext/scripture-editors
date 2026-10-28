@@ -5,13 +5,7 @@
  * of a span's marker glyphs, a selection that crosses a border is refused. Either way the editor
  * must not freeze, lose a span, move text, or leave a marker unmatched.
  */
-import {
-  EDITING_VIEWS,
-  EditingViewName,
-  editorView,
-  mountInView,
-  MountedEditor,
-} from "./editorViews.test-helpers";
+import { EDITING_VIEWS, editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -117,7 +111,7 @@ const applyPaths: [string, (mounted: MountedEditor, marker: string) => void][] =
 ];
 
 async function applied(
-  view: EditingViewName,
+  view: string,
   apply: (mounted: MountedEditor, marker: string) => void,
   marker: string,
   start: Endpoint,
@@ -275,5 +269,37 @@ describe("applying a marker over a whole span and the text either side of it", (
         expect(paragraph).toEqual(["a ", char("wj", char("nd", "Lord"), " Go"), "d b"]);
       },
     );
+  });
+});
+
+describe("applying a marker over part of one marker glyph in standard view", () => {
+  describe.each(applyPaths)("through %s", (_, apply) => {
+    it("refuses \\wj inside a span's opening glyph", async () => {
+      const { paragraph, logs } = await applied("standard", apply, "wj", ["\\nd", 1], ["\\nd", 2]);
+
+      expect(paragraph).toEqual(line);
+      expect(logs).toContainEqual(expect.stringContaining("holds only a marker's bytes"));
+    });
+
+    it("refuses \\fq inside a footnote's \\ft glyph without looping", async () => {
+      const footnote = {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [char("ft", "a ", char("nd", "b"))],
+      } as MarkerObject;
+      const content: MarkerContent[] = ["a ", footnote, " c"];
+      const { paragraph, logs } = await applied(
+        "standard+expandedNotes",
+        apply,
+        "fq",
+        ["\\ft", 0],
+        ["\\ft", 1],
+        content,
+      );
+
+      expect(paragraph).toEqual(content);
+      expect(logs).toContainEqual(expect.stringContaining("holds only a marker's bytes"));
+    });
   });
 });

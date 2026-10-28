@@ -455,6 +455,10 @@ refused. The public surface grew substantially; nothing was removed.
   glyph's bytes as text, or lost the span. Marking text beside a span, inside one, or a whole span
   from the text around it still works, and so does applying a footnote or cross-reference content
   marker across a nested span, which closes and reopens the spans it crosses.
+- Standard view refuses to apply a character marker to a selection lying inside one marker glyph,
+  which holds none of the text, and logs a warning. The glyph's bytes became the new span's text,
+  and for a footnote content marker (`\fq` over part of `\ft`) the edit looped until Lexical
+  aborted it.
 - Applying a character marker to a selection holding a whole note (`\wj` over a verse with a
   footnote in it) moves the note into the new span, its content untouched. It marked the note's
   content instead, and in Standard view replaced the note's `\ft`.

@@ -349,6 +349,19 @@ export function getUsjMarkerAction(
           $extendCharacterMarkerAtSelection(selection, marker, undefined, viewOptions);
         } else if (
           $isCharNode(nodeToInsert) &&
+          sameNode &&
+          !selection.isCollapsed() &&
+          $isMarkerNode(node)
+        ) {
+          // A selection inside one marker glyph holds none of the text, only the glyph's bytes.
+          // Marking those took them for text, and for a footnote content marker (`\fq`) the
+          // re-read glyph and the new span undid each other without end.
+          logger?.warn(
+            `Marker action "${marker}" was not applied: the selection holds only a marker's ` +
+              "bytes, no text.",
+          );
+        } else if (
+          $isCharNode(nodeToInsert) &&
           innermostChar &&
           sameNode &&
           !isNestInPlaceCharNode(nodeToInsert, styleInfo)
