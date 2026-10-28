@@ -107,8 +107,9 @@ refused. The public surface grew substantially; nothing was removed.
   selected, so the host can open its paragraph dropdown.
 - `EditorRef.insertFirstChapter(verseCount?)` — starts chapter 1 in a book with no chapters: `\c 1`
   and optional empty verses after the book's front matter, the same place the `\` menu's `\c` puts
-  it. The verses are left out when the chapter content already holds text or a verse, which they
-  would otherwise go above. Returns `false`, changing nothing, outside chapter 1 or once the
+  it. The verses are left out when the chapter content already holds anything (text, a verse, a
+  note, a milestone or a figure), which they would otherwise go above. A no-break space counts as
+  whitespace in every view. Returns `false`, changing nothing, outside chapter 1 or once the
   document has a chapter.
 - `MarkerMenuContext.canInsertChapter` — set in chapter 1 of a document with no chapter yet, where
   `getMarkerMenuItems` offers `\c`.

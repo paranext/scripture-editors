@@ -10,7 +10,8 @@
  * wants empty verses).
  */
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
-import { $dfs, $findMatchingParent } from "@lexical/utils";
+import { $dfsIterator } from "@lexical/utils";
+import { displayTextToUsj } from "./whitespaceDisplay.utils";
 import {
   $getParaTagMarker,
   buildParaStack,
@@ -32,19 +33,19 @@ import {
 } from "lexical";
 import {
   $findFirstAncestorNoteNode,
-  $isAttributeDisplayRun,
-  $isAttributeRunNode,
   $isBookNode,
-  $isImmutableUnmatchedNode,
+  $isDisplayAnnotationCarrier,
   $isImpliedParaNode,
-  $isMarkerNode,
+  $isMilestoneNode,
+  $isNoteNode,
   $isParaNode,
   $isSomeChapterNode,
+  $isUnknownNode,
   defaultStyleInfo,
   StyleInfo,
   ZWSP,
 } from "shared";
-import { $isSomeVerseNode, ViewOptions } from "shared-react";
+import { $isSomeVerseNode, hasStandardViewWhitespace, ViewOptions } from "shared-react";
 
 /**
  * Whether the document's book holds chapters. A peripheral book (FRT, INT, BAK, OTH, CNC, GLO,
@@ -125,40 +126,47 @@ function $findChapterContentStart(styleInfo: StyleInfo): LexicalNode | undefined
 }
 
 /**
- * Whether `node` is text of the document, as opposed to a marker glyph, whitespace, a zero-width
- * space holding a caret, or the attribute text Standard view shows but never saves.
+ * Whether `node` is text of the document: not a display glyph such as a marker or an attribute
+ * run (see {@link $isDisplayAnnotationCarrier}), and not only whitespace or the zero-width spaces that
+ * hold a caret. Where Standard view shows a no-break space as `~`, that counts as whitespace too,
+ * so every view gives the same answer.
  */
-function $isDocumentText(node: LexicalNode): boolean {
-  return (
-    $isTextNode(node) &&
-    !$isMarkerNode(node) &&
-    !$isImmutableUnmatchedNode(node) &&
-    !$isAttributeDisplayRun(node) &&
-    !$findMatchingParent(node, $isAttributeRunNode) &&
-    node.getTextContent().replaceAll(ZWSP, "").trim() !== ""
-  );
+function $isDocumentText(node: LexicalNode, viewOptions: ViewOptions | undefined): boolean {
+  if (!$isTextNode(node) || $isDisplayAnnotationCarrier(node)) return false;
+  const text = hasStandardViewWhitespace(viewOptions)
+    ? displayTextToUsj(node.getTextContent())
+    : node.getTextContent();
+  return text.replaceAll(ZWSP, "").trim() !== "";
 }
 
 /**
- * Whether the chapter content, from `start` to the end of the document, already holds text (see
- * {@link $isDocumentText}) or a verse, as a book typed or imported without chapter markers does.
- * Any text counts, a section heading or a remark included.
+ * Whether the chapter content, from `start` to the end of the document, already holds anything
+ * verses would go above, as a book typed or imported without chapter markers does: text (see
+ * {@link $isDocumentText}), a verse, a note, a milestone, or a figure, table or other block the
+ * editor keeps whole. Any text counts, a section heading or a remark included.
  */
-function $holdsChapterContent(start: LexicalNode): boolean {
-  for (let block: LexicalNode | null = start; block; block = block.getNextSibling())
-    for (const { node } of $dfs(block))
-      if ($isSomeVerseNode(node) || $isDocumentText(node)) return true;
+function $holdsChapterContent(start: LexicalNode, viewOptions: ViewOptions | undefined): boolean {
+  for (const { node } of $dfsIterator(start, $getRoot().getLastDescendant() ?? start))
+    if (
+      $isSomeVerseNode(node) ||
+      $isNoteNode(node) ||
+      $isMilestoneNode(node) ||
+      $isUnknownNode(node) ||
+      $isDocumentText(node, viewOptions)
+    )
+      return true;
   return false;
 }
 
 /**
  * Inserts chapter 1, with `verseCount` empty verses after it, where USFM puts it: after the front
  * matter, before any chapter content (see {@link $findChapterContentStart}). When that content
- * already holds text or a verse, the chapter goes in without verses: they would go above the
- * existing content, leaving all of it in the last verse. Where the markers show, the caret goes at
- * the end of the chapter line. Where they are hidden there is no chapter line, so the caret goes
- * after verse 1, or with no verses to the start of the paragraph that follows; with neither, it
- * stays where it was. Only where {@link $canInsertChapter} allows a chapter.
+ * already holds anything, such as text or a verse (see {@link $holdsChapterContent}), the chapter
+ * goes in without verses: they would go above the existing content, leaving all of it in the last
+ * verse. Where the markers show, the caret goes at the end of the chapter line. Where they are
+ * hidden there is no chapter line, so the caret goes after verse 1, or with no verses to the start
+ * of the paragraph that follows; with neither, it stays where it was. Only where
+ * {@link $canInsertChapter} allows a chapter.
  *
  * The nodes come from the same conversion that loads a document, so they match a loaded `\c 1` in
  * every view.
@@ -182,7 +190,7 @@ export function $insertFirstChapter({
 
   const chapterContentStart = $findChapterContentStart(styleInfo);
   const versesToAdd =
-    verseCount > 0 && chapterContentStart && $holdsChapterContent(chapterContentStart)
+    verseCount > 0 && chapterContentStart && $holdsChapterContent(chapterContentStart, viewOptions)
       ? 0
       : verseCount;
 

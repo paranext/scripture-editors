@@ -58,6 +58,7 @@ import {
   FORMATTED_VIEW_MODE,
   getViewOptions,
   PARAGRAPH_STRUCTURE_VIEW_MODE,
+  STANDARD_VIEW_MODE,
   ViewMode,
 } from "shared-react";
 import { describe, expect, it } from "vitest";
@@ -1245,11 +1246,8 @@ describe("a chapter inserted into a book with no chapters", () => {
     const V1: MarkerContent = { type: "verse", marker: "v", number: "1" };
     const V2: MarkerContent = { type: "verse", marker: "v", number: "2" };
 
-    async function insertWithVerses(content: MarkerContent[]) {
-      const { ref } = await mountEmptyBook(GEN_1_1, requireStandardViewOptions(), {
-        ...emptyBook,
-        content,
-      });
+    async function insertWithVerses(content: MarkerContent[], view = requireStandardViewOptions()) {
+      const { ref } = await mountEmptyBook(GEN_1_1, view, { ...emptyBook, content });
       await act(async () => {
         ref.current?.insertFirstChapter(2);
       });
@@ -1284,16 +1282,17 @@ describe("a chapter inserted into a book with no chapters", () => {
       expect(await insertWithVerses([BOOK, para])).toEqual([BOOK, CHAPTER_1, para]);
     });
 
-    it("adds verses above a paragraph holding only whitespace and a caret's zero-width space", async () => {
-      const blank: MarkerContent = { type: "para", marker: "p", content: [` ${ZWSP} `] };
+    it("adds verses above a paragraph whose text is only whitespace and a zero-width space", async () => {
+      const blank: MarkerContent = { type: "para", marker: "p", content: [`${ZWSP} `] };
 
-      // Loading normalizes the paragraph's whitespace, so only what goes above it is compared.
-      expect((await insertWithVerses([BOOK, blank]))?.slice(0, 4)).toEqual([
-        BOOK,
-        CHAPTER_1,
-        V1,
-        V2,
-      ]);
+      expect(await insertWithVerses([BOOK, blank])).toEqual([BOOK, CHAPTER_1, V1, V2, blank]);
+    });
+
+    // A heading already belongs to the chapter, so it counts as content like any other text.
+    it("adds no verses above a section heading", async () => {
+      const heading: MarkerContent = { type: "para", marker: "s1", content: ["The Creation"] };
+
+      expect(await insertWithVerses([BOOK, heading])).toEqual([BOOK, CHAPTER_1, heading]);
     });
 
     // Only the chapter content counts: text in the front matter above it does not.
@@ -1318,6 +1317,41 @@ describe("a chapter inserted into a book with no chapters", () => {
       expect(await insertWithVerses([BOOK, empty])).toEqual([BOOK, CHAPTER_1, V1, V2, empty]);
     });
   });
+
+  // Content with no text of its own still holds the chapter's place, in every view.
+  describe.each<ViewMode>([STANDARD_VIEW_MODE, FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE])(
+    "over content without text (%s view)",
+    (viewMode) => {
+      const V1: MarkerContent = { type: "verse", marker: "v", number: "1" };
+      const V2: MarkerContent = { type: "verse", marker: "v", number: "2" };
+
+      async function insertWithVerses(content: MarkerContent[]) {
+        const view = requireDefined(getViewOptions(viewMode), "no view options");
+        const { ref } = await mountEmptyBook(GEN_1_1, view, { ...emptyBook, content });
+        await act(async () => {
+          ref.current?.insertFirstChapter(2);
+        });
+        return ref.current?.getUsj()?.content;
+      }
+
+      it.each<[string, MarkerContent]>([
+        ["a figure with no caption", { type: "figure", marker: "fig", file: "a.jpg" }],
+        ["a milestone", { type: "ms", marker: "ts" }],
+        ["an empty footnote", { type: "note", marker: "f", caller: "+" }],
+      ])("adds no verses above %s", async (_name, item) => {
+        const para: MarkerContent = { type: "para", marker: "p", content: [item] };
+
+        expect(await insertWithVerses([BOOK, para])).toEqual([BOOK, CHAPTER_1, para]);
+      });
+
+      // Standard view shows each no-break space as `~`, which is still whitespace.
+      it("adds verses above a paragraph of no-break spaces", async () => {
+        const spaces: MarkerContent = { type: "para", marker: "p", content: [NBSP + NBSP] };
+
+        expect(await insertWithVerses([BOOK, spaces])).toEqual([BOOK, CHAPTER_1, V1, V2, spaces]);
+      });
+    },
+  );
 
   // Where the markers are hidden the chapter is a decorator, with no line to put the caret on.
   describe.each<ViewMode>([FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE])(
