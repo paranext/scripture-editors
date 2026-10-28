@@ -5,7 +5,6 @@ import { $createImmutableVerseNode, ImmutableVerseNode } from "../../nodes/usj";
 import { PARA_MERGE_ARMED_CLASS_NAME, StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { HistoryPlugin } from "../History/HistoryPlugin";
 import { $isBookPrefixNode } from "./ParaMarkerPrefixCursorGuardPlugin";
-import { $createCaretHostNode } from "./transientCaretHost";
 import {
   $createBookLine,
   baseTestEnvironment,
@@ -45,6 +44,7 @@ import {
   BookNode,
   createEmptyHistoryState,
   ParaNode,
+  $createCaretHostNode,
 } from "shared";
 
 // NOTE: jsdom cannot drive collapsed mid-text deletes (domSelection.modify) or printable-char

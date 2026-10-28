@@ -68,6 +68,7 @@ import {
 } from "shared-react";
 import {
   $createAttributeRunNode,
+  $createCaretHostNode,
   $createCharNode,
   $createMarkerNode,
   $createMilestoneNode,
@@ -358,10 +359,10 @@ describe("Editor USJ Adaptor", () => {
   });
 });
 
-// EmptyVerseCaretGuardPlugin drops a transient zero-width-space "caret host" into an emptied verse
-// so the insertion point stays visible (PT-4308). A node that is *only* placeholders carries no
-// Scripture text and is skipped, but a zero-width space is legitimate content in some scripts
-// (Thai/Khmer/Lao line breaks), so an embedded one in real text must survive.
+// The caret guards drop a transient zero-width-space "caret host" where the insertion point would
+// otherwise be invisible. A host carries no Scripture text and is skipped, but a zero-width space is
+// legitimate content in some scripts (Thai/Khmer/Lao line breaks), so only a node marked as a host
+// is skipped and every authored one survives.
 describe("Editor USJ Adaptor — caret-host placeholder", () => {
   it("drops a bare zero-width-space caret host and keeps surrounding verse text", () => {
     editor.update(
@@ -370,7 +371,7 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
         $getRoot().append(
           $createParaNode("p").append(
             $createImmutableVerseNode("1"),
-            $createTextNode(CURSOR_PLACEHOLDER_CHAR), // caret host in the now-empty verse 1
+            $createCaretHostNode(), // caret host in the now-empty verse 1
             $createImmutableVerseNode("2"),
             $createTextNode("real text"),
           ),
@@ -388,8 +389,8 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
 
   it("drops a bare caret host past a trailing note and keeps the note", () => {
     // TrailingNoteCaretGuardPlugin's host sits after a note in an ordinary paragraph rather than
-    // inside a verse; the serializer's rule is keyed on the node's own bare placeholder text, not
-    // on what surrounds it, so the same exclusion covers it.
+    // inside a verse; the serializer's rule is keyed on the node's own host mark, not on what
+    // surrounds it, so the same exclusion covers it.
     editor.update(
       () => {
         $getRoot().clear();
@@ -399,7 +400,7 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
             $createNoteNode("f", "+").append(
               $createCharNode("ft").append($createTextNode("note body")),
             ),
-            $createTextNode(CURSOR_PLACEHOLDER_CHAR), // caret host past the trailing note
+            $createCaretHostNode(), // caret host past the trailing note
           ),
         );
       },
@@ -412,6 +413,70 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
     expect(serialized.includes(CURSOR_PLACEHOLDER_CHAR)).toBe(false); // bare host never reaches USJ
     expect(serialized.includes("note body")).toBe(true); // the note itself survives
     expect(serialized.includes("before ")).toBe(true);
+  });
+
+  // A text node that holds nothing but zero-width spaces is authored content whenever it is not a
+  // marked host: ZWSP marks line-break opportunities in Thai, Khmer and Lao, and a run of it lands
+  // in a node of its own wherever the text around it is split.
+  it.each([
+    {
+      name: "split off the text before a verse marker",
+      $build: () => [
+        $createImmutableVerseNode("1"),
+        $createTextNode("alpha").setFormat("bold"),
+        $createTextNode(CURSOR_PLACEHOLDER_CHAR),
+        $createImmutableVerseNode("2"),
+        $createTextNode("beta"),
+      ],
+    },
+    {
+      name: "inside an annotation",
+      $build: () => [
+        $createImmutableVerseNode("1"),
+        $createTextNode("alpha"),
+        $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] }).append(
+          $createTextNode(CURSOR_PLACEHOLDER_CHAR),
+        ),
+        $createTextNode("beta"),
+      ],
+    },
+    {
+      name: "right before a note",
+      $build: () => [
+        $createImmutableVerseNode("1"),
+        $createTextNode("alpha").setFormat("bold"),
+        $createTextNode(CURSOR_PLACEHOLDER_CHAR),
+        $createNoteNode("f", "+").append($createCharNode("ft").append($createTextNode("body"))),
+      ],
+    },
+    {
+      name: "as a char span's only content",
+      $build: () => [
+        $createImmutableVerseNode("1"),
+        $createTextNode("alpha "),
+        $createCharNode("w").append($createTextNode(CURSOR_PLACEHOLDER_CHAR)),
+      ],
+    },
+    {
+      name: "doubled",
+      $build: () => [
+        $createImmutableVerseNode("1"),
+        $createTextNode("alpha").setFormat("bold"),
+        $createTextNode(CURSOR_PLACEHOLDER_CHAR + CURSOR_PLACEHOLDER_CHAR),
+      ],
+    },
+  ])("keeps an authored zero-width-space-only run $name", ({ $build }) => {
+    editor.update(
+      () => {
+        $getRoot().clear();
+        $getRoot().append($createParaNode("p").append(...$build()));
+      },
+      { discrete: true },
+    );
+
+    const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState());
+
+    expect(JSON.stringify(usj)).toContain(CURSOR_PLACEHOLDER_CHAR);
   });
 
   it("preserves a zero-width space embedded in real Scripture text", () => {

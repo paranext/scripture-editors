@@ -5,7 +5,6 @@ import {
   SomeVerseNode,
   wasNodeCreated,
 } from "../../nodes/usj/node-react.utils";
-import { $hasCaretHostMark } from "./transientCaretHost";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -32,6 +31,7 @@ import {
   textTypeState,
   TYPED_MARK_WRAP_TAG,
   VerseNode,
+  $hasCaretHostMark,
 } from "shared";
 
 /** This plugin ensures that there is a space following a text node including before verse nodes. */

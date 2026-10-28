@@ -10,7 +10,6 @@ import {
   typeTextAtSelection,
 } from "../react-test.utils";
 import { DeltaOp } from "./delta-common.utils";
-import { $createCaretHostNode } from "../transientCaretHost";
 import { DeltaOnChangePlugin } from "./DeltaOnChangePlugin";
 import {
   $createTextNode,
@@ -38,6 +37,7 @@ import {
   ImmutableChapterNode,
   ImpliedParaNode,
   segmentState,
+  $createCaretHostNode,
 } from "shared";
 
 let updateOps: DeltaOp[];

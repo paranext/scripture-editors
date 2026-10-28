@@ -27,10 +27,10 @@ import {
   NBSP,
   ParaNode,
   VerseNode,
+  $isCaretHost,
 } from "shared";
 import {
   $createImmutableVerseNode,
-  $isCaretHost,
   EmptyVerseCaretGuardPlugin,
   getViewOptions,
   ImmutableVerseNode,

@@ -24,7 +24,6 @@ import {
   $structuralDeleteTarget,
   keyDownToIntent,
 } from "./structureKeyboard.utils";
-import { $createCaretHostNode } from "./transientCaretHost";
 import {
   $createNodeSelection,
   $createRangeSelection,
@@ -59,6 +58,7 @@ import {
   $isSomeParaNode,
   NBSP,
   ParaNode,
+  $createCaretHostNode,
 } from "shared";
 
 describe("structureKeyboard.utils", () => {

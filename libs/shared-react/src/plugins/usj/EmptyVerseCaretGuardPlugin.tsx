@@ -1,4 +1,4 @@
-import { $isCaretHost, useTransientCaretHost } from "./transientCaretHost";
+import { useTransientCaretHost } from "./transientCaretHost";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -13,7 +13,7 @@ import {
   LexicalEditor,
 } from "lexical";
 import { useEffect } from "react";
-import { $caretHostAtBoundary } from "shared";
+import { $caretHostAtBoundary, $isCaretHost } from "shared";
 import { $isSomeVerseNode, SomeVerseNode } from "../../nodes/usj";
 
 /**
