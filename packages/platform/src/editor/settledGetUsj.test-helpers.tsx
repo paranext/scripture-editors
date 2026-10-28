@@ -106,7 +106,7 @@ export async function mountViewEditor(
   view: ViewOptions,
   options: MountOptions = {},
 ): Promise<MountedEditor> {
-  return mountEditor(usj, view, options);
+  return mountInView(usj, view, options);
 }
 
 /** Load `usj` into a fresh headless editor under `viewOptions`; mirrors
