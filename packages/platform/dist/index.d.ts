@@ -981,16 +981,17 @@ export declare interface EditorRef {
    * titles and introduction; a section heading such as `\s1` already belongs to the chapter). This
    * is where {@link EditorRef.insertMarker} with `"c"` and the `\` menu's `\c` put it too.
    *
-   * When the chapter content after the front matter already holds text or a verse, as a book typed
-   * or imported without chapter markers does, no verses are added: they would go above that
-   * content, leaving all of it in the last verse.
+   * When the chapter content after the front matter already holds anything (text, a verse, a
+   * note, a milestone or a figure), as a book typed or imported without chapter markers does, no
+   * verses are added: they would go above that content, leaving all of it in the last verse. A
+   * section heading counts, so a book holding only one gets `\c 1` without verses.
    *
    * Where the markers show (Standard view), the caret goes at the end of the chapter line. Where
    * they are hidden there is no chapter line, so the caret goes after verse 1, or with no verses to
    * the start of the paragraph that follows; with neither, it stays where it was.
    *
    * @param verseCount - How many empty verses to add after the chapter marker, when the chapter
-   *   content holds no text or verse yet. Defaults to none.
+   *   content holds nothing yet. Defaults to none.
    * @returns `false`, changing nothing, unless the `scrRef` prop is chapter 1 and the document has
    *   no chapter yet.
    * @throws Will throw an error if the editor is in readonly mode.
