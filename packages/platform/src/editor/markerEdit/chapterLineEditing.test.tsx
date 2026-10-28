@@ -1334,8 +1334,12 @@ describe("a chapter inserted into a book with no chapters", () => {
         return ref.current?.getUsj()?.content;
       }
 
+      // `MarkerObject` doesn't declare a figure's `file`, so this can't be an inline literal in the
+      // typed list below.
+      const uncaptionedFigure = { type: "figure", marker: "fig", file: "a.jpg" };
+
       it.each<[string, MarkerContent]>([
-        ["a figure with no caption", { type: "figure", marker: "fig", file: "a.jpg" }],
+        ["a figure with no caption", uncaptionedFigure],
         ["a milestone", { type: "ms", marker: "ts" }],
         ["an empty footnote", { type: "note", marker: "f", caller: "+" }],
       ])("adds no verses above %s", async (_name, item) => {
