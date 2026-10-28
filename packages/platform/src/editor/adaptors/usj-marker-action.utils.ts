@@ -16,6 +16,7 @@ import {
   ElementNode,
   LexicalEditor,
   LexicalNode,
+  PointType,
   RangeSelection,
   TextNode,
 } from "lexical";
@@ -816,32 +817,56 @@ function $wrapTextSelectionInInlineNode(
   selection: RangeSelection,
   createNode: () => LexicalNode,
 ): void {
-  const nodes = selection.getNodes();
   const [startOffset, endOffset] = getSelectionOffsets(selection);
-  const anchorNode = selection.anchor.getNode();
-  const focusNode = selection.focus.getNode();
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  // A span the selection holds all of is wrapped as one node, so its own children are not listed
+  // again: `getNodes` lists a span AFTER its children, and wrapping them first put the wrapper
+  // inside the span — the span's glyphs then belonged to the wrapper and the span itself was lost.
+  // A range from before a span's opening glyph to after its closing glyph is expressed on the span
+  // itself, and `getNodes` lists only its children then, so the span is added.
+  const listedNodes = selection.getNodes();
+  const pointElement = start.getNode();
+  const allNodes =
+    start.key === end.key &&
+    $isWrappableElement(pointElement) &&
+    $startsWithOpeningGlyph(pointElement) &&
+    !listedNodes.includes(pointElement) &&
+    $isWhollySelected(pointElement, start, end)
+      ? [pointElement, ...listedNodes]
+      : listedNodes;
+  const wholeNodes = allNodes.filter(
+    (node): node is ElementNode => $isWrappableElement(node) && $isWhollySelected(node, start, end),
+  );
+  const nodes = allNodes.filter((node) => !wholeNodes.some((whole) => whole.isParentOf(node)));
 
   let currentWrapper: LexicalNode | undefined;
 
-  nodes.forEach((node, index) => {
+  nodes.forEach((node) => {
     // Skip if node is already wrapped
     if ($isElementNode(currentWrapper) && currentWrapper.isParentOf(node)) {
       return;
     }
 
-    // A span the selection starts or ends inside is only partly selected: its selected text is
-    // listed (and wrapped) on its own. Wrapping the span itself would move it into a wrapper placed
-    // inside it, which never terminates.
-    if ($isElementNode(node) && (node.isParentOf(anchorNode) || node.isParentOf(focusNode))) {
+    // A span the selection holds only part of — it starts or ends inside it — is not moved: its
+    // selected children are listed (and wrapped) on their own. Moving a node into a wrapper that
+    // sits inside it never terminates, so that is refused whatever the selection's shape.
+    if (
+      $isElementNode(node) &&
+      (!wholeNodes.includes(node) ||
+        (currentWrapper !== undefined && node.isParentOf(currentWrapper)))
+    ) {
       currentWrapper = undefined;
       return;
     }
 
-    // Get the target node to wrap
+    // Get the target node to wrap. Offsets apply only to the text nodes the selection's points
+    // name; an element point's offset is a child index.
     const targetNode = $getTargetNode(
       node,
-      index === 0,
-      index === nodes.length - 1,
+      start.type === "text" && node.getKey() === start.key,
+      end.type === "text" && node.getKey() === end.key,
       startOffset,
       endOffset,
     );
@@ -895,6 +920,31 @@ function getSelectionOffsets(selection: RangeSelection): [number, number] {
   const anchorOffset = selection.anchor.offset;
   const focusOffset = selection.focus.offset;
   return selection.isBackward() ? [focusOffset, anchorOffset] : [anchorOffset, focusOffset];
+}
+
+/** Whether a marker apply's wrap can move `node` into its wrapper as one piece. */
+function $isWrappableElement(node: LexicalNode): node is ElementNode {
+  return $isElementNode(node) && node.isInline() && !$isSkippedByMarkerAction(node);
+}
+
+/** Whether `element`'s first child is an opening marker glyph, so its start is before the glyph. */
+function $startsWithOpeningGlyph(element: ElementNode): boolean {
+  const first = element.getFirstChild();
+  return $isMarkerNode(first) && first.getMarkerSyntax() === "opening";
+}
+
+/**
+ * Whether the range from `start` to `end` holds all of `element`: neither point is inside it,
+ * except a point on the element itself at its very start (for `start`) or very end (for `end`).
+ */
+function $isWhollySelected(element: ElementNode, start: PointType, end: PointType): boolean {
+  const startNode = start.getNode();
+  const endNode = end.getNode();
+  if (element.isParentOf(startNode) || element.isParentOf(endNode)) return false;
+  if (element.is(startNode) && !(start.type === "element" && start.offset === 0)) return false;
+  return (
+    !element.is(endNode) || (end.type === "element" && end.offset === element.getChildrenSize())
+  );
 }
 
 /**
