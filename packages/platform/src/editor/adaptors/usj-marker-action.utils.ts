@@ -968,19 +968,35 @@ function getSelectionOffsets(selection: RangeSelection): [number, number] {
 
 /**
  * Whether a range selection's two points sit in different char spans, so it holds part of a span's
- * marker glyphs. A point inside a glyph is inside its span; a point at a span's outer edge — before
- * its opening glyph, after its closing glyph — is outside it, so a selection holding a whole span
- * from the text around it does not cross.
+ * marker glyphs, or one of its points sits between two bytes of a span's closing glyph, whose
+ * bytes the selection would take away from the closer. A point inside a glyph is inside its span;
+ * a point at a span's outer edge — before its opening glyph, after its closing glyph — is outside
+ * it, so a selection holding a whole span from the text around it does not cross.
  *
  * Read-only: safe inside `editor.update()` before any mutation.
  */
 function $selectionCrossesSpanBorder(selection: RangeSelection): boolean {
   if (selection.isCollapsed()) return false;
+  if ($isPointInsideClosingGlyph(selection.anchor) || $isPointInsideClosingGlyph(selection.focus))
+    return true;
   const anchorSpans = $spansHoldingPoint(selection.anchor);
   const focusSpans = $spansHoldingPoint(selection.focus);
   return (
     anchorSpans.length !== focusSpans.length ||
     anchorSpans.some((span, index) => !span.is(focusSpans[index]))
+  );
+}
+
+/** Whether `point` sits between two bytes of a char span's closing glyph. */
+function $isPointInsideClosingGlyph(point: PointType): boolean {
+  const node = point.getNode();
+  return (
+    point.type === "text" &&
+    $isMarkerNode(node) &&
+    node.getMarkerSyntax() !== "opening" &&
+    $isCharNode(node.getParent()) &&
+    point.offset > 0 &&
+    point.offset < node.getTextContentSize()
   );
 }
 

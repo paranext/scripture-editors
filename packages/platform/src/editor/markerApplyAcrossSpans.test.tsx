@@ -178,6 +178,7 @@ const crossingCases: [string, string, Endpoint, Endpoint][] = [
   ["\\wj from the text before the span to inside it", "wj", ["a ", 1], ["Lord", 2]],
   ["\\nd from the text before the span to inside it", "nd", ["a ", 1], ["Lord", 2]],
   ["\\wj from inside the span's closing glyph", "wj", ["\\nd*", 2], ["God", 2]],
+  ["\\wj from inside the span's text to inside its closing glyph", "wj", ["Lord", 2], ["\\nd*", 2]],
 ];
 
 /** Selections next to, inside, or around the span that Standard view still applies. */

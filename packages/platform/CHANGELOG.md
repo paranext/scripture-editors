@@ -450,8 +450,8 @@ refused. The public surface grew substantially; nothing was removed.
   whole moves into the new span (`\wj \+nd Lord\+nd* \wj*`), including one selected from its
   opening glyph to its closing glyph in Standard view, which lost the span (`\wj Lord\wj**`).
 - Standard view refuses to apply a character marker across a marker border — a selection whose two
-  ends sit in different spans, so it holds part of a span's glyphs — and logs a warning instead of
-  changing anything. It nested a copy of the span, left an empty span, an unmatched closer or the
+  ends sit in different spans, so it holds part of a span's glyphs, or with an end inside a closing
+  marker — and logs a warning instead of changing anything. It nested a copy of the span, left an empty span, an unmatched closer or the
   glyph's bytes as text, or lost the span. Marking text beside a span, inside one, or a whole span
   from the text around it still works, and so does applying a footnote or cross-reference content
   marker across a nested span, which closes and reopens the spans it crosses.
