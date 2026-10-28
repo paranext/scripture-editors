@@ -473,3 +473,8 @@ refused. The public surface grew substantially; nothing was removed.
   (`\nd ~\nd*`) count that `~`, as the ops stream does; in the views without a separator after the
   opener they were one short, so a keystroke after such a span went out with a retain one too
   small.
+- In the views that hide markers, removing or replacing a character marker over a whole span
+  selected up to the start of the text after it — where a double-click or drag over the span ends
+  — acts on the whole span. Lexical records that end as a child index on the span, which was read
+  as a text offset, so `removeCharacterMarker()` over `\add God\add*` left `G\add od\add*`, and removing `\nd`
+  from a span holding a nested one changed nothing.
