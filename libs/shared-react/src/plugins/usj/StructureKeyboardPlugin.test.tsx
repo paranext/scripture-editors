@@ -34,6 +34,7 @@ import {
 } from "lexical";
 import {
   $createBookNode,
+  $createCaretHostNode,
   $createChapterNode,
   $createGutterMarkerNode,
   $createMarkerNode,
@@ -44,7 +45,6 @@ import {
   BookNode,
   createEmptyHistoryState,
   ParaNode,
-  $createCaretHostNode,
 } from "shared";
 
 // NOTE: jsdom cannot drive collapsed mid-text deletes (domSelection.modify) or printable-char

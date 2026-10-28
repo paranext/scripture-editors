@@ -28,8 +28,11 @@ import {
  * Marks a text node as a caret host from the moment it is created until text lands in it. It is
  * what recognizes a host from the node itself — after an undo brings one back, in every guard
  * instance at once, and in a serialized editor state — rather than by the key one guard instance
- * happens to track. A text node whose state differs from its neighbor's is not merged with it
- * either, so the mark also keeps Lexical from folding text pasted beside the caret into the host.
+ * happens to track. Lexical merges adjacent simple text nodes only when their node states are
+ * equivalent, and an unmarked node reads the mark as its default (`false`), so the mark also keeps
+ * Lexical from folding text pasted beside the caret into the host — on either side of it. (Its
+ * merge check's `__state === null` shortcut never fires for a stateless node, whose `__state` is
+ * `undefined`; `transientCaretHost.utils.test.ts` pins both directions.)
  */
 export const caretHostState = createState("isCaretHost", {
   parse: (value) => value === true,

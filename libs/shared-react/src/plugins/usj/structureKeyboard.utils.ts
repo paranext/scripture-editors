@@ -19,6 +19,7 @@ import {
   $caretHostAtBoundary,
   $getSelectableParaMarker,
   $getSelectedParaMarkerPara,
+  $isCaretHost,
   $isGutterMarkerNode,
   $isMarkerTrailingSeparator,
   $isParaLikeNode,
@@ -30,7 +31,6 @@ import {
   ParaLikeNode,
   ParaNode,
   SomeParaNode,
-  $isCaretHost,
 } from "shared";
 
 /**

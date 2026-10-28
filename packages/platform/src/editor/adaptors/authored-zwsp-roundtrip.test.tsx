@@ -5,18 +5,12 @@
  * same as a caret guard's transient host. These rows pin that save tells the two apart by the
  * host's identity, so the authored one round-trips unchanged.
  */
-import { mountViewEditor } from "../settledGetUsj.test-helpers";
+import { mountViewEditor, requireViewOptions } from "../settledGetUsj.test-helpers";
 import { contentPath, twoParaUsj } from "../positions/positions.test-helpers";
 import { act } from "@testing-library/react";
 import { $dfs } from "@lexical/utils";
 import { $isTypedMarkNode, ZWSP } from "shared";
-import { FORMATTED_VIEW_MODE, getViewOptions, STANDARD_VIEW_MODE, ViewOptions } from "shared-react";
-
-function requireViewOptions(mode: string): ViewOptions {
-  const view = getViewOptions(mode);
-  if (!view) throw new Error(`no view options for ${mode}`);
-  return view;
-}
+import { FORMATTED_VIEW_MODE, STANDARD_VIEW_MODE } from "shared-react";
 
 const verseText = `alpha${ZWSP} `;
 const usj = twoParaUsj([
@@ -54,7 +48,6 @@ describe("an authored zero-width space split into a run of its own", () => {
       expect(annotated).toEqual([ZWSP]);
 
       expect(mounted.ref.current?.getUsj()).toEqual(usj);
-      mounted.unmount();
     },
   );
 });

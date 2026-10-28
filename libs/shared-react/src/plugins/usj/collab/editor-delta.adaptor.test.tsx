@@ -1547,7 +1547,7 @@ describe("getEditorDelta", () => {
     // A caret guard's transient host (a bare zero-width space marked as a host) is never sent to
     // peers, so it must be invisible to the delta/OT stream — otherwise typing into an emptied verse
     // would emit ops that reference a character the backend never received.
-    it("is transparent to the delta: a bare cursor host emits no op", async () => {
+    it("is transparent to the delta: a bare caret host emits no op", async () => {
       const { editor } = await testEnvironment(() => {
         $getRoot().append(
           $createParaNode("p").append(
@@ -1614,7 +1614,12 @@ describe("getEditorDelta", () => {
 
       const delta = getEditorDelta(editor.getEditorState());
 
-      expect(delta.ops.map((op) => op.insert).join("")).toContain(ZWSP);
+      expect(delta.ops).toEqual([
+        { insert: { verse: { style: "v", number: "1" } } },
+        { insert: `alpha${ZWSP}` },
+        { insert: { verse: { style: "v", number: "2" } } },
+        { insert: LF, attributes: { para: { style: "p" } } },
+      ]);
     });
 
     it("should roundtrip the editor state in standard view (editable markers, collapsed notes)", async () => {

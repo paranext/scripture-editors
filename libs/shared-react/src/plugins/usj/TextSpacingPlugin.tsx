@@ -18,6 +18,7 @@ import {
 } from "lexical";
 import { useEffect } from "react";
 import {
+  $hasCaretHostMark,
   $isAttributeRunNode,
   $isCharNode,
   $isNoteNode,
@@ -31,7 +32,6 @@ import {
   textTypeState,
   TYPED_MARK_WRAP_TAG,
   VerseNode,
-  $hasCaretHostMark,
 } from "shared";
 
 /** This plugin ensures that there is a space following a text node including before verse nodes. */

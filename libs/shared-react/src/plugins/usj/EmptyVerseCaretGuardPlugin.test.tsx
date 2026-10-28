@@ -35,11 +35,11 @@ import {
 import {
   $createCharNode,
   $createParaNode,
+  $isCaretHost,
   $wrapSelectionInTypedMarkNode,
   CURSOR_CHANGE_TAG,
   CURSOR_PLACEHOLDER_CHAR,
   ParaNode,
-  $isCaretHost,
 } from "shared";
 
 // jsdom implements no layout: Lexical reads a Range rect when it writes the DOM selection.

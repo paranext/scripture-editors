@@ -1017,6 +1017,27 @@ describe("Editor Node Utilities", () => {
       });
     });
 
+    it("keeps an annotated lone NBSP whose char span's other content is an authored zero-width space", () => {
+      // A lone NBSP in a mark is content unless its char span has nothing else (the empty-span
+      // placeholder's shape). An authored zero-width space is something else, so the NBSP stays.
+      let nbsp: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        nbsp = $createTextNode(NBSP);
+        $getRoot().append(
+          $createParaNode().append(
+            $createCharNode("w").append(
+              $createTypedMarkNode({ t: ["1"] }).append(nbsp),
+              $createTextNode(ZWSP),
+            ),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        expect($shouldIgnoreNodeForContentIndexes(nbsp)).toBe(false);
+      });
+    });
+
     it("emits a non-text element wrapped inside a TypedMarkNode as its own item", () => {
       const { editor } = createBasicTestEnvironment(nodes, () => {
         $getRoot().append(

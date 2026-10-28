@@ -38,6 +38,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $createCaretHostNode,
   $createChapterNode,
   $createCharNode,
   $createGutterMarkerNode,
@@ -58,7 +59,6 @@ import {
   $isSomeParaNode,
   NBSP,
   ParaNode,
-  $createCaretHostNode,
 } from "shared";
 
 describe("structureKeyboard.utils", () => {

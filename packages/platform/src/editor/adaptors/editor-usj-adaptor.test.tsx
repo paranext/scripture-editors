@@ -104,6 +104,7 @@ import {
   textTypeState,
   TypedMarkNode,
   VERSE_MARKER,
+  ZWSP,
   COMMENT_MARK_TYPE,
 } from "shared";
 
@@ -424,7 +425,7 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       $build: () => [
         $createImmutableVerseNode("1"),
         $createTextNode("alpha").setFormat("bold"),
-        $createTextNode(CURSOR_PLACEHOLDER_CHAR),
+        $createTextNode(ZWSP),
         $createImmutableVerseNode("2"),
         $createTextNode("beta"),
       ],
@@ -434,9 +435,7 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       $build: () => [
         $createImmutableVerseNode("1"),
         $createTextNode("alpha"),
-        $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] }).append(
-          $createTextNode(CURSOR_PLACEHOLDER_CHAR),
-        ),
+        $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] }).append($createTextNode(ZWSP)),
         $createTextNode("beta"),
       ],
     },
@@ -445,7 +444,7 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       $build: () => [
         $createImmutableVerseNode("1"),
         $createTextNode("alpha").setFormat("bold"),
-        $createTextNode(CURSOR_PLACEHOLDER_CHAR),
+        $createTextNode(ZWSP),
         $createNoteNode("f", "+").append($createCharNode("ft").append($createTextNode("body"))),
       ],
     },
@@ -454,7 +453,7 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       $build: () => [
         $createImmutableVerseNode("1"),
         $createTextNode("alpha "),
-        $createCharNode("w").append($createTextNode(CURSOR_PLACEHOLDER_CHAR)),
+        $createCharNode("w").append($createTextNode(ZWSP)),
       ],
     },
     {
@@ -462,7 +461,7 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       $build: () => [
         $createImmutableVerseNode("1"),
         $createTextNode("alpha").setFormat("bold"),
-        $createTextNode(CURSOR_PLACEHOLDER_CHAR + CURSOR_PLACEHOLDER_CHAR),
+        $createTextNode(ZWSP + ZWSP),
       ],
     },
   ])("keeps an authored zero-width-space-only run $name", ({ $build }) => {
@@ -476,7 +475,51 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
 
     const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState());
 
-    expect(JSON.stringify(usj)).toContain(CURSOR_PLACEHOLDER_CHAR);
+    expect(JSON.stringify(usj)).toContain(ZWSP);
+  });
+
+  it("keeps an annotated lone NBSP whose char span's other content is an authored zero-width space", () => {
+    // A lone NBSP in a mark is content unless its char span has nothing else (the empty-span
+    // placeholder's shape). An authored zero-width space is something else, so the NBSP stays.
+    editor.update(
+      () => {
+        $getRoot().clear();
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createImmutableVerseNode("1"),
+            $createTextNode("alpha "),
+            $createCharNode("w").append(
+              $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] }).append($createTextNode(NBSP)),
+              $createTextNode(ZWSP),
+            ),
+          ),
+        );
+      },
+      { discrete: true },
+    );
+
+    const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState());
+
+    expect(usj?.content).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "verse", marker: "v", number: "1" },
+          "alpha ",
+          {
+            type: "char",
+            marker: "w",
+            content: [
+              { type: "ms", marker: "zmsc-s", sid: "c1" },
+              NBSP,
+              { type: "ms", marker: "zmsc-e", eid: "c1" },
+              ZWSP,
+            ],
+          },
+        ],
+      },
+    ]);
   });
 
   it("preserves a zero-width space embedded in real Scripture text", () => {

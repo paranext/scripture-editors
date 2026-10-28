@@ -197,11 +197,11 @@ function $removeHostPlaceholder(node: TextNode): void {
  * edit, so the transform that turns the host into that text adds no tags. The USJ serializer drops
  * a marked host as well, and the outgoing delta gives it zero length, so a host cannot reach saved
  * Scripture or a peer even if one somehow outlived a commit. Both recognize a host by its mark
- * (`transientCaretHost.utils.ts` in `shared`), never by its text. (Applying a
- * peer's delta still counts a host as one unit, so a remote op past a host lands one unit off.) All
- * placeholder handling is scoped to nodes marked as hosts, and removes only a host's own
- * placeholder — a zero-width space is legitimate content in some scripts (Thai/Khmer/Lao line
- * breaks) and is never touched.
+ * (`transientCaretHost.utils.ts` in `shared`), never by its text. (Applying a peer's delta still
+ * counts a host as one unit, so a remote op past a host lands one unit off.) All placeholder
+ * handling is scoped to nodes marked as hosts, and removes only a host's own placeholder — a
+ * zero-width space is legitimate content in some scripts (Thai/Khmer/Lao line breaks) and is never
+ * touched.
  *
  * Unlike the arrow-driven `CursorHandler` placeholder system (perf-react), this hosts a *resting*
  * caret.
@@ -236,7 +236,9 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       // Only a placeholder-only node counts: any text node can carry a caret, but a rule names
       // this boundary because typing must land in a node of its own there, not in whatever text
       // follows it. An unmarked one — a zero-width space loaded or typed as content — is reused
-      // rather than stacked behind, but being unmarked it is never stripped or removed.
+      // rather than stacked behind, but being unmarked it is never stripped or removed. Nor does it
+      // get CARET_HOST_ATTRIBUTE: the stylesheet's no-wrap rules there make up for a break
+      // opportunity a new host adds, and an authored one's is content that was there all along.
       const atBoundary = $caretHostAtBoundary(parent, boundary);
       const existing = $isCursorPlaceholderOnlyText(atBoundary) ? atBoundary : undefined;
       if (existing) {

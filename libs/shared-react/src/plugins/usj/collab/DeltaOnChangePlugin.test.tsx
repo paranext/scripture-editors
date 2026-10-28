@@ -23,6 +23,7 @@ import {
 } from "lexical";
 import {
   $createBookNode,
+  $createCaretHostNode,
   $createCharNode,
   $createNoteNode,
   $createImmutableChapterNode,
@@ -37,7 +38,6 @@ import {
   ImmutableChapterNode,
   ImpliedParaNode,
   segmentState,
-  $createCaretHostNode,
 } from "shared";
 
 let updateOps: DeltaOp[];

@@ -19,6 +19,7 @@ import {
   $createMarkerNode,
   $createParaNode,
   $createVerseNode,
+  $isCaretHost,
   $selectParaMarker,
   registerParaMarkerSelectionOwner,
   CharNode,
@@ -27,7 +28,6 @@ import {
   NBSP,
   ParaNode,
   VerseNode,
-  $isCaretHost,
 } from "shared";
 import {
   $createImmutableVerseNode,
