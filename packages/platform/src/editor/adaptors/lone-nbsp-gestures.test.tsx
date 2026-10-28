@@ -4,7 +4,12 @@
  * rules under test: an author's `~` is never dropped, and the engine's own lone-NBSP placeholder
  * (an empty char span's caret host) never reaches the saved document.
  */
-import { EDITOR_VIEWS, mountInView, MountedEditor } from "../editorViews.test-helpers";
+import {
+  EDITOR_VIEWS,
+  enabledViews,
+  mountInView,
+  MountedEditor,
+} from "../editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -94,7 +99,7 @@ function $insertText(text: string): void {
   selection.insertText(text);
 }
 
-const VIEW_NAMES = EDITOR_VIEWS.map((entry) => entry.name);
+const VIEW_NAMES = enabledViews(EDITOR_VIEWS).map((entry) => entry.name);
 
 describe("lone-NBSP gestures", () => {
   describe("applying a span's style right after a span of the same style", () => {

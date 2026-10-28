@@ -7,6 +7,7 @@
  * make displaying either run safe at all.
  */
 
+import { describeInView } from "../editorViews.test-helpers";
 import { requireDefined, viewOptions } from "./markerEdit.test-helpers";
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
 import { $rebuildChapter, Tier2Context } from "./tier2Rebuild.utils";
@@ -1151,7 +1152,7 @@ describe("typed \\ca literal in the chapter-adjacent implied paragraph", () => {
   });
 });
 
-describe("the chapter settle in the unformatted view", () => {
+describeInView("unformatted")("the chapter settle in the unformatted view", () => {
   // Content text keeps a no-break space as data in this view, but the chapter's own text is glyph
   // bytes: its no-break space is the separator after `\c`, and must reach the tokenizer as one.
   const unformatted = requireDefined(getViewOptions("unformatted"), "unformatted view missing");

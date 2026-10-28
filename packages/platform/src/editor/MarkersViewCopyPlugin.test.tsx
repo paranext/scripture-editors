@@ -2,6 +2,7 @@ import usjEditorAdaptor, {
   initialize as initializeSerialize,
   reset,
 } from "./adaptors/usj-editor.adaptor";
+import { describeInView } from "./editorViews.test-helpers";
 import { MarkerEditPlugin } from "./markerEdit/MarkerEditPlugin";
 import { copyEvent } from "./markerEdit/markerEdit.test-helpers";
 import { usfmToClipboardHtml } from "./markerEdit/whitespaceDisplay.plugin.utils";
@@ -100,7 +101,8 @@ async function copy(editor: LexicalEditor, command = COPY_COMMAND) {
   return getData;
 }
 
-describe("MarkersViewCopyPlugin", () => {
+// The app does not offer the Markers view, so this runs with the registry's library-only views.
+describeInView("visible")("MarkersViewCopyPlugin", () => {
   it("copies the whole document as its USFM, in both readable flavors and no internal one", async () => {
     const { editor } = await renderEditor(markersViewOptions);
     await act(async () => editor.update($selectAll));

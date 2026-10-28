@@ -5,11 +5,29 @@
  * Every per-view list a suite iterates is a projection of {@link EDITOR_VIEWS}, so a view's options
  * are spelled once and a key written for one suite (`"paragraph-structure"`) reads the same in all
  * of them. {@link EDITING_VIEWS} is the subset a user edits Scripture in; a suite whose subject is
- * the document a user edits runs over those three. {@link READ_ONLY_VIEWS} holds the read-only
+ * the document a user edits runs over them. {@link READ_ONLY_VIEWS} holds the read-only
  * views, which no editing suite runs.
  *
  * Each entry names the app surface it guards (`appSurface`): a `library-only` view is not offered
  * by paranext-core, and its rows run so the view does not decay, not because a user reaches it.
+ *
+ * Library-only views are OFF by default. Set `SE_TEST_LIBRARY_VIEWS=1`
+ * ({@link LIBRARY_VIEWS_ENV_VAR}; `pnpm test:library-views` in `packages/platform`) to run them,
+ * before a change to a library-only view or to code it shares with the app's views. Every
+ * projection below passes through {@link isViewEnabled}, and so does every per-view list a suite
+ * spells out itself ({@link enabledViews}); a suite written for one view alone registers through
+ * {@link describeInView}, so it shows as skipped while that view is off. The rows a library-only
+ * view gets from a shared test body are registered from the same body as the app's views, so
+ * turning the variable on runs every test added since in that view too — only an expectation that
+ * differs in that view (an expected-failure entry, a per-view table) is that view's own upkeep.
+ * An expected-failure entry naming a view that is off is not stale ({@link knownFailureRunner}).
+ * A test that builds a library-only view's options itself, rather than naming a registry view,
+ * still runs: it is either about code every view shares, with the view incidental, or a
+ * millisecond unit test of an option the library still publishes.
+ *
+ * A suite that never edits (it loads, reads, annotates or round-trips through the adaptors) still
+ * runs `formatted` by default: Power mode's Preview and the read-only text panels mount formatted's
+ * options read-only, so such a suite guards those surfaces there ({@link ViewSelection.readsOnly}).
  *
  * A plain helper module rather than an export from one of the suites, so a suite that needs it
  * does not re-register another suite's tests by importing it.
@@ -147,6 +165,12 @@ export interface NamedView<Name extends string = EditorViewName> {
 /** A registry view: a {@link NamedView} labelled with the app surface it guards. */
 export interface RegistryView<Name extends string = EditorViewName> extends NamedView<Name> {
   appSurface: AppSurface;
+  /**
+   * A read-only surface that mounts exactly these options with `isReadonly: true`. A suite that
+   * never edits guards that surface in this view, so runs it by default even when `appSurface` is
+   * `library-only` (see {@link ViewSelection.readsOnly}).
+   */
+  readOnlySurface?: AppSurface;
   /** What reaches the view in the app, or why a `library-only` view is still run. */
   note?: string;
 }
@@ -198,6 +222,7 @@ export const EDITOR_VIEWS: readonly RegistryView[] = [
     name: "formatted",
     view: requireViewOptions(FORMATTED_VIEW_MODE),
     appSurface: "library-only",
+    readOnlySurface: "preview",
     note:
       "not offered editable by the app since PT-4777 (kept so the view doesn't decay); the app " +
       "shows it read-only as the preview (READ_ONLY_VIEWS)",
@@ -221,6 +246,75 @@ function registryEntry<Name extends EditorViewName>(name: Name): RegistryView<Na
   return { ...found, name };
 }
 
+/** The environment variable that opts a run in to the library-only views, when set to `1`. */
+export const LIBRARY_VIEWS_ENV_VAR = "SE_TEST_LIBRARY_VIEWS";
+
+/** Whether this run includes the library-only views ({@link LIBRARY_VIEWS_ENV_VAR}). */
+export const LIBRARY_VIEWS_ENABLED = process.env[LIBRARY_VIEWS_ENV_VAR] === "1";
+
+/** What a suite does in the views it asks {@link isViewEnabled} about. */
+export interface ViewSelection {
+  /**
+   * The suite never edits: it loads, reads, annotates, or round-trips through the adaptors. A
+   * library-only view with a {@link RegistryView.readOnlySurface} then guards that surface, so it
+   * is enabled by default.
+   */
+  readsOnly?: boolean;
+}
+
+/**
+ * Whether this run registers rows in `view` (a registry name or entry): every view a user reaches
+ * in the app, and a `library-only` one only when {@link LIBRARY_VIEWS_ENABLED} — or, for a suite
+ * that {@link ViewSelection.readsOnly | reads only}, when a read-only surface mounts its options.
+ * Throws on a name the registry does not have, so a misspelt view cannot silently drop out.
+ */
+export function isViewEnabled(
+  view: string | { name: string },
+  { readsOnly = false }: ViewSelection = {},
+): boolean {
+  const name = typeof view === "string" ? view : view.name;
+  const entry = EDITOR_VIEWS.find((candidate) => candidate.name === name);
+  if (!entry) throw new Error(`unknown editor view: ${name}`);
+  if (LIBRARY_VIEWS_ENABLED || entry.appSurface !== "library-only") return true;
+  return readsOnly && entry.readOnlySurface !== undefined;
+}
+
+/**
+ * `views` (registry names, or entries with a registry `name`) less the ones this run leaves out
+ * ({@link isViewEnabled}). For a per-view list a suite spells out itself.
+ */
+export function enabledViews<View extends string | { name: string }>(
+  views: readonly View[],
+  selection?: ViewSelection,
+): View[] {
+  return views.filter((view) => isViewEnabled(view, selection));
+}
+
+/** `describe`, skipped while {@link isViewEnabled} leaves `view` out: for a suite written for that
+ * one view. */
+export function describeInView(
+  view: string,
+  selection?: ViewSelection,
+): ReturnType<typeof describe.skipIf> {
+  return describe.skipIf(!isViewEnabled(view, selection));
+}
+
+/** `it`, skipped while {@link isViewEnabled} leaves `view` out: for a test written for that one
+ * view. */
+export function itInView(view: string, selection?: ViewSelection): ReturnType<typeof it.skipIf> {
+  return it.skipIf(!isViewEnabled(view, selection));
+}
+
+/**
+ * Whether this run includes the footnote popover over a host in `host` (a registry name). Over
+ * Standard view the popover's options are the footnotes pane's row editor's, the note editor the
+ * app mounts (`footnotes-pane-row`); over any other host it is library-only (see
+ * {@link footnotePopoverView}).
+ */
+export function isPopoverHostEnabled(host: string): boolean {
+  return LIBRARY_VIEWS_ENABLED || host === "standard";
+}
+
 /** The {@link EDITOR_VIEWS} entry called `name`. */
 export function editorView(name: EditorViewName | string): ViewOptions {
   const found = EDITOR_VIEWS.find((entry) => entry.name === name);
@@ -237,12 +331,14 @@ export type EditingViewName = (typeof EDITING_VIEW_NAMES)[number];
 /**
  * The views a user edits Scripture in: Standard (Power mode), paragraph-structure (Simple mode),
  * and formatted, the library's default view — library-only: not offered editable by the app since
- * PT-4777, and kept here so the view doesn't decay. Formatted and paragraph-structure hide markers,
- * so the marker-edit engine is off in both — a suite whose subject is that engine does not belong
+ * PT-4777, and kept so the view doesn't decay, so it is in the list only when this run includes
+ * library-only views ({@link isViewEnabled}). Formatted and paragraph-structure hide markers, so
+ * the marker-edit engine is off in both — a suite whose subject is that engine does not belong
  * here.
  */
-export const EDITING_VIEWS: readonly RegistryView<EditingViewName>[] =
-  EDITING_VIEW_NAMES.map(registryEntry);
+export const EDITING_VIEWS: readonly RegistryView<EditingViewName>[] = enabledViews(
+  EDITING_VIEW_NAMES.map(registryEntry),
+);
 
 /** The name of a view in {@link READ_ONLY_VIEWS}. */
 export type ReadOnlyViewName = "preview" | "block-verse";
@@ -276,12 +372,22 @@ export const READ_ONLY_VIEWS: readonly ReadOnlyView[] = [
 
 /**
  * The view configurations every adaptor round-trip suite runs each fixture in: the named view
- * modes, plus Standard with expanded notes. The label is the view's registry name, and doubles as
- * the `skipModes` key prefix of a corpus fixture (`<label>: <reason>`).
+ * modes, plus Standard with expanded notes, less the ones this run leaves out. A round trip only
+ * loads and exports, so formatted stays in by default as Preview's options
+ * ({@link ViewSelection.readsOnly}). The label is the view's registry name, and doubles as the
+ * `skipModes` key prefix of a corpus fixture (`<label>: <reason>`).
  */
-export const ROUND_TRIP_VIEW_CONFIGS: { label: string; viewOptions: ViewOptions | undefined }[] = (
-  ["standard", "formatted", "unformatted", "paragraph-structure", "standard+expandedNotes"] as const
-).map((name) => ({ label: name, viewOptions: editorView(name) }));
+export const ROUND_TRIP_VIEW_CONFIGS: { label: string; viewOptions: ViewOptions | undefined }[] =
+  enabledViews(
+    [
+      "standard",
+      "formatted",
+      "unformatted",
+      "paragraph-structure",
+      "standard+expandedNotes",
+    ] as const,
+    { readsOnly: true },
+  ).map((name) => ({ label: name, viewOptions: editorView(name) }));
 
 /**
  * {@link EDITING_VIEWS} in the {@link ROUND_TRIP_VIEW_CONFIGS} shape, for the suites that mount an
@@ -311,14 +417,18 @@ export type TestRegistrar = (name: string, fn: () => unknown, timeout?: number) 
  * otherwise. A listed row that starts passing fails, so a fix has to delete its entry.
  *
  * `validKeys` is every key the suite generates; an entry naming none of them throws at
- * registration, so a renamed or removed row cannot leave a stale entry behind.
+ * registration, so a renamed or removed row cannot leave a stale entry behind. An entry that names
+ * a view this run leaves out ({@link isViewEnabled}) — the registry name as a whole word of the
+ * key — is not stale: its row is simply not registered this run.
  */
 export function knownFailureRunner(
   knownFailures: { readonly [key: string]: string },
   validKeys: readonly string[],
 ): (key: string) => TestRegistrar {
   const valid = new Set(validKeys);
-  const stale = Object.keys(knownFailures).filter((key) => !valid.has(key));
+  const stale = Object.keys(knownFailures).filter(
+    (key) => !valid.has(key) && !namesViewLeftOut(key),
+  );
   if (stale.length > 0) throw new Error(`known failures name no row: ${stale.join(", ")}`);
   return (key) => {
     if (!valid.has(key)) throw new Error(`row key ${key} is not among the suite's keys`);
@@ -328,6 +438,15 @@ export function knownFailureRunner(
       else it(name, fn, timeout);
     };
   };
+}
+
+/** Whether `key` names, as a whole word, a registry view this run leaves out. */
+function namesViewLeftOut(key: string): boolean {
+  return EDITOR_VIEWS.some(
+    (entry) =>
+      !isViewEnabled(entry) &&
+      new RegExp(`(^|[^\\w+-])${entry.name.replace(/[+]/g, "\\+")}([^\\w+-]|$)`).test(key),
+  );
 }
 
 /** The editor's host-facing change-notification callback type. */

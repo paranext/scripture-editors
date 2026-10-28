@@ -9,6 +9,7 @@ import {
   EditorViewName,
   editorView,
   footnotePopoverView,
+  isViewEnabled,
   mountInView,
   MountedEditor,
 } from "./editorViews.test-helpers";
@@ -71,26 +72,29 @@ const carriedContent: [string, MarkerContent[]][] = [
  */
 const knownFailures = new Set(["standard: a nested char span"]);
 
-describe.each(surfaces)("$surface", ({ main: mainView, noteEditor: noteView }) => {
-  for (const [name, carried] of carriedContent) {
-    (knownFailures.has(`${mainView}: ${name}`) ? it.fails : it)(
-      `carries ${name} out past the note`,
-      async () => {
-        const noteEditor = await mountInView(doc([note, ...carried]), noteView);
-        const main = await mountInView(doc(["a", note, "z"]), editorView(mainView));
-        const noteOp = noteEditor.ref.current?.getNoteOps(0)?.at(0);
-        const carriedOps = noteEditor.ref.current?.takeOpsAfterNote(0);
-        const key = main.ref.current?.getNoteKey(0);
-        if (!noteOp || !carriedOps || !key) throw new Error("no note session");
+describe.each(surfaces.filter(({ main }) => isViewEnabled(main)))(
+  "$surface",
+  ({ main: mainView, noteEditor: noteView }) => {
+    for (const [name, carried] of carriedContent) {
+      (knownFailures.has(`${mainView}: ${name}`) ? it.fails : it)(
+        `carries ${name} out past the note`,
+        async () => {
+          const noteEditor = await mountInView(doc([note, ...carried]), noteView);
+          const main = await mountInView(doc(["a", note, "z"]), editorView(mainView));
+          const noteOp = noteEditor.ref.current?.getNoteOps(0)?.at(0);
+          const carriedOps = noteEditor.ref.current?.takeOpsAfterNote(0);
+          const key = main.ref.current?.getNoteKey(0);
+          if (!noteOp || !carriedOps || !key) throw new Error("no note session");
 
-        act(() => main.ref.current?.replaceEmbedUpdate(key, [noteOp, ...carriedOps]));
+          act(() => main.ref.current?.replaceEmbedUpdate(key, [noteOp, ...carriedOps]));
 
-        expect(paraContent(noteEditor)).toEqual([note]);
-        expect(paraContent(main)).toEqual(normalizedText(["a", note, ...carried, "z"]));
-      },
-    );
-  }
-});
+          expect(paraContent(noteEditor)).toEqual([note]);
+          expect(paraContent(main)).toEqual(normalizedText(["a", note, ...carried, "z"]));
+        },
+      );
+    }
+  },
+);
 
 /** `content` with adjacent strings joined, as a save writes them. */
 function normalizedText(content: MarkerContent[]): MarkerContent[] {

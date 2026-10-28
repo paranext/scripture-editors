@@ -16,6 +16,7 @@ import {
   ORACLE_TYPE,
   oracleView,
 } from "../annotationLocations/annotationLocations.test-helpers";
+import { enabledViews, isViewEnabled, itInView } from "../editorViews.test-helpers";
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { copyEvent, pasteEvent } from "./markerEdit.test-helpers";
 import { $textContaining, contentPath, twoParaUsj } from "../positions/positions.test-helpers";
@@ -412,7 +413,7 @@ describe("typing between a span's glyph and its separator", () => {
   // the content text (`\w` + `x⍽grace`) depending on where the editor resolves the caret; the
   // same screen bytes settle the same way from both, and `getUsj()` while the edit is pending
   // already returns that settled document.
-  const rows: [shape: string, view: string, character: string][] = [
+  const allRows: [shape: string, view: string, character: string][] = [
     ["glyph", "standard", "x"],
     ["content", "standard", "x"],
     ["glyph", "standard", "j"],
@@ -420,6 +421,7 @@ describe("typing between a span's glyph and its separator", () => {
     ["glyph", "unformatted", "x"],
     ["content", "unformatted", "x"],
   ];
+  const rows = allRows.filter(([, view]) => isViewEnabled(view));
 
   it.each(rows)(
     "renames the opener and its closer (typed into the %s, %s view, `%s`)",
@@ -461,7 +463,7 @@ describe("typing between a span's glyph and its separator", () => {
     },
   );
 
-  it.each(["standard", "standard+expandedNotes", "unformatted"])(
+  it.each(enabledViews(["standard", "standard+expandedNotes", "unformatted"]))(
     "reads and places positions in the span's text against the settled span (%s view)",
     async (view) => {
       const mounted = await mountInView(wordUsj("w"), oracleView(view));
@@ -518,30 +520,33 @@ describe("typing between a span's glyph and its separator", () => {
     },
   );
 
-  it("ends the new name at the separator in the unformatted view", async () => {
-    // `\wj b\wj*` with `a` typed in front of the separator: the name is `wja`, never `wja b`.
-    const mounted = await mountInView(
-      twoParaUsj(["x ", { type: "char", marker: "wj", content: ["b"] }, " y"]),
-      oracleView("unformatted"),
-    );
-    await act(async () => {
-      mounted.lexical.update(() => {
-        const content = $textContaining("b");
-        content.setTextContent(`a${NBSP}b`);
-        content.select(1, 1);
+  itInView("unformatted")(
+    "ends the new name at the separator in the unformatted view",
+    async () => {
+      // `\wj b\wj*` with `a` typed in front of the separator: the name is `wja`, never `wja b`.
+      const mounted = await mountInView(
+        twoParaUsj(["x ", { type: "char", marker: "wj", content: ["b"] }, " y"]),
+        oracleView("unformatted"),
+      );
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const content = $textContaining("b");
+          content.setTextContent(`a${NBSP}b`);
+          content.select(1, 1);
+        });
+        await Promise.resolve();
       });
-      await Promise.resolve();
-    });
-    const expected = ["x ", { type: "char", marker: "wja", content: ["b"] }, " y"];
-    const pending = mounted.ref.current?.getUsj();
-    expect(paraOf(pending, "p").content).toEqual(expected);
+      const expected = ["x ", { type: "char", marker: "wja", content: ["b"] }, " y"];
+      const pending = mounted.ref.current?.getUsj();
+      expect(paraOf(pending, "p").content).toEqual(expected);
 
-    await depart(mounted);
-    const settled = mounted.ref.current?.getUsj();
-    expect(paraOf(settled, "p").content).toEqual(expected);
-    expect(settled).toEqual(pending);
-    expectScreenIsSaved(mounted, "p");
-  });
+      await depart(mounted);
+      const settled = mounted.ref.current?.getUsj();
+      expect(paraOf(settled, "p").content).toEqual(expected);
+      expect(settled).toEqual(pending);
+      expectScreenIsSaved(mounted, "p");
+    },
+  );
 });
 
 describe("a `|…` after the separator that is not an attribute list", () => {
@@ -754,7 +759,7 @@ describe("deleting the separator of a span whose text holds an authored no-break
   // Unformatted shows an authored no-break space as the byte itself, so `\w Lord~God\w*` with its
   // separator deleted reads `\wLord⍽God` — the same screen as `\w Lord God\w*` with its separator
   // deleted, and the two settle alike: the name ends at the space, as a new paragraph marker.
-  it.each([
+  itInView("unformatted").each([
     ["an authored no-break space", `Lord${NBSP}God`],
     ["a space", "Lord God"],
   ])("settles as the name the bytes spell (%s)", async (_name, text) => {
@@ -784,7 +789,7 @@ describe("deleting the separator of a span whose text holds an authored no-break
   });
 });
 
-describe.each(["standard", "unformatted"])(
+describe.each(enabledViews(["standard", "unformatted"]))(
   "a char opener's separator deleted, then a name byte typed (%s view)",
   (view) => {
     it("settles as the bytes the screen shows, not as a rename beside a missing separator", async () => {
@@ -830,8 +835,8 @@ describe.each(["standard", "unformatted"])(
 );
 
 describe.each([
-  ["standard+expandedNotes", false],
-  ["the footnote popover", true],
+  ...enabledViews(["standard+expandedNotes"]).map((name) => [name, false] as const),
+  ["the footnote popover", true] as const,
 ])("a paste over a span's glyph letters inside an unclosed note (%s)", (_name, isPopover) => {
   it("keeps the span's separator, so its marker is never renamed into its content", async () => {
     // `\f + \ft note text`, note and span both unclosed. Copy the span (`\ft note text`), select

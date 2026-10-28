@@ -35,6 +35,7 @@
 import {
   EditorViewName,
   editorView,
+  enabledViews,
   knownFailureRunner,
   mountInView,
 } from "./editorViews.test-helpers";
@@ -583,7 +584,9 @@ function viewsFor(kind: RangeKind | undefined): { name: string; view: ViewOption
   const names: EditorViewName[] = isPartialSpan
     ? ["formatted", "paragraph-structure"]
     : ["standard", "formatted", "paragraph-structure"];
-  return names.map((name) => {
+  // The `+expandedNotes` rows below are the only clipboard rows inside a note's content, which a
+  // user reaches in the footnotes pane's row editor, so they run whenever their host view does.
+  return enabledViews(names).map((name) => {
     const view = editorView(name);
     return kind === "inside note content"
       ? { name: `${name}+expandedNotes`, view: { ...view, noteMode: "expanded" } }

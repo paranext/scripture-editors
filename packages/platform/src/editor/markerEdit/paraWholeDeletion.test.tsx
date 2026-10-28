@@ -31,7 +31,7 @@ import {
   reset as resetSerialize,
 } from "../adaptors/usj-editor.adaptor";
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
-import { EDITING_VIEWS, forEachView, mountInView } from "../editorViews.test-helpers";
+import { EDITING_VIEWS, forEachView, itInView, mountInView } from "../editorViews.test-helpers";
 // Reaching inside only for tests (same pattern as markerEdit.test-helpers).
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import {
@@ -1085,55 +1085,58 @@ describe("user deletes a paragraph's entire visible representation", () => {
     expect(written.get("text/plain")).toContain("two"); // the cut content reached the clipboard
   });
 
-  it("removes the paragraph when Lexical's own cut removes it after an await (Unformatted view)", async () => {
-    // Unformatted view is editable-marker but not Standard view, so no engine CUT claim runs:
-    // Lexical's rich-text handler performs the cut, and it removes the range only after
-    // `await copyToClipboard(...)` — a later microtask than the CUT dispatch that armed. The arm
-    // must survive that await, so it cannot expire itself on a microtask the way the delete-key
-    // arms do.
-    //
-    // jsdom has no ClipboardEvent, and Lexical names the class to recognise a native event.
-    class ClipboardEventStub extends Event {
-      clipboardData = { setData: () => undefined, getData: () => "", types: [], files: [] };
-    }
-    vi.stubGlobal("ClipboardEvent", ClipboardEventStub);
-    try {
-      let second!: ParaNode;
-      initializeSerialize(undefined, undefined);
-      resetSerialize();
-      const { editor } = await baseTestEnvironment(
-        () => ({ second } = $appendTwoParas()),
-        <MarkerEditPlugin viewOptions={getViewOptions(UNFORMATTED_VIEW_MODE)} />,
-      );
-      await act(async () =>
-        editor.update(
-          () => {
-            const glyph = second.getFirstChild();
-            if (!$isMarkerNode(glyph)) throw new Error("expected the paragraph's marker glyph");
-            const last = requireDefined(second.getLastChild() ?? undefined, "paragraph content");
-            const selection = $createRangeSelection();
-            selection.anchor.set(glyph.getKey(), 0, "text");
-            selection.focus.set(last.getKey(), last.getTextContentSize(), "text");
-            $setSelection(selection);
-          },
-          { discrete: true },
-        ),
-      );
-      await act(async () =>
-        editor.dispatchCommand(
-          CUT_COMMAND,
-          new ClipboardEventStub("cut") as unknown as ClipboardEvent,
-        ),
-      );
+  itInView("unformatted")(
+    "removes the paragraph when Lexical's own cut removes it after an await (Unformatted view)",
+    async () => {
+      // Unformatted view is editable-marker but not Standard view, so no engine CUT claim runs:
+      // Lexical's rich-text handler performs the cut, and it removes the range only after
+      // `await copyToClipboard(...)` — a later microtask than the CUT dispatch that armed. The arm
+      // must survive that await, so it cannot expire itself on a microtask the way the delete-key
+      // arms do.
+      //
+      // jsdom has no ClipboardEvent, and Lexical names the class to recognise a native event.
+      class ClipboardEventStub extends Event {
+        clipboardData = { setData: () => undefined, getData: () => "", types: [], files: [] };
+      }
+      vi.stubGlobal("ClipboardEvent", ClipboardEventStub);
+      try {
+        let second!: ParaNode;
+        initializeSerialize(undefined, undefined);
+        resetSerialize();
+        const { editor } = await baseTestEnvironment(
+          () => ({ second } = $appendTwoParas()),
+          <MarkerEditPlugin viewOptions={getViewOptions(UNFORMATTED_VIEW_MODE)} />,
+        );
+        await act(async () =>
+          editor.update(
+            () => {
+              const glyph = second.getFirstChild();
+              if (!$isMarkerNode(glyph)) throw new Error("expected the paragraph's marker glyph");
+              const last = requireDefined(second.getLastChild() ?? undefined, "paragraph content");
+              const selection = $createRangeSelection();
+              selection.anchor.set(glyph.getKey(), 0, "text");
+              selection.focus.set(last.getKey(), last.getTextContentSize(), "text");
+              $setSelection(selection);
+            },
+            { discrete: true },
+          ),
+        );
+        await act(async () =>
+          editor.dispatchCommand(
+            CUT_COMMAND,
+            new ClipboardEventStub("cut") as unknown as ClipboardEvent,
+          ),
+        );
 
-      editor.getEditorState().read(() => {
-        expect(second.isAttached()).toBe(false);
-        expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(1);
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
+        editor.getEditorState().read(() => {
+          expect(second.isAttached()).toBe(false);
+          expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(1);
+        });
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 
   it("lands the caret at the JUNCTION when deleting only the visible prefix merges the para", async () => {
     // Select just the `\q1 ` prefix — glyph start through content start — and delete. The

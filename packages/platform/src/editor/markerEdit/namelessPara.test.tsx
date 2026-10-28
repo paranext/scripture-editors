@@ -9,6 +9,7 @@ import {
   ORACLE_VIEWS,
   oracleView,
 } from "../annotationLocations/annotationLocations.test-helpers";
+import { enabledViews } from "../editorViews.test-helpers";
 import {
   $screenBytes,
   depart,
@@ -73,7 +74,7 @@ describe("a nameless paragraph", () => {
     },
   );
 
-  it.each(["standard", "unformatted"])(
+  it.each(enabledViews(["standard", "unformatted"]))(
     "saves a rename of its glyph (%s view)",
     async (viewName) => {
       const mounted = await mountInView(namelessParaUsj(), oracleView(viewName));
@@ -91,7 +92,7 @@ describe("a nameless paragraph", () => {
     },
   );
 
-  it.each(["standard", "unformatted"])(
+  it.each(enabledViews(["standard", "unformatted"]))(
     "keeps its backslash a marker when a marker is typed inside it (%s view)",
     async (viewName) => {
       const mounted = await mountInView(namelessParaUsj(), oracleView(viewName));
@@ -155,7 +156,7 @@ describe("a nameless paragraph", () => {
       standardSettled: { type: "para", marker: "p", content: ["df"] },
     },
   ];
-  describe.each(["standard", "unformatted"])("in the %s view", (viewName) => {
+  describe.each(enabledViews(["standard", "unformatted"]))("in the %s view", (viewName) => {
     it.each(GLYPH_EDITS)(
       "saves what the screen shows: $name",
       async ({ glyph, caret, settled, standardSettled }) => {

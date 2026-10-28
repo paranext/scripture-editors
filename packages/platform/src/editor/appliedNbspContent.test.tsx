@@ -5,7 +5,13 @@
  * span's opener (formatted, paragraph-structure) must save it even when it is the span's whole
  * text, the slot an empty span's placeholder takes.
  */
-import { EditorViewName, editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
+import {
+  EditorViewName,
+  editorView,
+  enabledViews,
+  mountInView,
+  MountedEditor,
+} from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { NBSP } from "shared";
@@ -29,7 +35,7 @@ function paraContent(mounted: MountedEditor): MarkerContent[] | undefined {
   return typeof para === "object" ? para.content : undefined;
 }
 
-const views: EditorViewName[] = ["formatted", "paragraph-structure"];
+const views: EditorViewName[] = enabledViews(["formatted", "paragraph-structure"]);
 
 describe.each(views)("in %s view", (viewName) => {
   const view = editorView(viewName);

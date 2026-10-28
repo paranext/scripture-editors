@@ -5,6 +5,7 @@
 import {
   EDITING_VIEWS,
   editorView,
+  enabledViews,
   forEachView,
   MountedEditor,
   mountInView,
@@ -261,7 +262,10 @@ forEachView(EDITING_VIEWS, ({ view }) => {
 });
 
 /** The editing views, and the visible-marker view whose spans have no separator either. */
-const NBSP_VIEWS = [...EDITING_VIEWS, { name: "visible", view: editorView("visible") }];
+const NBSP_VIEWS = [
+  ...EDITING_VIEWS,
+  ...enabledViews([{ name: "visible", view: editorView("visible") }]),
+];
 
 /** `\p a \nd <content>\nd* b`. */
 function spanUsj(content: MarkerContent[]): Usj {

@@ -4,7 +4,12 @@
  * These rows name the exempt bytes of a small paragraph in every oracle view without those
  * predicates: an authored no-break space either side misreads as a separator adds a row.
  */
-import { $byteWalk, mountInView, ORACLE_VIEWS } from "./annotationLocations.test-helpers";
+import {
+  $byteWalk,
+  ALL_ORACLE_VIEWS,
+  mountInView,
+  ORACLE_VIEWS,
+} from "./annotationLocations.test-helpers";
 import { twoParaUsj } from "../positions/positions.test-helpers";
 import { NBSP } from "shared";
 
@@ -58,7 +63,7 @@ function inParagraph(jsonPath: string): boolean {
 describe("the oracle's exempt bytes, by hand", () => {
   it("names every oracle view", () => {
     expect(Object.keys(EXPECTED_EXEMPT).sort()).toEqual(
-      ORACLE_VIEWS.map(({ name }) => name).sort(),
+      ALL_ORACLE_VIEWS.map(({ name }) => name).sort(),
     );
   });
 

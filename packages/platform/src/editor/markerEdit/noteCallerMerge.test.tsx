@@ -7,7 +7,7 @@
  * caller shows it again. Either way the screen shows what the file gets.
  */
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
-import { EDITOR_VIEWS } from "../editorViews.test-helpers";
+import { EDITOR_VIEWS, enabledViews } from "../editorViews.test-helpers";
 import { IDLE_SETTLE_DELAY_MS } from "./MarkerEditPlugin";
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -95,7 +95,7 @@ function callerText(lexical: LexicalEditor): string | undefined {
   });
 }
 
-describe.each(["standard+expandedNotes", "unformatted"])(
+describe.each(enabledViews(["standard+expandedNotes", "unformatted"]))(
   "a note's caller beside plain content (%s view)",
   (view) => {
     it("keeps typed content out of the caller", async () => {
@@ -130,7 +130,7 @@ const noteContents: { contentName: string; content: MarkerContent[] }[] = [
 ];
 
 describe.each(
-  ["standard+expandedNotes", "unformatted"].flatMap((view) =>
+  enabledViews(["standard+expandedNotes", "unformatted"]).flatMap((view) =>
     noteContents.flatMap(({ contentName, content }) =>
       ["emptied", "removed"].map((how) => ({ view, contentName, content, how })),
     ),
@@ -193,7 +193,7 @@ function expectNoteScreenIsSaved(lexical: LexicalEditor, saved: MarkerObject): v
   expect(lexical.getEditorState().read($noteScreen)).toBe(noteUsfm(saved));
 }
 
-describe.each(["standard+expandedNotes", "unformatted"])(
+describe.each(enabledViews(["standard+expandedNotes", "unformatted"]))(
   "a note's caller partly damaged (%s view)",
   (view) => {
     /** Rewrite the caller text to `damaged`, caret at `caret` in it (or at the content's start). */
@@ -406,7 +406,7 @@ const emptyCallerNoteUsj = twoParaUsj([
   " b",
 ]);
 
-describe.each(["standard+expandedNotes", "unformatted"])(
+describe.each(enabledViews(["standard+expandedNotes", "unformatted"]))(
   "a note with an empty caller (%s view)",
   (view) => {
     /** Mount the note and rewrite its caller text, as {@link damage} does for a `+` caller. */
@@ -471,7 +471,7 @@ describe.each(["standard+expandedNotes", "unformatted"])(
 
 // ParatextData reads `\f \ft …` as `caller=""` and writes it back as `\f \ft …`, so an edit
 // anywhere must never give such a note a caller.
-describe.each(EDITOR_VIEWS.map(({ name }) => name))(
+describe.each(enabledViews(EDITOR_VIEWS).map(({ name }) => name))(
   "a note with an empty caller, edited beside and inside (%s view)",
   (view) => {
     it("saves the caller empty", async () => {
@@ -500,7 +500,7 @@ describe.each(EDITOR_VIEWS.map(({ name }) => name))(
   },
 );
 
-describe.each(["standard+expandedNotes", "unformatted"])(
+describe.each(enabledViews(["standard+expandedNotes", "unformatted"]))(
   "a note's caller removed beside content that reads like a caller (%s view)",
   (view) => {
     it("never takes the content for the caller", async () => {
@@ -530,7 +530,7 @@ describe.each(["standard+expandedNotes", "unformatted"])(
   },
 );
 
-describe.each(["standard+expandedNotes", "unformatted"])(
+describe.each(enabledViews(["standard+expandedNotes", "unformatted"]))(
   "a byte typed between a note's opening glyph and its caller (%s view)",
   (view) => {
     // The caret between `\f` and its caller text can sit at the glyph's end or at the caller text's
@@ -591,7 +591,7 @@ describe.each(["standard+expandedNotes", "unformatted"])(
   },
 );
 
-describe.each(["standard+expandedNotes", "unformatted"])(
+describe.each(enabledViews(["standard+expandedNotes", "unformatted"]))(
   "a waiting note caller's change ops (%s view)",
   (view) => {
     /** Mount `usj`, composing every change op it announces through `onUsjChange` onto the

@@ -8,7 +8,15 @@
  * span leaves behind when it is unwrapped. Unformatted view shows it as itself and its settle keeps
  * it too; the views that hide markers never show it at all.
  */
-import { EditorViewName, editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
+import {
+  describeInView,
+  EditorViewName,
+  editorView,
+  enabledViews,
+  isViewEnabled,
+  mountInView,
+  MountedEditor,
+} from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -311,7 +319,7 @@ function expectNoStandIn(value: unknown): void {
 
 for (const { label, allow, spelling } of SETTINGS)
   describe(`an attribute value's no-break space in Standard view, ${label}`, () => {
-    for (const shape of SHAPES)
+    for (const shape of SHAPES.filter(({ view }) => isViewEnabled(view)))
       describe(`in ${shape.name}`, () => {
         const mount = () => mountInView(shape.usj, viewWith(shape.view, allow));
 
@@ -473,44 +481,47 @@ describe("an attribute value's no-break space when a paragraph break empties its
     });
 });
 
-describe("an attribute value's no-break space in Unformatted view, where it shows as itself", () => {
-  const word = withAttributes(
-    { type: "char", marker: "w", content: ["word"] },
-    { lemma: `h${NBSP}i` },
-  );
-  const milestone = withAttributes({ type: "ms", marker: "qt-s" }, { who: `A${NBSP}B` });
-  const verse: MarkerObject = { type: "verse", marker: "v", number: "1", pubnumber: `2${NBSP}b` };
-  const content: MarkerContent[] = [verse, "x ", word, " y", milestone, "z"];
+describeInView("unformatted")(
+  "an attribute value's no-break space in Unformatted view, where it shows as itself",
+  () => {
+    const word = withAttributes(
+      { type: "char", marker: "w", content: ["word"] },
+      { lemma: `h${NBSP}i` },
+    );
+    const milestone = withAttributes({ type: "ms", marker: "qt-s" }, { who: `A${NBSP}B` });
+    const verse: MarkerObject = { type: "verse", marker: "v", number: "1", pubnumber: `2${NBSP}b` };
+    const content: MarkerContent[] = [verse, "x ", word, " y", milestone, "z"];
 
-  for (const { label, allow } of SETTINGS) {
-    it(`survives a settle of its paragraph, ${label}`, async () => {
-      const mounted = await mountInView(usjWith(content), viewWith("unformatted", allow));
-      expect(shownText(mounted.lexical)).toContain(`|h${NBSP}i`);
-      await select(mounted.lexical, " y", 2);
-      await type(mounted.lexical, "\\");
-      await commit(mounted);
+    for (const { label, allow } of SETTINGS) {
+      it(`survives a settle of its paragraph, ${label}`, async () => {
+        const mounted = await mountInView(usjWith(content), viewWith("unformatted", allow));
+        expect(shownText(mounted.lexical)).toContain(`|h${NBSP}i`);
+        await select(mounted.lexical, " y", 2);
+        await type(mounted.lexical, "\\");
+        await commit(mounted);
 
-      const para = paraContent(mounted.ref.current?.getUsj());
-      expect(objectIn(para, "verse")).toEqual(verse);
-      expect(objectIn(para, "char")).toEqual(word);
-      expect(objectIn(para, "ms")).toEqual(milestone);
-    });
+        const para = paraContent(mounted.ref.current?.getUsj());
+        expect(objectIn(para, "verse")).toEqual(verse);
+        expect(objectIn(para, "char")).toEqual(word);
+        expect(objectIn(para, "ms")).toEqual(milestone);
+      });
 
-    it(`survives an edit to the value, ${label}`, async () => {
-      const mounted = await mountInView(usjWith(content), viewWith("unformatted", allow));
-      await select(mounted.lexical, `|A${NBSP}B`, 3);
-      await type(mounted.lexical, "x");
-      await commit(mounted);
+      it(`survives an edit to the value, ${label}`, async () => {
+        const mounted = await mountInView(usjWith(content), viewWith("unformatted", allow));
+        await select(mounted.lexical, `|A${NBSP}B`, 3);
+        await type(mounted.lexical, "x");
+        await commit(mounted);
 
-      expect(objectIn(paraContent(mounted.ref.current?.getUsj()), "ms")).toEqual(
-        withAttributes({ type: "ms", marker: "qt-s" }, { who: `A${NBSP}xB` }),
-      );
-    });
-  }
-});
+        expect(objectIn(paraContent(mounted.ref.current?.getUsj()), "ms")).toEqual(
+          withAttributes({ type: "ms", marker: "qt-s" }, { who: `A${NBSP}xB` }),
+        );
+      });
+    }
+  },
+);
 
 describe("an attribute value's no-break space in the views that do not show attributes", () => {
-  for (const name of ["formatted", "paragraph-structure"] as const)
+  for (const name of enabledViews(["formatted", "paragraph-structure"] as const))
     for (const { label, allow } of SETTINGS)
       it(`stays U+00A0 through an edit in ${name} view, ${label}`, async () => {
         const word = withAttributes(

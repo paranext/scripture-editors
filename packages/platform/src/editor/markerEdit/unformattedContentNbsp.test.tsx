@@ -7,6 +7,7 @@
  * separators, the char span's leading prefix) still flatten to " " (see `contentFragmentText`,
  * tier2Rebuild.utils.ts).
  */
+import { describeInView } from "../editorViews.test-helpers";
 import editorUsjAdaptor, {
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
@@ -71,7 +72,7 @@ function $findFirstChar(root: LexicalNode, marker: string): CharNode | undefined
   return undefined;
 }
 
-describe("unformatted view: content NBSP across a settle", () => {
+describeInView("unformatted")("unformatted view: content NBSP across a settle", () => {
   it("preserves a body-text data NBSP when a typed literal settles in the same paragraph", async () => {
     const { editor } = await unformattedTestEnvironment(() => {
       $getRoot().append(

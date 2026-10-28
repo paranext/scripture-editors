@@ -9,7 +9,10 @@
 import {
   EditorViewName,
   editorView,
+  enabledViews,
   footnotePopoverView,
+  isPopoverHostEnabled,
+  itInView,
   mountInView,
   MountedEditor,
 } from "../editorViews.test-helpers";
@@ -134,7 +137,7 @@ const NOTE_CASES = CASES.filter(([, content]) =>
   content.some((item) => typeof item === "object" && item.type === "note"),
 );
 
-const VIEWS: EditorViewName[] = [
+const VIEWS: EditorViewName[] = enabledViews<EditorViewName>([
   "standard",
   "standard+expandedNotes",
   "formatted",
@@ -142,7 +145,7 @@ const VIEWS: EditorViewName[] = [
   "unformatted",
   "visible",
   "hidden+expanded",
-];
+]);
 
 /**
  * Opens the main editor's first note in a note editor mounted with `noteView` (the note editor's
@@ -208,7 +211,7 @@ describe.each([false, true])("allowInvisibleCharacters %s", (allow) => {
 
     // Library-only outside Standard view: the app opens no footnote popover over any view (see
     // `footnotePopoverView`); these rows keep the popover from decaying.
-    it.each(NOTE_CASES)(
+    it.skipIf(!isPopoverHostEnabled(viewName)).each(NOTE_CASES)(
       "keeps %s through the footnote popover's round trip",
       async (_, content) => {
         const main = await mountInView(doc(content), options);
@@ -250,7 +253,7 @@ describe("text typed into one of the layout's lone NBSPs is saved as content", (
     });
   }
 
-  it("keeps text typed at an element-first spacer (unformatted)", async () => {
+  itInView("unformatted")("keeps text typed at an element-first spacer (unformatted)", async () => {
     const main = await mountInView(
       doc([char("nd", [char("wj", ["x"])])]),
       editorView("unformatted"),
@@ -273,24 +276,29 @@ describe("text typed into one of the layout's lone NBSPs is saved as content", (
     expect(paraContent(main)).toEqual([char("nd", ["a", char("wj", ["x"])])]);
   });
 
-  it("keeps text typed into an empty span's placeholder (formatted)", async () => {
-    const main = await mountInView(
-      doc(["Tell the ", { type: "char", marker: "nd" }]),
-      editorView("formatted"),
-    );
-    const $findPlaceholder = () =>
-      $getRoot()
-        .getAllTextNodes()
-        .find((node) => {
-          const parent = node.getParent();
-          return (
-            node.getTextContent() === NBSP && $isCharNode(parent) && parent.getChildrenSize() === 1
-          );
-        });
-    expect(main.lexical.getEditorState().read(() => $findPlaceholder())).toBeDefined();
+  itInView("formatted")(
+    "keeps text typed into an empty span's placeholder (formatted)",
+    async () => {
+      const main = await mountInView(
+        doc(["Tell the ", { type: "char", marker: "nd" }]),
+        editorView("formatted"),
+      );
+      const $findPlaceholder = () =>
+        $getRoot()
+          .getAllTextNodes()
+          .find((node) => {
+            const parent = node.getParent();
+            return (
+              node.getTextContent() === NBSP &&
+              $isCharNode(parent) &&
+              parent.getChildrenSize() === 1
+            );
+          });
+      expect(main.lexical.getEditorState().read(() => $findPlaceholder())).toBeDefined();
 
-    await typeInto(main, $findPlaceholder, "x");
+      await typeInto(main, $findPlaceholder, "x");
 
-    expect(paraContent(main)).toEqual(["Tell the ", char("nd", ["x"])]);
-  });
+      expect(paraContent(main)).toEqual(["Tell the ", char("nd", ["x"])]);
+    },
+  );
 });

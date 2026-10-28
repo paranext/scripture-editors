@@ -7,6 +7,7 @@
  * spaces too.
  */
 import { mountInView, oracleView } from "./annotationLocations/annotationLocations.test-helpers";
+import { LIBRARY_VIEWS_ENABLED } from "./editorViews.test-helpers";
 import { mountStandardViewEditor } from "./settledGetUsj.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { flushQueuedEvents } from "./editor-test.utils";
@@ -397,18 +398,22 @@ describe("positions in a paragraph whose leading spaces getUsj() drops", () => {
   });
 });
 
-describe("other views keep a paragraph's leading spaces as typed", () => {
-  it.each(["unformatted", "formatted", "visible"])("%s", async (name) => {
-    const { ref, lexical, unmount } = await mountInView(paraUsj(["text"]), oracleView(name));
-    await placeCaret(lexical, () => $contentTextStarting("text"), 0);
+// Every view here is library-only, so the suite runs only with the registry's library-only views.
+describe.skipIf(!LIBRARY_VIEWS_ENABLED)(
+  "other views keep a paragraph's leading spaces as typed",
+  () => {
+    it.each(["unformatted", "formatted", "visible"])("%s", async (name) => {
+      const { ref, lexical, unmount } = await mountInView(paraUsj(["text"]), oracleView(name));
+      await placeCaret(lexical, () => $contentTextStarting("text"), 0);
 
-    await typeSpaces(lexical, 1);
+      await typeSpaces(lexical, 1);
 
-    expect(ref.current?.getUsj()?.content[2]).toEqual({
-      type: "para",
-      marker: "p",
-      content: [" text"],
+      expect(ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: [" text"],
+      });
+      unmount();
     });
-    unmount();
-  });
-});
+  },
+);

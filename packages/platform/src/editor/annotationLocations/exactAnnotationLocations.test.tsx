@@ -20,6 +20,7 @@ import {
   ORACLE_VIEWS,
   richUsj,
 } from "./annotationLocations.test-helpers";
+import { enabledViews, itInView } from "../editorViews.test-helpers";
 import { copyEvent, pasteEvent } from "../markerEdit/markerEdit.test-helpers";
 import {
   displayAnnotated,
@@ -248,7 +249,7 @@ describe("an annotation inside a figure caption", () => {
     expect(held).toBe(expectedHeld);
   });
 
-  it.each(["standard", "formatted", "paragraph-structure"])(
+  it.each(enabledViews(["standard", "formatted", "paragraph-structure"], { readsOnly: true }))(
     "survives undo and redo (%s)",
     async (name) => {
       const mounted = await mountInView(richUsj, oracleView(name));
@@ -271,7 +272,7 @@ describe("an annotation inside a figure caption", () => {
     },
   );
 
-  it.each(["standard", "formatted", "paragraph-structure"])(
+  it.each(enabledViews(["standard", "formatted", "paragraph-structure"], { readsOnly: true }))(
     "keeps the caption when a comment is made inside it (%s)",
     async (name) => {
       const mounted = await mountInView(richUsj, oracleView(name));
@@ -304,7 +305,7 @@ describe("an annotation over a no-break space the text itself contains", () => {
     end: { jsonPath: "$.content[2].content[0]", offset: 6 },
   };
 
-  it.each(["unformatted", "visible", "visible+collapsed"])(
+  it.each(enabledViews(["unformatted", "visible", "visible+collapsed"], { readsOnly: true }))(
     "holds it and saves it unchanged (%s)",
     async (name) => {
       const mounted = await mountInView(tildeUsj, oracleView(name));
@@ -320,53 +321,58 @@ describe("an annotation over a no-break space the text itself contains", () => {
     },
   );
 
-  it.each(["unformatted", "visible", "formatted", "paragraph-structure", "hidden+expanded"])(
-    "holds one inside a char span and saves it unchanged (%s)",
-    async (name) => {
-      const wordUsj = twoParaUsj([
-        "In ",
-        { type: "char", marker: "w", content: [`a${NBSP}b`] },
-        " end",
-      ]);
-      const mounted = await mountInView(wordUsj, oracleView(name));
-      const before = mounted.ref.current?.getUsj();
-
-      await act(async () => {
-        mounted.ref.current?.setAnnotation(
-          {
-            start: { jsonPath: "$.content[2].content[1].content[0]", offset: 1 },
-            end: { jsonPath: "$.content[2].content[1].content[0]", offset: 2 },
-          },
-          ORACLE_TYPE,
-          "nb",
-        );
-        await Promise.resolve();
-      });
-
-      expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "nb"))).toBe(NBSP);
-      expect(mounted.ref.current?.getUsj()).toEqual(before);
-    },
-  );
-
-  it("never makes an empty span's placeholder content (hidden+expanded)", async () => {
-    const emptyUsj = twoParaUsj(["x ", { type: "char", marker: "wj", content: [] }, " y"]);
-    const mounted = await mountInView(emptyUsj, oracleView("hidden+expanded"));
+  it.each(
+    enabledViews(
+      ["unformatted", "visible", "formatted", "paragraph-structure", "hidden+expanded"],
+      { readsOnly: true },
+    ),
+  )("holds one inside a char span and saves it unchanged (%s)", async (name) => {
+    const wordUsj = twoParaUsj([
+      "In ",
+      { type: "char", marker: "w", content: [`a${NBSP}b`] },
+      " end",
+    ]);
+    const mounted = await mountInView(wordUsj, oracleView(name));
     const before = mounted.ref.current?.getUsj();
 
     await act(async () => {
       mounted.ref.current?.setAnnotation(
         {
-          start: { jsonPath: "$.content[2].content[0]", offset: 1 },
-          end: { jsonPath: "$.content[2].content[2]", offset: 1 },
+          start: { jsonPath: "$.content[2].content[1].content[0]", offset: 1 },
+          end: { jsonPath: "$.content[2].content[1].content[0]", offset: 2 },
         },
         ORACLE_TYPE,
-        "ph",
+        "nb",
       );
       await Promise.resolve();
     });
 
+    expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "nb"))).toBe(NBSP);
     expect(mounted.ref.current?.getUsj()).toEqual(before);
   });
+
+  itInView("hidden+expanded", { readsOnly: true })(
+    "never makes an empty span's placeholder content (hidden+expanded)",
+    async () => {
+      const emptyUsj = twoParaUsj(["x ", { type: "char", marker: "wj", content: [] }, " y"]);
+      const mounted = await mountInView(emptyUsj, oracleView("hidden+expanded"));
+      const before = mounted.ref.current?.getUsj();
+
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(
+          {
+            start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+            end: { jsonPath: "$.content[2].content[2]", offset: 1 },
+          },
+          ORACLE_TYPE,
+          "ph",
+        );
+        await Promise.resolve();
+      });
+
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
+    },
+  );
 
   /** `\p In \w ~b\w* end`: the span's content starts with a no-break space of its own. */
   const leadingNbspUsj: Usj = twoParaUsj([
@@ -400,14 +406,10 @@ describe("an annotation over a no-break space the text itself contains", () => {
   ];
 
   it.each(
-    [
-      "standard",
-      "unformatted",
-      "visible",
-      "formatted",
-      "paragraph-structure",
-      "hidden+expanded",
-    ].flatMap((view) => leadingNbspRanges.map((row) => ({ ...row, view }))),
+    enabledViews(
+      ["standard", "unformatted", "visible", "formatted", "paragraph-structure", "hidden+expanded"],
+      { readsOnly: true },
+    ).flatMap((view) => leadingNbspRanges.map((row) => ({ ...row, view }))),
   )(
     "keeps one leading a char span's content when $name is set and removed ($view)",
     async ({ view, range }) => {
@@ -428,39 +430,35 @@ describe("an annotation over a no-break space the text itself contains", () => {
     },
   );
 
-  it.each(["formatted", "paragraph-structure", "hidden+expanded"])(
-    "keeps one leading a char span's content when that text is typed into (%s)",
-    async (name) => {
-      const mounted = await mountInView(leadingNbspUsj, oracleView(name));
+  it.each(
+    enabledViews(["formatted", "paragraph-structure", "hidden+expanded"], { readsOnly: true }),
+  )("keeps one leading a char span's content when that text is typed into (%s)", async (name) => {
+    const mounted = await mountInView(leadingNbspUsj, oracleView(name));
 
-      await act(async () => {
-        mounted.lexical.update(() => {
-          const text = $textContaining("b");
-          text.setTextContent(`${text.getTextContent()}x`);
-        });
-        await Promise.resolve();
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const text = $textContaining("b");
+        text.setTextContent(`${text.getTextContent()}x`);
       });
+      await Promise.resolve();
+    });
 
-      const para = mounted.ref.current?.getUsj()?.content?.[2];
-      if (!para || typeof para === "string") throw new Error("expected a paragraph");
-      expect(para.content?.[1]).toEqual({
-        type: "char",
-        marker: "w",
-        content: [`${NBSP}bx`],
-      });
-    },
-  );
+    const para = mounted.ref.current?.getUsj()?.content?.[2];
+    if (!para || typeof para === "string") throw new Error("expected a paragraph");
+    expect(para.content?.[1]).toEqual({
+      type: "char",
+      marker: "w",
+      content: [`${NBSP}bx`],
+    });
+  });
 
   /** `\p x \wj \wj* y`: an empty span, which every view but the editable ones shows as a lone
    * placeholder NBSP between read-only glyphs, or alone. */
   const emptySpanUsj: Usj = twoParaUsj(["x ", { type: "char", marker: "wj", content: [] }, " y"]);
-  const placeholderViews = [
-    "visible",
-    "visible+collapsed",
-    "formatted",
-    "paragraph-structure",
-    "hidden+expanded",
-  ];
+  const placeholderViews = enabledViews(
+    ["visible", "visible+collapsed", "formatted", "paragraph-structure", "hidden+expanded"],
+    { readsOnly: true },
+  );
 
   /** The empty span's placeholder text. Call inside a read or update. */
   function $placeholder(): LexicalNode {
@@ -639,7 +637,7 @@ describe("an annotation over a no-break space the text itself contains", () => {
     },
   );
 
-  it.each(["standard", "unformatted", ...placeholderViews])(
+  it.each([...enabledViews(["standard", "unformatted"], { readsOnly: true }), ...placeholderViews])(
     "never saves the placeholder a span emptied by a delete shows (%s)",
     async (name) => {
       const mounted = await mountInView(
@@ -698,7 +696,7 @@ describe("an annotation over a no-break space the text itself contains", () => {
     " y",
   ]);
 
-  it.each(["standard", "unformatted", ...placeholderViews])(
+  it.each([...enabledViews(["standard", "unformatted"], { readsOnly: true }), ...placeholderViews])(
     "keeps a span whose whole content is `~` (%s)",
     async (name) => {
       const mounted = await mountInView(tildeSpanUsj, oracleView(name));
@@ -725,24 +723,27 @@ describe("an annotation over a no-break space the text itself contains", () => {
     },
   );
 
-  it("keeps it through a settle elsewhere in the paragraph (unformatted)", async () => {
-    const mounted = await mountInView(tildeUsj, oracleView("unformatted"));
-    await act(async () => {
-      mounted.ref.current?.setAnnotation(tildeRange, ORACLE_TYPE, "nb");
-      await Promise.resolve();
-    });
+  itInView("unformatted", { readsOnly: true })(
+    "keeps it through a settle elsewhere in the paragraph (unformatted)",
+    async () => {
+      const mounted = await mountInView(tildeUsj, oracleView("unformatted"));
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(tildeRange, ORACLE_TYPE, "nb");
+        await Promise.resolve();
+      });
 
-    await typeOver(mounted.lexical, "should be", "should be \\bd x\\bd*");
-    settleByBlurAndCommit(mounted);
+      await typeOver(mounted.lexical, "should be", "should be \\bd x\\bd*");
+      settleByBlurAndCommit(mounted);
 
-    const para = mounted.ref.current?.getUsj()?.content?.[2];
-    if (!para || typeof para === "string") throw new Error("expected a paragraph");
-    expect(para.content?.[0]).toBe(`Tilde${NBSP}should be `);
-    expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
-    expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "nb"))).toBe(NBSP);
-  });
+      const para = mounted.ref.current?.getUsj()?.content?.[2];
+      if (!para || typeof para === "string") throw new Error("expected a paragraph");
+      expect(para.content?.[0]).toBe(`Tilde${NBSP}should be `);
+      expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
+      expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "nb"))).toBe(NBSP);
+    },
+  );
 
-  it.each(["unformatted", "visible"])(
+  it.each(enabledViews(["unformatted", "visible"], { readsOnly: true }))(
     "keeps it inside a comment through a save (%s)",
     async (name) => {
       const mounted = await mountInView(tildeUsj, oracleView(name));
@@ -842,30 +843,33 @@ describe("an annotation beside a no-break space the text itself contains", () =>
     expect(mounted.ref.current?.getUsj()).toEqual(before);
   });
 
-  it("keeps it through a settle elsewhere in the paragraph (unformatted)", async () => {
-    const mounted = await mountInView(
-      twoParaUsj([`a${NBSP}b should be`]),
-      oracleView("unformatted"),
-    );
-    await act(async () => {
-      mounted.ref.current?.setAnnotation(at(0, 1), ORACLE_TYPE, "a");
-      mounted.ref.current?.setAnnotation(at(2, 3), ORACLE_TYPE, "b");
-      await Promise.resolve();
-    });
+  itInView("unformatted", { readsOnly: true })(
+    "keeps it through a settle elsewhere in the paragraph (unformatted)",
+    async () => {
+      const mounted = await mountInView(
+        twoParaUsj([`a${NBSP}b should be`]),
+        oracleView("unformatted"),
+      );
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(at(0, 1), ORACLE_TYPE, "a");
+        mounted.ref.current?.setAnnotation(at(2, 3), ORACLE_TYPE, "b");
+        await Promise.resolve();
+      });
 
-    // The text after the mark over `b` is ` should be`, its own node.
-    await typeOver(mounted.lexical, "should be", " should be \\bd x\\bd*");
-    settleByBlurAndCommit(mounted);
+      // The text after the mark over `b` is ` should be`, its own node.
+      await typeOver(mounted.lexical, "should be", " should be \\bd x\\bd*");
+      settleByBlurAndCommit(mounted);
 
-    const para = mounted.ref.current?.getUsj()?.content?.[2];
-    if (!para || typeof para === "string") throw new Error("expected a paragraph");
-    expect(para.content?.[0]).toBe(`a${NBSP}b should be `);
-    expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
-    mounted.lexical.getEditorState().read(() => {
-      expect($heldBytes(HELD_TYPE, "a")).toBe("a");
-      expect($heldBytes(HELD_TYPE, "b")).toBe("b");
-    });
-  });
+      const para = mounted.ref.current?.getUsj()?.content?.[2];
+      if (!para || typeof para === "string") throw new Error("expected a paragraph");
+      expect(para.content?.[0]).toBe(`a${NBSP}b should be `);
+      expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
+      mounted.lexical.getEditorState().read(() => {
+        expect($heldBytes(HELD_TYPE, "a")).toBe("a");
+        expect($heldBytes(HELD_TYPE, "b")).toBe("b");
+      });
+    },
+  );
 });
 
 /** The text of every mark holding `type`/`id`, in document order. Call inside a read. */
@@ -1071,30 +1075,31 @@ describe("the labels around a mark on a note's text between its spans", () => {
     return $byteNodes().map(([node, offset]) => locKey($byteLoc(node, offset, false, view)));
   }
 
-  it.each(["standard", "visible", "visible+collapsed", "formatted", "paragraph-structure"])(
-    "stay where they were when a range ends at that text's end (%s)",
-    async (name) => {
-      const mounted = await mountInView(crossrefUsj, oracleView(name));
-      const before = mounted.lexical.getEditorState().read(() => $labels(name));
+  it.each(
+    enabledViews(["standard", "visible", "visible+collapsed", "formatted", "paragraph-structure"], {
+      readsOnly: true,
+    }),
+  )("stay where they were when a range ends at that text's end (%s)", async (name) => {
+    const mounted = await mountInView(crossrefUsj, oracleView(name));
+    const before = mounted.lexical.getEditorState().read(() => $labels(name));
 
-      await act(async () => {
-        mounted.ref.current?.setAnnotation(
-          {
-            start: { jsonPath: "$.content[2].content[0]", offset: 4 },
-            end: { jsonPath: "$.content[2].content[1].content[1]", offset: 1 },
-          },
-          ORACLE_TYPE,
-          "lab",
-        );
-        await Promise.resolve();
-      });
-
-      expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "lab"))).toContain(
-        "crossref",
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[2].content[0]", offset: 4 },
+          end: { jsonPath: "$.content[2].content[1].content[1]", offset: 1 },
+        },
+        ORACLE_TYPE,
+        "lab",
       );
-      expect(mounted.lexical.getEditorState().read(() => $labels(name))).toEqual(before);
-    },
-  );
+      await Promise.resolve();
+    });
+
+    expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "lab"))).toContain(
+      "crossref",
+    );
+    expect(mounted.lexical.getEditorState().read(() => $labels(name))).toEqual(before);
+  });
 });
 
 describe("a note's own content text", () => {
@@ -1609,9 +1614,9 @@ describe("inbound resolution for annotations", () => {
     },
   ];
   it.each(
-    ["standard", "formatted", "paragraph-structure", "visible+collapsed"].flatMap((view) =>
-      collapsedContentRanges.map((row) => ({ ...row, view })),
-    ),
+    enabledViews(["standard", "formatted", "paragraph-structure", "visible+collapsed"], {
+      readsOnly: true,
+    }).flatMap((view) => collapsedContentRanges.map((row) => ({ ...row, view }))),
   )(
     "keeps an annotation on $name off the collapsed note's caller ($view)",
     async ({ view, range, held }) => {
@@ -1826,26 +1831,29 @@ describe("inbound resolution for annotations", () => {
     });
   });
 
-  it("puts a caret inside a verse decorator's bytes in front of it", async () => {
-    const mounted = await mountInView(richUsj, oracleView("hidden+expanded"));
+  itInView("hidden+expanded", { readsOnly: true })(
+    "puts a caret inside a verse decorator's bytes in front of it",
+    async () => {
+      const mounted = await mountInView(richUsj, oracleView("hidden+expanded"));
 
-    await act(async () => {
-      mounted.ref.current?.setSelection({
-        start: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 0 },
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 0 },
+        });
+        await Promise.resolve();
       });
-      await Promise.resolve();
-    });
 
-    mounted.lexical.getEditorState().read(() => {
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection)) throw new Error("no range selection");
-      expect(selection.isCollapsed()).toBe(true);
-      const verse = $firstOfType($getRoot(), $isImmutableVerseNode);
-      if (!verse) throw new Error("expected a verse decorator");
-      expect(selection.anchor.getNode().is(verse.getParent())).toBe(true);
-      expect(selection.anchor.offset).toBe(verse.getIndexWithinParent());
-    });
-  });
+      mounted.lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        expect(selection.isCollapsed()).toBe(true);
+        const verse = $firstOfType($getRoot(), $isImmutableVerseNode);
+        if (!verse) throw new Error("expected a verse decorator");
+        expect(selection.anchor.getNode().is(verse.getParent())).toBe(true);
+        expect(selection.anchor.offset).toBe(verse.getIndexWithinParent());
+      });
+    },
+  );
 });
 
 describe("removal is reported by what holds the annotation now", () => {

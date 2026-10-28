@@ -5,7 +5,13 @@
  * U+001A (or any other C0 control character but tab, line feed and carriage return) that comes in
  * from outside comes in as a space, so it can never be saved as a no-break space.
  */
-import { EditorViewName, editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
+import {
+  EditorViewName,
+  editorView,
+  enabledViews,
+  mountInView,
+  MountedEditor,
+} from "./editorViews.test-helpers";
 import { press } from "./typingFidelityOracle.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -724,7 +730,7 @@ describe("the stand-in for a stored no-break space", () => {
     });
   });
 
-  describe.each<EditorViewName>(["formatted", "paragraph-structure"])(
+  describe.each(enabledViews<EditorViewName>(["formatted", "paragraph-structure"]))(
     "%s view with the option on",
     (name) => {
       it("takes and gives U+00A0 as itself", async () => {

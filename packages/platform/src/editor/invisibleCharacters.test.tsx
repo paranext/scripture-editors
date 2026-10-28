@@ -3,7 +3,14 @@
  * U+00A0 (Paratext's `AllowInvisibleChars` on). There `~` is an ordinary character, so Standard view
  * must neither read a `~` as a no-break space nor save a no-break space as anything else.
  */
-import { EditorViewName, editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
+import {
+  describeInView,
+  EditorViewName,
+  editorView,
+  enabledViews,
+  mountInView,
+  MountedEditor,
+} from "./editorViews.test-helpers";
 import { press } from "./typingFidelityOracle.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -278,7 +285,7 @@ describe("Standard view without allowInvisibleCharacters", () => {
   });
 });
 
-describe.each<EditorViewName>(["formatted", "paragraph-structure"])(
+describe.each(enabledViews<EditorViewName>(["formatted", "paragraph-structure"]))(
   "%s view with allowInvisibleCharacters",
   (name) => {
     it("keeps a tilde and a no-break space when the paragraph is edited", async () => {
@@ -295,7 +302,7 @@ describe.each<EditorViewName>(["formatted", "paragraph-structure"])(
   },
 );
 
-describe("Unformatted view with allowInvisibleCharacters", () => {
+describeInView("unformatted")("Unformatted view with allowInvisibleCharacters", () => {
   it("keeps a tilde and a no-break space when a typed marker rebuilds the paragraph", async () => {
     const mounted = await mountInView(
       oneParaUsj([`a~b${NBSP}c v 2 d`]),
@@ -315,7 +322,7 @@ describe("Unformatted view with allowInvisibleCharacters", () => {
   });
 });
 
-describe("Markers view with allowInvisibleCharacters", () => {
+describeInView("visible")("Markers view with allowInvisibleCharacters", () => {
   it("copies a tilde as a tilde and a no-break space as a no-break space", async () => {
     const mounted = await mountInView(
       oneParaUsj([`a~b${NBSP}c d`]),

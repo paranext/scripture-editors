@@ -7,7 +7,7 @@
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { createBasicTestEnvironment } from "../../../../../libs/shared/src/nodes/usj/test.utils";
-import { ROUND_TRIP_VIEW_CONFIGS } from "../editorViews.test-helpers";
+import { isViewEnabled, ROUND_TRIP_VIEW_CONFIGS } from "../editorViews.test-helpers";
 import editorUsjAdaptor, { initialize as initializeDeserialize } from "./editor-usj.adaptor";
 import {
   initialize as initializeSerialize,
@@ -36,18 +36,23 @@ import {
 
 const nodes = [TypedMarkNode, ...usjReactNodes];
 
-/** Every round-trip view, plus markerMode "visible" (read-only glyphs around a span's content). */
+/** Every round-trip view, plus markerMode "visible" (read-only glyphs around a span's content):
+ * the registry's `visible+collapsed`, run when the registry includes it. */
 const VIEWS: { label: string; viewOptions: ViewOptions | undefined }[] = [
   ...ROUND_TRIP_VIEW_CONFIGS,
-  {
-    label: "visible",
-    viewOptions: {
-      markerMode: "visible",
-      noteMode: "collapsed",
-      hasSpacing: true,
-      isFormattedFont: true,
-    },
-  },
+  ...(isViewEnabled("visible+collapsed")
+    ? [
+        {
+          label: "visible",
+          viewOptions: {
+            markerMode: "visible",
+            noteMode: "collapsed",
+            hasSpacing: true,
+            isFormattedFont: true,
+          } satisfies ViewOptions,
+        },
+      ]
+    : []),
 ];
 
 function usjOf(...content: MarkerContent[]): Usj {

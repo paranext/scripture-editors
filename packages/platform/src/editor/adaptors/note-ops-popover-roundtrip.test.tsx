@@ -14,7 +14,8 @@
  *
  * Over Standard view the popover's options are the footnotes pane's row editor's
  * (`footnotes-pane-row`), the note editor the app mounts. Over the other editing views the popover
- * is library-only (see `footnotePopoverView`); those rows keep it from decaying.
+ * is library-only (see `footnotePopoverView`); those rows keep it from decaying, and run only when
+ * the registry includes library-only views (`isPopoverHostEnabled`).
  */
 import { $rebuildNoteContent, Tier2Context } from "../markerEdit/tier2Rebuild.utils";
 import Editorial from "../../Editorial";
@@ -24,6 +25,7 @@ import {
   editorView,
   footnotePopoverView,
   forEachView,
+  isPopoverHostEnabled,
 } from "../editorViews.test-helpers";
 import { optionsInView } from "../noteEditorRef.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -426,7 +428,9 @@ function noteText(note: MarkerObject): string {
     .join("");
 }
 
-forEachView(EDITING_VIEWS, ({ name, view: hostView }) => {
+const POPOVER_HOSTS = EDITING_VIEWS.filter(({ name }) => isPopoverHostEnabled(name));
+
+forEachView(POPOVER_HOSTS, ({ name, view: hostView }) => {
   describe("popover note ops round-trip (canonical glyph-free contract)", () => {
     it("is idempotent for a note with \\fr/\\ft spans and a \\fv verse-ref char", async () => {
       const { popover } = await roundtripNote(hostView, 0, closedNoteUsj);
@@ -887,7 +891,11 @@ describe("popover save keeps an authored lone `~`", () => {
     ],
   };
 
-  it.each(["standard", "formatted", "paragraph-structure", "unformatted"] as const)(
+  it.each(
+    (["standard", "formatted", "paragraph-structure", "unformatted"] as const).filter(
+      isPopoverHostEnabled,
+    ),
+  )(
     "keeps span-only and element-leading `~`s through the popover's load and save in %s view",
     async (viewName) => {
       const hostView = editorView(viewName);

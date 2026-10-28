@@ -12,6 +12,7 @@
 import {
   EditingViewName,
   editorView,
+  enabledViews,
   mountInView,
   MountedEditor,
 } from "./editorViews.test-helpers";
@@ -133,7 +134,7 @@ const GESTURES: { key: Key; number: string; name: string }[] = [
 const GUARDED_VIEWS = ["paragraph-structure", "formatted"] as const;
 
 describe("guarded: a chapter beside the caret is armed, then deleted", () => {
-  for (const view of GUARDED_VIEWS) {
+  for (const view of enabledViews(GUARDED_VIEWS)) {
     describe(`in ${view} view`, () => {
       for (const { key, number, name } of GESTURES) {
         it(`${name}: the first press arms the chapter, the second deletes it`, async () => {
@@ -180,7 +181,7 @@ describe("guarded: a chapter beside the caret is armed, then deleted", () => {
 });
 
 describe("protected: a chapter beside the caret is never deleted", () => {
-  for (const view of GUARDED_VIEWS) {
+  for (const view of enabledViews(GUARDED_VIEWS)) {
     describe(`in ${view} view`, () => {
       for (const { key, number, name } of GESTURES) {
         it(`${name}: both presses are refused`, async () => {
@@ -210,7 +211,7 @@ describe("off: the keys keep their native behavior", () => {
     formatted: { Backspace: true, Delete: true },
     "paragraph-structure": { Backspace: false, Delete: true },
   };
-  for (const view of GUARDED_VIEWS) {
+  for (const view of enabledViews(GUARDED_VIEWS)) {
     describe(`in ${view} view`, () => {
       for (const { key, number, name } of GESTURES) {
         const deletes = FIRST_PRESS_DELETES[view][key];

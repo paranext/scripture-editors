@@ -6,6 +6,7 @@
  * pending would put it in the wrong paragraph.
  */
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { enabledViews } from "../editorViews.test-helpers";
 import { positionContext } from "../markerEdit/pendingSettledOracle.test-helpers";
 import {
   $livePointFromSettledLocation,
@@ -37,7 +38,7 @@ function $paragraphText(): TextNode {
   return text;
 }
 
-describe.each(["standard", "unformatted"])(
+describe.each(enabledViews(["standard", "unformatted"]))(
   "a block marker typed in the `\\id` line (%s view)",
   (view) => {
     it("carries a position after the line across the paragraph it starts", async () => {

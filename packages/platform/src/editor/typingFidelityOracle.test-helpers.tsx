@@ -57,7 +57,14 @@
  * `TYPING_FIDELITY_ORACLE_DUMP=1` prints every failing case, `TYPING_FIDELITY_ORACLE_TRACE=1` every
  * case as it runs, and `TYPING_FIDELITY_ORACLE_FRESH=1` mounts the document afresh for each one.
  */
-import { EditorViewName, editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
+import {
+  describeInView,
+  EditorViewName,
+  editorView,
+  isViewEnabled,
+  mountInView,
+  MountedEditor,
+} from "./editorViews.test-helpers";
 import { KEYSTROKE_CORPUS } from "./markerEdit/pendingSettledOracle.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -82,7 +89,7 @@ import {
 import { $isNoteNode, NBSP } from "shared";
 import { StructureProtectionMode } from "shared-react";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 
 // ---------------------------------------------------------------------------------------------
 // jsdom's missing `Selection.modify`
@@ -1284,7 +1291,8 @@ export function describeTypingFidelityOracle(
   const partRows = rows(part);
   // The list is shared by the view's parts: a rewrite replaces this part's rows only.
   afterAll(() => {
-    if (!WRITE) return;
+    // A view this run leaves out writes nothing, so a rewrite keeps its rows.
+    if (!WRITE || !isViewEnabled(oracleView.name)) return;
     const current: ExpectedFailures = existsSync(listFile)
       ? JSON.parse(readFileSync(listFile, "utf8"))
       : {};
@@ -1298,7 +1306,8 @@ export function describeTypingFidelityOracle(
     writeFileSync(listFile, `${JSON.stringify(merged, null, 2)}\n`);
   });
 
-  describe(`every keystroke changes only what it typed (${label} view, ${part})`, () => {
+  const describeView = describeInView(oracleView.name);
+  describeView(`every keystroke changes only what it typed (${label} view, ${part})`, () => {
     it.each(partRows.map((row) => [row.name, row] as const))(
       "%s",
       async (rowName, row) => {

@@ -4,7 +4,7 @@
  * double-click or drag over a whole span ends there, at the start of the text after it. The
  * marker must come off, or change on, the whole selected text, in every view that offers it.
  */
-import { editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
+import { editorView, enabledViews, mountInView, MountedEditor } from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -172,7 +172,7 @@ const cases: [string, MarkerContent[], Endpoint, Endpoint, Edit, MarkerContent[]
   ],
 ];
 
-describe.each(["formatted", "paragraph-structure"])("in %s view", (view) => {
+describe.each(enabledViews(["formatted", "paragraph-structure"]))("in %s view", (view) => {
   it.each(cases)("%s", async (_, content, start, end, edit, expected) => {
     const mounted = await mountInView(doc(content), editorView(view));
     await select(mounted.lexical, start, end);

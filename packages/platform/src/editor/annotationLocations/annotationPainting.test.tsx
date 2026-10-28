@@ -14,6 +14,7 @@ import {
   oracleView,
   ORACLE_TYPE,
 } from "./annotationLocations.test-helpers";
+import { enabledViews, itInView } from "../editorViews.test-helpers";
 import { settleByBlurAndCommit } from "../markerEdit/displayAnnotations.test-helpers";
 import { typeOver } from "../positions/positions.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -322,7 +323,7 @@ describe("annotation painting on read-only decorators", () => {
     end: { jsonPath: number, propertyOffset: 2 },
   };
 
-  it.each(["formatted", "visible", "hidden+expanded"])(
+  it.each(enabledViews(["formatted", "visible", "hidden+expanded"], { readsOnly: true }))(
     "paints one digit of a verse number (%s)",
     async (view) => {
       const mounted = await mountInView(paintUsj, oracleView(view));
@@ -401,19 +402,22 @@ describe("annotation painting on read-only decorators", () => {
     mounted.unmount();
   });
 
-  it("paints a whole verse number without the space its glyph ends in (visible)", async () => {
-    const mounted = await mountInView(paintUsj, oracleView("visible"));
-    await annotate(
-      mounted,
-      {
-        start: { jsonPath: number, propertyOffset: 0 },
-        end: { jsonPath: number, propertyOffset: 2 },
-      },
-      "number",
-    );
-    expect(paintedText(mounted, "number")).toBe("12");
-    mounted.unmount();
-  });
+  itInView("visible", { readsOnly: true })(
+    "paints a whole verse number without the space its glyph ends in (visible)",
+    async () => {
+      const mounted = await mountInView(paintUsj, oracleView("visible"));
+      await annotate(
+        mounted,
+        {
+          start: { jsonPath: number, propertyOffset: 0 },
+          end: { jsonPath: number, propertyOffset: 2 },
+        },
+        "number",
+      );
+      expect(paintedText(mounted, "number")).toBe("12");
+      mounted.unmount();
+    },
+  );
 
   it("paints one digit of a chapter number (formatted)", async () => {
     const mounted = await mountInView(paintUsj, oracleView("formatted"));
@@ -430,33 +434,41 @@ describe("annotation painting on read-only decorators", () => {
     mounted.unmount();
   });
 
-  it("paints one letter of a read-only marker glyph (visible)", async () => {
-    const mounted = await mountInView(paintUsj, oracleView("visible"));
-    const marker = `${para}.content[4]['marker']`;
-    await annotate(
-      mounted,
-      {
-        start: { jsonPath: marker, propertyOffset: 1 },
-        end: { jsonPath: marker, propertyOffset: 2 },
-      },
-      "letter",
-    );
-    expect(paintedText(mounted, "letter")).toBe("d");
-    mounted.unmount();
-  });
+  itInView("visible", { readsOnly: true })(
+    "paints one letter of a read-only marker glyph (visible)",
+    async () => {
+      const mounted = await mountInView(paintUsj, oracleView("visible"));
+      const marker = `${para}.content[4]['marker']`;
+      await annotate(
+        mounted,
+        {
+          start: { jsonPath: marker, propertyOffset: 1 },
+          end: { jsonPath: marker, propertyOffset: 2 },
+        },
+        "letter",
+      );
+      expect(paintedText(mounted, "letter")).toBe("d");
+      mounted.unmount();
+    },
+  );
 
-  it("paints only the attribute value of a read-only attribute run (visible)", async () => {
-    const mounted = await mountInView(paintUsj, oracleView("visible"));
-    const who = `${para}.content[6]['who']`;
-    await annotate(
-      mounted,
-      { start: { jsonPath: who, propertyOffset: 0 }, end: { jsonPath: who, propertyOffset: 6 } },
-      "who",
-    );
-    expect(paintedText(mounted, "who")).toBe("Pilate");
-    mounted.unmount();
-  });
+  itInView("visible", { readsOnly: true })(
+    "paints only the attribute value of a read-only attribute run (visible)",
+    async () => {
+      const mounted = await mountInView(paintUsj, oracleView("visible"));
+      const who = `${para}.content[6]['who']`;
+      await annotate(
+        mounted,
+        { start: { jsonPath: who, propertyOffset: 0 }, end: { jsonPath: who, propertyOffset: 6 } },
+        "who",
+      );
+      expect(paintedText(mounted, "who")).toBe("Pilate");
+      mounted.unmount();
+    },
+  );
 
+  // Runs whatever the registry includes: these rows are the only ones that click and hover a
+  // decorator's annotation, and that dispatch serves every view, Standard's note callers included.
   describe("bytes a decorator stands for but does not show", () => {
     /** `\v 12 \va 12a\va*`: the alternate number shows only where markers do. */
     const altUsj: Usj = {
@@ -476,7 +488,10 @@ describe("annotation painting on read-only decorators", () => {
       const mounted = await mountInView(altUsj, oracleView("hidden+expanded"));
       await annotate(
         mounted,
-        { start: { jsonPath: alt, propertyOffset: 0 }, end: { jsonPath: alt, propertyOffset: 3 } },
+        {
+          start: { jsonPath: alt, propertyOffset: 0 },
+          end: { jsonPath: alt, propertyOffset: 3 },
+        },
         "alt",
       );
       const holders = mounted.lexical
