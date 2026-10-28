@@ -371,6 +371,18 @@ export function getUsjMarkerAction(
           // text takes the new style, each crossed span keeps its uncovered tail. Ineligible
           // shapes (decorators in range, cross-container selections, …) keep the generic wrap.
           $applyNonNestAcrossNodes(selection, nodeToInsert, viewOptions?.markerMode === "editable");
+        } else if (
+          $isCharNode(nodeToInsert) &&
+          viewOptions?.markerMode === "editable" &&
+          $selectionCrossesSpanBorder(selection)
+        ) {
+          // Standard view shows a span's glyphs, so a selection can hold part of them. Wrapping one
+          // whose ends sit in different spans has no shape that keeps both spans whole — it turned
+          // glyph bytes into text, lost the span, or left an unmatched marker — so it is refused.
+          logger?.warn(
+            `Marker action "${marker}" was not applied: the selection crosses the border of a ` +
+              "character marker.",
+          );
         } else if (selection.getTextContent().length > 0) {
           // If the selection has text content, wrap the text selection in an inline node
           $wrapTextSelectionInInlineNode(selection, $createMarkedNode);
@@ -920,6 +932,47 @@ function getSelectionOffsets(selection: RangeSelection): [number, number] {
   const anchorOffset = selection.anchor.offset;
   const focusOffset = selection.focus.offset;
   return selection.isBackward() ? [focusOffset, anchorOffset] : [anchorOffset, focusOffset];
+}
+
+/**
+ * Whether a range selection's two points sit in different char spans, so it holds part of a span's
+ * marker glyphs. A point inside a glyph is inside its span; a point at a span's outer edge — before
+ * its opening glyph, after its closing glyph — is outside it, so a selection holding a whole span
+ * from the text around it does not cross.
+ *
+ * Read-only: safe inside `editor.update()` before any mutation.
+ */
+function $selectionCrossesSpanBorder(selection: RangeSelection): boolean {
+  if (selection.isCollapsed()) return false;
+  const anchorSpans = $spansHoldingPoint(selection.anchor);
+  const focusSpans = $spansHoldingPoint(selection.focus);
+  return (
+    anchorSpans.length !== focusSpans.length ||
+    anchorSpans.some((span, index) => !span.is(focusSpans[index]))
+  );
+}
+
+/** The char spans `point` sits inside, innermost first. */
+function $spansHoldingPoint(point: PointType): CharNode[] {
+  const node = point.getNode();
+  let holder: LexicalNode | null = node;
+  if (point.type === "text" && $isMarkerNode(node) && $isCharNode(node.getParent())) {
+    const isAtOuterEdge =
+      node.getMarkerSyntax() === "opening"
+        ? point.offset === 0
+        : point.offset === node.getTextContentSize();
+    holder = isAtOuterEdge ? (node.getParent()?.getParent() ?? null) : node.getParent();
+  } else if (
+    point.type === "element" &&
+    $isCharNode(node) &&
+    (point.offset === 0 || point.offset === node.getChildrenSize())
+  ) {
+    holder = node.getParent();
+  }
+  const spans: CharNode[] = [];
+  for (let current = holder; current; current = current.getParent())
+    if ($isCharNode(current)) spans.push(current);
+  return spans;
 }
 
 /** Whether a marker apply's wrap can move `node` into its wrapper as one piece. */

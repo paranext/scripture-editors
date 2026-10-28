@@ -1,8 +1,9 @@
 /**
  * Applying a character marker to a selection that reaches a char span's border, through the two
  * ways a user applies one: the marker menu and the host's `insertMarker`. A span the selection
- * holds whole moves into the new span. The editor must not freeze, lose a span, move text, or
- * leave a marker unmatched.
+ * holds whole moves into the new span; in Standard view, where the selection can hold part of a
+ * span's marker glyphs, a selection that crosses a border is refused. Either way the editor must
+ * not freeze, lose a span, move text, or leave a marker unmatched.
  */
 import {
   EDITING_VIEWS,
@@ -160,4 +161,70 @@ describe("applying a marker over a whole span from the text before it", () => {
       expect(paragraph).toEqual(["a ", char("wj", char("nd", "Lord")), " God b"]);
     },
   );
+});
+
+/** Selections that cross a border of the `\nd` span in `a \nd Lord\nd* God b`, each of which
+ * Standard view refuses. */
+const crossingCases: [string, string, Endpoint, Endpoint][] = [
+  ["\\nd from inside the span to inside the word after it", "nd", ["Lord", 2], ["God", 2]],
+  ["\\nd from the span's opening glyph to inside the word after it", "nd", ["\\nd", 0], ["God", 2]],
+  [
+    "\\nd from the start of the span's text to inside the word after it",
+    "nd",
+    ["Lord", 0],
+    ["God", 2],
+  ],
+  [
+    "\\nd from the end of the span's text to inside the word after it",
+    "nd",
+    ["Lord", 4],
+    ["God", 3],
+  ],
+  ["\\wj from inside the span to inside the word after it", "wj", ["Lord", 2], ["God", 2]],
+  ["\\wj from the text before the span to inside it", "wj", ["a ", 1], ["Lord", 2]],
+  ["\\nd from the text before the span to inside it", "nd", ["a ", 1], ["Lord", 2]],
+  ["\\wj from inside the span's closing glyph", "wj", ["\\nd*", 2], ["God", 2]],
+];
+
+/** Selections next to, inside, or around the span that Standard view still applies. */
+const applyingCases: [string, string, Endpoint, Endpoint, MarkerContent[]][] = [
+  [
+    "\\nd on the word after the span",
+    "nd",
+    ["God", 0],
+    ["God", 3],
+    ["a ", char("nd", "Lord"), " ", char("nd", "God"), " b"],
+  ],
+  [
+    "\\nd on the word before the span",
+    "nd",
+    ["a ", 0],
+    ["a ", 1],
+    [char("nd", "a"), " ", char("nd", "Lord"), " God b"],
+  ],
+  [
+    "\\wj wholly inside the span",
+    "wj",
+    ["Lord", 1],
+    ["Lord", 3],
+    ["a ", char("nd", "L", char("wj", "or"), "d"), " God b"],
+  ],
+];
+
+describe("applying a marker across a span's border in standard view", () => {
+  describe.each(applyPaths)("through %s", (_, apply) => {
+    it.each(crossingCases)("refuses %s", async (__, marker, start, end) => {
+      const { paragraph, logs } = await applied("standard", apply, marker, start, end);
+
+      expect(paragraph).toEqual(line);
+      expect(logs).toContainEqual(expect.stringContaining("crosses the border of a character"));
+    });
+
+    it.each(applyingCases)("still applies %s", async (__, marker, start, end, expected) => {
+      const { paragraph, logs } = await applied("standard", apply, marker, start, end);
+
+      expect(paragraph).toEqual(expected);
+      expect(logs).not.toContainEqual(expect.stringContaining("was not applied"));
+    });
+  });
 });
