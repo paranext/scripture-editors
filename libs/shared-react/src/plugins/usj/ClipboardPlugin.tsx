@@ -21,7 +21,12 @@ export function ClipboardPlugin(): null {
       if (!shiftKey && key.toLowerCase() === "c") {
         event.preventDefault();
         copySelection(editor);
-      } else if (!shiftKey && key.toLowerCase() === "x") {
+        return;
+      }
+      // This listener is the plugin's own, so Lexical's read-only gate on root events does not
+      // cover it: a read-only text copies, but neither cuts nor takes a paste.
+      if (!editor.isEditable()) return;
+      if (!shiftKey && key.toLowerCase() === "x") {
         event.preventDefault();
         cutSelection(editor);
       } else if (key.toLowerCase() === "v") {
