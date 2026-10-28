@@ -14,6 +14,7 @@ import {
 } from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
+import { ViewOptions } from "shared-react";
 import { describe, expect, it } from "vitest";
 
 function doc(content: MarkerContent[]): Usj {
@@ -36,17 +37,23 @@ const note: MarkerObject = {
   content: [char("ft", ["x"])],
 };
 
-const surfaces: { surface: string; main: EditorViewName; noteEditor: EditorViewName }[] = [
-  { surface: "the footnote popover over Standard view", main: "standard", noteEditor: "standard" },
+const surfaces: { surface: string; main: EditorViewName; noteEditor: ViewOptions }[] = [
+  {
+    surface: "the footnotes pane over Standard view",
+    main: "standard",
+    noteEditor: editorView("footnotes-pane-row"),
+  },
   {
     surface: "the footnotes pane over paragraph-structure view",
     main: "paragraph-structure",
-    noteEditor: "standard",
+    noteEditor: editorView("footnotes-pane-row"),
   },
+  // Library-only: the app opens no footnote popover over formatted view (see
+  // `footnotePopoverView`); this row keeps the popover from decaying.
   {
     surface: "the footnote popover over formatted view",
     main: "formatted",
-    noteEditor: "formatted",
+    noteEditor: footnotePopoverView(editorView("formatted")),
   },
 ];
 
@@ -69,10 +76,7 @@ describe.each(surfaces)("$surface", ({ main: mainView, noteEditor: noteView }) =
     (knownFailures.has(`${mainView}: ${name}`) ? it.fails : it)(
       `carries ${name} out past the note`,
       async () => {
-        const noteEditor = await mountInView(
-          doc([note, ...carried]),
-          footnotePopoverView(editorView(noteView)),
-        );
+        const noteEditor = await mountInView(doc([note, ...carried]), noteView);
         const main = await mountInView(doc(["a", note, "z"]), editorView(mainView));
         const noteOp = noteEditor.ref.current?.getNoteOps(0)?.at(0);
         const carriedOps = noteEditor.ref.current?.takeOpsAfterNote(0);

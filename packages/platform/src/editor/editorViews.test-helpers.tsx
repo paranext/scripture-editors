@@ -5,7 +5,11 @@
  * Every per-view list a suite iterates is a projection of {@link EDITOR_VIEWS}, so a view's options
  * are spelled once and a key written for one suite (`"paragraph-structure"`) reads the same in all
  * of them. {@link EDITING_VIEWS} is the subset a user edits Scripture in; a suite whose subject is
- * the document a user edits runs over those three.
+ * the document a user edits runs over those three. {@link READ_ONLY_VIEWS} holds the read-only
+ * views, which no editing suite runs.
+ *
+ * Each entry names the app surface it guards (`appSurface`): a `library-only` view is not offered
+ * by paranext-core, and its rows run so the view does not decay, not because a user reaches it.
  *
  * A plain helper module rather than an export from one of the suites, so a suite that needs it
  * does not re-register another suite's tests by importing it.
@@ -20,6 +24,7 @@ import { LexicalEditor } from "lexical";
 import { createRef, ReactElement, RefObject } from "react";
 import { LoggerBasic, StyleInfo } from "shared";
 import {
+  BLOCK_VERSE_VIEW_MODE,
   FORMATTED_VIEW_MODE,
   getViewOptions,
   PARAGRAPH_STRUCTURE_VIEW_MODE,
@@ -81,10 +86,31 @@ function requireViewOptions(mode: string): ViewOptions {
 
 const standard = requireViewOptions(STANDARD_VIEW_MODE);
 
+/**
+ * The options the footnote popover mounts its editor with over a host editor in `host`: the host's
+ * view with notes expanded, the note's marker and caller governed by the popover's dropdowns rather
+ * than typed, and no marker prefix on the scaffolding paragraph that holds the note. Mirrors
+ * paranext-core's `FootnoteEditor` options memo (`footnote-editor.component.tsx`).
+ *
+ * The app mounts that editor only as the footnotes pane's row editor, over Standard view's options:
+ * the registry's `footnotes-pane-row`. Over any other host it is library-only — no view in the app
+ * opens the footnote popover since PT-4777 — and those rows are kept so the popover over that host
+ * does not decay if a host offers it again.
+ */
+export function footnotePopoverView(host: ViewOptions): ViewOptions {
+  return {
+    ...host,
+    noteMode: "expanded",
+    isNoteShellEditable: false,
+    showParaMarkerPrefixes: false,
+  };
+}
+
 /** The name of a view in {@link EDITOR_VIEWS}. */
 export type EditorViewName =
   | "standard"
   | "standard+expandedNotes"
+  | "footnotes-pane-row"
   | "formatted"
   | "paragraph-structure"
   | "unformatted"
@@ -92,21 +118,66 @@ export type EditorViewName =
   | "visible+collapsed"
   | "hidden+expanded";
 
-/** A view in the registry: the name suites key rows by, and the options it mounts with. */
+/**
+ * Where paranext-core (Platform.Bible) offers a view, so a reader can tell the rows that guard a
+ * surface a user reaches from the ones that keep a library view from decaying:
+ *
+ * - `power-standard`: Power mode's Standard view, editable.
+ * - `simple`: Simple mode's text, editable.
+ * - `footnotes-pane-row`: the footnotes pane's row editor, where Power mode's Standard view and
+ *   Simple mode edit every note.
+ * - `preview`: Power mode's read-only Preview.
+ * - `read-only-panel`: the read-only text panels (resource and model texts, the text grid).
+ * - `library-only`: not offered by the app; run so the view does not decay if a host offers it.
+ */
+export type AppSurface =
+  | "power-standard"
+  | "simple"
+  | "footnotes-pane-row"
+  | "preview"
+  | "read-only-panel"
+  | "library-only";
+
+/** A view a suite runs: the name it keys rows by, and the options it mounts with. */
 export interface NamedView<Name extends string = EditorViewName> {
   name: Name;
   view: ViewOptions;
 }
 
+/** A registry view: a {@link NamedView} labelled with the app surface it guards. */
+export interface RegistryView<Name extends string = EditorViewName> extends NamedView<Name> {
+  appSurface: AppSurface;
+  /** What reaches the view in the app, or why a `library-only` view is still run. */
+  note?: string;
+}
+
 /**
  * Every view the suites run, by name: the named view modes, Standard with expanded notes (the
  * combination `getViewMode` cannot name, so view-mode-keyed machinery sees it as no mode at all),
- * and the marker/note-mode combinations no named mode spells but a host can pass.
+ * the footnotes pane's row editor, and the marker/note-mode combinations no named mode spells but a
+ * host can pass. Each is labelled with the app surface it guards (see {@link AppSurface}).
  */
-export const EDITOR_VIEWS: readonly NamedView[] = [
-  { name: "standard", view: standard },
-  { name: "standard+expandedNotes", view: { ...standard, noteMode: "expanded" } },
-  { name: "unformatted", view: requireViewOptions(UNFORMATTED_VIEW_MODE) },
+export const EDITOR_VIEWS: readonly RegistryView[] = [
+  { name: "standard", view: standard, appSurface: "power-standard" },
+  {
+    name: "standard+expandedNotes",
+    view: { ...standard, noteMode: "expanded" },
+    appSurface: "library-only",
+    note: "the app's Standard-view editor with notes expanded is footnotes-pane-row",
+  },
+  {
+    name: "footnotes-pane-row",
+    view: footnotePopoverView(standard),
+    appSurface: "footnotes-pane-row",
+    note:
+      "paranext-core's FootnoteEditor over Standard view, the view resolveFootnotesPaneViewOptions " +
+      "gives the pane in Simple mode and in Power mode's Standard view",
+  },
+  {
+    name: "unformatted",
+    view: requireViewOptions(UNFORMATTED_VIEW_MODE),
+    appSurface: "library-only",
+  },
   {
     name: "visible",
     view: {
@@ -115,18 +186,40 @@ export const EDITOR_VIEWS: readonly NamedView[] = [
       hasSpacing: false,
       isFormattedFont: false,
     },
+    appSurface: "library-only",
+    note: "the Markers view's options, which the app no longer offers",
   },
   {
     name: "visible+collapsed",
     view: { markerMode: "visible", noteMode: "collapsed", hasSpacing: true, isFormattedFont: true },
+    appSurface: "library-only",
   },
-  { name: "formatted", view: requireViewOptions(FORMATTED_VIEW_MODE) },
-  { name: "paragraph-structure", view: requireViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE) },
+  {
+    name: "formatted",
+    view: requireViewOptions(FORMATTED_VIEW_MODE),
+    appSurface: "library-only",
+    note:
+      "not offered editable by the app since PT-4777 (kept so the view doesn't decay); the app " +
+      "shows it read-only as the preview (READ_ONLY_VIEWS)",
+  },
+  {
+    name: "paragraph-structure",
+    view: requireViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE),
+    appSurface: "simple",
+  },
   {
     name: "hidden+expanded",
     view: { markerMode: "hidden", noteMode: "expanded", hasSpacing: false, isFormattedFont: false },
+    appSurface: "library-only",
+    note: "the Markers view's options with markers hidden; the app no longer offers that view",
   },
 ];
+
+function registryEntry<Name extends EditorViewName>(name: Name): RegistryView<Name> {
+  const found = EDITOR_VIEWS.find((entry) => entry.name === name);
+  if (!found) throw new Error(`unknown editor view: ${name}`);
+  return { ...found, name };
+}
 
 /** The {@link EDITOR_VIEWS} entry called `name`. */
 export function editorView(name: EditorViewName | string): ViewOptions {
@@ -142,14 +235,44 @@ export const EDITING_VIEW_NAMES = ["standard", "formatted", "paragraph-structure
 export type EditingViewName = (typeof EDITING_VIEW_NAMES)[number];
 
 /**
- * The views a user edits Scripture in: Standard (Power mode), formatted (Power mode's other tab, the
- * library's default view), and paragraph-structure (Simple mode's default). Formatted and
- * paragraph-structure hide markers, so the marker-edit engine is off in both — a suite whose
- * subject is that engine does not belong here.
+ * The views a user edits Scripture in: Standard (Power mode), paragraph-structure (Simple mode),
+ * and formatted, the library's default view — library-only: not offered editable by the app since
+ * PT-4777, and kept here so the view doesn't decay. Formatted and paragraph-structure hide markers,
+ * so the marker-edit engine is off in both — a suite whose subject is that engine does not belong
+ * here.
  */
-export const EDITING_VIEWS: readonly NamedView<EditingViewName>[] = EDITING_VIEW_NAMES.map(
-  (name) => ({ name, view: editorView(name) }),
-);
+export const EDITING_VIEWS: readonly RegistryView<EditingViewName>[] =
+  EDITING_VIEW_NAMES.map(registryEntry);
+
+/** The name of a view in {@link READ_ONLY_VIEWS}. */
+export type ReadOnlyViewName = "preview" | "block-verse";
+
+/** A read-only view: a registry-labelled view a host mounts with `isReadonly: true`. */
+export interface ReadOnlyView extends RegistryView<ReadOnlyViewName> {
+  isReadonly: true;
+}
+
+/**
+ * The read-only views the app shows Scripture in, each mounted with `isReadonly: true`: Power
+ * mode's Preview (formatted's options) and the text grid's aligned column (the block-verse layout,
+ * read-only by construction). Kept apart from {@link EDITOR_VIEWS}, whose suites all edit.
+ */
+export const READ_ONLY_VIEWS: readonly ReadOnlyView[] = [
+  {
+    name: "preview",
+    view: editorView("formatted"),
+    isReadonly: true,
+    appSurface: "preview",
+    note: "also the default view of the read-only text panels",
+  },
+  {
+    name: "block-verse",
+    view: requireViewOptions(BLOCK_VERSE_VIEW_MODE),
+    isReadonly: true,
+    appSurface: "read-only-panel",
+    note: "the text grid's aligned column",
+  },
+];
 
 /**
  * The view configurations every adaptor round-trip suite runs each fixture in: the named view
@@ -167,21 +290,6 @@ export const ROUND_TRIP_VIEW_CONFIGS: { label: string; viewOptions: ViewOptions 
  */
 export const EDITING_VIEW_CONFIGS: { label: string; viewOptions: ViewOptions }[] =
   EDITING_VIEWS.map(({ name, view }) => ({ label: name, viewOptions: view }));
-
-/**
- * The options the footnote popover mounts its editor with over a host editor in `host`: the host's
- * view with notes expanded, the note's marker and caller governed by the popover's dropdowns rather
- * than typed, and no marker prefix on the scaffolding paragraph that holds the note. Mirrors
- * paranext-core's `FootnoteEditor` options memo (`footnote-editor.component.tsx`).
- */
-export function footnotePopoverView(host: ViewOptions): ViewOptions {
-  return {
-    ...host,
-    noteMode: "expanded",
-    isNoteShellEditable: false,
-    showParaMarkerPrefixes: false,
-  };
-}
 
 /**
  * Register `register` once per view, each inside a `describe` named for the view, so a row's name

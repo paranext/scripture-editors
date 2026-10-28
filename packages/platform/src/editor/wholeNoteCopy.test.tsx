@@ -6,12 +6,7 @@
  * copy limit applied — and leaves the document, the selection and any pending marker edit as they
  * were.
  */
-import {
-  editorView,
-  footnotePopoverView,
-  mountInView,
-  MountedEditor,
-} from "./editorViews.test-helpers";
+import { editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $getRoot } from "lexical";
@@ -97,7 +92,7 @@ async function mountNote(
   const onUsjChange = vi.fn();
   const mounted = await mountInView(
     usj,
-    footnotePopoverView({ ...editorView("standard"), allowInvisibleCharacters }),
+    { ...editorView("footnotes-pane-row"), allowInvisibleCharacters },
     { onUsjChange, copyLimit },
   );
   return { ...mounted, onUsjChange };

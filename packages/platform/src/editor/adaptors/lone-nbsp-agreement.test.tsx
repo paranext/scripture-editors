@@ -145,13 +145,14 @@ const VIEWS: EditorViewName[] = [
 ];
 
 /**
- * Opens the main editor's first note in a note editor mounted with `noteView`, then saves what the
- * note editor gives back into the main editor, as paranext-core's `FootnoteEditor` does.
+ * Opens the main editor's first note in a note editor mounted with `noteView` (the note editor's
+ * own options), then saves what the note editor gives back into the main editor, as
+ * paranext-core's `FootnoteEditor` does.
  */
 async function editNoteIn(main: MountedEditor, noteView: ViewOptions): Promise<void> {
   const noteOps = main.ref.current?.getNoteOps(0);
   if (!noteOps) throw new Error("no note ops");
-  const noteEditor = await mountInView(doc([]), footnotePopoverView(noteView));
+  const noteEditor = await mountInView(doc([]), noteView);
   act(() => noteEditor.ref.current?.applyUpdate(noteOps));
   const edited = noteEditor.ref.current?.getNoteOps(0);
   const key = main.ref.current?.getNoteKey(0);
@@ -205,12 +206,14 @@ describe.each([false, true])("allowInvisibleCharacters %s", (allow) => {
       expect(paraContent(main)).toEqual(content);
     });
 
+    // Library-only outside Standard view: the app opens no footnote popover over any view (see
+    // `footnotePopoverView`); these rows keep the popover from decaying.
     it.each(NOTE_CASES)(
       "keeps %s through the footnote popover's round trip",
       async (_, content) => {
         const main = await mountInView(doc(content), options);
 
-        await editNoteIn(main, options);
+        await editNoteIn(main, footnotePopoverView(options));
 
         expect(paraContent(main)).toEqual(content);
       },
@@ -221,7 +224,7 @@ describe.each([false, true])("allowInvisibleCharacters %s", (allow) => {
       async (_, content) => {
         const main = await mountInView(doc(content), options);
 
-        await editNoteIn(main, view("standard", allow));
+        await editNoteIn(main, view("footnotes-pane-row", allow));
 
         expect(paraContent(main)).toEqual(content);
       },

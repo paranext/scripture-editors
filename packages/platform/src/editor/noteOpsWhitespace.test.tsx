@@ -1,20 +1,14 @@
 /**
- * No-break spaces and space runs in the delta ops one editor hands another: the footnote popover
- * (Standard view over Standard view, in Power mode) and the footnotes pane's row editor (Standard
- * view over the paragraph-structure main editor, in Simple mode). The host passes the main
- * editor's `getNoteOps` to the note editor's `applyUpdate`, and the note editor's `getNoteOps` (and
- * the text it carries out past the note, `takeOpsAfterNote`) back to the main editor's
- * `replaceEmbedUpdate`, as paranext-core's `FootnoteEditor` does. A stored no-break space and a
+ * No-break spaces and space runs in the delta ops one editor hands another: the footnotes pane's
+ * row editor (`footnotes-pane-row`) over Power mode's Standard view and over Simple mode's
+ * paragraph-structure main editor. The host passes the main editor's `getNoteOps` to the note
+ * editor's `applyUpdate`, and the note editor's `getNoteOps` (and the text it carries out past the
+ * note, `takeOpsAfterNote`) back to the main editor's `replaceEmbedUpdate`, as paranext-core's
+ * `FootnoteEditor` does. A stored no-break space and a
  * space run must both come back as they went, in either setting of
  * `ViewOptions.allowInvisibleCharacters`.
  */
-import {
-  EditorViewName,
-  editorView,
-  footnotePopoverView,
-  mountInView,
-  MountedEditor,
-} from "./editorViews.test-helpers";
+import { EditorViewName, editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
 import { opsForHost, opsFromHost } from "./markerEdit/whitespaceDisplay.utils";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -62,7 +56,7 @@ function nbspShownAs(allow: boolean): string {
 async function editNoteIn(main: MountedEditor, noteView: ViewOptions): Promise<MountedEditor> {
   const noteOps = main.ref.current?.getNoteOps(0);
   if (!noteOps) throw new Error("no note ops");
-  const noteEditor = await mountInView(doc([]), footnotePopoverView(noteView));
+  const noteEditor = await mountInView(doc([]), noteView);
   act(() => noteEditor.ref.current?.applyUpdate(noteOps));
   const edited = noteEditor.ref.current?.getNoteOps(0);
   const key = main.ref.current?.getNoteKey(0);
@@ -72,14 +66,14 @@ async function editNoteIn(main: MountedEditor, noteView: ViewOptions): Promise<M
 }
 
 const surfaces: { surface: string; main: EditorViewName }[] = [
-  { surface: "the footnote popover in Power mode", main: "standard" },
+  { surface: "the footnotes pane in Power mode's Standard view", main: "standard" },
   { surface: "the footnotes pane in Simple mode", main: "paragraph-structure" },
 ];
 
 describe.each([true, false])("allowInvisibleCharacters %s", (allow) => {
   describe.each(surfaces)("$surface", ({ main: mainView }) => {
     const mainOptions = view(mainView, allow);
-    const noteOptions = view("standard", allow);
+    const noteOptions = view("footnotes-pane-row", allow);
 
     async function expectNbspKept(content: MarkerContent[]): Promise<void> {
       const note = footnote(content);
@@ -119,7 +113,7 @@ describe.each([true, false])("allowInvisibleCharacters %s", (allow) => {
 
     it("keeps a stored no-break space in the text carried out past the note", async () => {
       const note = footnote([char("ft", ["x"])]);
-      const noteEditor = await mountInView(doc([note, NBSP]), footnotePopoverView(noteOptions));
+      const noteEditor = await mountInView(doc([note, NBSP]), noteOptions);
       const main = await mountInView(doc(["a", note, " z"]), mainOptions);
       const noteOp = noteEditor.ref.current?.getNoteOps(0)?.at(0);
       const carried = noteEditor.ref.current?.takeOpsAfterNote(0);

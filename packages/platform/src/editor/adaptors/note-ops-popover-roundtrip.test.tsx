@@ -11,6 +11,10 @@
  * the serialized USJ deep-equals the source. Over an editable-marker host, a subsequent
  * `$rebuildNoteContent` must also neither refuse (sentinel mismatch) nor change anything (fixed
  * point); with markers hidden the marker-edit engine that rebuild belongs to is off.
+ *
+ * Over Standard view the popover's options are the footnotes pane's row editor's
+ * (`footnotes-pane-row`), the note editor the app mounts. Over the other editing views the popover
+ * is library-only (see `footnotePopoverView`); those rows keep it from decaying.
  */
 import { $rebuildNoteContent, Tier2Context } from "../markerEdit/tier2Rebuild.utils";
 import Editorial from "../../Editorial";

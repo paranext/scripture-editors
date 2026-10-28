@@ -43,8 +43,14 @@ export const HELD_TYPE = `external-${ORACLE_TYPE}`;
 /** A mounted editor, as {@link mountInView} returns it. */
 export type MountedInView = MountedEditor;
 
-/** The views the oracle runs, by name: every view in the registry. */
-export const ORACLE_VIEWS: readonly NamedView[] = EDITOR_VIEWS;
+/**
+ * The views the oracle runs, by name: every view in the registry but the footnotes pane's row
+ * editor. A host annotates the Scripture text, never the row editor's one-note scaffold, so that
+ * editor has no annotation locations to pin.
+ */
+export const ORACLE_VIEWS: readonly NamedView[] = EDITOR_VIEWS.filter(
+  ({ name }) => name !== "footnotes-pane-row",
+);
 
 /** The {@link ORACLE_VIEWS} entry called `name`. */
 export const oracleView = editorView;
