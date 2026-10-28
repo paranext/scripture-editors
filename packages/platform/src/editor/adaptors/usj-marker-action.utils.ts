@@ -681,7 +681,7 @@ function $applyNonNestInsideChar(
     }
   } else {
     // Selection within one text node: isolate the selected text so it can be lifted out and wrapped.
-    const [start, end] = getSelectionOffsets(selection);
+    const [start, end] = $getSelectionOffsets(selection);
     let selected: TextNode = anchorNode;
     if (start > 0) {
       const parts = selected.splitText(start);
@@ -842,7 +842,7 @@ function $wrapTextSelectionInInlineNode(
   selection: RangeSelection,
   createNode: () => LexicalNode,
 ): void {
-  const [startOffset, endOffset] = getSelectionOffsets(selection);
+  const [startOffset, endOffset] = $getSelectionOffsets(selection);
   const [start, end] = selection.isBackward()
     ? [selection.focus, selection.anchor]
     : [selection.anchor, selection.focus];
@@ -956,14 +956,24 @@ function $wrapTextSelectionInInlineNode(
 // #region Helper functions for wrapping and unwrapping inline nodes
 
 /**
- * Get the start and end offsets of a selection.
+ * Get the start and end offsets of a selection, as text offsets into the first and last of its
+ * nodes (`selection.getNodes()`). A point on an element — where Lexical puts the end of a
+ * double-click or drag over a whole span, at the start of the text after it — has a child index
+ * for its offset, not a text offset: an element start holds its first node from the beginning, and
+ * an element end holds its last node to the end.
  * @param selection - The selection to get the offsets from.
  * @returns the start and end offsets of the selection.
  */
-function getSelectionOffsets(selection: RangeSelection): [number, number] {
-  const anchorOffset = selection.anchor.offset;
-  const focusOffset = selection.focus.offset;
-  return selection.isBackward() ? [focusOffset, anchorOffset] : [anchorOffset, focusOffset];
+function $getSelectionOffsets(selection: RangeSelection): [number, number] {
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  const nodes = selection.getNodes();
+  const last = nodes[nodes.length - 1];
+  const startOffset = start.type === "text" ? start.offset : 0;
+  const endOffset =
+    end.type === "text" ? end.offset : $isTextNode(last) ? last.getTextContentSize() : 0;
+  return [startOffset, endOffset];
 }
 
 /**
@@ -1057,7 +1067,7 @@ function $isWhollySelected(element: ElementNode, start: PointType, end: PointTyp
  */
 function $selectsTextInAndOutsideSpanOf(selection: RangeSelection, marker: string): boolean {
   const nodes = selection.getNodes();
-  const [startOffset, endOffset] = getSelectionOffsets(selection);
+  const [startOffset, endOffset] = $getSelectionOffsets(selection);
   let isInSpan = false;
   let isOutsideSpan = false;
   nodes.forEach((node, index) => {
@@ -1251,7 +1261,7 @@ export function $removeCharacterMarkerAtSelection(
 
   const nodes = selection.getNodes();
   const isBackward = selection.isBackward();
-  const [startOffset, endOffset] = getSelectionOffsets(selection);
+  const [startOffset, endOffset] = $getSelectionOffsets(selection);
   // Check there is something removable before the loop below starts splitting text nodes, so a
   // request that ends up a no-op mutates nothing at all. See `$hasActionableCharNode`.
   if (!$hasActionableCharNode(nodes, marker, startOffset, endOffset)) return false;
@@ -1783,7 +1793,7 @@ export function $replaceCharacterMarkerAtSelection(
   }
 
   const nodes = selection.getNodes();
-  const [startOffset, endOffset] = getSelectionOffsets(selection);
+  const [startOffset, endOffset] = $getSelectionOffsets(selection);
   // Check there is something to change before the loop below starts splitting text nodes, so a
   // no-match — or already-`toMarker` — request mutates nothing at all. See
   // `$hasActionableCharNode`.
@@ -1867,7 +1877,7 @@ export function $extendCharacterMarkerAtSelection(
   );
 
   const nodes = selection.getNodes();
-  const [startOffset, endOffset] = getSelectionOffsets(selection);
+  const [startOffset, endOffset] = $getSelectionOffsets(selection);
   // Both no-op paths are screened read-only, before anything splits: nothing left to cover *and*
   // no conflicting marker to strip means the document and the selection stay untouched.
   const hasConflictToRemove = !!conflictingMarkersExcludingSelf?.some((conflictingMarker) =>
@@ -1893,7 +1903,7 @@ export function $extendCharacterMarkerAtSelection(
   // Recomputed rather than reusing `nodes` and the offsets above: the conflict pass may have
   // changed both the tree and the selection.
   const isBackward = currentSelection.isBackward();
-  const [currentStartOffset, currentEndOffset] = getSelectionOffsets(currentSelection);
+  const [currentStartOffset, currentEndOffset] = $getSelectionOffsets(currentSelection);
   const targetNodes = $getTargetNodes(
     currentSelection.getNodes(),
     currentStartOffset,
