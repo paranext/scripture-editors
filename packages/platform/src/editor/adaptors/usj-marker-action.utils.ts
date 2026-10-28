@@ -848,8 +848,11 @@ function $wrapTextSelectionInInlineNode(
     $isWhollySelected(pointElement, start, end)
       ? [pointElement, ...listedNodes]
       : listedNodes;
+  // A note the selection holds all of moves into the new span the same way, contents untouched:
+  // marking the text inside it marked the note's content, and replaced its `\ft` in Standard view.
   const wholeNodes = allNodes.filter(
-    (node): node is ElementNode => $isWrappableElement(node) && $isWhollySelected(node, start, end),
+    (node): node is ElementNode =>
+      ($isWrappableElement(node) || $isNoteNode(node)) && $isWhollySelected(node, start, end),
   );
   const nodes = allNodes.filter((node) => !wholeNodes.some((whole) => whole.isParentOf(node)));
 
@@ -876,13 +879,15 @@ function $wrapTextSelectionInInlineNode(
 
     // Get the target node to wrap. Offsets apply only to the text nodes the selection's points
     // name; an element point's offset is a child index.
-    const targetNode = $getTargetNode(
-      node,
-      start.type === "text" && node.getKey() === start.key,
-      end.type === "text" && node.getKey() === end.key,
-      startOffset,
-      endOffset,
-    );
+    const targetNode = $isNoteNode(node)
+      ? node
+      : $getTargetNode(
+          node,
+          start.type === "text" && node.getKey() === start.key,
+          end.type === "text" && node.getKey() === end.key,
+          startOffset,
+          endOffset,
+        );
 
     if (!targetNode) {
       currentWrapper = undefined;

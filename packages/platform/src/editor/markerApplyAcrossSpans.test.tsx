@@ -1,9 +1,9 @@
 /**
  * Applying a character marker to a selection that reaches a char span's border, through the two
- * ways a user applies one: the marker menu and the host's `insertMarker`. A span the selection
- * holds whole moves into the new span; in Standard view, where the selection can hold part of a
- * span's marker glyphs, a selection that crosses a border is refused. Either way the editor must
- * not freeze, lose a span, move text, or leave a marker unmatched.
+ * ways a user applies one: the marker menu and the host's `insertMarker`. A span or note the
+ * selection holds whole moves into the new span; in Standard view, where the selection can hold part
+ * of a span's marker glyphs, a selection that crosses a border is refused. Either way the editor
+ * must not freeze, lose a span, move text, or leave a marker unmatched.
  */
 import {
   EDITING_VIEWS,
@@ -226,6 +226,33 @@ describe("applying a marker across a span's border in standard view", () => {
       expect(paragraph).toEqual(expected);
       expect(logs).not.toContainEqual(expect.stringContaining("was not applied"));
     });
+  });
+});
+
+describe("applying a marker over a whole note from the text around it", () => {
+  const footnote = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [char("ft", "n")],
+  } as MarkerObject;
+
+  describe.each(EDITING_VIEWS)("in $name view", ({ name: view }) => {
+    it.each(applyPaths)(
+      "moves the note into the new span, its content untouched, through %s",
+      async (_, apply) => {
+        const { paragraph } = await applied(
+          view,
+          apply,
+          "wj",
+          ["a ", 0],
+          [" c", 2],
+          ["a ", footnote, " c"],
+        );
+
+        expect(paragraph).toEqual([char("wj", "a ", footnote, " c")]);
+      },
+    );
   });
 });
 
