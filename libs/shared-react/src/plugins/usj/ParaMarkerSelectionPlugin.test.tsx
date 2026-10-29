@@ -789,6 +789,60 @@ describe.each(["off", "guarded"] as const)(
   },
 );
 
+describe("ParaMarkerSelectionPlugin — the selected marker of an empty paragraph after a chapter", () => {
+  /** `\c 1`, an empty `\s`, then `\p first`, with the plugins a delete on the marker passes through. */
+  async function emptyAfterChapterEnvironment(structureProtectionMode: StructureProtectionMode) {
+    let empty: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        empty = $createParaNode("s");
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          empty.append($createGutterGlyphNode("s")),
+          $createParaNode("p").append($createGutterGlyphNode("p"), $createTextNode("first")),
+        );
+      },
+      <>
+        <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
+        <ParaMarkerSelectionPlugin structureProtectionMode={structureProtectionMode} />
+      </>,
+    );
+    return { editor, empty: empty! };
+  }
+
+  const removed = [{ marker: "p", glyphs: 1, text: "first" }];
+
+  it.each(["Backspace", "Delete"])(
+    'under "guarded", the first %s arms its removal and the second removes it',
+    async (key) => {
+      const { editor, empty } = await emptyAfterChapterEnvironment("guarded");
+      await selectMarkerOf(editor, empty);
+      const before = documentJson(editor);
+
+      await pressKey(editor, key);
+
+      expect(documentJson(editor)).toBe(before);
+      expect(editor.getRootElement()?.getAttribute("data-verse-delete-kind")).toBe(
+        "removeEmptyPara",
+      );
+
+      await pressKey(editor, key);
+
+      expect(paragraphsOf(editor)).toEqual(removed);
+    },
+  );
+
+  it.each(["Backspace", "Delete"])('under "off", %s removes it in one press', async (key) => {
+    const { editor, empty } = await emptyAfterChapterEnvironment("off");
+    await selectMarkerOf(editor, empty);
+
+    const event = await pressKey(editor, key);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(paragraphsOf(editor)).toEqual(removed);
+  });
+});
+
 describe("ParaMarkerSelectionPlugin — deletion without a Backspace/Delete keydown", () => {
   const merged = [
     { marker: "p", glyphs: 1, text: "firstsecond" },

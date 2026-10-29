@@ -1,7 +1,7 @@
 import {
+  $deletePara,
   $isArmedSelection,
   $isUnmergeableParaStart,
-  $mergeParaIntoPrevious,
   $moveCaretPastGutterGlyph,
   $narrowSelectionPastGutterGlyph,
   $paraDeleteEffect,
@@ -186,7 +186,7 @@ export function StructureKeyboardPlugin({
           }
         } else if ($isSomeParaNode(node)) {
           // Only paragraphs merge into paragraphs; never merge some other ElementNode.
-          $mergeParaIntoPrevious(node);
+          $deletePara(node, intent);
         }
         return true;
       }

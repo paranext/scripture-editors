@@ -478,6 +478,56 @@ describe("$structuralDeleteTarget", () => {
     });
   });
 
+  it("returns an empty para after a chapter, when a paragraph follows it", async () => {
+    let empty: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      empty = $createParaNode("s");
+      $getRoot().append(
+        $createChapterNode("1"),
+        empty,
+        $createParaNode("p").append($createTextNode("first")),
+      );
+    });
+    updateSelection(editor, empty!, 0);
+    editor.getEditorState().read(() => {
+      expect($structuralDeleteTarget($getSelection()!, "deleteBackward")?.node.getKey()).toBe(
+        empty.getKey(),
+      );
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(false);
+    });
+  });
+
+  it("returns undefined for an empty para alone in its chapter", async () => {
+    let empty: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      empty = $createParaNode("s");
+      $getRoot().append($createChapterNode("1"), empty, $createChapterNode("2"));
+    });
+    updateSelection(editor, empty!, 0);
+    editor.getEditorState().read(() => {
+      expect($structuralDeleteTarget($getSelection()!, "deleteBackward")).toBeUndefined();
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(true);
+    });
+  });
+
+  it("forward: returns the empty para itself, not the next one", async () => {
+    let empty: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      empty = $createParaNode("s");
+      $getRoot().append(
+        $createParaNode("p").append($createTextNode("first")),
+        empty,
+        $createParaNode("q1").append($createTextNode("second")),
+      );
+    });
+    updateSelection(editor, empty!, 0);
+    editor.getEditorState().read(() => {
+      expect($structuralDeleteTarget($getSelection()!, "deleteForward")?.node.getKey()).toBe(
+        empty.getKey(),
+      );
+    });
+  });
+
   it("returns undefined mid-text", async () => {
     let t1: TextNode;
     const { editor } = await baseTestEnvironment(() => {
