@@ -12,7 +12,8 @@
  * matters most to a translator: a cut or paste changes exactly what was selected or pasted and
  * nothing else, what is pasted arrives intact, and undo and redo land exactly on the states before
  * and after. A copy in one view family pasted into the other ({@link runCrossViewRow}) goes in as
- * its html and plain text alone would.
+ * its html and plain text alone would; one in another hidden-marker view pasted into
+ * paragraph-structure ({@link hiddenCrossViewRowsFor}) goes in exactly.
  *
  * Simple mode's paragraph-structure view runs every row under each structure protection
  * ({@link protectionsFor}); `protected` is its default. There a paste keeps the document's
@@ -761,6 +762,8 @@ interface RangeRow {
   operation: Operation;
   /** The document the row mounts, when it is not the fixture: see {@link inNoteScaffold}. */
   usj?: Usj;
+  /** The view the copy is made in, when it is not the row's own: see {@link hiddenCrossViewRowsFor}. */
+  copyFrom?: { name: string; view: ViewOptions };
 }
 
 /**
@@ -829,6 +832,35 @@ function crossViewRowsFor(fixture: string, ranges: SampledRange[]): CrossViewRow
           from,
           to,
           protection,
+        });
+  }
+  return rows;
+}
+
+/**
+ * A copy in another hidden-marker view pasted into Simple mode's paragraph-structure view with
+ * Ctrl+V, under each of its protections: from Power mode's Preview and the text grid's block-verse
+ * column (read-only, so a copy is all a user does there) and, in a run with the library-only views,
+ * from the formatted view. Every hidden-marker view reads the others' node copy, so the paste is
+ * exactly what a copy and paste within paragraph-structure gives; paragraph-structure's own gutter
+ * glyphs, which no node copy holds, are rebuilt for each pasted paragraph.
+ */
+function hiddenCrossViewRowsFor(fixture: string, usj: Usj): RangeRow[] {
+  const sources = enabledViews(["preview", "block-verse", "formatted"]);
+  const to = { name: "paragraph-structure", view: editorView("paragraph-structure") };
+  const rows: RangeRow[] = [];
+  for (const range of sampleRanges(usj)) {
+    if (!viewsFor(range.kind).some(({ name }) => name === to.name)) continue;
+    for (const from of sources)
+      for (const protection of protectionsFor(to.name))
+        rows.push({
+          key: `${fixture} | ${range.kind} | ${from} to ${to.name} | ${protection} | copy, Ctrl+V`,
+          range,
+          viewName: to.name,
+          view: to.view,
+          protection,
+          operation: "copy, Ctrl+V",
+          copyFrom: { name: from, view: editorView(from) },
         });
   }
   return rows;
@@ -939,6 +971,10 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | PlainRow): stri
       holdsHtmlLossyContent(row.protection === "protected" ? protectedFragment(copied) : copied)
     )
       return "accepted: html from another program, or from a copy ending inside a figure, carries no char attributes (`closed`), note details, milestones, alternate or published verse numbers, or figures, and brings a note's display spacers back as text";
+    // Not yet tracked: the block-verse layout builds each verse as a block of its own, and its node
+    // copy carries those blocks.
+    if (row.copyFrom?.name === "block-verse" && holdsVerseBlockBreak(copied, start, row.protection))
+      return "not yet tracked: the block-verse layout's node copy carries each verse as a block of its own, so pasted into paragraph-structure it starts a paragraph at each verse (under `protected`, joins the blocks with an extra space)";
     // Not yet tracked: a hidden-marker view's plain-text paste leaves out the leading spaces of a
     // line it starts a new paragraph with, which the node copy keeps.
     if (
@@ -968,6 +1004,29 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | PlainRow): stri
       return "PT-4388: Standard's text path over deliberately damaged USFM: a nameless marker re-tokenizes as text, and a bare backslash keeps the paste a pending literal";
   }
   return undefined;
+}
+
+/**
+ * Whether a copy of `fragment`, which starts at `start`, in the block-verse layout holds a verse
+ * block's edge that a paste into paragraph-structure turns into structure: a verse that does not
+ * open a named paragraph opens a block of its own there. Under `protected`, which joins the blocks,
+ * only such a verse after the copy's start does.
+ */
+function holdsVerseBlockBreak(
+  fragment: Item[],
+  start: TextPoint,
+  protection: StructureProtectionMode,
+): boolean {
+  return fragment.some(
+    (block, blockIndex) =>
+      typeof block !== "string" &&
+      (block.content ?? []).some((item, index) => {
+        if (typeof item === "string" || item.type !== "verse") return false;
+        const indexInParagraph = blockIndex === 0 ? start.path[1] + index : index;
+        if (indexInParagraph === 0 && block.marker) return false;
+        return protection !== "protected" || blockIndex > 0 || index > 0;
+      }),
+  );
 }
 
 /** Whether a fragment holds what the html flavor cannot carry: a note, a milestone, a verse's or
@@ -1285,6 +1344,32 @@ function settledAfterPaste(
   return (content) => content && withoutEmptySidsIn(content, at.path[0], at.path[0] + blocks - 1);
 }
 
+/** Selects `start`..`end` and copies it, returning what reached the clipboard. */
+async function copyHere(
+  editor: LexicalEditor,
+  usj: Usj,
+  start: TextPoint,
+  end: TextPoint,
+): Promise<Map<string, string>> {
+  await select(editor, usj, start, end);
+  return dispatchClipboard(editor, COPY_COMMAND);
+}
+
+/** Copies `start`..`end` of `usj` in an editor of its own mounted in `view`. */
+async function copyIn(
+  view: ViewOptions,
+  usj: Usj,
+  start: TextPoint,
+  end: TextPoint,
+): Promise<Map<string, string>> {
+  const source = await mountInView(usj, view);
+  try {
+    return await copyHere(source.lexical, usj, start, end);
+  } finally {
+    source.unmount();
+  }
+}
+
 /** Selects `start`..`end` and cuts it, returning what reached the clipboard. */
 async function cut(
   editor: LexicalEditor,
@@ -1351,18 +1436,20 @@ async function runRangeRow(row: RangeRow, usj: Usj): Promise<void> {
       return;
     }
 
-    await select(lexical, usj, start, end);
-    const clipboard = await dispatchClipboard(lexical, COPY_COMMAND);
+    const copyView = row.copyFrom?.view ?? row.view;
+    const clipboard = row.copyFrom
+      ? await copyIn(row.copyFrom.view, usj, start, end)
+      : await copyHere(lexical, usj, start, end);
     const text = clipboard.get("text/plain") ?? "";
     expect(text, "the copy wrote text/plain").toBeTruthy();
     expect(clipboard.has(LEXICAL_FLAVOR), "the copy wrote its node copy").toBe(
       writesNodeCopy(row.range),
     );
-    if (isMarkerHidden(row.view) && writesNodeCopy(row.range))
+    if (isMarkerHidden(copyView) && writesNodeCopy(row.range))
       expect(JSON.parse(clipboard.get(LEXICAL_FLAVOR) ?? "{}").namespace).toBe(
         HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
       );
-    if (isMarkerHidden(row.view)) expectHiddenViewPlainCopy(text, copied);
+    if (isMarkerHidden(copyView)) expectHiddenViewPlainCopy(text, copied);
     const payload = new Map(clipboard);
     if (isWithoutLexicalFlavor(row)) payload.delete(LEXICAL_FLAVOR);
     if (row.operation === "copy, paste plain text") payload.delete("text/html");
@@ -1514,12 +1601,13 @@ const fixtureRows = FIXTURES.map((fixture) => {
     usj,
     ...rowsFor(fixture, usj),
     crossViews: crossViewRowsFor(fixture, sampleRanges(usj)),
+    hiddenCrossViews: hiddenCrossViewRowsFor(fixture, usj),
   };
 });
 
 const KNOWN_FAILURES: { [key: string]: string } = Object.fromEntries(
-  fixtureRows.flatMap(({ fixture, usj, ranges, plainTexts }) =>
-    [...ranges, ...plainTexts].flatMap((row) => {
+  fixtureRows.flatMap(({ fixture, usj, ranges, plainTexts, hiddenCrossViews }) =>
+    [...ranges, ...plainTexts, ...hiddenCrossViews].flatMap((row) => {
       const reason = knownFailure(fixture, ("usj" in row && row.usj) || usj, row);
       return reason ? [[row.key, reason]] : [];
     }),
@@ -1528,13 +1616,13 @@ const KNOWN_FAILURES: { [key: string]: string } = Object.fromEntries(
 
 const register = knownFailureRunner(
   KNOWN_FAILURES,
-  fixtureRows.flatMap(({ ranges, plainTexts, crossViews }) =>
-    [...ranges, ...plainTexts, ...crossViews].map((row) => row.key),
+  fixtureRows.flatMap(({ ranges, plainTexts, crossViews, hiddenCrossViews }) =>
+    [...ranges, ...plainTexts, ...crossViews, ...hiddenCrossViews].map((row) => row.key),
   ),
 );
 
 describe("clipboard over the testUSFM corpus, per editing view", () => {
-  for (const { fixture, usj, ranges, plainTexts, crossViews } of fixtureRows)
+  for (const { fixture, usj, ranges, plainTexts, crossViews, hiddenCrossViews } of fixtureRows)
     describe(fixture, () => {
       for (const row of ranges)
         register(row.key)(
@@ -1552,6 +1640,12 @@ describe("clipboard over the testUSFM corpus, per editing view", () => {
         register(row.key)(
           `${row.range.kind} | ${row.from.name} to ${row.to.name} | ${row.protection} | copy, Ctrl+V`,
           () => runCrossViewRow(row, usj),
+          30_000,
+        );
+      for (const row of hiddenCrossViews)
+        register(row.key)(
+          `${row.range.kind} | ${row.copyFrom?.name} to ${row.viewName} | ${row.protection} | copy, Ctrl+V`,
+          () => runRangeRow(row, usj),
           30_000,
         );
     });
