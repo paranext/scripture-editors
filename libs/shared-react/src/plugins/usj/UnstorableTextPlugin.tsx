@@ -1,4 +1,9 @@
-import { removeMarkerGlyphElements } from "./clipboard.utils";
+import {
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+  nodeCopyIn,
+  removeMarkerGlyphElements,
+  withoutNodeCopyOf,
+} from "./clipboard.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
 import {
   UnstorableCharacter,
@@ -11,7 +16,11 @@ import {
   $textAroundSelection,
   removeUnstorableText,
 } from "./unstorableText.utils";
-import { $insertDataTransferForRichText } from "@lexical/clipboard";
+import {
+  $generateNodesFromSerializedNodes,
+  $insertDataTransferForRichText,
+  $insertGeneratedNodes,
+} from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -22,8 +31,9 @@ import {
   COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_NORMAL,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  isDOMNode,
+  isSelectionCapturedInDecoratorInput,
   KEY_DOWN_COMMAND,
-  LexicalEditor,
   LexicalNode,
   PASTE_COMMAND,
   PASTE_TAG,
@@ -32,9 +42,6 @@ import {
 } from "lexical";
 import { useEffect, useRef } from "react";
 import { LoggerBasic } from "shared";
-
-/** The clipboard flavor Lexical writes its own node copy to. */
-const LEXICAL_CLIPBOARD_TYPE = "application/x-lexical-editor";
 
 /** Logs and reports one removal. */
 function reportRemoved(
@@ -101,27 +108,13 @@ function isShortcutChord(event: KeyboardEvent): boolean {
 }
 
 /**
- * The flavor Lexical inserts `data` from (`$insertDataTransferForRichText`): a node copy from an
- * editor of this namespace first, then html, then plain text.
+ * The flavor `data` is inserted from in a hidden-marker view: a node copy from a hidden-marker view
+ * ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}) first, then html, then plain text, as Lexical's
+ * `$insertDataTransferForRichText` picks once a node copy of any other view is hidden from it
+ * ({@link withoutNodeCopyOf}).
  */
-function insertionRoute(data: DataTransfer, editor: LexicalEditor): "lexical" | "html" | "plain" {
-  const lexicalString = data.getData(LEXICAL_CLIPBOARD_TYPE);
-  if (lexicalString) {
-    try {
-      const payload: unknown = JSON.parse(lexicalString);
-      if (
-        payload &&
-        typeof payload === "object" &&
-        "namespace" in payload &&
-        "nodes" in payload &&
-        payload.namespace === editor._config.namespace &&
-        Array.isArray(payload.nodes)
-      )
-        return "lexical";
-    } catch {
-      // Unreadable: Lexical falls through to html and plain text too.
-    }
-  }
+function insertionRoute(data: DataTransfer): "lexical" | "html" | "plain" {
+  if (nodeCopyIn(data, HIDDEN_VIEW_CLIPBOARD_NAMESPACE)) return "lexical";
   const html = data.getData("text/html");
   // Lexical skips html identical to the plain text.
   return html && html !== data.getData("text/plain") ? "html" : "plain";
@@ -154,10 +147,15 @@ function joinLines(text: string): string {
  * per paste, drop or refused keystroke through `onRemoved`. A paste or drop left with nothing to
  * insert changes nothing.
  *
- * Covers each route Lexical inserts by: a node copy from an editor of this namespace and html
- * (through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`), and plain text, pasted (`PASTE_COMMAND`) or
- * dropped (`CONTROLLED_TEXT_INSERTION_COMMAND` with an `insertFromDrop` event). Under `"protected"`
- * structure, `StructureKeyboardPlugin` inserts html pastes and drops itself; give it
+ * Reads a node copy (`application/x-lexical-editor`) only from a hidden-marker view, which tags it
+ * {@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}: pasted, it goes in exactly as copied, attributes, notes
+ * and figures included. A node copy from any other view, such as Standard view, whose node shapes
+ * differ, is passed over for its html or plain text.
+ *
+ * Covers each route a paste or drop inserts by: a node copy and html (through
+ * `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`), and plain text, pasted (`PASTE_COMMAND`) or dropped
+ * (`CONTROLLED_TEXT_INSERTION_COMMAND` with an `insertFromDrop` event). Under `"protected"`
+ * structure, `StructureKeyboardPlugin` inserts node copies, html pastes and drops itself; give it
  * {@link $filterUnstorablePastedNodes} as its `$filterPastedNodes` to cover those too.
  *
  * Html pasted or dropped loses every marker glyph element (`data-text-type="marker"`) before it is
@@ -259,7 +257,7 @@ export function UnstorableTextPlugin({
       source: UnstorableTextRemoved["source"],
     ): boolean => {
       const selection = $getSelection();
-      if (!$isRangeSelection(selection) || insertionRoute(data, editor) !== "plain") return false;
+      if (!$isRangeSelection(selection) || insertionRoute(data) !== "plain") return false;
       const text = data.getData("text/plain") || data.getData("text/uri-list");
       if (!text) return false;
       const joinsLines = structureProtectionModeRef.current === "protected" && /[\r\n]/.test(text);
@@ -297,7 +295,7 @@ export function UnstorableTextPlugin({
       source: UnstorableTextRemoved["source"],
     ): boolean => {
       const selection = $getSelection();
-      if (!selection || insertionRoute(data, editor) !== "html") return false;
+      if (!selection || insertionRoute(data) !== "html") return false;
       const html = htmlWithoutMarkerGlyphs(data.getData("text/html"));
       if (html === undefined) return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);
@@ -312,6 +310,38 @@ export function UnstorableTextPlugin({
       } finally {
         isInsertingWithoutGlyphs = false;
       }
+      return true;
+    };
+
+    /**
+     * Inserts a paste or drop itself where a hidden-marker view has to, and returns whether it did;
+     * otherwise Lexical's own insertion runs:
+     * - a node copy from a hidden-marker view ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}), which
+     *   Lexical does not read (its namespace is not the editor's). It goes in as Lexical inserts its
+     *   own node copy, through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, so the filter there sees
+     *   it;
+     * - a transfer whose node copy is tagged with the editor's own namespace — another view's copy,
+     *   such as Standard view's — by its html or plain text, so that view's node shapes are never
+     *   rebuilt here;
+     * - plain text or html that the filter or the glyph strip changes.
+     */
+    const $insertTransfer = (
+      transfer: DataTransfer,
+      source: UnstorableTextRemoved["source"],
+    ): boolean => {
+      const selection = $getSelection();
+      if (!selection) return false;
+      const nodeCopy = nodeCopyIn(transfer, HIDDEN_VIEW_CLIPBOARD_NAMESPACE);
+      if (nodeCopy) {
+        if (source === "paste") $addUpdateTag(PASTE_TAG);
+        $insertGeneratedNodes(editor, $generateNodesFromSerializedNodes(nodeCopy), selection);
+        return true;
+      }
+      const data = withoutNodeCopyOf(transfer, editor._config.namespace);
+      if ($insertPlainTransfer(data, source) || $insertHtmlWithoutGlyphs(data, source)) return true;
+      if (data === transfer) return false;
+      if (source === "paste") $addUpdateTag(PASTE_TAG);
+      $insertDataTransferForRichText(data, selection, editor);
       return true;
     };
 
@@ -337,13 +367,16 @@ export function UnstorableTextPlugin({
         (event: PasteCommandType) => {
           const data = "clipboardData" in event ? event.clipboardData : null;
           if (!data) return false;
-          if (!$insertPlainTransfer(data, "paste") && !$insertHtmlWithoutGlyphs(data, "paste"))
+          // A paste into an input inside a decorator is that input's own, as Lexical's paste
+          // leaves it.
+          if (isDOMNode(event.target) && isSelectionCapturedInDecoratorInput(event.target))
             return false;
+          if (!$insertTransfer(data, "paste")) return false;
           event.preventDefault();
           return true;
         },
         // Below the guards that refuse a paste outright, and below protected structure's
-        // sanitizer, which takes html pastes first.
+        // sanitizer, which takes node copies and html pastes first.
         COMMAND_PRIORITY_NORMAL,
       ),
       editor.registerCommand(
@@ -352,12 +385,11 @@ export function UnstorableTextPlugin({
           if (typeof payload === "string" || payload.inputType !== "insertFromDrop") return false;
           const data = payload.dataTransfer;
           if (!data) return false;
-          if ($insertPlainTransfer(data, "drop")) return true;
           isDropping = true;
           queueMicrotask(() => {
             isDropping = false;
           });
-          return $insertHtmlWithoutGlyphs(data, "drop");
+          return $insertTransfer(data, "drop");
         },
         // Below the guards that refuse an insertion outright (several at HIGH), above Lexical's own.
         COMMAND_PRIORITY_NORMAL,

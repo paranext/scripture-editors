@@ -14,6 +14,7 @@ import {
   LexicalNode,
   PASTE_COMMAND,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+  SerializedLexicalNode,
   SKIP_SCROLL_INTO_VIEW_TAG,
   TextNode,
 } from "lexical";
@@ -289,4 +290,69 @@ export function removeMarkerGlyphElements(root: ParentNode): boolean {
   const glyphs = root.querySelectorAll(`[data-text-type="${MARKER_TEXT_TYPE}"]`);
   glyphs.forEach((glyph) => glyph.remove());
   return glyphs.length > 0;
+}
+
+/** The clipboard flavor Lexical writes its own node copy to, and reads one from. */
+export const LEXICAL_CLIPBOARD_TYPE = "application/x-lexical-editor";
+
+/**
+ * The namespace a hidden-marker view (`markerMode: "hidden"`) tags its node copy
+ * ({@link LEXICAL_CLIPBOARD_TYPE}) with. Every editor shares one Lexical namespace, so Lexical's
+ * own paste would rebuild a copy from any view in any other; a view family reads a node copy only
+ * from its own family, and a copy from the other one through its html or plain text.
+ */
+export const HIDDEN_VIEW_CLIPBOARD_NAMESPACE = "platformEditor/hidden-markers";
+
+/**
+ * The serialized nodes of the node copy ({@link LEXICAL_CLIPBOARD_TYPE}) in `data`, when it is
+ * tagged `namespace`; otherwise `undefined`.
+ *
+ * @param data - The pasted transfer; only `getData` is read.
+ * @param namespace - The namespace the copy must be tagged with.
+ */
+export function nodeCopyIn(
+  data: Pick<DataTransfer, "getData">,
+  namespace: string,
+): SerializedLexicalNode[] | undefined {
+  const payload = parsedNodeCopy(data);
+  return payload?.namespace === namespace ? payload.nodes : undefined;
+}
+
+/**
+ * `data` without its node copy ({@link LEXICAL_CLIPBOARD_TYPE}) when that copy is tagged
+ * `namespace`, so Lexical's own paste takes the html or plain text instead; otherwise `data` itself.
+ *
+ * @param data - The pasted transfer; the result reads only `getData` from it.
+ * @param namespace - The namespace whose node copy is hidden.
+ */
+export function withoutNodeCopyOf(data: DataTransfer, namespace: string): DataTransfer {
+  if (parsedNodeCopy(data)?.namespace !== namespace) return data;
+  // Lexical reads only `getData` from a transfer it inserts, and a real `DataTransfer` cannot be
+  // constructed everywhere this runs.
+  return {
+    getData: (type: string) => (type === LEXICAL_CLIPBOARD_TYPE ? "" : data.getData(type)),
+  } as Pick<DataTransfer, "getData"> as DataTransfer;
+}
+
+/** The node copy in `data` as Lexical writes it, or `undefined` when there is none or it is
+ * unreadable. */
+function parsedNodeCopy(
+  data: Pick<DataTransfer, "getData">,
+): { namespace: unknown; nodes: SerializedLexicalNode[] } | undefined {
+  const json = data.getData(LEXICAL_CLIPBOARD_TYPE);
+  if (!json) return undefined;
+  try {
+    const payload: unknown = JSON.parse(json);
+    if (
+      payload &&
+      typeof payload === "object" &&
+      "namespace" in payload &&
+      "nodes" in payload &&
+      Array.isArray(payload.nodes)
+    )
+      return { namespace: payload.namespace, nodes: payload.nodes as SerializedLexicalNode[] };
+  } catch {
+    // Unreadable: Lexical's own paste falls through to html and plain text too.
+  }
+  return undefined;
 }

@@ -181,6 +181,7 @@ import {
   getInsertedNodeKey,
   getViewClassList,
   HiddenContentDeleteGuardPlugin,
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   isBlockVerseLayout,
   LoadStatePlugin,
   NoteCallerHighlightHandle,
@@ -2197,11 +2198,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           />
           <ParaNodePlugin />
           {/* Only the hidden-marker views filter what the sanitizer inserts: Standard view stores a
-              pasted `\` as the marker it spells. */}
+              pasted `\` as the marker it spells. And only they read their own node copy, which
+              Standard view's node shapes do not match. */}
           <StructureKeyboardPlugin
             structureProtectionMode={structureProtectionMode}
             $filterPastedNodes={
               viewOptions?.markerMode === "hidden" ? $filterHiddenViewPastedNodes : undefined
+            }
+            nodeCopyNamespace={
+              viewOptions?.markerMode === "hidden" ? HIDDEN_VIEW_CLIPBOARD_NAMESPACE : undefined
             }
           />
           <TextDirectionPlugin textDirection={textDirection} />

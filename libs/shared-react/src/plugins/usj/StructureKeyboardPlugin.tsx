@@ -20,6 +20,7 @@ import {
   keyDownToIntent,
   snapshotPoint,
 } from "./structureKeyboard.utils";
+import { $generateNodesFromSerializedNodes } from "@lexical/clipboard";
 import { $generateNodesFromDOM } from "@lexical/html";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import DOMPurify from "dompurify";
@@ -58,7 +59,7 @@ import {
   $recordClipboardSpans,
   $selectParaMarker,
 } from "shared";
-import { removeMarkerGlyphElements } from "./clipboard.utils";
+import { nodeCopyIn, removeMarkerGlyphElements } from "./clipboard.utils";
 import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
@@ -125,11 +126,16 @@ function $restorerFor(selection: RangeSelection): () => void {
  *   about to insert, after sanitizing, to change them in place before they go in (e.g. to remove
  *   text the view cannot store, with `$filterUnstorablePastedNodes`). Called inside the update.
  *   When it leaves nothing to insert (see `$insertsNothing`), nothing is inserted.
+ * @param nodeCopyNamespace - Under `"protected"`, a paste whose node copy
+ *   (`application/x-lexical-editor`) is tagged with this namespace is sanitized and inserted from
+ *   that copy rather than from its html, so attributes, notes and figures arrive whole (e.g.
+ *   `HIDDEN_VIEW_CLIPBOARD_NAMESPACE` in a hidden-marker view). Any other paste takes its html.
  * @returns Always `null`; this plugin renders no UI, only editor behavior and DOM signals.
  */
 export function StructureKeyboardPlugin({
   structureProtectionMode = "off",
   $filterPastedNodes,
+  nodeCopyNamespace,
 }: {
   structureProtectionMode?: StructureProtectionMode;
   $filterPastedNodes?: (
@@ -137,6 +143,7 @@ export function StructureKeyboardPlugin({
     selection: RangeSelection,
     source: "paste" | "drop",
   ) => void;
+  nodeCopyNamespace?: string;
 }): null {
   const [editor] = useLexicalComposerContext();
   // A ref, so a host handing a fresh filter each render does not re-register every command (which
@@ -322,7 +329,16 @@ export function StructureKeyboardPlugin({
       const dom = new DOMParser().parseFromString(safeHtml, "text/html");
       // Every marker glyph is presentation, not content; parsed back, each would be marker text.
       removeMarkerGlyphElements(dom);
-      const sanitized = $sanitizeNodesForProtectedStructure($generateNodesFromDOM(editor, dom));
+      return $insertSanitized($generateNodesFromDOM(editor, dom), event, source);
+    };
+
+    // Strip structural markers from pasted/dropped nodes and insert the rest. Always consumes.
+    const $insertSanitized = (
+      nodes: LexicalNode[],
+      event: Event,
+      source: "paste" | "drop",
+    ): boolean => {
+      const sanitized = $sanitizeNodesForProtectedStructure(nodes);
       // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
       const selection = $getSelection();
       if ($isRangeSelection(selection)) {
@@ -349,6 +365,12 @@ export function StructureKeyboardPlugin({
         event.preventDefault();
         return true;
       }
+      const nodeCopy =
+        nodeCopyNamespace && event.clipboardData
+          ? nodeCopyIn(event.clipboardData, nodeCopyNamespace)
+          : undefined;
+      if (nodeCopy)
+        return $insertSanitized($generateNodesFromSerializedNodes(nodeCopy), event, "paste");
       return $sanitizeAndInsert(event.clipboardData?.getData("text/html"), event, "paste");
     };
 
@@ -495,7 +517,7 @@ export function StructureKeyboardPlugin({
       ),
       editor.registerUpdateListener(clearStaleLatch),
     );
-  }, [editor, structureProtectionMode, setArmedState]);
+  }, [editor, structureProtectionMode, nodeCopyNamespace, setArmedState]);
 
   // Publish the armed state onto the editor root: the class gates the CSS blink to armed markers,
   // and the data attributes let the host app render a localized destructive hint. The `verse-`
