@@ -2151,11 +2151,12 @@ export declare interface Thread {
 /**
  * Respells the no-break spaces in text a host takes from the editor's display — a DOM selection or
  * an element's `textContent`, for a copy or a search — the way the project's USFM spells them.
- * Standard view shows a stored no-break space as `~` while `ViewOptions.allowInvisibleCharacters`
- * is off, which is already the USFM spelling, so the text is returned unchanged. With it on, the
- * editor holds a no-break space as an internal stand-in it draws as a blank the width of a space;
- * each one becomes U+00A0 here, and `~` stays an ordinary character. Other display characters (the
- * no-break spaces a space run or a marker separator shows as) are left as they are.
+ * Standard view shows a stored no-break space in body text as `~` while
+ * `ViewOptions.allowInvisibleCharacters` is off, which is already the USFM spelling, so that is left
+ * as it is. With it on, and in an attribute value under either setting, the editor holds a no-break
+ * space as an internal stand-in it draws as a blank the width of a space; each one becomes U+00A0
+ * here, and `~` stays an ordinary character. Other display characters (the no-break spaces a space
+ * run or a marker separator shows as) are left as they are.
  *
  * Expected to be removed once Standard view holds a stored no-break space as itself (PT-4931):
  * display text will then already carry the project's spelling.
@@ -2494,6 +2495,12 @@ export declare interface ViewOptions {
    * that comes in (a load, a paste, a drop, typing, applied ops) into a space, in either setting,
    * so the stand-in is never mistaken for one. That includes U+000B and U+000C, which Paratext's
    * reader keeps; they become spaces on purpose, since JavaScript reads them as whitespace.
+   *
+   * An attribute value (a char span's `|lemma`, a milestone's `who`, a note's `\cat`, a verse's
+   * `\va`/`\vp`, …) is the same either way: Paratext reads `~` as a no-break space only in body
+   * text, so a value's `~` is always an ordinary character and is kept as `~`, and Standard view
+   * holds a value's U+00A0 as the stand-in above and shows it as the blank. A copy writes a value's
+   * U+00A0 as U+00A0 under either setting.
    *
    * Views that hide markers (formatted, paragraph-structure, block verse) show the stored
    * characters as they are either way, so they behave the same with this on or off.
