@@ -3638,6 +3638,20 @@ describe("options.requestNativePaste", () => {
     return root;
   }
 
+  /** Mounts the editor with `options` and a caret in the verse's text, where a paste lands. */
+  async function createEditorWithCaret(
+    options: EditorOptions,
+  ): Promise<RefObject<EditorRef | null>> {
+    const ref = await createEditorRefForTesting({ options });
+    await act(async () =>
+      getEditorRef(ref).setSelection({
+        start: { jsonPath: versePath, offset: 3 },
+        end: { jsonPath: versePath, offset: 3 },
+      }),
+    );
+    return ref;
+  }
+
   /** Lets the deferred host request and any fallback read run. */
   async function settlePaste() {
     await act(async () => {
@@ -3651,7 +3665,7 @@ describe("options.requestNativePaste", () => {
       focusedWhenAsked = document.activeElement;
       return Promise.resolve(true);
     });
-    const ref = await createEditorRefForTesting({ options: { requestNativePaste } });
+    const ref = await createEditorWithCaret({ requestNativePaste });
     const other = document.createElement("button");
     document.body.appendChild(other);
     await act(async () => other.focus());
@@ -3667,7 +3681,7 @@ describe("options.requestNativePaste", () => {
 
   it("EditorRef.paste() reads the clipboard itself when the host declines", async () => {
     const requestNativePaste = vi.fn(() => Promise.resolve(false));
-    const ref = await createEditorRefForTesting({ options: { requestNativePaste } });
+    const ref = await createEditorWithCaret({ requestNativePaste });
 
     await act(async () => getEditorRef(ref).paste());
     await settlePaste();
@@ -3687,7 +3701,7 @@ describe("options.requestNativePaste", () => {
 
   it("EditorRef.pastePlainText() never asks the host", async () => {
     const requestNativePaste = vi.fn(() => Promise.resolve(true));
-    const ref = await createEditorRefForTesting({ options: { requestNativePaste } });
+    const ref = await createEditorWithCaret({ requestNativePaste });
 
     await act(async () => getEditorRef(ref).pastePlainText());
     await settlePaste();
@@ -3740,7 +3754,7 @@ describe("options.requestNativePaste", () => {
 
   it("Ctrl/Cmd+V asks the host", async () => {
     const requestNativePaste = vi.fn(() => Promise.resolve(true));
-    await createEditorRefForTesting({ options: { requestNativePaste } });
+    await createEditorWithCaret({ requestNativePaste });
 
     const event = await pressPaste();
 
@@ -3751,7 +3765,7 @@ describe("options.requestNativePaste", () => {
 
   it("the context menu's Paste asks the host", async () => {
     const requestNativePaste = vi.fn(() => Promise.resolve(true));
-    await createEditorRefForTesting({ options: { requestNativePaste } });
+    await createEditorWithCaret({ requestNativePaste });
 
     await pickMenuPaste();
 
@@ -3761,8 +3775,9 @@ describe("options.requestNativePaste", () => {
 
   it("Ctrl/Cmd+V asks the host in paragraph-structure view", async () => {
     const requestNativePaste = vi.fn(() => Promise.resolve(true));
-    await createEditorRefForTesting({
-      options: { view: getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE), requestNativePaste },
+    await createEditorWithCaret({
+      view: getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE),
+      requestNativePaste,
     });
 
     await pressPaste();
@@ -3776,7 +3791,7 @@ describe("options.requestNativePaste", () => {
 
     it("Ctrl/Cmd+V never asks the host", async () => {
       const requestNativePaste = vi.fn(() => Promise.resolve(true));
-      await createEditorRefForTesting({ options: { view, requestNativePaste } });
+      await createEditorWithCaret({ view, requestNativePaste });
 
       const event = await pressPaste();
 
@@ -3787,7 +3802,7 @@ describe("options.requestNativePaste", () => {
 
     it("the context menu's Paste never asks the host", async () => {
       const requestNativePaste = vi.fn(() => Promise.resolve(true));
-      await createEditorRefForTesting({ options: { view, requestNativePaste } });
+      await createEditorWithCaret({ view, requestNativePaste });
 
       await pickMenuPaste();
 
@@ -3797,7 +3812,7 @@ describe("options.requestNativePaste", () => {
 
     it("EditorRef.paste() never asks the host", async () => {
       const requestNativePaste = vi.fn(() => Promise.resolve(true));
-      const ref = await createEditorRefForTesting({ options: { view, requestNativePaste } });
+      const ref = await createEditorWithCaret({ view, requestNativePaste });
 
       await act(async () => getEditorRef(ref).paste());
       await settlePaste();
