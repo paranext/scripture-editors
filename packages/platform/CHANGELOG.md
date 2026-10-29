@@ -534,5 +534,6 @@ refused. The public surface grew substantially; nothing was removed.
   now leaves out gutter markers and hidden constructs too.
 - A multi-line plain-text paste or drop under `"protected"` structure in the views that hide markers
   stays in the paragraph at the caret, its lines joined by one space (a run of line breaks counts
-  as one, a trailing one is dropped, and a tab becomes a space), as an html paste's paragraphs are.
+  as one, a trailing one is dropped, and each tab in it becomes a space), as an html paste's
+  paragraphs are.
   It made a new paragraph per line, which protected structure exists to prevent.

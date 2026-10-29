@@ -1214,8 +1214,8 @@ export function MarkerEditPlugin({
           // Cutting a whole paragraph is the same whole-representation deletion as the delete
           // keys — arm the paragraph reap from the pre-cut selection. CRITICAL so it runs ahead
           // of whichever handler performs the removal (the standard-view CUT claim at HIGH,
-          // `CopyLimitPlugin`'s plain-text cut at NORMAL, or Lexical's own at EDITOR); never
-          // claims the event.
+          // `CopyLimitPlugin`'s plain-text cut or `HiddenViewCopyPlugin`'s cut at NORMAL, or
+          // Lexical's own at EDITOR); never claims the event.
           //
           // A refused cut deletes nothing, so it must arm nothing: nothing commits, the update
           // listener never resets the arm, and an unrelated later commit would read it as this

@@ -138,8 +138,8 @@ function htmlWithoutMarkerGlyphs(html: string): string | undefined {
 
 /**
  * Plain text as protected structure inserts it, in the paragraph at the caret: each run of line
- * breaks becomes one space, except a trailing one, which goes (Lexical's own plain-text paste
- * makes no empty paragraph for it either), and each tab becomes a space.
+ * breaks becomes one space, except a trailing one, which goes, since under protection it would
+ * only split the paragraph; and each tab becomes a space.
  */
 function joinLines(text: string): string {
   return text
