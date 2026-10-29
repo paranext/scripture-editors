@@ -119,8 +119,8 @@ const standard = requireViewOptions(STANDARD_VIEW_MODE);
  *
  * The app mounts that editor only as the footnotes pane's row editor, over Standard view's options:
  * the registry's `footnotes-pane-row`. Over any other host it is library-only — no view in the app
- * opens the footnote popover since PT-4777 — and those rows are kept so the popover over that host
- * does not decay if a host offers it again.
+ * opens the footnote popover — and those rows are kept so the popover over that host does not
+ * decay if a host offers it again.
  */
 export function footnotePopoverView(host: ViewOptions): ViewOptions {
   return {
@@ -224,7 +224,7 @@ export const EDITOR_VIEWS: readonly RegistryView[] = [
     view: requireViewOptions(FORMATTED_VIEW_MODE),
     appSurface: "library-only",
     note:
-      "not offered editable by the app since PT-4777 (kept so the view doesn't decay); the app " +
+      "not offered editable by the app (kept so the view doesn't decay); the app " +
       "mounts its options read-only as `preview` (READ_ONLY_VIEWS), which a suite that only " +
       "reads runs instead",
   },
@@ -363,8 +363,8 @@ export type EditingViewName = (typeof EDITING_VIEW_NAMES)[number];
 
 /**
  * The views a user edits Scripture in: Standard (Power mode), paragraph-structure (Simple mode),
- * and formatted, the library's default view — library-only: not offered editable by the app since
- * PT-4777, and kept so the view doesn't decay, so it is in the list only when this run includes
+ * and formatted, the library's default view — library-only: not offered editable by the app, and
+ * kept so the view doesn't decay, so it is in the list only when this run includes
  * library-only views ({@link isViewEnabled}). Formatted and paragraph-structure hide markers, so
  * the marker-edit engine is off in both — a suite whose subject is that engine does not belong
  * here.
