@@ -164,6 +164,11 @@ export function ContextMenuPlugin({
     y: 0,
   });
   const [selectedIndex, setSelectedIndex] = useState<number | undefined>(undefined);
+  // A ref, so a host handing a fresh callback each render does not rebuild the option list.
+  const requestNativePasteRef = useRef(requestNativePaste);
+  useEffect(() => {
+    requestNativePasteRef.current = requestNativePaste;
+  }, [requestNativePaste]);
 
   const options = useMemo(() => {
     const builtIn = [
@@ -183,9 +188,10 @@ export function ContextMenuPlugin({
           copySelection(editor);
         },
       }),
+      // eslint-disable-next-line react-hooks/refs -- `ContextMenuOption` only stores `onSelect`; the menu's click and Enter handlers run it, never render, so the ref is read at paste time.
       new ContextMenuOption(`Paste`, {
         onSelect: () => {
-          pasteNatively(editor, requestNativePaste);
+          pasteNatively(editor, requestNativePasteRef.current);
         },
         isDisabled: isReadonly,
       }),
@@ -201,7 +207,7 @@ export function ContextMenuPlugin({
         new ContextMenuOption(opt.title, { onSelect: opt.onSelect, isDisabled: opt.isDisabled }),
     );
     return [...builtIn, ...extra];
-  }, [editor, isReadonly, extraOptions, requestNativePaste]);
+  }, [editor, isReadonly, extraOptions]);
 
   const menuRef = useRef<HTMLDivElement>(null);
   // What had focus when the menu opened, so the keydown guard below can tell "focus never moved"

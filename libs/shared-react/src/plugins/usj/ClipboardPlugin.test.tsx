@@ -1,5 +1,5 @@
 import { ClipboardPlugin } from "./ClipboardPlugin";
-import { copySelection } from "./clipboard.utils";
+import { copySelection, pasteNatively } from "./clipboard.utils";
 import { baseTestEnvironment, settle } from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
@@ -197,12 +197,12 @@ describe("ClipboardPlugin — paste keys are unaffected", () => {
   });
 });
 
-describe("ClipboardPlugin — the host's native paste", () => {
-  /** The async clipboard read `pasteSelection`/`pasteSelectionAsPlainText` start with. */
-  function clipboardRead() {
-    return vi.mocked(navigator.clipboard.read);
-  }
+/** The async clipboard read `pasteSelection`/`pasteSelectionAsPlainText` start with. */
+function clipboardRead() {
+  return vi.mocked(navigator.clipboard.read);
+}
 
+describe("ClipboardPlugin — the host's native paste", () => {
   it("asks the host to paste on Ctrl+V, reading no clipboard itself when the host pastes", async () => {
     const requestNativePaste = vi.fn(() => Promise.resolve(true));
     const { editor, text } = await clipboardEnvironment(requestNativePaste);
@@ -229,6 +229,36 @@ describe("ClipboardPlugin — the host's native paste", () => {
     await pressShortcut(editor, "v");
 
     expect(focusedWhenAsked).toBe(editor.getRootElement());
+  });
+
+  it("asks outside any editor update, once the refocus has committed", async () => {
+    let updatingWhenAsked: boolean | undefined;
+    let hadFocusWhenAsked: boolean | undefined;
+    const { editor, text } = await clipboardEnvironment(() => {
+      updatingWhenAsked = editor._updating;
+      hadFocusWhenAsked = document.hasFocus();
+      return Promise.resolve(true);
+    });
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    await pressShortcut(editor, "v");
+
+    expect(updatingWhenAsked).toBe(false);
+    expect(hadFocusWhenAsked).toBe(true);
+  });
+
+  it("reads the clipboard itself when the host's callback throws", async () => {
+    const requestNativePaste = vi.fn((): Promise<boolean> => {
+      throw new Error("host unavailable");
+    });
+    const { editor, text } = await clipboardEnvironment(requestNativePaste);
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    await pressShortcut(editor, "v");
+    await settle();
+
+    expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
   });
 
   it("reads the clipboard itself when the host declines the paste", async () => {
@@ -316,6 +346,62 @@ describe("ClipboardPlugin — the host's native paste", () => {
 
     expect(requestNativePaste).not.toHaveBeenCalled();
     expect(clipboardRead()).not.toHaveBeenCalled();
+  });
+});
+
+describe("pasteNatively — waiting for focus to come back", () => {
+  /** Something outside the editor that takes focus the way a menu returning it to a trigger does. */
+  function outsideButton(): HTMLButtonElement {
+    const button = document.createElement("button");
+    document.body.append(button);
+    return button;
+  }
+
+  it("asks the host only once focus is back in the editor", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    const { editor, text } = await clipboardEnvironment();
+    await act(async () => editor.update(() => text.select(3, 3)));
+    const rootElement = editor.getRootElement();
+    if (!rootElement) throw new Error("editor has no root element");
+    const button = outsideButton();
+    // The refocus is undone straight away, as a closing menu's focus return would undo it.
+    vi.spyOn(rootElement, "focus").mockImplementation(() => button.focus());
+    button.focus();
+
+    await act(async () => pasteNatively(editor, requestNativePaste));
+    await settle();
+    expect(requestNativePaste).not.toHaveBeenCalled();
+
+    await act(async () => HTMLElement.prototype.focus.call(rootElement));
+    expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(clipboardRead()).not.toHaveBeenCalled();
+    button.remove();
+  });
+
+  it("reads the clipboard itself when focus does not come back in time, and never asks the host", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    const { editor, text } = await clipboardEnvironment();
+    await act(async () => editor.update(() => text.select(3, 3)));
+    const rootElement = editor.getRootElement();
+    if (!rootElement) throw new Error("editor has no root element");
+    const button = outsideButton();
+    vi.spyOn(rootElement, "focus").mockImplementation(() => button.focus());
+    button.focus();
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await act(async () => pasteNatively(editor, requestNativePaste));
+      expect(clipboardRead()).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTime(500));
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+
+    // A focus return after the fallback ran does not paste a second time.
+    await act(async () => HTMLElement.prototype.focus.call(rootElement));
+    expect(requestNativePaste).not.toHaveBeenCalled();
+    button.remove();
   });
 });
 
