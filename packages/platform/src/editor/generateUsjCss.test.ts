@@ -494,4 +494,21 @@ describe("generateUsjFontCss", () => {
   it("returns an empty string for an empty StyleInfo", () => {
     expect(generateUsjFontCss({ markers: {} })).toBe("");
   });
+
+  it("escapes a marker name so it cannot terminate the rule early", () => {
+    const css = generateUsjFontCss({ markers: fontMarker("x{}", "Noto") });
+    expect(css).toContain(".usfm_x\\{\\}");
+    expect(css).not.toContain(".usfm_x{} {");
+  });
+
+  it("warns under its own name and falls back to the default scope for an unsafe containerSelector", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const css = generateUsjFontCss(
+      { markers: fontMarker("nd", "Noto") },
+      { containerSelector: ".x { } body" },
+    );
+    expect(css).toBe(`${SCOPE} .usfm_nd { font-family: "Noto", ${FALLBACK}; }`);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("[generateUsjFontCss]"));
+    warn.mockRestore();
+  });
 });

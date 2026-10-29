@@ -1386,7 +1386,8 @@ export declare function generateUsjCss(styleInfo: StyleInfo, options?: UsjCssOpt
  * marker's font, then the project default font, then the Scripture fallback chain). Weight, colour,
  * size, margins, alignment and every other marker declaration are left out, as are the
  * chapter-nested `\ca`/`\cp` rules, so a view that keeps its own marker layout can take the
- * project's fonts without the project's layout.
+ * project's fonts without the project's layout. There is no `rtl` option: none of these
+ * declarations depend on text direction.
  *
  * @public
  */
