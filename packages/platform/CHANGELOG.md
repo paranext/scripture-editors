@@ -145,6 +145,12 @@ refused. The public surface grew substantially; nothing was removed.
   `source` (`"paste"`, `"drop"` or `"typing"`) and what was `removed` (`"\\"` and `"//"`, each once,
   in the order first met), so the host can tell the user why some of what they pasted, dropped or
   typed is missing. Never called in Standard or Markers view, or when nothing was removed.
+- `EditorOptions.requestNativePaste`: asks the host to run the platform's native paste into the
+  focused frame (paranext-core runs Electron's `webContents.paste()`), so Ctrl/Cmd+V, the context
+  menu's Paste and `EditorRef.paste()` carry every clipboard format, the editor's own included.
+  The editor calls it from a microtask once its root has focus again; the host resolves `true`
+  only after the paste ran, and `false` or rejects only if none did, so the editor falls back to
+  reading the clipboard itself. Unset, every paste reads the clipboard asynchronously.
 
 ### Changed
 
@@ -551,3 +557,6 @@ refused. The public surface grew substantially; nothing was removed.
   context menu's Paste and the Edit menu's Paste, when the host runs a native paste
   (`EditorOptions.requestNativePaste`). A cut and paste back of a caption-less figure or an optional
   break restores it; the node copy left it out. Html from another program is pasted as before.
+- A note pasted in the editor opens like the one copied: clicking its caller calls
+  `nodes.noteCallerOnClick`. A caller rebuilt from the editor's own node copy had no click handler,
+  so the click did nothing, in every view.
