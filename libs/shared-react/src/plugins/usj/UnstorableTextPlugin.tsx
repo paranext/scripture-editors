@@ -1,8 +1,9 @@
 import {
+  $nodesFromNodeCopy,
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   nodeCopyIn,
   removeMarkerGlyphElements,
-  withoutNodeCopyOf,
+  withoutNodeCopy,
 } from "./clipboard.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
 import {
@@ -16,11 +17,7 @@ import {
   $textAroundSelection,
   removeUnstorableText,
 } from "./unstorableText.utils";
-import {
-  $generateNodesFromSerializedNodes,
-  $insertDataTransferForRichText,
-  $insertGeneratedNodes,
-} from "@lexical/clipboard";
+import { $insertDataTransferForRichText, $insertGeneratedNodes } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -110,8 +107,8 @@ function isShortcutChord(event: KeyboardEvent): boolean {
 /**
  * The flavor `data` is inserted from in a hidden-marker view: a node copy from a hidden-marker view
  * ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}) first, then html, then plain text, as Lexical's
- * `$insertDataTransferForRichText` picks once a node copy of any other view is hidden from it
- * ({@link withoutNodeCopyOf}).
+ * `$insertDataTransferForRichText` picks once any other node copy is hidden from it
+ * ({@link withoutNodeCopy}).
  */
 function insertionRoute(data: DataTransfer): "lexical" | "html" | "plain" {
   if (nodeCopyIn(data, HIDDEN_VIEW_CLIPBOARD_NAMESPACE)) return "lexical";
@@ -320,9 +317,9 @@ export function UnstorableTextPlugin({
      *   Lexical does not read (its namespace is not the editor's). It goes in as Lexical inserts its
      *   own node copy, through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, so the filter there sees
      *   it;
-     * - a transfer whose node copy is tagged with the editor's own namespace — another view's copy,
-     *   such as Standard view's — by its html or plain text, so that view's node shapes are never
-     *   rebuilt here;
+     * - a transfer with any other node copy — another view's, such as Standard view's (tagged with
+     *   the editor's own namespace), or one that makes no nodes ({@link $nodesFromNodeCopy}) — by
+     *   its html or plain text, so another view's node shapes are never rebuilt here;
      * - plain text or html that the filter or the glyph strip changes.
      */
     const $insertTransfer = (
@@ -332,12 +329,13 @@ export function UnstorableTextPlugin({
       const selection = $getSelection();
       if (!selection) return false;
       const nodeCopy = nodeCopyIn(transfer, HIDDEN_VIEW_CLIPBOARD_NAMESPACE);
-      if (nodeCopy) {
+      const nodes = nodeCopy && $nodesFromNodeCopy(nodeCopy, loggerRef.current);
+      if (nodes) {
         if (source === "paste") $addUpdateTag(PASTE_TAG);
-        $insertGeneratedNodes(editor, $generateNodesFromSerializedNodes(nodeCopy), selection);
+        $insertGeneratedNodes(editor, nodes, selection);
         return true;
       }
-      const data = withoutNodeCopyOf(transfer, editor._config.namespace);
+      const data = withoutNodeCopy(transfer);
       if ($insertPlainTransfer(data, source) || $insertHtmlWithoutGlyphs(data, source)) return true;
       if (data === transfer) return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);

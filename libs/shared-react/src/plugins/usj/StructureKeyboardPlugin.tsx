@@ -20,7 +20,6 @@ import {
   keyDownToIntent,
   snapshotPoint,
 } from "./structureKeyboard.utils";
-import { $generateNodesFromSerializedNodes } from "@lexical/clipboard";
 import { $generateNodesFromDOM } from "@lexical/html";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import DOMPurify from "dompurify";
@@ -58,8 +57,9 @@ import {
   $isSomeParaNode,
   $recordClipboardSpans,
   $selectParaMarker,
+  LoggerBasic,
 } from "shared";
-import { nodeCopyIn, removeMarkerGlyphElements } from "./clipboard.utils";
+import { $nodesFromNodeCopy, nodeCopyIn, removeMarkerGlyphElements } from "./clipboard.utils";
 import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
@@ -129,13 +129,16 @@ function $restorerFor(selection: RangeSelection): () => void {
  * @param nodeCopyNamespace - Under `"protected"`, a paste whose node copy
  *   (`application/x-lexical-editor`) is tagged with this namespace is sanitized and inserted from
  *   that copy rather than from its html, so attributes, notes and figures arrive whole (e.g.
- *   `HIDDEN_VIEW_CLIPBOARD_NAMESPACE` in a hidden-marker view). Any other paste takes its html.
+ *   `HIDDEN_VIEW_CLIPBOARD_NAMESPACE` in a hidden-marker view). Any other paste takes its html, and
+ *   so does one whose node copy makes no nodes (see `$nodesFromNodeCopy`).
+ * @param logger - Where a node copy that makes no nodes is logged, at `warn`.
  * @returns Always `null`; this plugin renders no UI, only editor behavior and DOM signals.
  */
 export function StructureKeyboardPlugin({
   structureProtectionMode = "off",
   $filterPastedNodes,
   nodeCopyNamespace,
+  logger,
 }: {
   structureProtectionMode?: StructureProtectionMode;
   $filterPastedNodes?: (
@@ -144,14 +147,18 @@ export function StructureKeyboardPlugin({
     source: "paste" | "drop",
   ) => void;
   nodeCopyNamespace?: string;
+  logger?: LoggerBasic;
 }): null {
   const [editor] = useLexicalComposerContext();
-  // A ref, so a host handing a fresh filter each render does not re-register every command (which
-  // would move this plugin's handlers to the end of their priority and flip same-priority ties).
+  // Refs, so a host handing a fresh filter or logger each render does not re-register every
+  // command (which would move this plugin's handlers to the end of their priority and flip
+  // same-priority ties).
   const filterPastedNodesRef = useRef($filterPastedNodes);
+  const loggerRef = useRef(logger);
   useEffect(() => {
     filterPastedNodesRef.current = $filterPastedNodes;
-  }, [$filterPastedNodes]);
+    loggerRef.current = logger;
+  }, [$filterPastedNodes, logger]);
   const armedRef = useRef<ArmedDelete | undefined>(undefined);
   const [armed, setArmed] = useState<ArmedDelete | undefined>(undefined);
   const setArmedState = useCallback((next: ArmedDelete | undefined) => {
@@ -369,8 +376,8 @@ export function StructureKeyboardPlugin({
         nodeCopyNamespace && event.clipboardData
           ? nodeCopyIn(event.clipboardData, nodeCopyNamespace)
           : undefined;
-      if (nodeCopy)
-        return $insertSanitized($generateNodesFromSerializedNodes(nodeCopy), event, "paste");
+      const nodes = nodeCopy && $nodesFromNodeCopy(nodeCopy, loggerRef.current);
+      if (nodes) return $insertSanitized(nodes, event, "paste");
       return $sanitizeAndInsert(event.clipboardData?.getData("text/html"), event, "paste");
     };
 

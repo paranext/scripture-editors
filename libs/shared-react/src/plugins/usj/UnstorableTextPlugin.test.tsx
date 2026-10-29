@@ -126,6 +126,7 @@ async function environment(
           structureProtectionMode={structureProtectionMode}
           $filterPastedNodes={withStructureKeyboard === "filtered" ? $filterPastedNodes : undefined}
           nodeCopyNamespace={HIDDEN_VIEW_CLIPBOARD_NAMESPACE}
+          logger={logger}
         />
       )}
       <UnstorableTextPlugin
@@ -238,6 +239,55 @@ describe("UnstorableTextPlugin — paste", () => {
     expect(hasUnmatched).toBe(false);
     expect(onRemoved).not.toHaveBeenCalled();
   });
+
+  describe.each(["off", "protected"] as StructureProtectionMode[])(
+    "a node copy that makes no nodes goes in by its html or plain text (%s)",
+    (structureProtectionMode) => {
+      it.each([
+        ["an unregistered type", [serializedText("a"), { type: "no-such-node", version: 1 }]],
+        ["a null entry", [serializedText("a"), null]],
+        ["no nodes", []],
+      ])("%s", async (_name, nodes) => {
+        const { editor, logger } = await environment("x", {
+          structureProtectionMode,
+          withStructureKeyboard: "filtered",
+        });
+        const event = pasteEvent({
+          "application/x-lexical-editor": lexicalFlavor(nodes),
+          "text/html": "<span>html</span>",
+          "text/plain": "plain",
+        });
+
+        const isClaimed = await dispatch(editor, () =>
+          editor.dispatchCommand(PASTE_COMMAND, event),
+        );
+
+        expect(isClaimed).toBe(true);
+        expect(event.preventDefault).toHaveBeenCalled();
+        expect(readParas(editor)).toEqual(["xhtml"]);
+        if (nodes.length > 0) expect(logger.warn).toHaveBeenCalled();
+      });
+
+      it("with plain text alone", async () => {
+        const { editor } = await environment("x", {
+          structureProtectionMode,
+          withStructureKeyboard: "filtered",
+        });
+
+        await dispatch(editor, () =>
+          editor.dispatchCommand(
+            PASTE_COMMAND,
+            pasteEvent({
+              "application/x-lexical-editor": lexicalFlavor([{ type: "no-such-node", version: 1 }]),
+              "text/plain": "plain",
+            }),
+          ),
+        );
+
+        expect(readParas(editor)).toEqual(["xplain"]);
+      });
+    },
+  );
 
   it("pastes a node copy from another editor's namespace as its plain text, filtered", async () => {
     const { editor, onRemoved } = await environment("x");

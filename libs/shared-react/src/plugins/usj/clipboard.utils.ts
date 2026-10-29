@@ -1,3 +1,4 @@
+import { $generateNodesFromSerializedNodes } from "@lexical/clipboard";
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
@@ -18,7 +19,7 @@ import {
   SKIP_SCROLL_INTO_VIEW_TAG,
   TextNode,
 } from "lexical";
-import { MARKER_TEXT_TYPE, textTypeState } from "shared";
+import { LoggerBasic, MARKER_TEXT_TYPE, textTypeState } from "shared";
 
 function cleanupText(text: string): string {
   return text.replaceAll("\t", " ");
@@ -319,19 +320,45 @@ export function nodeCopyIn(
 }
 
 /**
- * `data` without its node copy ({@link LEXICAL_CLIPBOARD_TYPE}) when that copy is tagged
- * `namespace`, so Lexical's own paste takes the html or plain text instead; otherwise `data` itself.
+ * `data` without its node copy ({@link LEXICAL_CLIPBOARD_TYPE}), whatever it holds, so Lexical's
+ * own paste takes the html or plain text instead; `data` itself when it carries none.
  *
  * @param data - The pasted transfer; the result reads only `getData` from it.
- * @param namespace - The namespace whose node copy is hidden.
  */
-export function withoutNodeCopyOf(data: DataTransfer, namespace: string): DataTransfer {
-  if (parsedNodeCopy(data)?.namespace !== namespace) return data;
+export function withoutNodeCopy(data: DataTransfer): DataTransfer {
+  if (!data.getData(LEXICAL_CLIPBOARD_TYPE)) return data;
   // Lexical reads only `getData` from a transfer it inserts, and a real `DataTransfer` cannot be
   // constructed everywhere this runs.
   return {
     getData: (type: string) => (type === LEXICAL_CLIPBOARD_TYPE ? "" : data.getData(type)),
   } as Pick<DataTransfer, "getData"> as DataTransfer;
+}
+
+/**
+ * The nodes a node copy's serialized nodes ({@link nodeCopyIn}) make, or `undefined` when it makes
+ * none: it is empty, or an entry cannot be made into a node (a type this editor does not register,
+ * an entry that is not a node at all, an `importJSON` that throws). Any program can write the
+ * flavor, so a paste then goes on as if it carried no node copy, as Lexical's own paste does.
+ *
+ * Mutating (it creates nodes): call inside an update.
+ *
+ * @param serialized - The node copy's serialized nodes.
+ * @param logger - Where an unreadable node copy is logged, at `warn`.
+ */
+export function $nodesFromNodeCopy(
+  serialized: SerializedLexicalNode[],
+  logger?: LoggerBasic,
+): LexicalNode[] | undefined {
+  if (serialized.length === 0) return undefined;
+  try {
+    const nodes = $generateNodesFromSerializedNodes(serialized);
+    return nodes.length > 0 ? nodes : undefined;
+  } catch (error) {
+    logger?.warn(
+      `A pasted node copy could not be read, so its html or plain text goes in instead: ${String(error)}`,
+    );
+    return undefined;
+  }
 }
 
 /** The node copy in `data` as Lexical writes it, or `undefined` when there is none or it is
