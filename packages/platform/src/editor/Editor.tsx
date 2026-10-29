@@ -2238,6 +2238,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             nodeCopyNamespace={
               viewOptions?.markerMode === "hidden" ? HIDDEN_VIEW_CLIPBOARD_NAMESPACE : undefined
             }
+            logger={stableLogger}
           />
           <TextDirectionPlugin textDirection={textDirection} />
           <TextSpacingPlugin />
