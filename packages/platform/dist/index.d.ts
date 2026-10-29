@@ -275,6 +275,13 @@ export declare interface EditorOptions {
    * {@link EditorOptions.copyLimit} is set, is refused. Unset, editing is native.
    */
   onHiddenContentDelete?: HiddenContentDeleteHandler;
+  /**
+   * Called once per paste, drop or blocked keystroke in a hidden-marker view (`view.markerMode` is
+   * `"hidden"`) that removed or refused `\` or `//`: the view cannot show what they would make (a
+   * marker, an optional line break), so they are kept out of its text. Use it to tell the user why
+   * some of what they pasted, dropped or typed is missing. Not called in Standard or Markers view.
+   */
+  onUnstorableTextRemoved?: UnstorableTextRemovedHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */
   hasExternalUI?: boolean;
   /** Is the editor enabled for spell checking. */
@@ -2253,6 +2260,29 @@ export declare type TypedMarkOnRemove = (
  * @public
  */
 export declare type TypedMarkRemovalCause = "removed" | "destroyed";
+
+/**
+ * Text a hidden-marker view keeps out of what is pasted, dropped or typed into it, because saved it
+ * would stop being text: `\` starts a USFM marker, and `//` is USFM's optional line break.
+ */
+export declare type UnstorableCharacter = "\\" | "//";
+
+/** Passed to {@link UnstorableTextRemovedHandler} when an edit's text lost unstorable characters. */
+export declare interface UnstorableTextRemoved {
+  /**
+   * What brought the text in. More sources may be added; a host that branches on this should handle
+   * values it does not know.
+   */
+  readonly source: "paste" | "drop" | "typing";
+  /** What was removed or refused, each kind once, in the order first met. Never empty. */
+  readonly removed: UnstorableCharacter[];
+}
+
+/**
+ * Told once per paste, drop or refused keystroke that removed or refused unstorable text, so the
+ * host can tell the user why some of what they pasted, dropped or typed is missing.
+ */
+export declare type UnstorableTextRemovedHandler = (event: UnstorableTextRemoved) => void;
 
 /**
  * Options controlling {@link generateUsjCss}'s output.
