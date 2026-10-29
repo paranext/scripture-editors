@@ -508,6 +508,9 @@ export interface MountedEditor {
   rerenderWithStyleInfo: (styleInfo: StyleInfo | undefined) => Promise<void>;
   /** Re-render the same editor at a different scripture reference, the way a host navigates it. */
   rerenderWithScrRef: (scrRef: SerializedVerseRef) => Promise<void>;
+  /** Re-render the same editor with different view options, the way a host passes a project
+   * setting once it has loaded. */
+  rerenderWithView: (view: ViewOptions) => Promise<void>;
 }
 
 /** Mounts `usj` in the real `Editor` with `view`, collecting what its logger reports. */
@@ -544,6 +547,7 @@ export async function mountInView(
   };
   const capture: ReactElement = <EditorRefPlugin editorRef={lexicalRef} />;
   let currentScrRef = scrRef;
+  let currentView = view;
   const editorWith = (currentStyleInfo: StyleInfo | undefined): ReactElement => (
     <Editor
       ref={ref}
@@ -551,7 +555,7 @@ export async function mountInView(
       scrRef={currentScrRef}
       onScrRefChange={onScrRefChange}
       options={{
-        view,
+        view: currentView,
         isReadonly,
         styleInfo: currentStyleInfo,
         structureProtectionMode,
@@ -591,6 +595,13 @@ export async function mountInView(
       await act(async () => {
         rerenderEditor(editorWith(currentStyleInfo));
         await Promise.resolve();
+        await Promise.resolve();
+      });
+    },
+    rerenderWithView: async (nextView) => {
+      currentView = nextView;
+      await act(async () => {
+        rerenderEditor(editorWith(currentStyleInfo));
         await Promise.resolve();
       });
     },

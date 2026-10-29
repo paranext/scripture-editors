@@ -618,6 +618,31 @@ describe("the stand-in for a stored no-break space", () => {
       const reported = onRemove.mock.calls.map((call) => call[3]).join("");
       expect(reported).toBe(`a${NBSP}b`);
     });
+
+    it("report an annotation's text in the spelling of the document it was set on", async () => {
+      // A view-option change reloads the document and drops its annotations, so the text a removal
+      // reports is spelled the way the options the annotation was set under spelled it.
+      const mounted = await mountInView(usjWith([`a${NBSP}bcd`]), standardOn);
+      const jsonPath = "$.content[2].content[0]";
+      const onRemove = vi.fn<TypedMarkOnRemove>();
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(
+          { start: { jsonPath, offset: 0 }, end: { jsonPath, offset: 3 } },
+          "test",
+          "1",
+          { onRemove },
+        );
+        await Promise.resolve();
+      });
+
+      await mounted.rerenderWithView(view("standard", false));
+      await settle();
+
+      expect(onRemove).toHaveBeenCalled();
+      const reported = onRemove.mock.calls.map((call) => call[3]);
+      expectNoStandIn(reported);
+      expect(reported.join("")).toBe(`a${NBSP}b`);
+    });
   });
 
   describe("note callers", () => {

@@ -1319,7 +1319,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       }
 
       // The text each callback reports is the annotation's display text, so a stored no-break space
-      // is still the editor's internal stand-in there; the host is given U+00A0.
+      // is still the editor's internal stand-in there; the host is given U+00A0. Keep the
+      // `viewOptions` of this call, not the latest: a view-option change reloads the document and
+      // drops its annotations, so the text a removal then reports is spelled the old way.
       const hostText = (text: string) => toUsfmNbspSpelling(text, viewOptions);
       annotationRef.current?.setAnnotation(
         live,
