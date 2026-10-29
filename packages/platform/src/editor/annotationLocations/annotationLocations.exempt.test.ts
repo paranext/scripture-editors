@@ -47,7 +47,7 @@ const EXPECTED_EXEMPT: { [view: string]: string[] } = {
   unformatted: OPENER_SEPARATORS,
   visible: [],
   "visible+collapsed": [],
-  formatted: [],
+  preview: [],
   "paragraph-structure": [],
   "hidden+expanded": [],
 };

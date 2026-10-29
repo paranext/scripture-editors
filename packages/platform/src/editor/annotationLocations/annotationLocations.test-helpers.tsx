@@ -46,23 +46,22 @@ export type MountedInView = MountedEditor;
 
 /**
  * Every view the oracle can run, by name: every view in the registry but the footnotes pane's row
- * editor. A host annotates the Scripture text, never the row editor's one-note scaffold, so that
- * editor has no annotation locations to pin.
+ * editor, with formatted's options run as `preview`, the read-only view that mounts them. A host
+ * annotates the Scripture text, never the row editor's one-note scaffold, so that editor has no
+ * annotation locations to pin; and annotating only reads the text, so formatted made editable
+ * would run nothing `preview` does not.
  */
-export const ALL_ORACLE_VIEWS: readonly NamedView[] = EDITOR_VIEWS.filter(
+export const ALL_ORACLE_VIEWS: readonly NamedView<string>[] = EDITOR_VIEWS.filter(
   ({ name }) => name !== "footnotes-pane-row",
+).map((entry) =>
+  entry.name === "formatted" ? { name: "preview", view: editorView("preview") } : entry,
 );
 
-/**
- * The views the oracle runs this run: {@link ALL_ORACLE_VIEWS} less the ones the registry leaves
- * out. Annotating only reads the text, so formatted stays in by default, as the options Preview
- * and the read-only text panels annotate in (`readsOnly`).
- */
-export const ORACLE_VIEWS: readonly NamedView[] = enabledViews(ALL_ORACLE_VIEWS, {
-  readsOnly: true,
-});
+/** The views the oracle runs this run: {@link ALL_ORACLE_VIEWS} less the ones the registry leaves
+ * out. */
+export const ORACLE_VIEWS: readonly NamedView<string>[] = enabledViews(ALL_ORACLE_VIEWS);
 
-/** The {@link ORACLE_VIEWS} entry called `name`. */
+/** The options of the registry view called `name`, an {@link ORACLE_VIEWS} one among them. */
 export const oracleView = editorView;
 
 export { mountInView };

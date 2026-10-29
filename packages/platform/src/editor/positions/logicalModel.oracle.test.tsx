@@ -144,7 +144,7 @@ const modes: { name: string; viewOptions: ViewOptions; hasSeparators: boolean }[
   { name: "visible", viewOptions: generatorViewOptions("visible"), hasSeparators: false },
   { name: "hidden", viewOptions: generatorViewOptions("hidden"), hasSeparators: false },
   { name: "standard", viewOptions: standardViewOptions, hasSeparators: true },
-  { name: "formatted", viewOptions: editorView("formatted"), hasSeparators: false },
+  { name: "preview", viewOptions: editorView("preview"), hasSeparators: false },
   {
     name: "paragraph-structure",
     viewOptions: editorView("paragraph-structure"),

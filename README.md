@@ -222,6 +222,8 @@ pnpm test:library-views
 
 Run them before a change that touches a library-only view, or code those views share with the app's views.
 
+Everything the app's views can reach is tested in an app view by default, so the library-only rows carry only what no app view reaches. A suite that only reads (loads, annotates or round-trips) runs Preview — formatted's options, mounted read-only as the app mounts them — rather than formatted.
+
 You can also use the [recommended VS Code extensions](/.vscode/extensions.json) to run tests there. This is particularly useful for running individual tests and debugging.
 
 ## API Extraction

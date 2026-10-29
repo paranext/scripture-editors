@@ -37,6 +37,7 @@ import {
   editorView,
   enabledViews,
   knownFailureRunner,
+  LIBRARY_VIEWS_ENABLED,
   mountInView,
 } from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -568,8 +569,9 @@ async function redo(mounted: Mounted): Promise<void> {
 // ------------------------------------------------------------------------------------------------
 
 /**
- * The views each range runs in. A range inside note content runs with notes expanded, the only way
- * to reach note text in the document itself rather than in the footnote editor.
+ * The views each range runs in. A range inside note content runs where the note's content is in
+ * the document itself: the footnotes pane's row editor, where the app edits every note, and — in a
+ * run that includes the library-only views — each editing view with its notes expanded.
  *
  * Standard view sits out the ranges with an end inside a char span. There the end lies past the
  * span's opening glyph or before its closing one, so the range holds marker bytes without their
@@ -584,14 +586,17 @@ function viewsFor(kind: RangeKind | undefined): { name: string; view: ViewOption
   const names: EditorViewName[] = isPartialSpan
     ? ["formatted", "paragraph-structure"]
     : ["standard", "formatted", "paragraph-structure"];
-  // The `+expandedNotes` rows below are the only clipboard rows inside a note's content, which a
-  // user reaches in the footnotes pane's row editor, so they run whenever their host view does.
-  return enabledViews(names).map((name) => {
-    const view = editorView(name);
-    return kind === "inside note content"
-      ? { name: `${name}+expandedNotes`, view: { ...view, noteMode: "expanded" } }
-      : { name, view };
-  });
+  if (kind !== "inside note content")
+    return enabledViews(names).map((name) => ({ name, view: editorView(name) }));
+  return [
+    { name: "footnotes-pane-row", view: editorView("footnotes-pane-row") },
+    ...(LIBRARY_VIEWS_ENABLED
+      ? names.map((name) => ({
+          name: `${name}+expandedNotes`,
+          view: { ...editorView(name), noteMode: "expanded" as const },
+        }))
+      : []),
+  ];
 }
 
 /**
@@ -625,6 +630,32 @@ interface RangeRow {
   viewName: string;
   view: ViewOptions;
   operation: Operation;
+  /** The document the row mounts, when it is not the fixture: see {@link inNoteScaffold}. */
+  usj?: Usj;
+}
+
+/**
+ * The footnotes pane's row editor never holds the chapter: it mounts a scaffold paragraph holding
+ * the one note it edits (paranext-core's `FootnoteEditor`; the paragraph is unnamed there, which
+ * the editor reads as `\p`). So a range inside note content runs there in that shape — the note
+ * the range lies in, alone in a `\p` — with the range moved onto it.
+ */
+function inNoteScaffold(usj: Usj, range: SampledRange): { usj: Usj; range: SampledRange } {
+  const notePath = range.start.path.slice(0, 2);
+  const note = itemAt(usj.content, notePath);
+  if (!note || typeof note === "string") throw new Error("the range lies in no note");
+  const rebase = (point: TextPoint): TextPoint => ({
+    ...point,
+    path: [0, 0, ...point.path.slice(2)],
+  });
+  return {
+    usj: {
+      type: "USJ",
+      version: usj.version,
+      content: [{ type: "para", marker: "p", content: [note] }],
+    },
+    range: { ...range, start: rebase(range.start), end: rebase(range.end) },
+  };
 }
 
 interface UsfmRow {
@@ -637,15 +668,18 @@ interface UsfmRow {
 function rowsFor(fixture: string, usj: Usj): { ranges: RangeRow[]; usfm: UsfmRow[] } {
   const ranges: RangeRow[] = [];
   for (const range of sampleRanges(usj))
-    for (const { name: viewName, view } of viewsFor(range.kind))
+    for (const { name: viewName, view } of viewsFor(range.kind)) {
+      const scaffold = viewName === "footnotes-pane-row" ? inNoteScaffold(usj, range) : undefined;
       for (const operation of OPERATIONS)
         ranges.push({
           key: `${fixture} | ${range.kind} | ${viewName} | ${operation}`,
-          range,
+          range: scaffold?.range ?? range,
           viewName,
           view,
           operation,
+          usj: scaffold?.usj,
         });
+    }
   const usfm: UsfmRow[] = [];
   for (const { name: viewName, view } of viewsFor(undefined))
     for (const text of USFM_LOOKING_TEXTS)
@@ -870,7 +904,7 @@ const fixtureRows = FIXTURES.map((fixture) => {
 const KNOWN_FAILURES: { [key: string]: string } = Object.fromEntries(
   fixtureRows.flatMap(({ fixture, usj, ranges, usfm }) =>
     [...ranges, ...usfm].flatMap((row) => {
-      const reason = knownFailure(fixture, usj, row);
+      const reason = knownFailure(fixture, ("usj" in row && row.usj) || usj, row);
       return reason ? [[row.key, reason]] : [];
     }),
   ),
@@ -887,7 +921,7 @@ describe("clipboard over the testUSFM corpus, per editing view", () => {
       for (const row of ranges)
         register(row.key)(
           `${row.range.kind} | ${row.viewName} | ${row.operation}`,
-          () => runRangeRow(row, usj),
+          () => runRangeRow(row, row.usj ?? usj),
           30_000,
         );
       for (const row of usfm)
@@ -898,3 +932,40 @@ describe("clipboard over the testUSFM corpus, per editing view", () => {
         );
     });
 });
+
+/**
+ * HTML another program put on the clipboard — a web page's paragraphs, with no internal Lexical
+ * flavor — pasted into a hidden-marker view: the first paragraph joins the one the caret is in, and
+ * each one after it arrives as a `\p` (an HTML paragraph names no marker), its layout styles
+ * dropped.
+ */
+describe.each(enabledViews(["formatted", "paragraph-structure"]))(
+  "another program's HTML paragraphs, pasted in the %s view",
+  (name) => {
+    it("arrive as paragraphs", async () => {
+      const usj: Usj = {
+        type: "USJ",
+        version: "3.1",
+        content: [{ type: "para", marker: "q1", content: ["Host text"] }],
+      };
+      const mounted = await mountInView(usj, editorView(name));
+      try {
+        await select(mounted.lexical, usj, { path: [0, 0], offset: "Host text".length });
+        await paste(
+          mounted.lexical,
+          new Map([
+            ["text/html", '<p style="text-align: center; text-indent: 40px">One</p><p>Two</p>'],
+            ["text/plain", "One\n\nTwo"],
+          ]),
+        );
+
+        expect(contentOf(mounted)).toEqual([
+          { type: "para", marker: "q1", content: ["Host textOne"] },
+          { type: "para", marker: "p", content: ["Two"] },
+        ]);
+      } finally {
+        mounted.unmount();
+      }
+    });
+  },
+);

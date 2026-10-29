@@ -323,7 +323,7 @@ describe("annotation painting on read-only decorators", () => {
     end: { jsonPath: number, propertyOffset: 2 },
   };
 
-  it.each(enabledViews(["formatted", "visible", "hidden+expanded"], { readsOnly: true }))(
+  it.each(enabledViews(["preview", "paragraph-structure", "visible", "hidden+expanded"]))(
     "paints one digit of a verse number (%s)",
     async (view) => {
       const mounted = await mountInView(paintUsj, oracleView(view));
@@ -342,7 +342,7 @@ describe("annotation painting on read-only decorators", () => {
   // The verse decorator re-renders inside the commit here, so this pins the result of a renumber;
   // a decorator rendering after its commit is covered in `displayAnnotations.index.test.tsx`.
   it("keeps a partial highlight on its bytes when a collaborator renumbers the verse", async () => {
-    const mounted = await mountInView(paintUsj, oracleView("formatted"));
+    const mounted = await mountInView(paintUsj, oracleView("preview"));
     await annotate(
       mounted,
       {
@@ -370,7 +370,7 @@ describe("annotation painting on read-only decorators", () => {
   });
 
   it("drops, and reports destroyed, a hold on a digit a collaborator's renumber replaces", async () => {
-    const mounted = await mountInView(paintUsj, oracleView("formatted"));
+    const mounted = await mountInView(paintUsj, oracleView("preview"));
     const onRemove = vi.fn<TypedMarkOnRemove>();
     await act(async () => {
       mounted.ref.current?.setAnnotation(digit, ORACLE_TYPE, "digit", { onRemove });
@@ -402,7 +402,7 @@ describe("annotation painting on read-only decorators", () => {
     mounted.unmount();
   });
 
-  itInView("visible", { readsOnly: true })(
+  itInView("visible")(
     "paints a whole verse number without the space its glyph ends in (visible)",
     async () => {
       const mounted = await mountInView(paintUsj, oracleView("visible"));
@@ -419,8 +419,8 @@ describe("annotation painting on read-only decorators", () => {
     },
   );
 
-  it("paints one digit of a chapter number (formatted)", async () => {
-    const mounted = await mountInView(paintUsj, oracleView("formatted"));
+  it("paints one digit of a chapter number (preview)", async () => {
+    const mounted = await mountInView(paintUsj, oracleView("preview"));
     const chapter = "$.content[0]['number']";
     await annotate(
       mounted,
@@ -434,25 +434,22 @@ describe("annotation painting on read-only decorators", () => {
     mounted.unmount();
   });
 
-  itInView("visible", { readsOnly: true })(
-    "paints one letter of a read-only marker glyph (visible)",
-    async () => {
-      const mounted = await mountInView(paintUsj, oracleView("visible"));
-      const marker = `${para}.content[4]['marker']`;
-      await annotate(
-        mounted,
-        {
-          start: { jsonPath: marker, propertyOffset: 1 },
-          end: { jsonPath: marker, propertyOffset: 2 },
-        },
-        "letter",
-      );
-      expect(paintedText(mounted, "letter")).toBe("d");
-      mounted.unmount();
-    },
-  );
+  itInView("visible")("paints one letter of a read-only marker glyph (visible)", async () => {
+    const mounted = await mountInView(paintUsj, oracleView("visible"));
+    const marker = `${para}.content[4]['marker']`;
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: marker, propertyOffset: 1 },
+        end: { jsonPath: marker, propertyOffset: 2 },
+      },
+      "letter",
+    );
+    expect(paintedText(mounted, "letter")).toBe("d");
+    mounted.unmount();
+  });
 
-  itInView("visible", { readsOnly: true })(
+  itInView("visible")(
     "paints only the attribute value of a read-only attribute run (visible)",
     async () => {
       const mounted = await mountInView(paintUsj, oracleView("visible"));
@@ -467,164 +464,168 @@ describe("annotation painting on read-only decorators", () => {
     },
   );
 
-  // Runs whatever the registry includes: these rows are the only ones that click and hover a
-  // decorator's annotation, and that dispatch serves every view, Standard's note callers included.
-  describe("bytes a decorator stands for but does not show", () => {
-    /** `\v 12 \va 12a\va*`: the alternate number shows only where markers do. */
-    const altUsj: Usj = {
-      type: "USJ",
-      version: "3.1",
-      content: [
-        {
-          type: "para",
-          marker: "p",
-          content: [{ type: "verse", marker: "v", number: "12", altnumber: "12a" }, "In"],
-        },
-      ],
-    };
-    const alt = "$.content[0].content[0]['altnumber']";
-
-    it("holds the annotation but paints nothing", async () => {
-      const mounted = await mountInView(altUsj, oracleView("hidden+expanded"));
-      await annotate(
-        mounted,
-        {
-          start: { jsonPath: alt, propertyOffset: 0 },
-          end: { jsonPath: alt, propertyOffset: 3 },
-        },
-        "alt",
-      );
-      const holders = mounted.lexical
-        .getEditorState()
-        .read(() =>
-          $byteNodes().flatMap(([node]) =>
-            $displayAnnotationsOf(node).filter((annotation) => annotation.id === "alt"),
-          ),
-        );
-      expect(holders).toEqual([
-        expect.objectContaining({ type: HELD_TYPE, id: "alt", undisplayed: true }),
-      ]);
-      expect(paintedText(mounted, "alt")).toBe("");
-      mounted.unmount();
-    });
-
-    describe("beside an annotation that paints the decorator whole", () => {
-      /** `Before \v 12 \va 12a\va* In`. */
-      const besideUsj: Usj = {
+  // The only rows that click a decorator's annotation, a dispatch every view runs (Standard's note
+  // callers included): in Preview and Simple mode's view, the app views whose verses are
+  // decorators.
+  describe.each(enabledViews(["preview", "paragraph-structure", "hidden+expanded"]))(
+    "bytes a decorator stands for but does not show (%s)",
+    (view) => {
+      /** `\v 12 \va 12a\va*`: the alternate number shows only where markers do. */
+      const altUsj: Usj = {
         type: "USJ",
         version: "3.1",
         content: [
           {
             type: "para",
             marker: "p",
-            content: [
-              "Before ",
-              { type: "verse", marker: "v", number: "12", altnumber: "12a" },
-              "In",
-            ],
+            content: [{ type: "verse", marker: "v", number: "12", altnumber: "12a" }, "In"],
           },
         ],
       };
-      const besideAlt = "$.content[0].content[1]['altnumber']";
+      const alt = "$.content[0].content[0]['altnumber']";
 
-      async function mountBoth() {
-        const mounted = await mountInView(besideUsj, oracleView("hidden+expanded"));
-        const a = { onClick: vi.fn(), onRemove: vi.fn<TypedMarkOnRemove>() };
-        const b = { onClick: vi.fn(), onRemove: vi.fn<TypedMarkOnRemove>() };
-        await act(async () => {
-          // Across the verse: the gap fill paints the verse whole.
-          mounted.ref.current?.setAnnotation(
-            {
-              start: { jsonPath: "$.content[0].content[0]", offset: 2 },
-              end: { jsonPath: "$.content[0].content[2]", offset: 1 },
-            },
-            ORACLE_TYPE,
-            "A",
-            a,
-          );
-          // Only bytes the verse stands for but does not show.
-          mounted.ref.current?.setAnnotation(
-            {
-              start: { jsonPath: besideAlt, propertyOffset: 0 },
-              end: { jsonPath: besideAlt, propertyOffset: 3 },
-            },
-            ORACLE_TYPE,
-            "B",
-            b,
-          );
-          await Promise.resolve();
-        });
-        const verseKey = mounted.lexical.getEditorState().read(() =>
-          $dfs()
-            .find(({ node }) => $isImmutableVerseNode(node))
-            ?.node.getKey(),
+      it("holds the annotation but paints nothing", async () => {
+        const mounted = await mountInView(altUsj, oracleView(view));
+        await annotate(
+          mounted,
+          {
+            start: { jsonPath: alt, propertyOffset: 0 },
+            end: { jsonPath: alt, propertyOffset: 3 },
+          },
+          "alt",
         );
-        const verse = verseKey ? mounted.lexical.getElementByKey(verseKey) : null;
-        if (!verse) throw new Error("the verse renders");
-        return { mounted, a, b, verse };
-      }
-
-      it("sends a click on the decorator only to the annotation it paints", async () => {
-        const { mounted, a, b, verse } = await mountBoth();
-        verse.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-        expect(a.onClick).toHaveBeenCalledTimes(1);
-        expect(b.onClick).not.toHaveBeenCalled();
+        const holders = mounted.lexical
+          .getEditorState()
+          .read(() =>
+            $byteNodes().flatMap(([node]) =>
+              $displayAnnotationsOf(node).filter((annotation) => annotation.id === "alt"),
+            ),
+          );
+        expect(holders).toEqual([
+          expect.objectContaining({ type: HELD_TYPE, id: "alt", undisplayed: true }),
+        ]);
+        expect(paintedText(mounted, "alt")).toBe("");
         mounted.unmount();
       });
 
-      /** A collaborator's change to the verse's alternate number. */
-      const setAltnumber = (mounted: MountedInView, altnumber: string | undefined) =>
-        act(async () => {
-          mounted.lexical.update(
-            () => {
-              $addUpdateTag(DELTA_CHANGE_TAG);
-              const verse = $dfs()
-                .map(({ node }) => node)
-                .find($isImmutableVerseNode);
-              verse?.setAltnumber(altnumber);
+      describe("beside an annotation that paints the decorator whole", () => {
+        /** `Before \v 12 \va 12a\va* In`. */
+        const besideUsj: Usj = {
+          type: "USJ",
+          version: "3.1",
+          content: [
+            {
+              type: "para",
+              marker: "p",
+              content: [
+                "Before ",
+                { type: "verse", marker: "v", number: "12", altnumber: "12a" },
+                "In",
+              ],
             },
-            { discrete: true },
+          ],
+        };
+        const besideAlt = "$.content[0].content[1]['altnumber']";
+
+        async function mountBoth() {
+          const mounted = await mountInView(besideUsj, oracleView(view));
+          const a = { onClick: vi.fn(), onRemove: vi.fn<TypedMarkOnRemove>() };
+          const b = { onClick: vi.fn(), onRemove: vi.fn<TypedMarkOnRemove>() };
+          await act(async () => {
+            // Across the verse: the gap fill paints the verse whole.
+            mounted.ref.current?.setAnnotation(
+              {
+                start: { jsonPath: "$.content[0].content[0]", offset: 2 },
+                end: { jsonPath: "$.content[0].content[2]", offset: 1 },
+              },
+              ORACLE_TYPE,
+              "A",
+              a,
+            );
+            // Only bytes the verse stands for but does not show.
+            mounted.ref.current?.setAnnotation(
+              {
+                start: { jsonPath: besideAlt, propertyOffset: 0 },
+                end: { jsonPath: besideAlt, propertyOffset: 3 },
+              },
+              ORACLE_TYPE,
+              "B",
+              b,
+            );
+            await Promise.resolve();
+          });
+          const verseKey = mounted.lexical.getEditorState().read(() =>
+            $dfs()
+              .find(({ node }) => $isImmutableVerseNode(node))
+              ?.node.getKey(),
           );
-          await Promise.resolve();
+          const verse = verseKey ? mounted.lexical.getElementByKey(verseKey) : null;
+          if (!verse) throw new Error("the verse renders");
+          return { mounted, a, b, verse };
+        }
+
+        it("sends a click on the decorator only to the annotation it paints", async () => {
+          const { mounted, a, b, verse } = await mountBoth();
+          verse.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          expect(a.onClick).toHaveBeenCalledTimes(1);
+          expect(b.onClick).not.toHaveBeenCalled();
+          mounted.unmount();
         });
 
-      it("follows the bytes an undisplayed hold holds through a collaborator's edit", async () => {
-        const { mounted, b } = await mountBoth();
-        // `12a` to `13b`: only the `1` is left.
-        await setAltnumber(mounted, "13b");
-        expect(b.onRemove).not.toHaveBeenCalled();
-        await act(async () => mounted.ref.current?.removeAnnotation(ORACLE_TYPE, "B"));
-        expect(b.onRemove).toHaveBeenCalledWith(HELD_TYPE, "B", "removed", "1");
-        mounted.unmount();
+        /** A collaborator's change to the verse's alternate number. */
+        const setAltnumber = (mounted: MountedInView, altnumber: string | undefined) =>
+          act(async () => {
+            mounted.lexical.update(
+              () => {
+                $addUpdateTag(DELTA_CHANGE_TAG);
+                const verse = $dfs()
+                  .map(({ node }) => node)
+                  .find($isImmutableVerseNode);
+                verse?.setAltnumber(altnumber);
+              },
+              { discrete: true },
+            );
+            await Promise.resolve();
+          });
+
+        it("follows the bytes an undisplayed hold holds through a collaborator's edit", async () => {
+          const { mounted, b } = await mountBoth();
+          // `12a` to `13b`: only the `1` is left.
+          await setAltnumber(mounted, "13b");
+          expect(b.onRemove).not.toHaveBeenCalled();
+          await act(async () => mounted.ref.current?.removeAnnotation(ORACLE_TYPE, "B"));
+          expect(b.onRemove).toHaveBeenCalledWith(HELD_TYPE, "B", "removed", "1");
+          mounted.unmount();
+        });
+
+        it("drops, and reports destroyed, an undisplayed hold whose bytes a collaborator removes", async () => {
+          const { mounted, b } = await mountBoth();
+          await setAltnumber(mounted, undefined);
+          expect(b.onRemove.mock.calls).toEqual([[HELD_TYPE, "B", "destroyed", "12a"]]);
+          mounted.unmount();
+        });
+
+        it("names the bytes an undisplayed hold holds when it is removed", async () => {
+          const { mounted, b } = await mountBoth();
+          await act(async () => mounted.ref.current?.removeAnnotation(ORACLE_TYPE, "B"));
+          expect(b.onRemove).toHaveBeenCalledWith(HELD_TYPE, "B", "removed", "12a");
+          mounted.unmount();
+        });
       });
 
-      it("drops, and reports destroyed, an undisplayed hold whose bytes a collaborator removes", async () => {
-        const { mounted, b } = await mountBoth();
-        await setAltnumber(mounted, undefined);
-        expect(b.onRemove.mock.calls).toEqual([[HELD_TYPE, "B", "destroyed", "12a"]]);
+      it("paints only what the decorator shows of a range over shown and unshown bytes", async () => {
+        const mounted = await mountInView(altUsj, oracleView(view));
+        await annotate(
+          mounted,
+          {
+            start: { jsonPath: "$.content[0].content[0]['number']", propertyOffset: 1 },
+            end: { jsonPath: alt, propertyOffset: 3 },
+          },
+          "both",
+        );
+        expect(paintedText(mounted, "both")).toBe("2");
         mounted.unmount();
       });
-
-      it("names the bytes an undisplayed hold holds when it is removed", async () => {
-        const { mounted, b } = await mountBoth();
-        await act(async () => mounted.ref.current?.removeAnnotation(ORACLE_TYPE, "B"));
-        expect(b.onRemove).toHaveBeenCalledWith(HELD_TYPE, "B", "removed", "12a");
-        mounted.unmount();
-      });
-    });
-
-    it("paints only what the decorator shows of a range over shown and unshown bytes", async () => {
-      const mounted = await mountInView(altUsj, oracleView("hidden+expanded"));
-      await annotate(
-        mounted,
-        {
-          start: { jsonPath: "$.content[0].content[0]['number']", propertyOffset: 1 },
-          end: { jsonPath: alt, propertyOffset: 3 },
-        },
-        "both",
-      );
-      expect(paintedText(mounted, "both")).toBe("2");
-      mounted.unmount();
-    });
-  });
+    },
+  );
 });

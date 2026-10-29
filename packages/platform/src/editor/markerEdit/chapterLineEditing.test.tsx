@@ -12,6 +12,7 @@
  * a paste or a drop goes in as it would be typed there.
  */
 import { getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
+import { enabledViews } from "../editorViews.test-helpers";
 import { EditorRef } from "../editor.model";
 import { getEnterMenuItems, getMarkerMenuItems } from "../markerMenu/markerItemSource";
 import {
@@ -1319,46 +1320,45 @@ describe("a chapter inserted into a book with no chapters", () => {
   });
 
   // Content with no text of its own still holds the chapter's place, in every view.
-  describe.each<ViewMode>([STANDARD_VIEW_MODE, FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE])(
-    "over content without text (%s view)",
-    (viewMode) => {
-      const V1: MarkerContent = { type: "verse", marker: "v", number: "1" };
-      const V2: MarkerContent = { type: "verse", marker: "v", number: "2" };
+  describe.each<ViewMode>(
+    enabledViews([STANDARD_VIEW_MODE, FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE]),
+  )("over content without text (%s view)", (viewMode) => {
+    const V1: MarkerContent = { type: "verse", marker: "v", number: "1" };
+    const V2: MarkerContent = { type: "verse", marker: "v", number: "2" };
 
-      async function insertWithVerses(content: MarkerContent[]) {
-        const view = requireDefined(getViewOptions(viewMode), "no view options");
-        const { ref } = await mountEmptyBook(GEN_1_1, view, { ...emptyBook, content });
-        await act(async () => {
-          ref.current?.insertFirstChapter(2);
-        });
-        return ref.current?.getUsj()?.content;
-      }
-
-      // `MarkerObject` doesn't declare a figure's `file`, so this can't be an inline literal in the
-      // typed list below.
-      const uncaptionedFigure = { type: "figure", marker: "fig", file: "a.jpg" };
-
-      it.each<[string, MarkerContent]>([
-        ["a figure with no caption", uncaptionedFigure],
-        ["a milestone", { type: "ms", marker: "ts" }],
-        ["an empty footnote", { type: "note", marker: "f", caller: "+" }],
-      ])("adds no verses above %s", async (_name, item) => {
-        const para: MarkerContent = { type: "para", marker: "p", content: [item] };
-
-        expect(await insertWithVerses([BOOK, para])).toEqual([BOOK, CHAPTER_1, para]);
+    async function insertWithVerses(content: MarkerContent[]) {
+      const view = requireDefined(getViewOptions(viewMode), "no view options");
+      const { ref } = await mountEmptyBook(GEN_1_1, view, { ...emptyBook, content });
+      await act(async () => {
+        ref.current?.insertFirstChapter(2);
       });
+      return ref.current?.getUsj()?.content;
+    }
 
-      // Standard view shows each no-break space as `~`, which is still whitespace.
-      it("adds verses above a paragraph of no-break spaces", async () => {
-        const spaces: MarkerContent = { type: "para", marker: "p", content: [NBSP + NBSP] };
+    // `MarkerObject` doesn't declare a figure's `file`, so this can't be an inline literal in the
+    // typed list below.
+    const uncaptionedFigure = { type: "figure", marker: "fig", file: "a.jpg" };
 
-        expect(await insertWithVerses([BOOK, spaces])).toEqual([BOOK, CHAPTER_1, V1, V2, spaces]);
-      });
-    },
-  );
+    it.each<[string, MarkerContent]>([
+      ["a figure with no caption", uncaptionedFigure],
+      ["a milestone", { type: "ms", marker: "ts" }],
+      ["an empty footnote", { type: "note", marker: "f", caller: "+" }],
+    ])("adds no verses above %s", async (_name, item) => {
+      const para: MarkerContent = { type: "para", marker: "p", content: [item] };
+
+      expect(await insertWithVerses([BOOK, para])).toEqual([BOOK, CHAPTER_1, para]);
+    });
+
+    // Standard view shows each no-break space as `~`, which is still whitespace.
+    it("adds verses above a paragraph of no-break spaces", async () => {
+      const spaces: MarkerContent = { type: "para", marker: "p", content: [NBSP + NBSP] };
+
+      expect(await insertWithVerses([BOOK, spaces])).toEqual([BOOK, CHAPTER_1, V1, V2, spaces]);
+    });
+  });
 
   // Where the markers are hidden the chapter is a decorator, with no line to put the caret on.
-  describe.each<ViewMode>([FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE])(
+  describe.each<ViewMode>(enabledViews([FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE]))(
     "with the markers hidden (%s view)",
     (viewMode) => {
       const mountHiddenMarkers = (usj = emptyBook) =>

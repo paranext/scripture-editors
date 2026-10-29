@@ -25,9 +25,12 @@
  * still runs: it is either about code every view shares, with the view incidental, or a
  * millisecond unit test of an option the library still publishes.
  *
- * A suite that never edits (it loads, reads, annotates or round-trips through the adaptors) still
- * runs `formatted` by default: Power mode's Preview and the read-only text panels mount formatted's
- * options read-only, so such a suite guards those surfaces there ({@link ViewSelection.readsOnly}).
+ * What an app view can reach is tested in an app view, by default; a library-only view's rows
+ * carry only what no app view reaches. A suite that never edits (it loads, reads, annotates or
+ * round-trips through the adaptors) names `preview` ({@link READ_ONLY_VIEWS}) where it would name
+ * `formatted`: the same options, mounted read-only as Power mode's Preview and the read-only text
+ * panels mount them. {@link editorView} and {@link isViewEnabled} take a read-only view's name like
+ * any other, and {@link mountInView} mounts a read-only view's options read-only.
  *
  * A plain helper module rather than an export from one of the suites, so a suite that needs it
  * does not re-register another suite's tests by importing it.
@@ -165,12 +168,6 @@ export interface NamedView<Name extends string = EditorViewName> {
 /** A registry view: a {@link NamedView} labelled with the app surface it guards. */
 export interface RegistryView<Name extends string = EditorViewName> extends NamedView<Name> {
   appSurface: AppSurface;
-  /**
-   * A read-only surface that mounts exactly these options with `isReadonly: true`. A suite that
-   * never edits guards that surface in this view, so runs it by default even when `appSurface` is
-   * `library-only` (see {@link ViewSelection.readsOnly}).
-   */
-  readOnlySurface?: AppSurface;
   /** What reaches the view in the app, or why a `library-only` view is still run. */
   note?: string;
 }
@@ -222,10 +219,10 @@ export const EDITOR_VIEWS: readonly RegistryView[] = [
     name: "formatted",
     view: requireViewOptions(FORMATTED_VIEW_MODE),
     appSurface: "library-only",
-    readOnlySurface: "preview",
     note:
       "not offered editable by the app since PT-4777 (kept so the view doesn't decay); the app " +
-      "shows it read-only as the preview (READ_ONLY_VIEWS)",
+      "mounts its options read-only as `preview` (READ_ONLY_VIEWS), which a suite that only " +
+      "reads runs instead",
   },
   {
     name: "paragraph-structure",
@@ -240,6 +237,43 @@ export const EDITOR_VIEWS: readonly RegistryView[] = [
   },
 ];
 
+/** The name of a view in {@link READ_ONLY_VIEWS}. */
+export type ReadOnlyViewName = "preview" | "block-verse";
+
+/** A read-only view: a registry-labelled view a host mounts with `isReadonly: true`. */
+export interface ReadOnlyView extends RegistryView<ReadOnlyViewName> {
+  isReadonly: true;
+}
+
+/**
+ * The read-only views the app shows Scripture in, each mounted with `isReadonly: true`: Power
+ * mode's Preview (formatted's options) and the text grid's aligned column (the block-verse layout,
+ * read-only by construction). Kept apart from {@link EDITOR_VIEWS}, whose suites all edit; a suite
+ * that only reads runs them by name ({@link editorView}), and {@link mountInView} mounts their
+ * options read-only.
+ */
+export const READ_ONLY_VIEWS: readonly ReadOnlyView[] = [
+  {
+    name: "preview",
+    // A copy, so the options identify the read-only view (see `readOnlyViewOptions`).
+    view: { ...requireViewOptions(FORMATTED_VIEW_MODE) },
+    isReadonly: true,
+    appSurface: "preview",
+    note: "also the default view of the read-only text panels",
+  },
+  {
+    name: "block-verse",
+    view: requireViewOptions(BLOCK_VERSE_VIEW_MODE),
+    isReadonly: true,
+    appSurface: "read-only-panel",
+    note: "the text grid's aligned column",
+  },
+];
+
+/** The options of every {@link READ_ONLY_VIEWS} entry, which {@link mountInView} mounts read-only
+ * unless told otherwise. */
+const readOnlyViewOptions = new WeakSet<ViewOptions>(READ_ONLY_VIEWS.map(({ view }) => view));
+
 function registryEntry<Name extends EditorViewName>(name: Name): RegistryView<Name> {
   const found = EDITOR_VIEWS.find((entry) => entry.name === name);
   if (!found) throw new Error(`unknown editor view: ${name}`);
@@ -252,31 +286,16 @@ export const LIBRARY_VIEWS_ENV_VAR = "SE_TEST_LIBRARY_VIEWS";
 /** Whether this run includes the library-only views ({@link LIBRARY_VIEWS_ENV_VAR}). */
 export const LIBRARY_VIEWS_ENABLED = process.env[LIBRARY_VIEWS_ENV_VAR] === "1";
 
-/** What a suite does in the views it asks {@link isViewEnabled} about. */
-export interface ViewSelection {
-  /**
-   * The suite never edits: it loads, reads, annotates, or round-trips through the adaptors. A
-   * library-only view with a {@link RegistryView.readOnlySurface} then guards that surface, so it
-   * is enabled by default.
-   */
-  readsOnly?: boolean;
-}
-
 /**
- * Whether this run registers rows in `view` (a registry name or entry): every view a user reaches
- * in the app, and a `library-only` one only when {@link LIBRARY_VIEWS_ENABLED} — or, for a suite
- * that {@link ViewSelection.readsOnly | reads only}, when a read-only surface mounts its options.
- * Throws on a name the registry does not have, so a misspelt view cannot silently drop out.
+ * Whether this run registers rows in `view` (a registry name or entry, an {@link EDITOR_VIEWS} or a
+ * {@link READ_ONLY_VIEWS} one): every view a user reaches in the app, and a `library-only` one only
+ * when {@link LIBRARY_VIEWS_ENABLED}. Throws on a name the registry does not have, so a misspelt
+ * view cannot silently drop out.
  */
-export function isViewEnabled(
-  view: string | { name: string },
-  { readsOnly = false }: ViewSelection = {},
-): boolean {
+export function isViewEnabled(view: string | { name: string }): boolean {
   const name = typeof view === "string" ? view : view.name;
-  const entry = EDITOR_VIEWS.find((candidate) => candidate.name === name);
-  if (!entry) throw new Error(`unknown editor view: ${name}`);
-  if (LIBRARY_VIEWS_ENABLED || entry.appSurface !== "library-only") return true;
-  return readsOnly && entry.readOnlySurface !== undefined;
+  const entry = registryView(name);
+  return LIBRARY_VIEWS_ENABLED || entry.appSurface !== "library-only";
 }
 
 /**
@@ -285,24 +304,26 @@ export function isViewEnabled(
  */
 export function enabledViews<View extends string | { name: string }>(
   views: readonly View[],
-  selection?: ViewSelection,
 ): View[] {
-  return views.filter((view) => isViewEnabled(view, selection));
+  return views.filter((view) => isViewEnabled(view));
+}
+
+/** `rows` less the ones whose `view` (a registry name) this run leaves out ({@link isViewEnabled}):
+ * for a table of cases that names each case's view. */
+export function rowsInEnabledViews<Row extends { view: string }>(rows: readonly Row[]): Row[] {
+  return rows.filter(({ view }) => isViewEnabled(view));
 }
 
 /** `describe`, skipped while {@link isViewEnabled} leaves `view` out: for a suite written for that
  * one view. */
-export function describeInView(
-  view: string,
-  selection?: ViewSelection,
-): ReturnType<typeof describe.skipIf> {
-  return describe.skipIf(!isViewEnabled(view, selection));
+export function describeInView(view: string): ReturnType<typeof describe.skipIf> {
+  return describe.skipIf(!isViewEnabled(view));
 }
 
 /** `it`, skipped while {@link isViewEnabled} leaves `view` out: for a test written for that one
  * view. */
-export function itInView(view: string, selection?: ViewSelection): ReturnType<typeof it.skipIf> {
-  return it.skipIf(!isViewEnabled(view, selection));
+export function itInView(view: string): ReturnType<typeof it.skipIf> {
+  return it.skipIf(!isViewEnabled(view));
 }
 
 /**
@@ -315,11 +336,19 @@ export function isPopoverHostEnabled(host: string): boolean {
   return LIBRARY_VIEWS_ENABLED || host === "standard";
 }
 
-/** The {@link EDITOR_VIEWS} entry called `name`. */
-export function editorView(name: EditorViewName | string): ViewOptions {
-  const found = EDITOR_VIEWS.find((entry) => entry.name === name);
+/** The {@link EDITOR_VIEWS} or {@link READ_ONLY_VIEWS} entry called `name`. */
+function registryView(name: string): RegistryView<string> {
+  const found = [...EDITOR_VIEWS, ...READ_ONLY_VIEWS].find((entry) => entry.name === name);
   if (!found) throw new Error(`unknown editor view: ${name}`);
-  return found.view;
+  return found;
+}
+
+/**
+ * The options of the {@link EDITOR_VIEWS} or {@link READ_ONLY_VIEWS} entry called `name`. A
+ * read-only view's are its own object, so {@link mountInView} knows to mount them read-only.
+ */
+export function editorView(name: EditorViewName | ReadOnlyViewName | string): ViewOptions {
+  return registryView(name).view;
 }
 
 /** The views a user edits Scripture in, by name. */
@@ -340,54 +369,21 @@ export const EDITING_VIEWS: readonly RegistryView<EditingViewName>[] = enabledVi
   EDITING_VIEW_NAMES.map(registryEntry),
 );
 
-/** The name of a view in {@link READ_ONLY_VIEWS}. */
-export type ReadOnlyViewName = "preview" | "block-verse";
-
-/** A read-only view: a registry-labelled view a host mounts with `isReadonly: true`. */
-export interface ReadOnlyView extends RegistryView<ReadOnlyViewName> {
-  isReadonly: true;
-}
-
-/**
- * The read-only views the app shows Scripture in, each mounted with `isReadonly: true`: Power
- * mode's Preview (formatted's options) and the text grid's aligned column (the block-verse layout,
- * read-only by construction). Kept apart from {@link EDITOR_VIEWS}, whose suites all edit.
- */
-export const READ_ONLY_VIEWS: readonly ReadOnlyView[] = [
-  {
-    name: "preview",
-    view: editorView("formatted"),
-    isReadonly: true,
-    appSurface: "preview",
-    note: "also the default view of the read-only text panels",
-  },
-  {
-    name: "block-verse",
-    view: requireViewOptions(BLOCK_VERSE_VIEW_MODE),
-    isReadonly: true,
-    appSurface: "read-only-panel",
-    note: "the text grid's aligned column",
-  },
-];
-
 /**
  * The view configurations every adaptor round-trip suite runs each fixture in: the named view
  * modes, plus Standard with expanded notes, less the ones this run leaves out. A round trip only
- * loads and exports, so formatted stays in by default as Preview's options
- * ({@link ViewSelection.readsOnly}). The label is the view's registry name, and doubles as the
- * `skipModes` key prefix of a corpus fixture (`<label>: <reason>`).
+ * loads and exports, so formatted's options run as `preview`, the read-only view that mounts them.
+ * The label is the view's registry name, and doubles as the `skipModes` key prefix of a corpus
+ * fixture (`<label>: <reason>`).
  */
 export const ROUND_TRIP_VIEW_CONFIGS: { label: string; viewOptions: ViewOptions | undefined }[] =
-  enabledViews(
-    [
-      "standard",
-      "formatted",
-      "unformatted",
-      "paragraph-structure",
-      "standard+expandedNotes",
-    ] as const,
-    { readsOnly: true },
-  ).map((name) => ({ label: name, viewOptions: editorView(name) }));
+  enabledViews([
+    "standard",
+    "preview",
+    "unformatted",
+    "paragraph-structure",
+    "standard+expandedNotes",
+  ] as const).map((name) => ({ label: name, viewOptions: editorView(name) }));
 
 /**
  * {@link EDITING_VIEWS} in the {@link ROUND_TRIP_VIEW_CONFIGS} shape, for the suites that mount an
@@ -462,6 +458,7 @@ export interface MountOptions {
   onScrRefChange?: (scrRef: SerializedVerseRef) => void;
   /** Receives everything the editor logs, in addition to {@link MountedEditor.logs}. */
   logger?: LoggerBasic;
+  /** Defaults to whether `view` is a {@link READ_ONLY_VIEWS} entry's options. */
   isReadonly?: boolean;
   styleInfo?: StyleInfo;
   /**
@@ -501,7 +498,7 @@ export async function mountInView(
     scrRef,
     onScrRefChange,
     logger,
-    isReadonly,
+    isReadonly = readOnlyViewOptions.has(view),
     styleInfo,
     structureProtectionMode,
     nodes,

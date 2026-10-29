@@ -564,7 +564,7 @@ describe("editable", () => {
     async ({ at, run }) => {
       const changedIn: boolean[] = [];
       for (const view of editableViews) {
-        const mounted = await mountInView(usj, view, { scrRef });
+        const mounted = await mountInView(usj, view, { scrRef, isReadonly: false });
         await settle();
         await select(mounted.lexical, at.text, at.from, at.to);
         const before = snapshot(mounted);

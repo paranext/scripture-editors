@@ -1,22 +1,28 @@
 /**
  * The registry's opt-in for library-only views: what a run with `SE_TEST_LIBRARY_VIEWS` unset
- * leaves out, and that leaving a view out never reads as a stale expectation. Each row holds in
- * both kinds of run.
+ * leaves out, that leaving a view out never reads as a stale expectation, and that the read-only
+ * views the app shows always run, read-only. Each row holds in both kinds of run.
  */
 import {
   EDITING_VIEWS,
   EDITOR_VIEWS,
+  editorView,
   enabledViews,
   isPopoverHostEnabled,
   isViewEnabled,
   knownFailureRunner,
   LIBRARY_VIEWS_ENABLED,
+  mountInView,
+  READ_ONLY_VIEWS,
   ROUND_TRIP_VIEW_CONFIGS,
 } from "./editorViews.test-helpers";
+import { Usj } from "@eten-tech-foundation/scripture-utilities";
 
-const libraryOnly = EDITOR_VIEWS.filter(({ appSurface }) => appSurface === "library-only").map(
-  ({ name }) => name,
-);
+const usj: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [{ type: "para", marker: "p", content: ["In the beginning"] }],
+};
 
 describe("the library-only views opt-in", () => {
   it("runs every view the app offers, and the library-only ones only when opted in", () => {
@@ -31,12 +37,22 @@ describe("the library-only views opt-in", () => {
     );
   });
 
-  it("keeps formatted in a suite that only reads, as Preview's options", () => {
-    expect(isViewEnabled("formatted", { readsOnly: true })).toBe(true);
-    expect(ROUND_TRIP_VIEW_CONFIGS.map(({ label }) => label)).toContain("formatted");
-    expect(enabledViews(libraryOnly, { readsOnly: true })).toEqual(
-      LIBRARY_VIEWS_ENABLED ? libraryOnly : ["formatted"],
-    );
+  it("runs the read-only views the app shows, mounting their options read-only", async () => {
+    for (const { name, view } of READ_ONLY_VIEWS) {
+      expect(isViewEnabled(name), name).toBe(true);
+      expect(editorView(name), name).toBe(view);
+      const mounted = await mountInView(usj, view);
+      expect(mounted.lexical.isEditable(), name).toBe(false);
+      mounted.unmount();
+    }
+    // Preview mounts formatted's options read-only, so a suite that only reads runs it, not
+    // formatted.
+    expect(editorView("preview")).toEqual(editorView("formatted"));
+    expect(ROUND_TRIP_VIEW_CONFIGS.map(({ label }) => label)).toContain("preview");
+    expect(ROUND_TRIP_VIEW_CONFIGS.map(({ label }) => label)).not.toContain("formatted");
+    const editable = await mountInView(usj, editorView("preview"), { isReadonly: false });
+    expect(editable.lexical.isEditable()).toBe(true);
+    editable.unmount();
   });
 
   it("runs the footnote popover over Standard view, its only host in the app", () => {
