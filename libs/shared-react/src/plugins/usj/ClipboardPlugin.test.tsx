@@ -252,6 +252,40 @@ describe("ClipboardPlugin — the host's native paste", () => {
     expect(hadFocusWhenAsked).toBe(true);
   });
 
+  it("reads the clipboard itself when the editor has no selection, leaving focus where it is", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    const { editor } = await clipboardEnvironment(requestNativePaste);
+    await act(async () => editor.update(() => $setSelection(null)));
+    const other = document.createElement("button");
+    document.body.appendChild(other);
+    await act(async () => other.focus());
+
+    await act(async () => pasteNatively(editor, requestNativePaste));
+    await settle();
+
+    expect(requestNativePaste).not.toHaveBeenCalled();
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(other);
+    other.remove();
+  });
+
+  it("reads the clipboard itself when the editor has focus but no selection", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    const { editor } = await clipboardEnvironment(requestNativePaste);
+    await act(async () => editor.getRootElement()?.focus());
+    // Focus without a caret: no DOM range for Lexical to read a selection back from.
+    await act(async () => {
+      window.getSelection()?.removeAllRanges();
+      editor.update(() => $setSelection(null));
+    });
+
+    await pressShortcut(editor, "v");
+    await settle();
+
+    expect(requestNativePaste).not.toHaveBeenCalled();
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
   it("reads the clipboard itself when the host's callback throws", async () => {
     const requestNativePaste = vi.fn((): Promise<boolean> => {
       throw new Error("host unavailable");
@@ -330,6 +364,7 @@ describe("ClipboardPlugin — the host's native paste", () => {
       },
       <Host />,
     );
+    await act(async () => editor.update(() => $getRoot().selectEnd()));
     const registerCommand = vi.spyOn(editor, "registerCommand");
 
     await act(async () => setCallback?.(second));
