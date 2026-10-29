@@ -28,6 +28,7 @@ import { $getMarkerMenuContext } from "./markerMenu/markerMenuContext.utils";
 import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
 import { $insertFirstChapter } from "./markerEdit/firstChapter.utils";
 import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
+import { HiddenViewCopyPlugin } from "./HiddenViewCopyPlugin";
 import { InlineRangeEditPlugin } from "./InlineRangeEditPlugin";
 import { InvisibleCharactersPlugin } from "./InvisibleCharactersPlugin";
 import {
@@ -2106,6 +2107,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               they were registered: the guards and the whole-paragraph cut arm have to judge the
               selection the cut will actually take. */}
           <CopyLimitPlugin limit={copyLimit} viewOptions={viewOptions} />
+          {/* After CopyLimitPlugin: both write copies at NORMAL, and at equal priority handlers
+              run in the order they were registered, so CopyLimitPlugin's over-limit writer claims
+              a shortened copy as plain text only, before this one would add the HTML and internal
+              flavors (which carry collapsed note text the limit did not count). */}
+          {viewOptions?.markerMode === "hidden" && <HiddenViewCopyPlugin copyLimit={copyLimit} />}
           {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
               normalization that keeps a point out of one is too. */}
           <DecoratorBoundarySelectionPlugin />
@@ -2146,7 +2152,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             copyLimit={copyLimit}
           />
           {/* Standard view writes its own USFM copy (MarkerEditPlugin); the read-only Markers view
-              needs one too, since its display text is not USFM. The hidden-marker views copy prose. */}
+              needs one too, since its display text is not USFM. The hidden-marker views copy prose
+              (HiddenViewCopyPlugin, above). */}
           {viewOptions?.markerMode === "visible" && (
             <MarkersViewCopyPlugin viewOptions={viewOptions} copyLimit={copyLimit} />
           )}
