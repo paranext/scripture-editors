@@ -440,13 +440,13 @@ export function knownFailureRunner(
   };
 }
 
-/** Whether `key` names, as a whole word, a registry view this run leaves out. */
+/**
+ * Whether `key` names, as a whole word, a registry view this run leaves out. A word is a run of
+ * word characters, `+` and `-`, the characters view names are made of.
+ */
 function namesViewLeftOut(key: string): boolean {
-  return EDITOR_VIEWS.some(
-    (entry) =>
-      !isViewEnabled(entry) &&
-      new RegExp(`(^|[^\\w+-])${entry.name.replace(/[+]/g, "\\+")}([^\\w+-]|$)`).test(key),
-  );
+  const words = key.split(/[^\w+-]+/);
+  return EDITOR_VIEWS.some((entry) => !isViewEnabled(entry) && words.includes(entry.name));
 }
 
 /**
