@@ -153,7 +153,13 @@ export class ImmutableTypedTextNode extends DecoratorNode<null> {
     return false;
   }
 
+  /**
+   * A gutter glyph ({@link gutterMarkerState}) exports no element, so an HTML copy leaves it out:
+   * it is a reading aid beside the text, not text. Lexical's HTML exporter consults
+   * `excludeFromCopy` only on element nodes, so a decorator leaves itself out here instead.
+   */
   override exportDOM(editor: LexicalEditor): DOMExportOutput {
+    if ($getState(this, gutterMarkerState)) return { element: null };
     const { element } = super.exportDOM(editor);
     if (element && isHTMLElement(element)) {
       element.setAttribute("data-text-type", this.getTextType());
