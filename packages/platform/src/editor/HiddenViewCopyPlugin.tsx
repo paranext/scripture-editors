@@ -63,7 +63,7 @@ export function HiddenViewCopyPlugin({
         "text/plain": plainText ?? shownText,
         "text/html": $getHtmlContent(editor, selection),
       };
-      const lexicalFlavor = $hiddenViewLexicalFlavor(editor, selection);
+      const lexicalFlavor = $hiddenViewLexicalFlavor(selection);
       if (lexicalFlavor !== undefined) data["application/x-lexical-editor"] = lexicalFlavor;
       return $writeCopyPayload(
         // COPY_COMMAND's payload is `ClipboardEvent | KeyboardEvent | null`; this duck-checks the
