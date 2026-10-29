@@ -2,6 +2,7 @@ import { $generateNodesFromSerializedNodes } from "@lexical/clipboard";
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
+  $createTextNode,
   $getState,
   $getSelection,
   $isElementNode,
@@ -17,6 +18,7 @@ import {
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   SerializedLexicalNode,
   SKIP_SCROLL_INTO_VIEW_TAG,
+  TabNode,
   TextNode,
 } from "lexical";
 import { LoggerBasic, MARKER_TEXT_TYPE, textTypeState } from "shared";
@@ -65,6 +67,28 @@ export function registerEmptyCopyGuard(editor: LexicalEditor): () => void {
     editor.registerCommand(COPY_COMMAND, $claimWhenNothingToCopy, COMMAND_PRIORITY_LOW),
     editor.registerCommand(CUT_COMMAND, $claimWhenNothingToCopy, COMMAND_PRIORITY_LOW),
   );
+}
+
+/**
+ * Turns every tab node into a space, as {@link pasteSelection} turns each pasted tab into one.
+ *
+ * Lexical inserts a tab in pasted plain text, or in html whose whitespace is preformatted (`<pre>`),
+ * as a tab node, and USJ has nothing to save one as, so `word1⇥word2` would save as `word1word2`.
+ * A transform covers every way a tab node gets in — the browser's own paste, which reaches the
+ * editor without the clipboard read that cleans it, a drop, and pasted html — wherever it lands.
+ * A caret on the tab stays where it was, on the space.
+ */
+export function registerTabsAsSpaces(editor: LexicalEditor): () => void {
+  return editor.registerNodeTransform(TabNode, (tab) => {
+    const space = $createTextNode(" ").setFormat(tab.getFormat()).setStyle(tab.getStyle());
+    const selection = $getSelection();
+    const pointsOnTab = $isRangeSelection(selection)
+      ? [selection.anchor, selection.focus].filter((point) => point.key === tab.getKey())
+      : [];
+    const offsets = pointsOnTab.map((point) => point.offset);
+    tab.replace(space);
+    pointsOnTab.forEach((point, index) => point.set(space.getKey(), offsets[index], "text"));
+  });
 }
 
 /** Whether `node` is plain prose: a plain text node with no format and no engine role. */
