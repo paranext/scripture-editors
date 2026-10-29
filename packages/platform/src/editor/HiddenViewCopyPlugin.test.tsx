@@ -18,10 +18,12 @@ import {
   COPY_COMMAND,
   CUT_COMMAND,
   LexicalEditor,
+  RangeSelection,
   TextNode,
 } from "lexical";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { $isParaNode, $isUnknownNode } from "shared";
 import { HIDDEN_VIEW_CLIPBOARD_NAMESPACE, StructureProtectionMode } from "shared-react";
 
 // Located relative to the working directory, as the other testUSFM corpus suites do: the platform
@@ -266,6 +268,92 @@ describe("HiddenViewCopyPlugin", () => {
       } finally {
         mounted.unmount();
       }
+    },
+  );
+
+  // 2 Samuel 1's optional breaks: `Here ` // ` is one with spaces around it. Here` // `is one…`.
+  const optbreakParagraph = (samuel.content[85] as MarkerObject).content ?? [];
+  const beforeOptbreak = optbreakParagraph[0] as string;
+  const afterOptbreak = optbreakParagraph[2] as string;
+
+  /** The node copy's optional breaks, for a selection from `anchor` to `focus`, each a text point
+   * (`At`) or an element point given as the optional break and an offset into its parent. */
+  async function optbreaksCopied(
+    viewName: string,
+    anchor: At | { optbreak: "on" | "before" | "after" },
+    focus: At | { optbreak: "on" | "before" | "after" },
+  ): Promise<SerializedNode[] | undefined> {
+    const mounted = await mountInView(samuel, editorView(viewName));
+    try {
+      await act(async () =>
+        mounted.lexical.update(
+          () => {
+            const optbreak = $getRoot()
+              .getChildren()
+              .flatMap((child) => ($isParaNode(child) ? child.getChildren() : []))
+              .find((node) => $isUnknownNode(node) && node.getTag() === "optbreak");
+            if (!optbreak) throw new Error("no optional break");
+            const parent = optbreak.getParentOrThrow();
+            const setPoint = (
+              point: RangeSelection["anchor"],
+              at: At | { optbreak: "on" | "before" | "after" },
+            ) => {
+              if ("text" in at) {
+                const [node, offset] = $point(at);
+                point.set(node.getKey(), offset, "text");
+              } else if (at.optbreak === "on") point.set(optbreak.getKey(), 0, "element");
+              else
+                point.set(
+                  parent.getKey(),
+                  optbreak.getIndexWithinParent() + (at.optbreak === "after" ? 1 : 0),
+                  "element",
+                );
+            };
+            const selection = $createRangeSelection();
+            setPoint(selection.anchor, anchor);
+            setPoint(selection.focus, focus);
+            $setSelection(selection);
+          },
+          { discrete: true },
+        ),
+      );
+      const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+      if (!store.has(LEXICAL_FLAVOR)) return undefined;
+      return nodeCopy(store).nodes.filter((node) => node.tag === "optbreak");
+    } finally {
+      mounted.unmount();
+    }
+  }
+
+  // An optional break is invisible here, so a selection can only touch it at its edges. Lexical
+  // normalizes a point beside it into the break itself or into the text next to it. A selection with
+  // an end in the break writes no node copy at all (`$rangeReachesIntoOpaqueBlock`), and one that
+  // only touches it leaves it out, so a paste never brings back a break the selection did not cover.
+  describe.each(enabledViews(["formatted", "paragraph-structure"] as const))(
+    "%s copy at an optional break's edge",
+    (viewName) => {
+      const before = { text: beforeOptbreak, offset: 4 };
+      const after = { text: afterOptbreak, offset: 4 };
+
+      it.each([
+        ["from text to text", before, after],
+        ["starting right before it", { optbreak: "before" }, after],
+      ] as const)("keeps an optional break the selection crosses, %s", async (_, from, to) => {
+        expect(await optbreaksCopied(viewName, from, to)).toHaveLength(1);
+      });
+
+      it.each([
+        ["ends on it", before, { optbreak: "on" }],
+        ["ends right before it", before, { optbreak: "before" }],
+        ["ends right after it", before, { optbreak: "after" }],
+        ["starts on it", { optbreak: "on" }, after],
+      ] as const)("writes no node copy for a selection that %s", async (_, from, to) => {
+        expect(await optbreaksCopied(viewName, from, to)).toBeUndefined();
+      });
+
+      it("leaves out an optional break the selection starts right after", async () => {
+        expect(await optbreaksCopied(viewName, { optbreak: "after" }, after)).toEqual([]);
+      });
     },
   );
 
