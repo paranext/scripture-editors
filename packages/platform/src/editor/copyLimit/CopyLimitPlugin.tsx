@@ -185,12 +185,13 @@ export function CopyLimitPlugin({
       return false;
     };
 
-    // Writes an over-limit copy or cut that no handler ahead of it claimed (Standard view's runs at
-    // HIGH; the hidden-marker views' `HiddenViewCopyPlugin` runs at NORMAL but is registered after
-    // this one, so this claims first) as the plain text the view shows. Lexical's own copy would
-    // also write HTML and its internal flavor, which carry text the view does not show, such as a
-    // collapsed footnote. A cut removes the range only when the plain text carries all of it: never
-    // verse or chapter markers, notes or other structure it leaves out.
+    // Writes an over-limit copy or cut that no handler ahead of it claimed (Standard view's writer
+    // and `MarkersViewCopyPlugin` run at HIGH; the hidden-marker views' `HiddenViewCopyPlugin` runs
+    // at NORMAL but is registered after this one, so this claims first) as the plain text the view
+    // shows. Lexical's own copy would also write HTML and its internal flavor, which carry text the
+    // view does not show, such as a collapsed footnote. A cut removes the range only when the plain
+    // text carries all of it: never verse or chapter markers, notes or other structure it leaves
+    // out.
     const $writePlainCopy = (event: ClipboardEvent | KeyboardEvent | null, isCut: boolean) => {
       if (limitRef.current === undefined || !isOverLimitRef.current) return false;
       isOverLimitRef.current = false;
