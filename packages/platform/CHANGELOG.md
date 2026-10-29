@@ -271,6 +271,10 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- Ctrl+V and Ctrl+Shift+V no longer paste into a read-only editor (`isReadonly`, e.g. a preview or a
+  resource text). `ClipboardPlugin` listens for its shortcuts on the editor root itself, outside
+  Lexical's read-only gate, so the clipboard was inserted and reported through `onUsjChange`. A
+  read-only editor still copies on Ctrl+C; Ctrl+X no longer dispatches a cut there.
 - In Standard view, a no-break space in an attribute value (a char span's `|lemma`, a milestone's
   `who`, a figure's `src`, a note's `\cat`, a verse's `\va`/`\vp`, a chapter's `\ca`/`\cp`) shows
   as the body text spells one (`~`, or a blank where `ViewOptions.allowInvisibleCharacters` is on)
