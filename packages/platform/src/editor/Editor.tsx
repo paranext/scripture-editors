@@ -511,9 +511,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // option genuinely changes.
   //
   // `nodeOptions` and `contextMenuOptions`, destructured just below, don't need this treatment:
-  // `nodeOptions` is only a dependency of `LoadStatePlugin`'s separate adaptor-*initialize* effect,
-  // not its reload effect, and `contextMenuOptions` isn't passed to `LoadStatePlugin` at all - so
-  // of the three, only `viewOptions`'s identity can trigger the spurious reload this fix addresses.
+  // `nodeOptions` is a dependency of `LoadStatePlugin`'s separate adaptor-*initialize* effect, not
+  // its reload effect, and `contextMenuOptions` isn't passed to `LoadStatePlugin` at all - so of
+  // the three, only `viewOptions`'s identity can trigger the spurious reload this fix addresses.
+  // `nodeOptions` is memoized on `nodes` alone, though, because its `noteCallerOnClick` (built
+  // below) is also a dependency of `NoteNodePlugin`'s registration effect: a new identity
+  // re-registers that plugin's handlers and re-runs its caller transform over every note. A host
+  // should therefore memoize `nodes` (`EditorOptions.nodes`).
   const requestedViewOptions = view ?? defaultViewOptions;
   // Paragraph-level features that cannot work once a verse owns the block:
   // - a visible or editable `markerMode`, and gutter markers, both put a marker prefix in the

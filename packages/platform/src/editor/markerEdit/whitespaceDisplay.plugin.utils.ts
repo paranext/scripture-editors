@@ -709,8 +709,11 @@ function $insertPastedTextIntoAttributeContext(
  * a fixed sanctioned MIME allow-list (`text/plain`, `text/html`, and a short list of others) —
  * the private `application/x-lexical-editor` flavor Lexical writes on copy is not one of them, so
  * the `DataTransfer` `pasteSelection` (`clipboard.utils.ts`) rebuilds from `navigator.clipboard.
- * read()` can never contain it. A real Ctrl+V — even a same-editor paste of the editor's own
- * copy — therefore always rides `text/html`/`text/plain` like any external source. A BLANKET
+ * read()` can never contain it. Standard view's Ctrl+V and context-menu Paste read the clipboard
+ * that way (the host's native paste, `EditorOptions.requestNativePaste`, is only for the
+ * hidden-marker views), so they — even a same-editor paste of the editor's own copy — ride
+ * `text/html`/`text/plain` like any external source. Only a paste the browser runs itself, such
+ * as a host menu's own Paste, can carry the node copy. A BLANKET
  * NBSP→`~` mapping would corrupt a same-editor paste of its own copy: every display-NBSP (the
  * separator after `\f`/`\fr`/`\ft`) would become a literal `~`, turning recognized markers into
  * unknown-marker soup, and a browser-hop `\nd …\nd*` paste would come back with an unmatched

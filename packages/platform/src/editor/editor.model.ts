@@ -115,6 +115,11 @@ export interface EditorRef {
   copy(): void;
   /**
    * Paste text at the current cursor position.
+   *
+   * With {@link EditorOptions.requestNativePaste} set, in a hidden-marker view (`view.markerMode`
+   * is `"hidden"`), it puts focus back on the editor's root and completes asynchronously through
+   * the host's native paste, waiting up to 500 ms for focus to come back first; otherwise, and
+   * when the host does not paste, it reads the clipboard asynchronously.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
    */
@@ -1137,7 +1142,10 @@ export interface EditorOptions {
   textDirection?: TextDirection;
   /** Key to trigger the marker menu. Defaults to '\'. */
   markerMenuTrigger?: string;
-  /** Options for some editor nodes. */
+  /**
+   * Options for some editor nodes. Memoize it: a new object, even an equal one, re-registers the
+   * note handling and re-runs its caller update over every note.
+   */
   nodes?: UsjNodeOptions;
   /** Additional items to append to the editor context menu. */
   contextMenu?: ContextMenuOptionConfig[];

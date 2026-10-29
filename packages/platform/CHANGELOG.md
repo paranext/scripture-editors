@@ -304,8 +304,9 @@ refused. The public surface grew substantially; nothing was removed.
   with the namespace `"platformEditor/hidden-markers"`**, and only those views read it back. A
   copy from Standard view pasted into one of them, or one of theirs pasted into Standard view,
   goes in by its html or plain text instead of rebuilding the other view's node shapes. The node
-  copy holds no gutter marker glyph, and is not written for a selection that ends inside a figure
-  or touches a book or chapter line.
+  copy holds no gutter marker glyph, and is not written for a selection with either end inside a
+  construct the view hides (a figure, an optional break, any other unknown construct, or a table)
+  or one that touches a book or chapter line.
 
 ### Fixed
 
