@@ -429,6 +429,12 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
         $createImmutableVerseNode("2"),
         $createTextNode("beta"),
       ],
+      expected: [
+        { type: "verse", marker: "v", number: "1" },
+        `alpha${ZWSP}`,
+        { type: "verse", marker: "v", number: "2" },
+        "beta",
+      ],
     },
     {
       name: "inside an annotation",
@@ -437,6 +443,14 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
         $createTextNode("alpha"),
         $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] }).append($createTextNode(ZWSP)),
         $createTextNode("beta"),
+      ],
+      expected: [
+        { type: "verse", marker: "v", number: "1" },
+        "alpha",
+        { type: "ms", marker: "zmsc-s", sid: "c1" },
+        ZWSP,
+        { type: "ms", marker: "zmsc-e", eid: "c1" },
+        "beta",
       ],
     },
     {
@@ -447,6 +461,16 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
         $createTextNode(ZWSP),
         $createNoteNode("f", "+").append($createCharNode("ft").append($createTextNode("body"))),
       ],
+      expected: [
+        { type: "verse", marker: "v", number: "1" },
+        `alpha${ZWSP}`,
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ type: "char", marker: "ft", content: ["body"] }],
+        },
+      ],
     },
     {
       name: "as a char span's only content",
@@ -454,6 +478,11 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
         $createImmutableVerseNode("1"),
         $createTextNode("alpha "),
         $createCharNode("w").append($createTextNode(ZWSP)),
+      ],
+      expected: [
+        { type: "verse", marker: "v", number: "1" },
+        "alpha ",
+        { type: "char", marker: "w", content: [ZWSP] },
       ],
     },
     {
@@ -463,8 +492,9 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
         $createTextNode("alpha").setFormat("bold"),
         $createTextNode(ZWSP + ZWSP),
       ],
+      expected: [{ type: "verse", marker: "v", number: "1" }, `alpha${ZWSP}${ZWSP}`],
     },
-  ])("keeps an authored zero-width-space-only run $name", ({ $build }) => {
+  ])("keeps an authored zero-width-space-only run $name", ({ $build, expected }) => {
     editor.update(
       () => {
         $getRoot().clear();
@@ -475,7 +505,7 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
 
     const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState());
 
-    expect(JSON.stringify(usj)).toContain(ZWSP);
+    expect(usj?.content).toEqual([{ type: "para", marker: "p", content: expected }]);
   });
 
   it("keeps an annotated lone NBSP whose char span's other content is an authored zero-width space", () => {

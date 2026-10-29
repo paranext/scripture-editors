@@ -12,7 +12,7 @@ import { $dfs } from "@lexical/utils";
 import { $isTypedMarkNode, ZWSP } from "shared";
 import { FORMATTED_VIEW_MODE, STANDARD_VIEW_MODE } from "shared-react";
 
-const verseText = `alpha${ZWSP} `;
+const verseText = `alpha${ZWSP}beta `;
 const usj = twoParaUsj([
   { type: "verse", marker: "v", number: "1" },
   verseText,

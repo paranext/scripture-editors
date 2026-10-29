@@ -250,9 +250,10 @@ const cases: AgreementCase[] = [
     expected: [{ kind: "text", text: "firstsecond" }],
   },
   {
-    // ZWSP is authored text in Thai, Khmer and Lao (a line-break opportunity); an annotation
-    // boundary is the everyday way one ends up alone in its own node. Without the caret-host mark
-    // it is content on both sides, byte-identical to a host or not.
+    // ZWSP is authored text in Thai, Khmer and Lao (a line-break opportunity). Any split leaves
+    // one alone in its own node: here a verse boundary, and most often in practice an annotation
+    // boundary. Without the caret-host mark it is content on both sides, byte-identical to a host
+    // or not.
     name: "an unmarked ZWSP-only text node is a content item",
     $build: () => {
       $getRoot().append(

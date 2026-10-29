@@ -98,10 +98,10 @@ function $deleteFromEmptyVerseHost(
  * with no visible caret. This plugin drops a zero-width-space "caret host" text node into such an
  * empty verse and moves the caret into it, so the insertion point stays visible and typing lands in
  * the verse. {@link useTransientCaretHost} owns the host's lifetime — created on arrival, removed on
- * departure or blur, stripped the moment real text is typed — and the exclusions that keep it out of
- * saved Scripture and out of collaborative traffic; this file supplies only the rule for WHERE one
- * is needed, and the delete a host must not swallow. `TrailingNoteCaretGuardPlugin` supplies the
- * other rule.
+ * departure or blur, stripped the moment real text is typed. What keeps a host out of saved
+ * Scripture and out of collaborative traffic is its mark, read through shared's
+ * `transientCaretHost.utils.ts`. This file supplies only the rule for WHERE one is needed, and the
+ * delete a host must not swallow. `TrailingNoteCaretGuardPlugin` supplies the other rule.
  *
  * The host is the verse marker's immediate next sibling, which `usj-nodes.css` relies on to draw the
  * caret right after the number (the `[data-caret-host]` rules).
