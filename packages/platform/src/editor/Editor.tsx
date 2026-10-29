@@ -193,7 +193,7 @@ import {
   ParaMarkerPrefixCursorGuardPlugin,
   ParaMarkerSelectionPlugin,
   ParaNodePlugin,
-  pasteSelection,
+  pasteNatively,
   pasteSelectionAsPlainText,
   readLatest,
   releaseTagsAfterNextCommit,
@@ -479,6 +479,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     structureProtectionMode = "off",
     onHiddenContentDelete,
     onUnstorableTextRemoved,
+    requestNativePaste,
     hasExternalUI = false,
     hasSpellCheck = false,
     textDirection = "ltr",
@@ -1123,7 +1124,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     paste() {
       assertEditable("paste");
-      if (editorRef.current) pasteSelection(editorRef.current);
+      if (editorRef.current) pasteNatively(editorRef.current, requestNativePaste);
     },
     pastePlainText() {
       assertEditable("paste as plain text");
@@ -2099,7 +2100,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <AnnotationPlugin ref={annotationRef} logger={stableLogger} viewOptions={viewOptions} />
           <ArrowNavigationPlugin viewOptions={viewOptions} />
           <CharNodePlugin />
-          <ClipboardPlugin />
+          {/* Both keep the callback in a ref, so a fresh one each render moves no registration. */}
+          <ClipboardPlugin requestNativePaste={requestNativePaste} />
           {/* Editable marker modes require literal backslash input (the marker-edit engine and
               the `\` marker menu consume it), so neither plugin here acts in Standard view. The
               hidden-marker views take a paste or drop with `\` or `//` in it, leaving those out,
@@ -2113,7 +2115,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             />
           )}
           {viewOptions?.markerMode === "visible" && <CommandMenuPlugin logger={stableLogger} />}
-          <ContextMenuPlugin options={contextMenuOptions} />
+          <ContextMenuPlugin options={contextMenuOptions} requestNativePaste={requestNativePaste} />
           {/* Must mount before every plugin with a CRITICAL cut handler (MarkerEditPlugin,
               OpaqueBlockGuardPlugin, StructureKeyboardPlugin). Its CRITICAL fit shortens the
               selection of a limited copy or cut, and at equal priority handlers run in the order

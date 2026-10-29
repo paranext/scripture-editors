@@ -29,7 +29,7 @@ import {
   LexicalEditor,
   TextNode,
 } from "lexical";
-import { ReactElement, useEffect } from "react";
+import { ReactElement, useEffect, useState } from "react";
 import { $createParaNode, TypedMarkNode } from "shared";
 import { usjReactNodes } from "../../nodes/usj";
 
@@ -816,15 +816,21 @@ describe("ContextMenuPlugin — Paste through the host's native paste", () => {
     });
   });
 
-  it("asks the host from the keyboard too, where focus never left the editor", async () => {
-    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+  it("asks the host from the keyboard too, outside the update the menu runs its item in", async () => {
+    let updatingWhenAsked: boolean | undefined;
+    const requestNativePaste = vi.fn(() => {
+      updatingWhenAsked = editor._updating;
+      return Promise.resolve(true);
+    });
     const { editor, text } = await contextMenuEnvironment(true, requestNativePaste);
     await act(async () => editor.update(() => text.select(3, 3)));
+    editor.getRootElement()?.focus();
 
     await chooseContextMenuOption(editor, PASTE_OPTION);
     await settle();
 
     expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(updatingWhenAsked).toBe(false);
     expect(clipboardRead()).not.toHaveBeenCalled();
   });
 
@@ -850,6 +856,32 @@ describe("ContextMenuPlugin — Paste through the host's native paste", () => {
 
     expect(requestNativePaste).not.toHaveBeenCalled();
     expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks through the latest callback the host handed over", async () => {
+    const first = vi.fn(() => Promise.resolve(true));
+    const second = vi.fn(() => Promise.resolve(true));
+    let setCallback: ((callback: () => Promise<boolean>) => void) | undefined;
+    function Host() {
+      const [callback, setState] = useState<() => Promise<boolean>>(() => first);
+      useEffect(() => {
+        setCallback = (next) => setState(() => next);
+      }, []);
+      return <ContextMenuPlugin requestNativePaste={callback} />;
+    }
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append($createParaNode("p").append($createTextNode("In the beginning")));
+      },
+      <Host />,
+    );
+
+    await act(async () => setCallback?.(second));
+    await clickContextMenuOption(editor, "Paste");
+    await settle();
+
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(first).not.toHaveBeenCalled();
   });
 
   it("reads the clipboard itself when the host offers no native paste", async () => {
