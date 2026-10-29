@@ -1635,7 +1635,7 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
-    it("does not ask about a paste the command menu refuses, or one of files alone", async () => {
+    it("does not ask about a paste of nothing but unstorable text, or one of files alone", async () => {
       const handler = answering("delete");
       const { editor } = await guardedEnvironment($init, handler);
       updateSelection(editor, before!, 3, after!, 2);
@@ -1643,12 +1643,26 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       Object.defineProperty(filesOnly.clipboardData, "types", { value: ["Files"] });
 
       await act(async () => {
-        editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "and/or"));
+        editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "\\//"));
         editor.dispatchCommand(PASTE_COMMAND, filesOnly);
       });
       await settle();
 
       expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("asks about a paste that keeps some of its text once unstorable text is removed", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "and/or \\v 1"));
+      });
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
     });
 
     it("drops a selection edit when a verse marker was added inside the selection while asking", async () => {

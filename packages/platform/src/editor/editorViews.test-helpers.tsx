@@ -493,6 +493,8 @@ export interface MountOptions {
   nodes?: EditorOptions["nodes"];
   /** `EditorOptions.copyLimit`: the most text one copy or cut may take. */
   copyLimit?: number;
+  /** `EditorOptions.onUnstorableTextRemoved`: told when a paste, drop or keystroke lost `\` or `//`. */
+  onUnstorableTextRemoved?: EditorOptions["onUnstorableTextRemoved"];
 }
 
 /** A mounted test editor: its public ref, the raw Lexical editor, and the teardown a row needs
@@ -528,6 +530,7 @@ export async function mountInView(
     structureProtectionMode,
     nodes,
     copyLimit,
+    onUnstorableTextRemoved,
   }: MountOptions = {},
 ): Promise<MountedEditor> {
   const ref = createRef<EditorRef>();
@@ -561,6 +564,7 @@ export async function mountInView(
         structureProtectionMode,
         nodes,
         copyLimit,
+        onUnstorableTextRemoved,
       }}
       onUsjChange={onUsjChange}
       onSelectionChange={onSelectionChange}
