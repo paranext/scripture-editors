@@ -302,3 +302,24 @@ function createNoteClickCapture() {
 
   return { captureGetNoteOps, captureGetNoteIndex, mockOnClick };
 }
+
+describe("updateFromJSON - onClick", () => {
+  it("keeps the caller's own click handler when the serialized one is no function", async () => {
+    const onClick: NoteCallerOnClick = () => undefined;
+    const { editor } = await baseTestEnvironment();
+    let kept: unknown;
+    editor.update(
+      () => {
+        const caller = $createImmutableNoteCallerNode("a", "", onClick).updateFromJSON({
+          caller: "b",
+          previewText: "",
+          // What a node copy written by another program can hold, as JSON carries no function.
+          onClick: "not a function" as unknown as NoteCallerOnClick,
+        });
+        kept = caller.getOnClick();
+      },
+      { discrete: true },
+    );
+    expect(kept).toBe(onClick);
+  });
+});
