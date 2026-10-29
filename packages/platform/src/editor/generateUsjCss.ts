@@ -133,12 +133,15 @@ const DEFAULT_CONTAINER_SELECTOR = ".editor-input.usfm";
  */
 const SAFE_SELECTOR_REGEX = /^[\w.#[\]="':()>+~*,\s-]+$/;
 
-/** The container selector to emit: the caller's, or the default when the caller's is unsafe. */
-function safeContainerSelector(containerSelector: string): string {
+/**
+ * The container selector to emit: the caller's, or the default when the caller's is unsafe.
+ * `generator` names the exported function in the warning.
+ */
+function safeContainerSelector(containerSelector: string, generator: string): string {
   if (SAFE_SELECTOR_REGEX.test(containerSelector)) return containerSelector;
   // eslint-disable-next-line no-console -- no logger seam in this pure function; loud-fail per project convention.
   console.warn(
-    `[generateUsjCss] Ignoring unsafe containerSelector "${containerSelector}"; using "${DEFAULT_CONTAINER_SELECTOR}".`,
+    `[${generator}] Ignoring unsafe containerSelector "${containerSelector}"; using "${DEFAULT_CONTAINER_SELECTOR}".`,
   );
   return DEFAULT_CONTAINER_SELECTOR;
 }
@@ -263,7 +266,8 @@ function chapterNestedRunRules(styleInfo: StyleInfo, scope: string): string[] {
 
 /**
  * The base rule for the project default font and size, or `undefined` when the sheet sets neither.
- * Shared by {@link generateUsjCss} and {@link generateUsjFontCss} so the two cannot drift.
+ * This and {@link markerRule} are shared by {@link generateUsjCss} and {@link generateUsjFontCss} so
+ * the two cannot drift.
  */
 function baseRule(styleInfo: StyleInfo, zoom: number, scope: string): string | undefined {
   const baseDecls: string[] = [];
@@ -273,6 +277,11 @@ function baseRule(styleInfo: StyleInfo, zoom: number, scope: string): string | u
   if (hasValue(styleInfo.defaultFontSize) && styleInfo.defaultFontSize > 0)
     baseDecls.push(`font-size: ${formatLength(styleInfo.defaultFontSize * zoom)}pt`);
   return baseDecls.length > 0 ? `${scope} { ${baseDecls.join("; ")}; }` : undefined;
+}
+
+/** The rule for one marker's declarations, the marker name escaped as a class name. */
+function markerRule(scope: string, marker: string, decls: string[]): string {
+  return `${scope} .usfm_${escapeCssIdentifier(marker)} { ${decls.join("; ")}; }`;
 }
 
 /**
@@ -290,14 +299,13 @@ function baseRule(styleInfo: StyleInfo, zoom: number, scope: string): string | u
  */
 export function generateUsjCss(styleInfo: StyleInfo, options: UsjCssOptions = {}): string {
   const { zoom = 1, rtl = false, containerSelector = DEFAULT_CONTAINER_SELECTOR } = options;
-  const scope = safeContainerSelector(containerSelector);
+  const scope = safeContainerSelector(containerSelector, "generateUsjCss");
   const rules: string[] = [];
   const base = baseRule(styleInfo, zoom, scope);
   if (base) rules.push(base);
   for (const [marker, entry] of Object.entries(styleInfo.markers)) {
     const decls = markerDeclarations(marker, entry, zoom, rtl, styleInfo.defaultFont);
-    if (decls.length > 0)
-      rules.push(`${scope} .usfm_${escapeCssIdentifier(marker)} { ${decls.join("; ")}; }`);
+    if (decls.length > 0) rules.push(markerRule(scope, marker, decls));
   }
   rules.push(...chapterNestedRunRules(styleInfo, scope));
   return rules.join("\n");
@@ -309,7 +317,8 @@ export function generateUsjCss(styleInfo: StyleInfo, options: UsjCssOptions = {}
  * marker's font, then the project default font, then the Scripture fallback chain). Weight, colour,
  * size, margins, alignment and every other marker declaration are left out, as are the
  * chapter-nested `\ca`/`\cp` rules, so a view that keeps its own marker layout can take the
- * project's fonts without the project's layout.
+ * project's fonts without the project's layout. There is no `rtl` option: none of these
+ * declarations depend on text direction.
  *
  * @public
  */
@@ -318,14 +327,15 @@ export function generateUsjFontCss(
   options: Pick<UsjCssOptions, "zoom" | "containerSelector"> = {},
 ): string {
   const { zoom = 1, containerSelector = DEFAULT_CONTAINER_SELECTOR } = options;
-  const scope = safeContainerSelector(containerSelector);
+  const scope = safeContainerSelector(containerSelector, "generateUsjFontCss");
   const rules: string[] = [];
   const base = baseRule(styleInfo, zoom, scope);
   if (base) rules.push(base);
   for (const [marker, entry] of Object.entries(styleInfo.markers)) {
-    if (!entry.fontName) continue;
-    const declaration = fontFamilyDeclaration(entry.fontName, styleInfo.defaultFont);
-    rules.push(`${scope} .usfm_${escapeCssIdentifier(marker)} { ${declaration}; }`);
+    if (entry.fontName)
+      rules.push(
+        markerRule(scope, marker, [fontFamilyDeclaration(entry.fontName, styleInfo.defaultFont)]),
+      );
   }
   return rules.join("\n");
 }
