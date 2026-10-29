@@ -1,4 +1,3 @@
-import { hasCommandCharacter } from "./CommandMenuPlugin";
 import {
   HiddenContentDeleteAction,
   HiddenContentDeleteDecision,
@@ -20,6 +19,7 @@ import { $confineRangeToProtectedNote } from "./NoteShellCaretGuardPlugin";
 import { $selectionReachesIntoOpaqueBlock, isEditingKey } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
+import { removeUnstorableText } from "./unstorableText.utils";
 import {
   $moveCaretPastGutterGlyph,
   $narrowSelectionPastGutterGlyph,
@@ -529,9 +529,7 @@ export function HiddenContentDeleteGuardPlugin({
     const $onPaste = (event: PasteCommandType): boolean => {
       const selection = $judgedSelection();
       if (!selection || selection.isCollapsed()) return false;
-      const isProtected = structureProtectionModeRef.current === "protected";
-      if ($isProtectedFromReplacement(selection) || pasteInsertsNothing(event, isProtected))
-        return false;
+      if ($isProtectedFromReplacement(selection) || pasteInsertsNothing(event)) return false;
       const hidden = $hiddenNodesInSelection(selection);
       if (hidden.length === 0) return false;
       // The clipboard is only readable while the paste event is being dispatched, so what it holds
@@ -650,17 +648,18 @@ function preventAndClaim(event: Event | null): true {
 
 /**
  * Whether a paste would insert nothing, leaving nothing to ask about: a clipboard of files alone, or
- * text holding a `\` or `/`, which `CommandMenuPlugin` refuses after this plugin has run. That
- * plugin is mounted in every view this one guards; protected structure's sanitizer inserts an html
- * flavor ahead of its refusal.
+ * plain text alone that is nothing but text the view cannot store (`\` and `//`), which
+ * `UnstorableTextPlugin` removes, inserting nothing, after this plugin has run. A node copy or html
+ * goes in as nodes, so it is asked about.
  */
-function pasteInsertsNothing(event: PasteCommandType, isProtected: boolean): boolean {
+function pasteInsertsNothing(event: PasteCommandType): boolean {
   if (typeof ClipboardEvent === "undefined" || !(event instanceof ClipboardEvent)) return false;
   const data = event.clipboardData;
   if (!data) return false;
   if (Array.from(data.types).every((type) => type === "Files")) return true;
-  if (isProtected && data.getData("text/html")) return false;
-  return hasCommandCharacter(data.getData("text/plain"));
+  if (data.getData("text/html") || data.getData("application/x-lexical-editor")) return false;
+  const text = data.getData("text/plain");
+  return text !== "" && removeUnstorableText(text).text === "";
 }
 
 /**
