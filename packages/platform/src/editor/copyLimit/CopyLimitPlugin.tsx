@@ -9,6 +9,7 @@ import {
   SelectionLimitOptions,
   sliceToCopyLimit,
 } from "./copyLimit.utils";
+import { $isLeftOutOfHiddenViewCopy } from "../hiddenViewCopy.utils";
 import { $selectionToUsfmViaStandardView } from "../MarkersViewCopyPlugin";
 import {
   $selectionToUsfmText,
@@ -29,6 +30,7 @@ import {
   getDOMTextNode,
   isExactShortcutMatch,
   LexicalEditor,
+  LexicalNode,
   PointType,
   RangeSelection,
   SELECT_ALL_COMMAND,
@@ -197,7 +199,9 @@ export function CopyLimitPlugin({
       return $writeClipboardData(
         event && typeof event === "object" && "clipboardData" in event ? event : null,
         editor,
-        { "text/plain": $selectionShownText(selection, $isInCollapsedNote) },
+        {
+          "text/plain": $selectionShownText(selection, hiddenTextPredicate(viewOptionsRef.current)),
+        },
         shouldRemove ? () => selection.removeText() : undefined,
       );
     };
@@ -271,8 +275,18 @@ function $copyFit(
   return {
     $size: (selection) =>
       selection.getTextContent().length + $notePreviewLength(selection.getNodes()),
-    options: { $isHidden: $isInCollapsedNote },
+    options: { $isHidden: hiddenTextPredicate(viewOptions) },
   };
+}
+
+/**
+ * Picks the nodes whose text a shortened copy in the view `viewOptions` describes leaves out: a
+ * collapsed note's text in every view, and in a hidden-marker view also what that view's own copy
+ * leaves out ({@link $isLeftOutOfHiddenViewCopy}).
+ */
+function hiddenTextPredicate(viewOptions: ViewOptions | undefined): (node: LexicalNode) => boolean {
+  if (viewOptions?.markerMode !== "hidden") return $isInCollapsedNote;
+  return (node) => $isLeftOutOfHiddenViewCopy(node) || $isInCollapsedNote(node);
 }
 
 /**
