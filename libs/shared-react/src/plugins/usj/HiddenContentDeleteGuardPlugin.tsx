@@ -15,6 +15,7 @@ import {
   DeleteDirection,
   HiddenRun,
 } from "./hiddenContentDelete.utils";
+import { hasCommandCharacter } from "./CommandMenuPlugin";
 import { $confineRangeToProtectedNote } from "./NoteShellCaretGuardPlugin";
 import { $selectionReachesIntoOpaqueBlock, isEditingKey } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
@@ -144,6 +145,10 @@ interface DeleteExtent {
  * @param structureProtectionMode - The editor's structure protection, so this plugin can step
  *   aside where `"protected"` refuses an edit outright.
  * @param copyLimit - The editor's `copyLimit`.
+ * @param refusesCommandCharacters - Whether `CommandMenuPlugin` refuses, after this plugin, any
+ *   paste whose plain text holds a `\` or `/` (the Markers view). Otherwise `UnstorableTextPlugin`
+ *   removes only `\` and `//` from what is pasted. Either way a paste it leaves with nothing to
+ *   insert is not asked about.
  * @param onHiddenContentDelete - Asks the user; see {@link HiddenContentDeleteHandler}. Without it
  *   this plugin does nothing and editing is native.
  * @param logger - Where handler failures, dropped answers, and long-open questions are reported.
@@ -152,12 +157,14 @@ export function HiddenContentDeleteGuardPlugin({
   isEnabled,
   structureProtectionMode = "off",
   copyLimit,
+  refusesCommandCharacters = false,
   onHiddenContentDelete,
   logger,
 }: {
   isEnabled: boolean;
   structureProtectionMode?: StructureProtectionMode;
   copyLimit?: number;
+  refusesCommandCharacters?: boolean;
   onHiddenContentDelete?: HiddenContentDeleteHandler;
   logger?: LoggerBasic;
 }): null {
@@ -168,13 +175,15 @@ export function HiddenContentDeleteGuardPlugin({
   // Refs for the same reason: handlers registered once keep their place among their peers.
   const structureProtectionModeRef = useRef(structureProtectionMode);
   const copyLimitRef = useRef(copyLimit);
+  const refusesCommandCharactersRef = useRef(refusesCommandCharacters);
   const loggerRef = useRef(logger);
   useEffect(() => {
     handlerRef.current = onHiddenContentDelete;
     structureProtectionModeRef.current = structureProtectionMode;
     copyLimitRef.current = copyLimit;
+    refusesCommandCharactersRef.current = refusesCommandCharacters;
     loggerRef.current = logger;
-  }, [onHiddenContentDelete, structureProtectionMode, copyLimit, logger]);
+  }, [onHiddenContentDelete, structureProtectionMode, copyLimit, refusesCommandCharacters, logger]);
 
   const hasHandler = !!onHiddenContentDelete;
 
@@ -529,7 +538,10 @@ export function HiddenContentDeleteGuardPlugin({
     const $onPaste = (event: PasteCommandType): boolean => {
       const selection = $judgedSelection();
       if (!selection || selection.isCollapsed()) return false;
-      if ($isProtectedFromReplacement(selection) || pasteInsertsNothing(event)) return false;
+      const insertsNothing = refusesCommandCharactersRef.current
+        ? pasteIsRefusedForCommandCharacter(event, structureProtectionModeRef.current)
+        : pasteInsertsNothing(event);
+      if ($isProtectedFromReplacement(selection) || insertsNothing) return false;
       const hidden = $hiddenNodesInSelection(selection);
       if (hidden.length === 0) return false;
       // The clipboard is only readable while the paste event is being dispatched, so what it holds
@@ -660,6 +672,24 @@ function pasteInsertsNothing(event: PasteCommandType): boolean {
   if (data.getData("text/html") || data.getData("application/x-lexical-editor")) return false;
   const text = data.getData("text/plain");
   return text !== "" && removeUnstorableText(text).text === "";
+}
+
+/**
+ * Whether a paste would insert nothing where `CommandMenuPlugin` refuses any paste whose plain text
+ * holds a `\` or `/` after this plugin has run: a clipboard of files alone, or such text. Under
+ * `"protected"` structure, `StructureKeyboardPlugin`'s sanitizer inserts an html flavor ahead of
+ * that refusal, so it is asked about.
+ */
+function pasteIsRefusedForCommandCharacter(
+  event: PasteCommandType,
+  structureProtectionMode: StructureProtectionMode,
+): boolean {
+  if (typeof ClipboardEvent === "undefined" || !(event instanceof ClipboardEvent)) return false;
+  const data = event.clipboardData;
+  if (!data) return false;
+  if (Array.from(data.types).every((type) => type === "Files")) return true;
+  if (structureProtectionMode === "protected" && data.getData("text/html")) return false;
+  return hasCommandCharacter(data.getData("text/plain"));
 }
 
 /**
