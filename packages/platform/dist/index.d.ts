@@ -2240,7 +2240,8 @@ export declare type TypedMarkOnRemove = (
 export declare type TypedMarkRemovalCause = "removed" | "destroyed";
 
 /**
- * Options controlling {@link generateUsjCss}'s output.
+ * Options controlling {@link generateUsjCss}'s output. {@link generateUsjFontCss} takes `zoom` and
+ * `containerSelector` from these.
  *
  * @public
  */
