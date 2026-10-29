@@ -262,6 +262,20 @@ function chapterNestedRunRules(styleInfo: StyleInfo, scope: string): string[] {
 }
 
 /**
+ * The base rule for the project default font and size, or `undefined` when the sheet sets neither.
+ * Shared by {@link generateUsjCss} and {@link generateUsjFontCss} so the two cannot drift.
+ */
+function baseRule(styleInfo: StyleInfo, zoom: number, scope: string): string | undefined {
+  const baseDecls: string[] = [];
+  if (styleInfo.defaultFont) baseDecls.push(fontFamilyDeclaration(styleInfo.defaultFont));
+  // Like the per-marker fontSize: a 0 default would blank the whole editor, so only positive
+  // sizes emit.
+  if (hasValue(styleInfo.defaultFontSize) && styleInfo.defaultFontSize > 0)
+    baseDecls.push(`font-size: ${formatLength(styleInfo.defaultFontSize * zoom)}pt`);
+  return baseDecls.length > 0 ? `${scope} { ${baseDecls.join("; ")}; }` : undefined;
+}
+
+/**
  * Generate CSS for a project's USJ Scripture editor from its stylesheet
  * (usfm.sty + custom.sty), mirroring PT9 CSSCreator.CreateUsfmCss. Emits a
  * base rule for the project default font/size followed by one
@@ -278,18 +292,40 @@ export function generateUsjCss(styleInfo: StyleInfo, options: UsjCssOptions = {}
   const { zoom = 1, rtl = false, containerSelector = DEFAULT_CONTAINER_SELECTOR } = options;
   const scope = safeContainerSelector(containerSelector);
   const rules: string[] = [];
-  const baseDecls: string[] = [];
-  if (styleInfo.defaultFont) baseDecls.push(fontFamilyDeclaration(styleInfo.defaultFont));
-  // Like the per-marker fontSize: a 0 default would blank the whole editor, so only positive
-  // sizes emit.
-  if (hasValue(styleInfo.defaultFontSize) && styleInfo.defaultFontSize > 0)
-    baseDecls.push(`font-size: ${formatLength(styleInfo.defaultFontSize * zoom)}pt`);
-  if (baseDecls.length > 0) rules.push(`${scope} { ${baseDecls.join("; ")}; }`);
+  const base = baseRule(styleInfo, zoom, scope);
+  if (base) rules.push(base);
   for (const [marker, entry] of Object.entries(styleInfo.markers)) {
     const decls = markerDeclarations(marker, entry, zoom, rtl, styleInfo.defaultFont);
     if (decls.length > 0)
       rules.push(`${scope} .usfm_${escapeCssIdentifier(marker)} { ${decls.join("; ")}; }`);
   }
   rules.push(...chapterNestedRunRules(styleInfo, scope));
+  return rules.join("\n");
+}
+
+/**
+ * Generate only the font part of {@link generateUsjCss}'s output: the base rule for the project
+ * default font family and size, and a `font-family` rule for each marker that names a font (the
+ * marker's font, then the project default font, then the Scripture fallback chain). Weight, colour,
+ * size, margins, alignment and every other marker declaration are left out, as are the
+ * chapter-nested `\ca`/`\cp` rules, so a view that keeps its own marker layout can take the
+ * project's fonts without the project's layout.
+ *
+ * @public
+ */
+export function generateUsjFontCss(
+  styleInfo: StyleInfo,
+  options: Pick<UsjCssOptions, "zoom" | "containerSelector"> = {},
+): string {
+  const { zoom = 1, containerSelector = DEFAULT_CONTAINER_SELECTOR } = options;
+  const scope = safeContainerSelector(containerSelector);
+  const rules: string[] = [];
+  const base = baseRule(styleInfo, zoom, scope);
+  if (base) rules.push(base);
+  for (const [marker, entry] of Object.entries(styleInfo.markers)) {
+    if (!entry.fontName) continue;
+    const declaration = fontFamilyDeclaration(entry.fontName, styleInfo.defaultFont);
+    rules.push(`${scope} .usfm_${escapeCssIdentifier(marker)} { ${declaration}; }`);
+  }
   return rules.join("\n");
 }

@@ -16,6 +16,8 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Added
 
+- `generateUsjFontCss` — the font part of `generateUsjCss`'s output only (the base font family and
+  size, and each marker's font family), for a view that keeps its own marker layout.
 - `STANDARD_VIEW_MODE`, plus `"standard"` in `getDefaultViewMode()` and `viewModeToViewNames`.
 - `EditorRef` methods: `isFocused`, `commitPendingMarkerEdits`, `setTransientInput`,
   `getMarkerMenuContext`, `applyMarkerMenuSelection`, `splitParagraphWithMarker`,
