@@ -114,11 +114,15 @@ export class ImmutableNoteCallerNode extends DecoratorNode<ReactNode> {
   override updateFromJSON(
     serializedNode: LexicalUpdateJSON<SerializedImmutableNoteCallerNode>,
   ): this {
-    return super
+    const self = super
       .updateFromJSON(serializedNode)
       .setCaller(serializedNode.caller)
-      .setPreviewText(serializedNode.previewText)
-      .setOnClick(serializedNode.onClick);
+      .setPreviewText(serializedNode.previewText);
+    // Serialized through JSON, as a pasted node copy is, `onClick` is no function but whatever the
+    // copy's writer put there, so the caller keeps the handler it has.
+    return typeof serializedNode.onClick === "function"
+      ? self.setOnClick(serializedNode.onClick)
+      : self;
   }
 
   setCaller(caller: string): this {
