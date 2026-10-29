@@ -875,6 +875,7 @@ describe("ContextMenuPlugin — Paste through the host's native paste", () => {
       },
       <Host />,
     );
+    await act(async () => editor.update(() => $getRoot().selectEnd()));
 
     await act(async () => setCallback?.(second));
     await clickContextMenuOption(editor, "Paste");

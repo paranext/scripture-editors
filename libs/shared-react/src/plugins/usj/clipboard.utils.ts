@@ -206,7 +206,9 @@ function holdsFocus(rootElement: HTMLElement): boolean {
  * If the host declines (resolves `false`), its request fails, or the callback throws, the paste
  * falls back to {@link pasteSelection}: a failed request means the host did not paste, and losing
  * the paste is worse than pasting without the editor's own format. With no `requestNativePaste`,
- * this is {@link pasteSelection}.
+ * this is {@link pasteSelection}. So it is with no Lexical selection: the host is not asked and
+ * focus is left where it is, since a native paste would land wherever focusing the root puts the
+ * browser's caret.
  *
  * Callers apply the read-only gate; this pastes regardless of whether the editor is editable.
  *
@@ -262,20 +264,31 @@ export const pasteNatively = (
 
   if (holdsFocus(rootElement)) {
     // Still deferred, so the callback never runs inside the update or event handler this was
-    // called from.
-    queueMicrotask(() => askOnceFocused(rootElement, requestNativePaste));
+    // called from; the selection is read there, once any update this was called from is in.
+    queueMicrotask(() => {
+      if (editor.read(() => $getSelection()) === null) fallBack();
+      else askOnceFocused(rootElement, requestNativePaste);
+    });
     return;
   }
-  rootElement.focus({ preventScroll: true });
-  // A dirty selection is written back to the DOM on commit, which keeps the caret where Lexical has
-  // it whatever focusing the root did to the DOM selection.
+  let hasSelection = false;
   editor.update(
     () => {
-      $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
       const selection = $getSelection();
-      if (selection && !selection.dirty) $setSelection(selection.clone());
+      if (!selection) return;
+      hasSelection = true;
+      rootElement.focus({ preventScroll: true });
+      // A dirty selection is written back to the DOM on commit, which keeps the caret where
+      // Lexical has it whatever focusing the root did to the DOM selection.
+      $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
+      if (!selection.dirty) $setSelection(selection.clone());
     },
-    { onUpdate: () => queueMicrotask(() => askOnceFocused(rootElement, requestNativePaste)) },
+    {
+      onUpdate: () =>
+        queueMicrotask(() =>
+          hasSelection ? askOnceFocused(rootElement, requestNativePaste) : fallBack(),
+        ),
+    },
   );
 };
 
