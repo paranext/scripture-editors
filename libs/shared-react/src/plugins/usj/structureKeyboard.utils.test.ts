@@ -510,7 +510,27 @@ describe("$structuralDeleteTarget", () => {
     });
   });
 
-  it("forward: returns the empty para itself, not the next one", async () => {
+  it("deleteBackward at the start of a para after an empty para → the EMPTY para", async () => {
+    let empty: ParaNode;
+    let t2: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      empty = $createParaNode("s");
+      t2 = $createTextNode("second");
+      $getRoot().append(
+        $createParaNode("p").append($createTextNode("first")),
+        empty,
+        $createParaNode("q1").append(t2),
+      );
+    });
+    updateSelection(editor, t2!, 0);
+    editor.getEditorState().read(() => {
+      expect($structuralDeleteTarget($getSelection()!, "deleteBackward")?.node.getKey()).toBe(
+        empty!.getKey(),
+      );
+    });
+  });
+
+  it("deleteForward in an empty para with a next para → the empty para itself", async () => {
     let empty: ParaNode;
     const { editor } = await baseTestEnvironment(() => {
       empty = $createParaNode("s");

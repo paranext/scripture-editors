@@ -8,6 +8,7 @@ import { StructureProtectionMode } from "./structure-protection.model";
 import {
   $canDeletePara,
   $deletePara,
+  $getEmptyParaBefore,
   $getGutterParaWithCaretAtStart,
   $placeCaretAfterParaChild,
 } from "./structureKeyboard.utils";
@@ -104,7 +105,7 @@ const TARGETED_INPUT_TYPES = new Set([
  *   with nothing else before it, and refused under
  *   `"protected"`, as `StructureKeyboardPlugin` refuses the same merge from a caret. Under
  *   `"guarded"`, it is `StructureKeyboardPlugin`'s two-step delete, as from a caret: the first
- *   press arms the merge and keeps the marker selected, the second merges.
+ *   press arms the delete and keeps the marker selected, the second performs it.
  * - Pointer and clipboard: a click elsewhere, or a cut, copy or paste after the browser's selection
  *   moved elsewhere, uses that selection; otherwise paste lands at the content start and cut, copy
  *   and drag-start are refused (the glyph is not content). A drop lands at its drop point, and is
@@ -164,8 +165,8 @@ export function ParaMarkerSelectionPlugin({
       if (structureProtectionModeRef.current !== "protected") $deletePara(para);
     };
 
-    // Under "guarded", a merge that would happen is left to `StructureKeyboardPlugin`'s two-step
-    // delete, which arms it on the first press and performs it on the second.
+    // Under "guarded", a merge or removal that would happen is left to `StructureKeyboardPlugin`'s
+    // two-step delete, which arms it on the first press and performs it on the second.
     const $deferToTwoStepDelete = (para: SomeParaNode) =>
       structureProtectionModeRef.current === "guarded" && $canDeletePara(para);
 
@@ -291,7 +292,10 @@ export function ParaMarkerSelectionPlugin({
       if (!isBackward || structureProtectionModeRef.current !== "off") return false;
       const para = $getGutterParaWithCaretAtStart($getSelection());
       if (!para) return false;
-      $deletePara(para);
+      // An empty paragraph before goes itself, rather than taking this one's text under its marker.
+      const emptyBefore = $getEmptyParaBefore(para);
+      if (emptyBefore) $deletePara(emptyBefore, "deleteForward");
+      else $deletePara(para);
       return true;
     };
 

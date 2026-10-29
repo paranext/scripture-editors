@@ -1028,32 +1028,32 @@ describe("StructureKeyboardPlugin — per-edit undo/redo for a run of verse dele
   });
 });
 
+/** Each top-level block's marker (`c` for a chapter) and text. */
+function blocksOf(editor: LexicalEditor) {
+  return editor.getEditorState().read(() =>
+    $getRoot()
+      .getChildren()
+      .map((block) => ({
+        marker: $isParaNode(block) ? block.getMarker() : "c",
+        text: block.getTextContent(),
+      })),
+  );
+}
+
+/** Asserts the caret is collapsed somewhere in `para`. */
+function expectCaretIn(editor: LexicalEditor, para: ParaNode) {
+  editor.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+    expect(selection.isCollapsed()).toBe(true);
+    expect(selection.focus.getNode().getTopLevelElementOrThrow().getKey()).toBe(para.getKey());
+  });
+}
+
 // A paragraph right after a chapter has nothing before it to merge into. An empty one loses
 // nothing by going, so it is removed instead, when a paragraph after it in the chapter can take the
 // caret.
 describe("StructureKeyboardPlugin — an empty paragraph after a chapter", () => {
-  /** Each top-level block's marker (`c` for the chapter) and text. */
-  function blocksOf(editor: LexicalEditor) {
-    return editor.getEditorState().read(() =>
-      $getRoot()
-        .getChildren()
-        .map((block) => ({
-          marker: $isParaNode(block) ? block.getMarker() : "c",
-          text: block.getTextContent(),
-        })),
-    );
-  }
-
-  /** Asserts the caret is collapsed somewhere in `para`. */
-  function expectCaretIn(editor: LexicalEditor, para: ParaNode) {
-    editor.getEditorState().read(() => {
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
-      expect(selection.isCollapsed()).toBe(true);
-      expect(selection.anchor.getNode().getTopLevelElementOrThrow().getKey()).toBe(para.getKey());
-    });
-  }
-
   it.each([
     ["with its marker shown", true],
     ["with no marker shown", false],
@@ -1153,6 +1153,69 @@ describe("StructureKeyboardPlugin — an empty paragraph after a chapter", () =>
 
     expect(JSON.stringify(editor.getEditorState().toJSON())).toBe(before);
   });
+
+  it("two in a row go one at a time, the caret moving down to the next each time", async () => {
+    let first: ParaNode;
+    let second: ParaNode;
+    let next: ParaNode;
+    const { editor } = await guardedEnvironment(() => {
+      first = $createParaNode("s");
+      second = $createParaNode("s2");
+      next = $createParaNode("p");
+      $getRoot().append(
+        $createChapterNode("1"),
+        first.append($createGutterMarkerNode("\\s ")),
+        second.append($createGutterMarkerNode("\\s2 ")),
+        next.append($createTextNode("first")),
+      );
+    });
+    updateSelection(editor, first!, 1);
+
+    await pressKey(editor, "Backspace", 0);
+    await pressKey(editor, "Backspace");
+
+    expect(blocksOf(editor).map(({ marker }) => marker)).toEqual(["c", "s2", "p"]);
+    expectCaretIn(editor, second!);
+
+    await pressKey(editor, "Backspace", 0);
+    await pressKey(editor, "Backspace");
+
+    expect(blocksOf(editor).map(({ marker }) => marker)).toEqual(["c", "p"]);
+    expectCaretIn(editor, next!);
+  });
+
+  it("Undo restores the removed paragraph in one step", async () => {
+    let empty: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        empty = $createParaNode("s");
+        $getRoot().append(
+          $createChapterNode("1"),
+          empty.append($createGutterMarkerNode("\\s ")),
+          $createParaNode("p").append($createTextNode("first")),
+        );
+      },
+      <>
+        <StructureKeyboardPlugin structureProtectionMode="guarded" />
+        <HistoryPlugin externalHistoryState={createEmptyHistoryState()} />
+      </>,
+    );
+    updateSelection(editor, empty!, 1);
+    const before = blocksOf(editor);
+
+    await pressKey(editor, "Backspace", 0);
+    await pressKey(editor, "Backspace", 0);
+    expect(blocksOf(editor)).toEqual([
+      { marker: "c", text: "" },
+      { marker: "p", text: "first" },
+    ]);
+
+    await act(async () => {
+      editor.dispatchCommand(UNDO_COMMAND, undefined);
+    });
+
+    expect(blocksOf(editor)).toEqual(before);
+  });
 });
 
 // Delete in an empty paragraph removes that paragraph, as Backspace does: merging the next
@@ -1160,12 +1223,14 @@ describe("StructureKeyboardPlugin — an empty paragraph after a chapter", () =>
 describe("StructureKeyboardPlugin — Delete in an empty paragraph", () => {
   it("Delete twice removes the empty paragraph and keeps the next paragraph's marker", async () => {
     let empty: ParaNode;
+    let next: ParaNode;
     const { editor } = await guardedEnvironment(() => {
       empty = $createParaNode("s");
+      next = $createParaNode("q1");
       $getRoot().append(
         $createParaNode("p").append($createTextNode("first")),
         empty.append($createGutterMarkerNode("\\s ")),
-        $createParaNode("q1").append($createTextNode("second")),
+        next.append($createTextNode("second")),
       );
     });
     updateSelection(editor, empty!, 1);
@@ -1174,14 +1239,99 @@ describe("StructureKeyboardPlugin — Delete in an empty paragraph", () => {
     expect(editor.getRootElement()?.getAttribute("data-verse-delete-kind")).toBe("removeEmptyPara");
     await pressKey(editor, "Delete", 0);
 
+    expect(blocksOf(editor)).toEqual([
+      { marker: "p", text: "first" },
+      { marker: "q1", text: "second" },
+    ]);
+    expectCaretIn(editor, next!);
+  });
+
+  it("Delete twice at the end of the paragraph before it removes it and leaves the caret there", async () => {
+    let first: TextNode;
+    const { editor } = await guardedEnvironment(() => {
+      first = $createTextNode("first");
+      $getRoot().append(
+        $createParaNode("p").append(first),
+        $createParaNode("s").append($createGutterMarkerNode("\\s ")),
+        $createParaNode("q1").append($createTextNode("second")),
+      );
+    });
+    updateSelection(editor, first!, 5);
+
+    await pressKey(editor, "Delete", 0);
+    expect(editor.getRootElement()?.getAttribute("data-verse-delete-kind")).toBe("removeEmptyPara");
+    await pressKey(editor, "Delete");
+
+    expect(blocksOf(editor)).toEqual([
+      { marker: "p", text: "first" },
+      { marker: "q1", text: "second" },
+    ]);
     editor.getEditorState().read(() => {
-      const paras = $getRoot().getChildren().filter($isParaNode);
-      expect(paras.map((para) => [para.getMarker(), para.getTextContent()])).toEqual([
-        ["p", "first"],
-        ["q1", "second"],
-      ]);
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.isCollapsed()).toBe(true);
+      expect(selection.focus.key).toBe(first!.getKey());
+      expect(selection.focus.offset).toBe(5);
     });
   });
+
+  it("Delete in one right before a chapter does not remove it", async () => {
+    let empty: ParaNode;
+    const { editor } = await guardedEnvironment(() => {
+      empty = $createParaNode("s");
+      $getRoot().append(
+        $createParaNode("p").append($createTextNode("first")),
+        empty.append($createGutterMarkerNode("\\s ")),
+        $createChapterNode("2"),
+        $createParaNode("p").append($createTextNode("second")),
+      );
+    });
+    updateSelection(editor, empty!, 1);
+
+    await pressKey(editor, "Delete", 0);
+    await pressKey(editor, "Delete", 0);
+
+    expect(blocksOf(editor).map(({ marker }) => marker)).toEqual(["p", "s", "c", "p"]);
+  });
+});
+
+// Backspace from the start of a paragraph after an empty one removes the empty one, as Delete in it
+// does: merging this paragraph into it would give this paragraph's text the empty one's marker.
+describe("StructureKeyboardPlugin — Backspace after an empty paragraph", () => {
+  it.each([
+    ["with its marker shown", true],
+    ["with no marker shown", false],
+  ])(
+    "Backspace twice removes the empty paragraph (%s) and keeps this paragraph's marker",
+    async (_label, hasGutterMarker) => {
+      let empty: ParaNode;
+      let second: ParaNode;
+      let secondText: TextNode;
+      const { editor } = await guardedEnvironment(() => {
+        empty = $createParaNode("s");
+        second = $createParaNode("q1");
+        secondText = $createTextNode("second");
+        $getRoot().append(
+          $createParaNode("p").append($createTextNode("first")),
+          hasGutterMarker ? empty.append($createGutterMarkerNode("\\s ")) : empty,
+          second.append(secondText),
+        );
+      });
+      updateSelection(editor, secondText!, 0);
+
+      await pressKey(editor, "Backspace", 0);
+      expect(editor.getRootElement()?.getAttribute("data-verse-delete-kind")).toBe(
+        "removeEmptyPara",
+      );
+      await pressKey(editor, "Backspace");
+
+      expect(blocksOf(editor)).toEqual([
+        { marker: "p", text: "first" },
+        { marker: "q1", text: "second" },
+      ]);
+      expectCaretIn(editor, second!);
+    },
+  );
 });
 
 // The plugin renders no UI; it publishes the armed state to the editor root so the host app can
