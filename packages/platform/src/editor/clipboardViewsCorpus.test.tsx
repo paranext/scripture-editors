@@ -35,7 +35,7 @@
  *   ({@link filterFragment});
  * - Standard view sits out ranges with an end inside a char span ({@link viewsFor}).
  *
- * Every row mounts its own editor. The whole suite runs in about two minutes.
+ * Every row mounts its own editor. The whole suite runs in about a minute.
  */
 import {
   EditorViewName,
@@ -670,13 +670,22 @@ const isWithoutLexicalFlavor = (operation: Operation) =>
 /**
  * Plain text pasted where a copy would be: text that looks like USFM, and text holding a `/` — a
  * lone one, which every view keeps, and a `//`, which a hidden-marker view cannot store as text.
+ * Each with what a hidden-marker view inserts for it and the notice's `removed` (none: no notice).
  */
-const PLAIN_TEXTS = ["\\v 9 x", "\\nd y\\nd*", "and/or", "1/2", "https://example.org"] as const;
+const PLAIN_TEXTS = [
+  { text: "\\v 9 x", hiddenInserts: "v 9 x", removed: ["\\"] },
+  { text: "\\nd y\\nd*", hiddenInserts: "nd ynd*", removed: ["\\"] },
+  { text: "and/or", hiddenInserts: "and/or", removed: [] },
+  { text: "1/2", hiddenInserts: "1/2", removed: [] },
+  { text: "https://example.org", hiddenInserts: "https:example.org", removed: ["//"] },
+] as const;
+
+type PlainText = (typeof PLAIN_TEXTS)[number];
 
 /**
  * The structure protections a view runs under. Simple mode, the app's paragraph-structure view,
  * offers all three and defaults to `protected` (`computeEffectiveStructureProtection`); the other
- * views run as Power mode and the library mount them, `off`.
+ * views run as Power mode and the library mounts them, `off`.
  */
 function protectionsFor(viewName: string): StructureProtectionMode[] {
   return viewName === "paragraph-structure" ? ["off", "guarded", "protected"] : ["off"];
@@ -722,7 +731,9 @@ interface PlainRow {
   viewName: string;
   view: ViewOptions;
   protection: StructureProtectionMode;
-  text: (typeof PLAIN_TEXTS)[number];
+  text: PlainText["text"];
+  /** What a hidden-marker view inserts, and what its one notice names as removed. */
+  hidden: Pick<PlainText, "hiddenInserts" | "removed">;
 }
 
 function rowsFor(fixture: string, usj: Usj): { ranges: RangeRow[]; plainTexts: PlainRow[] } {
@@ -745,13 +756,14 @@ function rowsFor(fixture: string, usj: Usj): { ranges: RangeRow[]; plainTexts: P
   const plainTexts: PlainRow[] = [];
   for (const { name: viewName, view } of viewsFor(undefined))
     for (const protection of protectionsFor(viewName))
-      for (const text of PLAIN_TEXTS)
+      for (const { text, ...hidden } of PLAIN_TEXTS)
         plainTexts.push({
           key: `${fixture} | ${viewName} | ${protection} | paste plain ${text}`,
           viewName,
           view,
           protection,
           text,
+          hidden,
         });
   return { ranges, plainTexts };
 }
@@ -813,7 +825,7 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | PlainRow): stri
       ((pasteRoute(row) === "html" && holdsHtmlLossyContent(copied)) ||
         (pasteRoute(row) === "lexical" && holdsChildlessUnknownConstruct(copied)))
     )
-      return "PT-4921: text/html carries no char attributes (`closed`) or figures, and brings a note's display spacers back as text; a caption-less figure (a childless unknown construct) is left out of the editor's own clipboard format";
+      return "PT-4921: text/html carries no char attributes (`closed`) or figures, and brings a note's display spacers back as text; a childless unknown construct (a caption-less figure, an optbreak) is left out of the editor's own clipboard format";
   }
   // TODO(PT-4388): read a bare `\` as a nameless marker once ParatextData 9.6 is in; the
   // tokenizer change waits on that upgrade.
@@ -1251,22 +1263,23 @@ async function runPlainRow(row: PlainRow, usj: Usj): Promise<void> {
     await select(mounted.lexical, usj, destination);
     await paste(mounted.lexical, new Map([["text/plain", row.text]]));
     if (isMarkerHidden(row.view)) {
-      const context = contextAt(original, destination);
-      const { inserted, notices } = pastedIn(
-        row.view,
-        plainFragment(original, destination, row.text, row.protection),
-        context,
-      );
+      // The literal expectations hold only away from a `/` already in the document, which a
+      // pasted `/` beside it would make `//`.
+      const { before, after } = contextAt(original, destination);
+      expect([before, after], "no `/` beside the paste").not.toContain("/");
+      const { hiddenInserts, removed } = row.hidden;
       const expected = plain(
-        insertFragment(original, destination, inserted, { spaceBeforeVerse: true }),
+        insertFragment(
+          original,
+          destination,
+          plainFragment(original, destination, hiddenInserts, row.protection),
+          { spaceBeforeVerse: true },
+        ),
       );
       expect(contentOf(mounted), "after the paste").toEqual(expected);
-      expect(onRemoved, "notices").toHaveBeenCalledTimes(notices);
-      if (notices > 0)
-        expect(onRemoved).toHaveBeenCalledWith({
-          source: "paste",
-          removed: removeUnstorableText(row.text, context.before, context.after).removed,
-        });
+      expect(onRemoved, "notices").toHaveBeenCalledTimes(removed.length > 0 ? 1 : 0);
+      if (removed.length > 0)
+        expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: [...removed] });
       await undo(mounted);
       expect(contentOf(mounted), "after undoing the paste").toEqual(original);
       await redo(mounted);
