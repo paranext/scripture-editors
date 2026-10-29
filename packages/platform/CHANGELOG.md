@@ -109,8 +109,10 @@ refused. The public surface grew substantially; nothing was removed.
   and optional empty verses after the book's front matter, the same place the `\` menu's `\c` puts
   it. The verses are left out when the chapter content already holds anything (text, a verse, a
   note, a milestone or a figure), which they would otherwise go above. A no-break space counts as
-  whitespace in every view. Returns `false`, changing nothing, outside chapter 1 or once the
-  document has a chapter.
+  whitespace in every view. An empty paragraph of verse text, such as `\p` or `\q1`, takes the
+  verses inside it (`\c 1 \p \v 1 …`); an empty section heading, `\b` or `\d` keeps them above it.
+  A book that is all front matter, as a new book is, gets them in a new `\p`.
+  Returns `false`, changing nothing, outside chapter 1 or once the document has a chapter.
 - `MarkerMenuContext.canInsertChapter` — set in chapter 1 of a document with no chapter yet, where
   `getMarkerMenuItems` offers `\c`.
 
