@@ -2102,9 +2102,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <ClipboardPlugin />
           {/* Editable marker modes require literal backslash input (the marker-edit engine and
               the `\` marker menu consume it), so neither plugin here acts in Standard view. The
-              hidden-marker views take a paste or drop with `\` or `//` in it, leaving those out
-              (UnstorableTextPlugin); the Markers view still refuses typed or pasted `\` and `/`
-              outright (CommandMenuPlugin). */}
+              hidden-marker views take a paste or drop with `\` or `//` in it, leaving those out,
+              and refuse a typed `\` or `//` (UnstorableTextPlugin); the Markers view still
+              refuses typed or pasted `\` and `/` outright (CommandMenuPlugin). */}
           {viewOptions?.markerMode === "hidden" && (
             <UnstorableTextPlugin
               structureProtectionMode={structureProtectionMode}

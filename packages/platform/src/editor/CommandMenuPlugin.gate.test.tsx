@@ -30,7 +30,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // `\` marker menu both consume it - so the gate leaves CommandMenuPlugin UNMOUNTED there. The
 // Markers view (markerMode "visible") keeps CommandMenuPlugin mounted to swallow a literal `\`/`/`.
 // The hidden-marker views (Formatted) mount `UnstorableTextPlugin` in its place, which takes a
-// paste with `\` or `//` in it, leaving those out.
+// paste with `\` or `//` in it, leaving those out, and refuses a typed `\` or `//`.
 //
 // These tests assert the gate's real, user-facing effect rather than merely which plugin mounts:
 // they render the actual Editor (no mock) and dispatch a real `\`/`/` keydown through Lexical's
