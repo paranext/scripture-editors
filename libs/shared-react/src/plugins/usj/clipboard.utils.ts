@@ -1,10 +1,12 @@
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
+  $addUpdateTag,
   $getState,
   $getSelection,
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   COMMAND_PRIORITY_LOW,
   COPY_COMMAND,
   CUT_COMMAND,
@@ -12,6 +14,7 @@ import {
   LexicalNode,
   PASTE_COMMAND,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+  SKIP_SCROLL_INTO_VIEW_TAG,
   TextNode,
 } from "lexical";
 import { MARKER_TEXT_TYPE, textTypeState } from "shared";
@@ -142,6 +145,54 @@ export const pasteSelection = (editor: LexicalEditor) => {
     });
     editor.dispatchCommand(PASTE_COMMAND, event);
   });
+};
+
+/**
+ * Pastes at the selection, through the host's native paste when the host offers one.
+ *
+ * A native paste is the browser's own: it fires a trusted `paste` event carrying every clipboard
+ * format, including `@lexical/clipboard`'s `application/x-lexical-editor`, which
+ * `navigator.clipboard.read()` cannot see. The host runs it into whatever has focus, so focus is
+ * put back on the editor's root first — a click on a menu item takes it away — and the Lexical
+ * selection is re-asserted in the DOM so the paste lands where the caret was.
+ *
+ * If the host declines (resolves `false`) or its request fails, the paste falls back to
+ * {@link pasteSelection}: a failed request means the host did not paste, and losing the paste is
+ * worse than pasting without the editor's own format. With no `requestNativePaste`, this is
+ * {@link pasteSelection}.
+ *
+ * Callers apply the read-only gate; this pastes regardless of whether the editor is editable.
+ *
+ * @param editor - The editor to paste into.
+ * @param requestNativePaste - Asks the host to run its native paste into the focused frame;
+ *   resolves `true` when it did.
+ */
+export const pasteNatively = (
+  editor: LexicalEditor,
+  requestNativePaste?: () => Promise<boolean>,
+) => {
+  if (!requestNativePaste) {
+    pasteSelection(editor);
+    return;
+  }
+  const rootElement = editor.getRootElement();
+  if (rootElement && !rootElement.contains(rootElement.ownerDocument.activeElement)) {
+    // A dirty selection is written back to the DOM on the next commit, which keeps the caret where
+    // Lexical has it whatever focusing the root does to the DOM selection. The focus itself is set
+    // synchronously, so it is in place before the host is asked.
+    editor.update(() => {
+      $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
+      const selection = $getSelection();
+      if (selection && !selection.dirty) $setSelection(selection.clone());
+    });
+    rootElement.focus({ preventScroll: true });
+  }
+  requestNativePaste().then(
+    (pasted) => {
+      if (!pasted) pasteSelection(editor);
+    },
+    () => pasteSelection(editor),
+  );
 };
 
 export const pasteSelectionAsPlainText = (editor: LexicalEditor) => {

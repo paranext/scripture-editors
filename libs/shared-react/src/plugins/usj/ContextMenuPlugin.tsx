@@ -5,7 +5,7 @@
 import {
   copySelection,
   cutSelection,
-  pasteSelection,
+  pasteNatively,
   pasteSelectionAsPlainText,
   registerEmptyCopyGuard,
 } from "./clipboard.utils";
@@ -141,10 +141,20 @@ export class ContextMenuOption {
   }
 }
 
+/**
+ * The editor's context menu: Cut, Copy, Paste, Paste as Plain Text, then any extra `options`.
+ *
+ * @param options - Extra items, after the built-in ones.
+ * @param requestNativePaste - When set, Paste asks the host to run its native paste, which carries
+ *   every clipboard format; resolving `false` falls back to reading the clipboard. See
+ *   {@link pasteNatively}.
+ */
 export function ContextMenuPlugin({
   options: extraOptions,
+  requestNativePaste,
 }: {
   options?: ContextMenuOptionConfig[];
+  requestNativePaste?: () => Promise<boolean>;
 } = {}): ReactElement | null {
   const [editor] = useLexicalComposerContext();
   const [isReadonly, setIsReadonly] = useState(() => !editor.isEditable());
@@ -175,7 +185,7 @@ export function ContextMenuPlugin({
       }),
       new ContextMenuOption(`Paste`, {
         onSelect: () => {
-          pasteSelection(editor);
+          pasteNatively(editor, requestNativePaste);
         },
         isDisabled: isReadonly,
       }),
@@ -191,7 +201,7 @@ export function ContextMenuPlugin({
         new ContextMenuOption(opt.title, { onSelect: opt.onSelect, isDisabled: opt.isDisabled }),
     );
     return [...builtIn, ...extra];
-  }, [editor, isReadonly, extraOptions]);
+  }, [editor, isReadonly, extraOptions, requestNativePaste]);
 
   const menuRef = useRef<HTMLDivElement>(null);
   // What had focus when the menu opened, so the keydown guard below can tell "focus never moved"

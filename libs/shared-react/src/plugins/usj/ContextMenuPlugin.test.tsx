@@ -9,7 +9,7 @@
  */
 import { ClipboardPlugin } from "./ClipboardPlugin";
 import { ContextMenuPlugin } from "./ContextMenuPlugin";
-import { baseTestEnvironment, pressKeyThroughDom } from "./react-test.utils";
+import { baseTestEnvironment, pressKeyThroughDom, settle } from "./react-test.utils";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -19,6 +19,8 @@ import { act, render } from "@testing-library/react";
 import {
   $createTextNode,
   $getRoot,
+  $getSelection,
+  $isRangeSelection,
   COMMAND_PRIORITY_LOW,
   COMMAND_PRIORITY_NORMAL,
   COPY_COMMAND,
@@ -621,6 +623,7 @@ afterEach(async () => {
 
 async function contextMenuEnvironment(
   withClipboardPlugin = true,
+  requestNativePaste?: () => Promise<boolean>,
 ): Promise<{ editor: LexicalEditor; text: TextNode }> {
   let text: TextNode | undefined;
   const { editor } = await baseTestEnvironment(
@@ -629,8 +632,8 @@ async function contextMenuEnvironment(
       $getRoot().append($createParaNode("p").append(text));
     },
     <>
-      {withClipboardPlugin && <ClipboardPlugin />}
-      <ContextMenuPlugin />
+      {withClipboardPlugin && <ClipboardPlugin requestNativePaste={requestNativePaste} />}
+      <ContextMenuPlugin requestNativePaste={requestNativePaste} />
     </>,
   );
   if (!text) throw new Error("expected the initial text node to exist");
@@ -661,6 +664,33 @@ async function chooseContextMenuOption(editor: LexicalEditor, index: number): Pr
 
 const COPY_OPTION = 1;
 const CUT_OPTION = 0;
+const PASTE_OPTION = 2;
+const PASTE_AS_PLAIN_TEXT_OPTION = 3;
+
+/**
+ * Opens the context menu and clicks the option titled `title` the way a mouse user does: the
+ * mousedown on the item takes focus off the editor first. jsdom does not run the browser's
+ * mousedown-focuses-target default, so it is done here, as it is for the disabled-item test above.
+ */
+async function clickContextMenuOption(editor: LexicalEditor, title: string): Promise<void> {
+  const target = editor.getRootElement()?.firstElementChild;
+  if (!target) throw new Error("expected the editor to have rendered content to right-click");
+  await act(async () => {
+    target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+  });
+  const item = Array.from(document.querySelectorAll<HTMLLIElement>(".typeahead-popover li")).find(
+    (li) => li.querySelector(".text")?.textContent === title,
+  );
+  if (!item) throw new Error(`expected a "${title}" menu item`);
+  await act(async () => {
+    item.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    item.focus();
+  });
+  expect(document.activeElement).toBe(item);
+  await act(async () => {
+    item.click();
+  });
+}
 
 describe("ContextMenuPlugin — Cut/Copy go through the empty-copy guard", () => {
   it("Copy with a collapsed caret leaves the clipboard untouched", async () => {
@@ -741,5 +771,94 @@ describe("ContextMenuPlugin — Escape", () => {
     });
 
     expect(escape.defaultPrevented).toBe(false);
+  });
+});
+
+describe("ContextMenuPlugin — Paste through the host's native paste", () => {
+  beforeEach(() => {
+    // jsdom has no async clipboard API. A read that never settles is enough: these tests assert
+    // only whether a paste reached it.
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { read: vi.fn(() => new Promise(() => undefined)) },
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function clipboardRead() {
+    return vi.mocked(navigator.clipboard.read);
+  }
+
+  it("puts focus back in the editor before asking the host, since a native paste lands where focus is", async () => {
+    let focusedWhenAsked: Element | null = null;
+    const requestNativePaste = vi.fn(() => {
+      focusedWhenAsked = document.activeElement;
+      return Promise.resolve(true);
+    });
+    const { editor, text } = await contextMenuEnvironment(true, requestNativePaste);
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    await clickContextMenuOption(editor, "Paste");
+    await settle();
+
+    expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(focusedWhenAsked).toBe(editor.getRootElement());
+    expect(clipboardRead()).not.toHaveBeenCalled();
+    // Focusing the root does not move the caret the paste is meant for.
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect([selection.anchor.key, selection.anchor.offset]).toEqual([text.getKey(), 3]);
+      expect(selection.isCollapsed()).toBe(true);
+    });
+  });
+
+  it("asks the host from the keyboard too, where focus never left the editor", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    const { editor, text } = await contextMenuEnvironment(true, requestNativePaste);
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    await chooseContextMenuOption(editor, PASTE_OPTION);
+    await settle();
+
+    expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(clipboardRead()).not.toHaveBeenCalled();
+  });
+
+  it("reads the clipboard itself when the host declines the paste", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(false));
+    const { editor, text } = await contextMenuEnvironment(true, requestNativePaste);
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    await clickContextMenuOption(editor, "Paste");
+    await settle();
+
+    expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
+  it("pastes as plain text without asking the host", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    const { editor, text } = await contextMenuEnvironment(true, requestNativePaste);
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    await chooseContextMenuOption(editor, PASTE_AS_PLAIN_TEXT_OPTION);
+    await settle();
+
+    expect(requestNativePaste).not.toHaveBeenCalled();
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the clipboard itself when the host offers no native paste", async () => {
+    const { editor, text } = await contextMenuEnvironment();
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    await clickContextMenuOption(editor, "Paste");
+    await settle();
+
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
   });
 });

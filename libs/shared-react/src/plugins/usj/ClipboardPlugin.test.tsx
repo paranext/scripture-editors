@@ -1,6 +1,6 @@
 import { ClipboardPlugin } from "./ClipboardPlugin";
 import { copySelection } from "./clipboard.utils";
-import { baseTestEnvironment } from "./react-test.utils";
+import { baseTestEnvironment, settle } from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
   $createNodeSelection,
@@ -11,6 +11,7 @@ import {
   PASTE_COMMAND,
   TextNode,
 } from "lexical";
+import { useEffect, useState } from "react";
 import {
   $createCharNode,
   $createImmutableTypedTextNode,
@@ -57,14 +58,16 @@ afterEach(async () => {
 });
 
 /** An editor holding one paragraph of text, with the clipboard key handling under test mounted. */
-async function clipboardEnvironment(): Promise<{ editor: LexicalEditor; text: TextNode }> {
+async function clipboardEnvironment(
+  requestNativePaste?: () => Promise<boolean>,
+): Promise<{ editor: LexicalEditor; text: TextNode }> {
   let text: TextNode | undefined;
   const { editor } = await baseTestEnvironment(
     () => {
       text = $createTextNode("In the beginning");
       $getRoot().append($createParaNode("p").append(text));
     },
-    <ClipboardPlugin />,
+    <ClipboardPlugin requestNativePaste={requestNativePaste} />,
   );
   if (!text) throw new Error("expected the initial text node to exist");
   return { editor, text };
@@ -191,6 +194,128 @@ describe("ClipboardPlugin — paste keys are unaffected", () => {
     // now follow must not reach these.
     expect((await pressShortcut(editor, "v")).defaultPrevented).toBe(true);
     expect((await pressShortcut(editor, "v", true)).defaultPrevented).toBe(true);
+  });
+});
+
+describe("ClipboardPlugin — the host's native paste", () => {
+  /** The async clipboard read `pasteSelection`/`pasteSelectionAsPlainText` start with. */
+  function clipboardRead() {
+    return vi.mocked(navigator.clipboard.read);
+  }
+
+  it("asks the host to paste on Ctrl+V, reading no clipboard itself when the host pastes", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    const { editor, text } = await clipboardEnvironment(requestNativePaste);
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    const event = await pressShortcut(editor, "v");
+    await settle();
+
+    // The keystroke stays claimed, so the browser's own paste never runs alongside the host's.
+    expect(event.defaultPrevented).toBe(true);
+    expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(clipboardRead()).not.toHaveBeenCalled();
+  });
+
+  it("asks with focus in the editor, where the native paste lands", async () => {
+    let focusedWhenAsked: Element | null = null;
+    const requestNativePaste = vi.fn(() => {
+      focusedWhenAsked = document.activeElement;
+      return Promise.resolve(true);
+    });
+    const { editor, text } = await clipboardEnvironment(requestNativePaste);
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    await pressShortcut(editor, "v");
+
+    expect(focusedWhenAsked).toBe(editor.getRootElement());
+  });
+
+  it("reads the clipboard itself when the host declines the paste", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(false));
+    const { editor, text } = await clipboardEnvironment(requestNativePaste);
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    await pressShortcut(editor, "v");
+    await settle();
+
+    expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the clipboard itself when the host's paste request fails", async () => {
+    const requestNativePaste = vi.fn(() => Promise.reject(new Error("host unavailable")));
+    const { editor, text } = await clipboardEnvironment(requestNativePaste);
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    await pressShortcut(editor, "v");
+    await settle();
+
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
+  it("pastes as plain text on Ctrl+Shift+V without asking the host", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    const { editor, text } = await clipboardEnvironment(requestNativePaste);
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    const event = await pressShortcut(editor, "v", true);
+    await settle();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(requestNativePaste).not.toHaveBeenCalled();
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the clipboard itself on Ctrl+V when the host offers no native paste", async () => {
+    const { editor, text } = await clipboardEnvironment();
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    const event = await pressShortcut(editor, "v");
+    await settle();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks through the latest callback the host handed over, keeping its guards registered once", async () => {
+    const first = vi.fn(() => Promise.resolve(true));
+    const second = vi.fn(() => Promise.resolve(true));
+    let setCallback: ((callback: () => Promise<boolean>) => void) | undefined;
+    function Host() {
+      const [callback, setState] = useState<() => Promise<boolean>>(() => first);
+      useEffect(() => {
+        setCallback = (next) => setState(() => next);
+      }, []);
+      return <ClipboardPlugin requestNativePaste={callback} />;
+    }
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append($createParaNode("p").append($createTextNode("In the beginning")));
+      },
+      <Host />,
+    );
+    const registerCommand = vi.spyOn(editor, "registerCommand");
+
+    await act(async () => setCallback?.(second));
+    await pressShortcut(editor, "v");
+
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(first).not.toHaveBeenCalled();
+    expect(registerCommand).not.toHaveBeenCalled();
+  });
+
+  it("takes no paste in a read-only editor, so the host is never asked", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    const { editor, text } = await clipboardEnvironment(requestNativePaste);
+    await act(async () => editor.update(() => text.select(3, 3)));
+    await act(async () => editor.setEditable(false));
+
+    await pressShortcut(editor, "v");
+    await settle();
+
+    expect(requestNativePaste).not.toHaveBeenCalled();
+    expect(clipboardRead()).not.toHaveBeenCalled();
   });
 });
 
