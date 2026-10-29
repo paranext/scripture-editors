@@ -761,6 +761,27 @@ function expectedNotices(view: ViewOptions, fragment: Item[]): number {
   return isMarkerHidden(view) && isFiltered(fragment) ? 1 : 0;
 }
 
+/** The text `fragment` holds, a stray marker (`unmatched`, shown as its own bytes in every view)
+ * included. */
+function contentText(fragment: Item[]): string {
+  return fragment
+    .map((item) => {
+      if (typeof item === "string") return item;
+      if (item.type === "unmatched") return `\\${item.marker ?? ""}`;
+      return contentText(item.content ?? []);
+    })
+    .join("");
+}
+
+/** How many `\` and `/` characters `text` holds: the characters a hidden-marker view's paste
+ * filter acts on. */
+function slashCounts(text: string): { backslashes: number; slashes: number } {
+  return {
+    backslashes: text.split("\\").length - 1,
+    slashes: text.split("/").length - 1,
+  };
+}
+
 /**
  * What a plain-text paste into a hidden-marker view inserts: the text itself — into the string at
  * the caret for one line; one paragraph per line otherwise, each new paragraph with the host's
@@ -815,6 +836,13 @@ async function runRangeRow(row: RangeRow, usj: Usj): Promise<void> {
     const clipboard = await dispatchClipboard(lexical, COPY_COMMAND);
     const text = clipboard.get("text/plain") ?? "";
     expect(text, "the copy wrote text/plain").toBeTruthy();
+    // The paste filter strips `\` and `//` from this text, so the paste checks below cannot see
+    // one the copy added: a gutter glyph (`\q1 `) or a marker leaking into a hidden view's plain
+    // copy. Every one there must be one the content itself holds.
+    if (isMarkerHidden(row.view))
+      expect(slashCounts(text), "the copy's text/plain adds no `\\` or `/`").toEqual(
+        slashCounts(contentText(copied)),
+      );
     const payload = new Map(clipboard);
     const isInternal = row.operation === "copy, paste all flavors";
     if (!isInternal) payload.delete("application/x-lexical-editor");
