@@ -146,8 +146,10 @@ refused. The public surface grew substantially; nothing was removed.
   in the order first met), so the host can tell the user why some of what they pasted, dropped or
   typed is missing. Never called in Standard or Markers view, or when nothing was removed.
 - `EditorOptions.requestNativePaste`: asks the host to run the platform's native paste into the
-  focused frame (paranext-core runs Electron's `webContents.paste()`), so Ctrl/Cmd+V, the context
-  menu's Paste and `EditorRef.paste()` carry every clipboard format, the editor's own included.
+  focused frame (paranext-core runs Electron's `webContents.paste()`), so in the views that hide
+  markers Ctrl/Cmd+V, the context menu's Paste and `EditorRef.paste()` carry every clipboard
+  format, the view's own node copy included. Standard view never calls it: it pastes the USFM text
+  its copy writes, which reading the clipboard delivers.
   The editor calls it from a microtask once its root has focus again; the host resolves `true`
   only after the paste ran, and `false` or rejects only if none did, so the editor falls back to
   reading the clipboard itself. Unset, every paste reads the clipboard asynchronously.

@@ -1109,10 +1109,12 @@ export interface EditorOptions {
    */
   onUnstorableTextRemoved?: UnstorableTextRemovedHandler;
   /**
-   * Asks the host to run the platform's native paste into the focused frame. When set,
-   * Ctrl/Cmd+V, the context menu's Paste and {@link EditorRef.paste} use it, so the paste carries
-   * every clipboard format, including the editor's own (an async clipboard read sees only plain
-   * text and HTML). Paste as plain text never uses it.
+   * Asks the host to run the platform's native paste into the focused frame. When set, in a
+   * hidden-marker view (`view.markerMode` is `"hidden"`) Ctrl/Cmd+V, the context menu's Paste and
+   * {@link EditorRef.paste} use it, so the paste carries every clipboard format, including the
+   * view's own node copy (an async clipboard read sees only plain text and HTML), which it pastes
+   * losslessly. Paste as plain text never uses it, and neither does any other view: Standard view
+   * pastes the USFM text its copy writes, which an async clipboard read delivers too.
    *
    * The editor puts focus back on its root first and calls this from a microtask once that has
    * settled, never from inside an editor update; it must not touch the editor synchronously. If
