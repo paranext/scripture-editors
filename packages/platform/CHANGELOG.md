@@ -292,6 +292,12 @@ refused. The public surface grew substantially; nothing was removed.
   carries the next paragraph's gutter glyph) or a paste of a Markers-view copy would have inserted
   text such as `q1 ` that the user never wrote. The read-only Markers view still refuses `\` and
   `/`, and Standard view is unchanged.
+- **A copy in the views that hide markers tags its node copy (`application/x-lexical-editor`)
+  with the namespace `"platformEditor/hidden-markers"`**, and only those views read it back. A
+  copy from Standard view pasted into one of them, or one of theirs pasted into Standard view,
+  goes in by its html or plain text instead of rebuilding the other view's node shapes. The node
+  copy holds no gutter marker glyph, and is not written for a selection that ends inside a figure
+  or touches a book or chapter line.
 
 ### Fixed
 
@@ -537,3 +543,11 @@ refused. The public surface grew substantially; nothing was removed.
   as one, a trailing one is dropped, and each tab in it becomes a space), as an html paste's
   paragraphs are.
   It made a new paragraph per line, which protected structure exists to prevent.
+- A copy and paste within the views that hide markers reproduces the copied Scripture exactly:
+  character and note attributes, note details, milestones, alternate and published verse numbers,
+  optional breaks and figures all survive, under every structure protection (under `"protected"`
+  the paste still joins paragraphs and drops verses and chapters). The paste took the html, which
+  carries none of these; it now takes the node copy whenever the paste carries one — Ctrl+V, the
+  context menu's Paste and the Edit menu's Paste, when the host runs a native paste
+  (`EditorOptions.requestNativePaste`). A cut and paste back of a caption-less figure or an optional
+  break restores it; the node copy left it out. Html from another program is pasted as before.
