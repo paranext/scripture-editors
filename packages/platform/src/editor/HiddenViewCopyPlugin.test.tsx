@@ -1,7 +1,8 @@
 /**
  * What a copy or cut in a hidden-marker view writes to the clipboard: the text the view shows,
  * without a paragraph's gutter marker glyph or the text of a construct the view hides (a figure's
- * caption), and with the text of a collapsed note, which a plain-text paste needs.
+ * caption), and with the text of a collapsed note, which a plain-text paste needs; and the view's
+ * own node copy, tagged so only a hidden-marker view reads it back.
  */
 import { editorView, enabledViews, mountInView } from "./editorViews.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -17,7 +18,7 @@ import {
 } from "lexical";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { StructureProtectionMode } from "shared-react";
+import { HIDDEN_VIEW_CLIPBOARD_NAMESPACE, StructureProtectionMode } from "shared-react";
 
 // Located relative to the working directory, as the other testUSFM corpus suites do: the platform
 // project root under nx, the repo root otherwise.
@@ -35,6 +36,23 @@ const matthew = readFixture("web-matthew-1-and-2.usj");
 const samuel = readFixture("testUSFM-2SA-1.usj");
 
 const LEXICAL_FLAVOR = "application/x-lexical-editor";
+
+interface SerializedNode {
+  type: string;
+  children?: SerializedNode[];
+  [key: string]: unknown;
+}
+
+/** The node copy a copy wrote: its namespace and its nodes, every depth flattened. */
+function nodeCopy(store: Map<string, string>): { namespace: string; nodes: SerializedNode[] } {
+  const payload = JSON.parse(store.get(LEXICAL_FLAVOR) ?? "{}") as {
+    namespace: string;
+    nodes: SerializedNode[];
+  };
+  const flatten = (nodes: SerializedNode[]): SerializedNode[] =>
+    nodes.flatMap((node) => [node, ...flatten(node.children ?? [])]);
+  return { namespace: payload.namespace, nodes: flatten(payload.nodes ?? []) };
+}
 
 /** The one plain text node whose text `matches`. */
 function $textNode(matches: (text: string) => boolean): TextNode {
@@ -165,6 +183,95 @@ describe("HiddenViewCopyPlugin", () => {
       );
       const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
       expect(store.get("text/plain")).toBe(beforeFigure + afterFigure);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it.each(enabledViews(["formatted", "paragraph-structure"] as const))(
+    "%s copy writes its node copy tagged for hidden-marker views, without gutter glyphs",
+    async (viewName) => {
+      const mounted = await mountInView(matthew, editorView(viewName));
+      try {
+        await select(mounted.lexical, ACROSS_PARAGRAPHS.from, ACROSS_PARAGRAPHS.to);
+        const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+        const { namespace, nodes } = nodeCopy(store);
+        expect(namespace).toBe(HIDDEN_VIEW_CLIPBOARD_NAMESPACE);
+        expect(nodes.filter((node) => node.type === "para")).toHaveLength(2);
+        expect(nodes.filter((node) => node.type === "immutable-typed-text")).toEqual([]);
+      } finally {
+        mounted.unmount();
+      }
+    },
+  );
+
+  // 2 Samuel 1's first figure paragraph: text, a figure with no caption, text.
+  const captionlessParagraph = (samuel.content[91] as MarkerObject).content ?? [];
+  const beforeCaptionless = captionlessParagraph[0] as string;
+  const captionless = captionlessParagraph[1] as MarkerObject;
+
+  it.each(enabledViews(["formatted", "paragraph-structure"] as const))(
+    "%s copy over a caption-less figure keeps the figure in its node copy",
+    async (viewName) => {
+      const mounted = await mountInView(samuel, editorView(viewName));
+      try {
+        await select(
+          mounted.lexical,
+          { text: beforeCaptionless, offset: -4 },
+          { text: captionlessParagraph[2] as string, offset: 4 },
+        );
+        const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+        const figures = nodeCopy(store).nodes.filter((node) => node.tag === "figure");
+        expect(figures).toHaveLength(1);
+        expect(figures[0]).toMatchObject({
+          marker: captionless.marker,
+          unknownAttributes: {
+            file: Reflect.get(captionless, "file"),
+            size: Reflect.get(captionless, "size"),
+            ref: Reflect.get(captionless, "ref"),
+          },
+        });
+      } finally {
+        mounted.unmount();
+      }
+    },
+  );
+
+  it("a copy ending inside a figure's caption writes no node copy", async () => {
+    const mounted = await mountInView(samuel, editorView("formatted"));
+    try {
+      await act(async () =>
+        mounted.lexical.update(
+          () => {
+            const start = $textNode((text) => text === beforeFigure);
+            const caption = $textNode((text) => text.startsWith("Caption"));
+            const selection = $createRangeSelection();
+            selection.anchor.set(start.getKey(), 0, "text");
+            selection.focus.set(caption.getKey(), 3, "text");
+            $setSelection(selection);
+          },
+          { discrete: true },
+        ),
+      );
+      const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+      expect(store.get("text/plain")).toBeTruthy();
+      expect(store.has(LEXICAL_FLAVOR)).toBe(false);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it("a copy across a chapter line writes no node copy", async () => {
+    const mounted = await mountInView(matthew, editorView("paragraph-structure"));
+    try {
+      await select(
+        mounted.lexical,
+        { text: "He named him Jesus.", offset: -2 },
+        { text: "Now when Jesus was born in Bethlehem", offset: 2 },
+      );
+      const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+      expect(store.get("text/plain")).toBeTruthy();
+      expect(store.has(LEXICAL_FLAVOR)).toBe(false);
     } finally {
       mounted.unmount();
     }

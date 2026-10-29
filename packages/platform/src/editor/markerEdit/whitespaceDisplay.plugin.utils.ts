@@ -46,6 +46,7 @@ import {
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
+  $isSomeChapterNode,
   $isTypedMarkNode,
   $isUnknownNode,
   ATTRIBUTE_NBSP_SPELLING,
@@ -1272,15 +1273,18 @@ export function usfmToClipboardHtml(usfm: string): string {
 }
 
 /**
- * Whether any node of `selection` is, or sits inside, a `BookNode` or `ChapterNode` — a structure
- * USFM allows once per book, which a paste must never duplicate.
+ * Whether any node of `selection` is, or sits inside, a `BookNode` or a chapter node (Standard
+ * view's `ChapterNode`, the hidden-marker views' `ImmutableChapterNode`) — a structure USFM allows
+ * once per book, which a paste must never duplicate.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
  */
-function $selectionTouchesBookOrChapter(selection: RangeSelection): boolean {
+export function $selectionTouchesBookOrChapter(selection: RangeSelection): boolean {
   return selection
     .getNodes()
     .some((node) =>
       [node, ...node.getParents()].some(
-        (ancestor) => $isBookNode(ancestor) || $isChapterNode(ancestor),
+        (ancestor) => $isBookNode(ancestor) || $isSomeChapterNode(ancestor),
       ),
     );
 }
