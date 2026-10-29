@@ -266,9 +266,55 @@ describe("UnstorableTextPlugin — paste", () => {
     },
   );
 
-  it("joins the lines of a plain-text paste with a space when structure is protected", async () => {
-    const { editor, onRemoved } = await environment("ab", {
-      anchor: 1,
+  it.each([
+    ["a blank line", "a\n\nb", "[a b]"],
+    ["Windows line breaks and a trailing one", "line one\r\nline two\n", "[line one line two]"],
+    ["a tab alongside a line break", "a\tb\nc", "[a b c]"],
+  ])(
+    "joins the lines of a plain-text paste with one space when structure is protected: %s",
+    async (_, text, expected) => {
+      const { editor, onRemoved } = await environment("[]", {
+        anchor: 1,
+        structureProtectionMode: "protected",
+        withStructureKeyboard: "filtered",
+      });
+
+      await dispatch(editor, () =>
+        editor.dispatchCommand(PASTE_COMMAND, pasteEvent({ "text/plain": text })),
+      );
+
+      expect(readParas(editor)).toEqual([expected]);
+      expect(onRemoved).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["a bold run of nothing but `\\`", "<p>a<b>\\\\</b></p>", "a\\\\", "xa"],
+    ["a second paragraph of nothing but `//`", "<p>y</p><p>//</p>", "y\n//", "xy "],
+  ])(
+    "leaves out text the filter empties from a protected html paste: %s",
+    async (_, html, plain, expected) => {
+      const { editor, onRemoved } = await environment("x", {
+        structureProtectionMode: "protected",
+        withStructureKeyboard: "filtered",
+      });
+
+      await dispatch(editor, () =>
+        editor.dispatchCommand(
+          PASTE_COMMAND,
+          pasteEvent({ "text/html": html, "text/plain": plain }),
+        ),
+      );
+
+      expect(readParas(editor)).toEqual([expected]);
+      expect(onRemoved).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("changes nothing for a protected html paste of a character span holding only `\\` over a selection", async () => {
+    const { editor, onRemoved } = await environment("keep this", {
+      anchor: 0,
+      focus: 4,
       structureProtectionMode: "protected",
       withStructureKeyboard: "filtered",
     });
@@ -276,12 +322,15 @@ describe("UnstorableTextPlugin — paste", () => {
     await dispatch(editor, () =>
       editor.dispatchCommand(
         PASTE_COMMAND,
-        pasteEvent({ "text/plain": "line one\r\nline\ttwo\n" }),
+        pasteEvent({
+          "text/html": '<p><span data-marker="w" class="char">\\\\</span></p>',
+          "text/plain": "\\\\",
+        }),
       ),
     );
 
-    expect(readParas(editor)).toEqual(["aline one line two b"]);
-    expect(onRemoved).not.toHaveBeenCalled();
+    expect(readParas(editor)).toEqual(["keep this"]);
+    expect(onRemoved).toHaveBeenCalledTimes(1);
   });
 
   it("filters a protected html paste the sanitizer inserts, through its filter", async () => {

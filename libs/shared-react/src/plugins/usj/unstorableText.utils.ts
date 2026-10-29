@@ -133,7 +133,7 @@ function $storedTextRuns(siblings: LexicalNode[]): TextNode[][] {
  * dropped, in place. Text in adjacent nodes is read as one string, so `a/` then `/b` is a `//`.
  * Leaves alone an unmatched marker's glyph, decorators, display text (token or segmented text,
  * such as a note caller) and the content of constructs the view hides. A text node left empty is
- * removed: from its parent, or from `nodes` when it has none.
+ * removed: from `nodes` when it is listed there, and from its parent when it has one.
  *
  * Mutating: call inside `editor.update()`.
  *
@@ -166,12 +166,35 @@ export function $removeUnstorableTextFromNodes(
       const kept = keptText(characters, mask.keep, start);
       start += characters.length;
       if (kept === texts[index]) return;
-      if (kept) node.setTextContent(kept);
-      else if (node.getParent()) node.remove();
-      else nodes.splice(nodes.indexOf(node), 1);
+      if (kept) {
+        node.setTextContent(kept);
+        return;
+      }
+      // A listed node can still be a child too: the protected-structure sanitizer lists a
+      // paragraph's children without detaching them, and inserts whatever stays listed.
+      const listedAt = nodes.indexOf(node);
+      if (listedAt >= 0) nodes.splice(listedAt, 1);
+      if (node.getParent()) node.remove();
     });
   }
   return removed;
+}
+
+/** Whether `node` holds nothing to insert: an element with no leaf anywhere inside it. */
+function $holdsNoLeaf(node: LexicalNode): boolean {
+  return $isElementNode(node) && node.getChildren().every($holdsNoLeaf);
+}
+
+/**
+ * Whether inserting `nodes` would put nothing into the document: there are none, or each is an
+ * element with no leaf anywhere inside it (a character span emptied by
+ * {@link $removeUnstorableTextFromNodes}, say). Inserting such nodes over a selection would still
+ * delete the selection.
+ *
+ * @param nodes - Nodes about to be pasted or dropped.
+ */
+export function $insertsNothing(nodes: LexicalNode[]): boolean {
+  return nodes.every($holdsNoLeaf);
 }
 
 /** The stored-text character next to `point` on `side`, or `""` where there is none. */

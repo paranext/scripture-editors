@@ -62,6 +62,7 @@ import {
 import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
+import { $insertsNothing } from "./unstorableText.utils";
 
 /**
  * Class on an armed paragraph's gutter marker (or, when it shows none, on the paragraph) while a
@@ -123,7 +124,7 @@ function $restorerFor(selection: RangeSelection): () => void {
  * @param $filterPastedNodes - Under `"protected"`, called on the nodes an html paste or drop is
  *   about to insert, after sanitizing, to change them in place before they go in (e.g. to remove
  *   text the view cannot store, with `$filterUnstorablePastedNodes`). Called inside the update.
- *   When it leaves no nodes, nothing is inserted.
+ *   When it leaves nothing to insert (see `$insertsNothing`), nothing is inserted.
  * @returns Always `null`; this plugin renders no UI, only editor behavior and DOM signals.
  */
 export function StructureKeyboardPlugin({
@@ -330,10 +331,10 @@ export function StructureKeyboardPlugin({
       // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
       const selection = $getSelection();
       if ($isRangeSelection(selection)) {
-        const hadNodes = sanitized.length > 0;
+        const hadContent = !$insertsNothing(sanitized);
         filterPastedNodesRef.current?.(sanitized, selection, source);
         // Filtered down to nothing: inserting nothing over a selection would still delete it.
-        if (hadNodes && sanitized.length === 0) {
+        if (hadContent && $insertsNothing(sanitized)) {
           event.preventDefault();
           return true;
         }
