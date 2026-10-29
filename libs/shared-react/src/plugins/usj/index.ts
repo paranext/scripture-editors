@@ -35,4 +35,7 @@ export * from "./TextDirectionPlugin";
 export * from "./TextSpacingPlugin";
 export * from "./TrailingNoteCaretGuardPlugin";
 export { $isCaretHost, CARET_HOST_ATTRIBUTE } from "./transientCaretHost";
+export * from "./unstorable-text.model";
+export * from "./unstorableText.utils";
+export * from "./UnstorableTextPlugin";
 export * from "./UsjNodesMenuPlugin";
