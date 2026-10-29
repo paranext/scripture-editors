@@ -4,6 +4,7 @@ import {
   defaultCrossRefCallers,
   defaultNoteCallers,
   ImmutableNoteCallerNode,
+  NoteCallerOnClick,
   UsjNodeOptions,
 } from "../../nodes/usj";
 import { ViewOptions } from "../../views/view-options.utils";
@@ -73,7 +74,7 @@ export function NoteNodePlugin<TLogger extends LoggerBasic>({
 }): null {
   const [editor] = useLexicalComposerContext();
   useNodeOptions(nodeOptions, logger);
-  useNoteNode(editor, expandedNoteKeyRef, viewOptions, logger);
+  useNoteNode(editor, expandedNoteKeyRef, viewOptions, logger, nodeOptions.noteCallerOnClick);
   return null;
 }
 
@@ -114,12 +115,14 @@ function useNodeOptions(nodeOptions: UsjNodeOptions, logger?: LoggerBasic) {
  * @param expandedNoteKeyRef - Ref to track the currently expanded note key, if any.
  * @param viewOptions - View options of the editor.
  * @param logger - Logger to use, if any.
+ * @param noteCallerOnClick - The host's note caller click handler, which every caller gets.
  */
 function useNoteNode(
   editor: LexicalEditor,
   expandedNoteKeyRef: React.MutableRefObject<string | undefined>,
   viewOptions: ViewOptions | undefined,
   logger: LoggerBasic | undefined,
+  noteCallerOnClick: NoteCallerOnClick | undefined,
 ) {
   useEffect(() => {
     if (!editor.hasNodes([CharNode, NoteNode, ImmutableNoteCallerNode])) {
@@ -139,8 +142,10 @@ function useNoteNode(
       editor.registerNodeTransform(CharNode, $noteCharNodeTransform),
       editor.registerNodeTransform(TextNode, $noteTextNodeTransform),
 
-      // Ensure a separator after the caller.
-      editor.registerNodeTransform(ImmutableNoteCallerNode, $noteCallerNodeTransform),
+      // Ensure a separator after the caller, and that a click on it reaches the host.
+      editor.registerNodeTransform(ImmutableNoteCallerNode, (node) =>
+        $noteCallerNodeTransform(node, noteCallerOnClick),
+      ),
 
       // Re-generate all note callers when a note is removed.
       editor.registerMutationListener(
@@ -169,7 +174,7 @@ function useNoteNode(
         },
       ),
     );
-  }, [editor, expandedNoteKeyRef, logger, viewOptions]);
+  }, [editor, expandedNoteKeyRef, logger, viewOptions, noteCallerOnClick]);
 }
 
 /**
@@ -286,12 +291,20 @@ function $noteTextNodeTransform(node: TextNode): void {
 }
 
 /**
- * Ensure a separator after the caller.
+ * Ensure a separator after the caller, and that a click on it calls the host's
+ * `noteCallerOnClick`. A caller rebuilt from a node copy (a paste) has no click handler, since JSON
+ * cannot carry a function.
  * @param node - The note caller that needs a separator after it.
+ * @param noteCallerOnClick - The host's note caller click handler, if it gave one.
  */
-function $noteCallerNodeTransform(node: ImmutableNoteCallerNode): void {
+function $noteCallerNodeTransform(
+  node: ImmutableNoteCallerNode,
+  noteCallerOnClick: NoteCallerOnClick | undefined,
+): void {
   if (!$isImmutableNoteCallerNode(node)) return;
 
+  if (noteCallerOnClick && node.getOnClick() !== noteCallerOnClick)
+    node.setOnClick(noteCallerOnClick);
   $ensureNoteSeparatorAfter(node);
 }
 
