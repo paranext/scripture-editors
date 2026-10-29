@@ -119,9 +119,9 @@ refused. The public surface grew substantially; nothing was removed.
   where the view shows a space of a run as an NBSP.
 - `toUsfmNbspSpelling(displayText, viewOptions)`: for a host that reads text from the editor's
   display (a DOM selection, an element's `textContent`) to copy or search it — turns the editor's
-  internal stand-in for a stored no-break space back into U+00A0 when
-  `ViewOptions.allowInvisibleCharacters` is on, and leaves the text unchanged when it is off (`~`
-  is already the project's spelling then). Experimental: expected to be removed once Standard view
+  internal stand-in for a stored no-break space back into U+00A0 (in body text when
+  `ViewOptions.allowInvisibleCharacters` is on, and in an attribute value either way), and leaves a
+  `~` as it is (the project's spelling of one in body text when the option is off). Experimental: expected to be removed once Standard view
   holds a stored no-break space as itself.
 - The font family `PlatformEditorNbspStandIn` draws that stand-in as a blank. The editor adds its
   face (`unicode-range: U+1A`) to its document itself; a host stylesheet that sets its own
@@ -287,10 +287,15 @@ refused. The public surface grew substantially; nothing was removed.
   read-only editor still copies on Ctrl+C; Ctrl+X no longer dispatches a cut there.
 - In Standard view, a no-break space in an attribute value (a char span's `|lemma`, a milestone's
   `who`, a figure's `src`, a note's `\cat`, a verse's `\va`/`\vp`, a chapter's `\ca`/`\cp`) shows
-  as the body text spells one (`~`, or a blank where `ViewOptions.allowInvisibleCharacters` is on)
-  and stays a no-break space through a settle of its paragraph, an edit to the value, copy and
-  paste, and an unwrap of its span; it was saved as a plain space. Unformatted view's settle keeps
-  it too.
+  as a blank the width of a space, whatever `ViewOptions.allowInvisibleCharacters` says, and stays
+  a no-break space through a settle of its paragraph and an edit to the value; it was saved as a
+  plain space. A `~` in an attribute value stays a `~` under either setting, as Paratext 9 keeps
+  it: Paratext reads `~` as a no-break space only in body text. With the option off, a settle of
+  the value's paragraph saved the author's `~` as U+00A0. Unformatted view's settle keeps both too.
+  A copy writes an attribute value's no-break space as U+00A0 under either setting; a paste reads
+  it the way it reads any pasted U+00A0, so with the option off it comes back as `~`, as Paratext 9
+  pastes one. The bytes an unwrapped span leaves behind are body text, and spell a no-break space
+  as body text does.
 - Placing the caret in an empty verse no longer moves the next verse number onto a new line, and the
   caret is drawn right after the empty verse's number. The verse holding the caret now carries
   `psc-empty-text-active` instead of no class, and its caret host carries `data-caret-host`. A host
