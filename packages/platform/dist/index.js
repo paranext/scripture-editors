@@ -21236,7 +21236,13 @@ function m$() {
   return J(() => {
     const t = (n) => {
       const { key: r, shiftKey: i, metaKey: s, ctrlKey: o, altKey: a } = n;
-      !(Tr ? s : o) || a || (!i && r.toLowerCase() === "c" ? (n.preventDefault(), ch(e)) : !i && r.toLowerCase() === "x" ? (n.preventDefault(), lh(e)) : r.toLowerCase() === "v" && (n.preventDefault(), i ? fh(e) : uh(e)));
+      if (!(!(Tr ? s : o) || a)) {
+        if (!i && r.toLowerCase() === "c") {
+          n.preventDefault(), ch(e);
+          return;
+        }
+        e.isEditable() && (!i && r.toLowerCase() === "x" ? (n.preventDefault(), lh(e)) : r.toLowerCase() === "v" && (n.preventDefault(), i ? fh(e) : uh(e)));
+      }
     };
     return He(
       // Every copy/cut this plugin's shortcuts synthesize — and every one the context menu or an
