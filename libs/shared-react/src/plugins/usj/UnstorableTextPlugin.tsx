@@ -1,3 +1,4 @@
+import { removeMarkerGlyphElements } from "./clipboard.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
 import {
   UnstorableCharacter,
@@ -100,10 +101,10 @@ function isShortcutChord(event: KeyboardEvent): boolean {
 }
 
 /**
- * Whether Lexical inserts `data` as plain text: it carries neither a node copy from an editor of
- * this namespace nor html, the two flavors Lexical prefers (`$insertDataTransferForRichText`).
+ * The flavor Lexical inserts `data` from (`$insertDataTransferForRichText`): a node copy from an
+ * editor of this namespace first, then html, then plain text.
  */
-function takesPlainTextRoute(data: DataTransfer, editor: LexicalEditor): boolean {
+function insertionRoute(data: DataTransfer, editor: LexicalEditor): "lexical" | "html" | "plain" {
   const lexicalString = data.getData(LEXICAL_CLIPBOARD_TYPE);
   if (lexicalString) {
     try {
@@ -116,14 +117,23 @@ function takesPlainTextRoute(data: DataTransfer, editor: LexicalEditor): boolean
         payload.namespace === editor._config.namespace &&
         Array.isArray(payload.nodes)
       )
-        return false;
+        return "lexical";
     } catch {
       // Unreadable: Lexical falls through to html and plain text too.
     }
   }
   const html = data.getData("text/html");
   // Lexical skips html identical to the plain text.
-  return !html || html === data.getData("text/plain");
+  return html && html !== data.getData("text/plain") ? "html" : "plain";
+}
+
+/**
+ * `html` without its marker glyphs (see {@link removeMarkerGlyphElements}), or `undefined` when it
+ * holds none.
+ */
+function htmlWithoutMarkerGlyphs(html: string): string | undefined {
+  const dom = new DOMParser().parseFromString(html, "text/html");
+  return removeMarkerGlyphElements(dom) ? dom.documentElement.outerHTML : undefined;
 }
 
 /**
@@ -149,6 +159,10 @@ function joinLines(text: string): string {
  * dropped (`CONTROLLED_TEXT_INSERTION_COMMAND` with an `insertFromDrop` event). Under `"protected"`
  * structure, `StructureKeyboardPlugin` inserts html pastes and drops itself; give it
  * {@link $filterUnstorablePastedNodes} as its `$filterPastedNodes` to cover those too.
+ *
+ * Html pasted or dropped loses every marker glyph element (`data-text-type="marker"`) before it is
+ * parsed, as protected structure's sanitizer drops them: a glyph is presentation, and parsed back
+ * it would be marker text. A node copy is not touched.
  *
  * Typing a `\` is refused, and so is typing a `/` that would touch a `/` beside it (over a
  * selection, one outside it); a lone `/` goes in. A keystroke is refused at its `keydown`
@@ -199,6 +213,9 @@ export function UnstorableTextPlugin({
     // Set while typed text that lost unstorable characters goes in, so what is left is not
     // filtered, or reported, again.
     let isInsertingFiltered = false;
+    // Set while html that lost its marker glyphs goes in, so nodes left with nothing to insert
+    // change nothing, as a filtered paste left with nothing does.
+    let isInsertingWithoutGlyphs = false;
 
     /**
      * Filters typed `text` at the selection. When it loses anything, puts in what is left, reports
@@ -242,7 +259,7 @@ export function UnstorableTextPlugin({
       source: UnstorableTextRemoved["source"],
     ): boolean => {
       const selection = $getSelection();
-      if (!$isRangeSelection(selection) || !takesPlainTextRoute(data, editor)) return false;
+      if (!$isRangeSelection(selection) || insertionRoute(data, editor) !== "plain") return false;
       const text = data.getData("text/plain") || data.getData("text/uri-list");
       if (!text) return false;
       const joinsLines = structureProtectionModeRef.current === "protected" && /[\r\n]/.test(text);
@@ -268,6 +285,36 @@ export function UnstorableTextPlugin({
       return true;
     };
 
+    /**
+     * Inserts an html paste or drop itself, without its marker glyphs, when its html holds any: a
+     * glyph is presentation, so it would otherwise go in as marker text such as `\q1 `, which the
+     * filter would then leave as `q1 `. The browser's own serialization of a drag-move across a
+     * paragraph break carries the next paragraph's gutter glyph, and a Markers-view copy carries
+     * every marker as one. Returns whether it inserted; otherwise Lexical's own insertion runs.
+     */
+    const $insertHtmlWithoutGlyphs = (
+      data: DataTransfer,
+      source: UnstorableTextRemoved["source"],
+    ): boolean => {
+      const selection = $getSelection();
+      if (!selection || insertionRoute(data, editor) !== "html") return false;
+      const html = htmlWithoutMarkerGlyphs(data.getData("text/html"));
+      if (html === undefined) return false;
+      if (source === "paste") $addUpdateTag(PASTE_TAG);
+      // As for plain text above: Lexical reads only `getData`, and finds the same flavors as
+      // before but for the html.
+      const withoutGlyphs = {
+        getData: (type: string) => (type === "text/html" ? html : data.getData(type)),
+      } as Pick<DataTransfer, "getData"> as DataTransfer;
+      isInsertingWithoutGlyphs = true;
+      try {
+        $insertDataTransferForRichText(withoutGlyphs, selection, editor);
+      } finally {
+        isInsertingWithoutGlyphs = false;
+      }
+      return true;
+    };
+
     return mergeRegister(
       editor.registerCommand(
         SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
@@ -280,7 +327,7 @@ export function UnstorableTextPlugin({
             loggerRef.current,
           );
           // Claimed only when nothing is left: inserting nothing over a selection would delete it.
-          return removed.length > 0 && $insertsNothing(nodes);
+          return (removed.length > 0 || isInsertingWithoutGlyphs) && $insertsNothing(nodes);
         },
         // Critical, so a handler that does insert the nodes cannot insert them unfiltered.
         COMMAND_PRIORITY_CRITICAL,
@@ -289,7 +336,9 @@ export function UnstorableTextPlugin({
         PASTE_COMMAND,
         (event: PasteCommandType) => {
           const data = "clipboardData" in event ? event.clipboardData : null;
-          if (!data || !$insertPlainTransfer(data, "paste")) return false;
+          if (!data) return false;
+          if (!$insertPlainTransfer(data, "paste") && !$insertHtmlWithoutGlyphs(data, "paste"))
+            return false;
           event.preventDefault();
           return true;
         },
@@ -308,7 +357,7 @@ export function UnstorableTextPlugin({
           queueMicrotask(() => {
             isDropping = false;
           });
-          return false;
+          return $insertHtmlWithoutGlyphs(data, "drop");
         },
         // Below the guards that refuse an insertion outright (several at HIGH), above Lexical's own.
         COMMAND_PRIORITY_NORMAL,

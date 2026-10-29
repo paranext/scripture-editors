@@ -197,3 +197,133 @@ describe("pasting into Standard view", () => {
     expect(saved).toContain('"marker":"nd"');
   });
 });
+
+/** A paragraph's gutter marker glyph, as a hidden-marker view's own DOM serializes it. */
+const PARA_GLYPH = '<span data-text-type="marker" class="marker">\\q1&nbsp;</span>';
+/** An inline marker glyph, as the Markers view and older copies serialize one. */
+const INLINE_GLYPH = '<span data-text-type="marker" class="marker">\\w&nbsp;</span>';
+/** A selection across a paragraph break as the browser serializes it for a drag or html copy. */
+const ACROSS_PARAS = { "text/html": `<p>a</p><p>${PARA_GLYPH}b</p>`, "text/plain": "a\n\\q1 b" };
+const INLINE = {
+  "text/html": `<p><span>x </span>${INLINE_GLYPH}<span>word</span></p>`,
+  "text/plain": "x \\w word",
+};
+
+/** Every paragraph's saved text, run together, for checks that hold wherever the breaks fall. */
+function savedText(mounted: MountedEditor): string {
+  return savedParas(mounted).join("|");
+}
+
+describe.each<[string, StructureProtectionMode]>([
+  ["paragraph-structure", "off"],
+  ["paragraph-structure", "guarded"],
+  ["formatted", "off"],
+])("marker glyphs in html put into %s view with structure %s", (viewName, mode) => {
+  it("drops a paragraph's glyph from a drop across a paragraph break, telling no one", async () => {
+    const { mounted, onRemoved } = await mount(viewName, mode);
+
+    await drop(mounted, ACROSS_PARAS);
+
+    const saved = savedText(mounted);
+    expect(saved).not.toContain("q1");
+    expect(saved).not.toContain("\\");
+    expect(saved).toContain("first a");
+    expect(saved).toContain("bverse text");
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("drops a paragraph's glyph from an html paste across a paragraph break, telling no one", async () => {
+    const { mounted, onRemoved } = await mount(viewName, mode);
+
+    await paste(mounted, ACROSS_PARAS);
+
+    const saved = savedText(mounted);
+    expect(saved).not.toContain("q1");
+    expect(saved).not.toContain("\\");
+    expect(saved).toContain("first a");
+    expect(saved).toContain("bverse text");
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("drops an inline glyph from an html paste, telling no one", async () => {
+    const { mounted, onRemoved } = await mount(viewName, mode);
+
+    await paste(mounted, INLINE);
+
+    expect(savedParas(mounted)).toEqual(["first x wordverse text"]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("drops an inline glyph from a drop, telling no one", async () => {
+    const { mounted, onRemoved } = await mount(viewName, mode);
+
+    await drop(mounted, INLINE);
+
+    expect(savedParas(mounted)).toEqual(["first x wordverse text"]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("changes nothing for html holding only a glyph, leaving the selection's text", async () => {
+    const { mounted, onRemoved } = await mount(viewName, mode);
+    await act(async () =>
+      mounted.lexical.update(
+        () => {
+          const node = $getRoot()
+            .getAllTextNodes()
+            .find((text) => text.getTextContent().includes(VERSE_TEXT));
+          if (!node) throw new Error("verse text not found");
+          const start = node.getTextContent().indexOf(VERSE_TEXT);
+          node.select(start, start + "first ".length);
+        },
+        { discrete: true },
+      ),
+    );
+
+    await paste(mounted, { "text/html": `<p>${PARA_GLYPH}</p>`, "text/plain": "\\q1 " });
+
+    expect(savedParas(mounted)).toEqual([VERSE_TEXT]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Standard view reads the text flavor as USFM, so a glyph's bytes become the marker they spell
+ * there; nothing in the hidden-marker views' handling of glyphs reaches it.
+ */
+describe("marker glyphs in html put into Standard view", () => {
+  const verseOne = { type: "verse", marker: "v", number: "1" };
+  const expected: { [flavors: string]: MarkerContent[] } = {
+    across: [
+      { type: "para", marker: "p", content: [verseOne, "first a"] },
+      { type: "para", marker: "q1", content: ["bverse text"] },
+    ],
+    inline: [
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          verseOne,
+          "first x ",
+          { type: "char", marker: "w", closed: "false", content: ["wordverse text"] },
+        ],
+      },
+    ],
+  };
+
+  describe.each<[string, (mounted: MountedEditor, flavors: Flavors) => Promise<void>]>([
+    ["paste", paste],
+    ["drop", drop],
+  ])("by %s", (_route, putIn) => {
+    it.each<[string, Flavors]>([
+      ["across", ACROSS_PARAS],
+      ["inline", INLINE],
+    ])("stores the %s glyph as the marker it spells", async (name, flavors) => {
+      const { mounted, onRemoved } = await mount("standard", "off");
+
+      await putIn(mounted, flavors);
+
+      expect(onRemoved).not.toHaveBeenCalled();
+      expect(mounted.ref.current?.getUsj()?.content.slice(2)).toEqual(expected[name]);
+    });
+  });
+});
