@@ -26,8 +26,8 @@
  * - an empty derived `sid` that Standard view's rebuild after a pasted verse drops
  *   ({@link withoutEmptySidsIn});
  * - a hidden-marker view's plain-text paste arrives as prose ({@link plainFragment});
- * - `CommandMenuPlugin` refuses a hidden-view paste of content holding `\` or `/`
- *   ({@link isRefusedByPasteGate});
+ * - a hidden-marker view's paste leaves `\` and `//` out of the text it inserts
+ *   ({@link filterFragment});
  * - Standard view sits out ranges with an end inside a char span ({@link viewsFor}).
  *
  * Every row mounts its own editor. The whole suite runs in about a minute.
@@ -60,8 +60,8 @@ import {
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NBSP } from "shared";
-import { ViewOptions } from "shared-react";
-import { describe, expect } from "vitest";
+import { removeUnstorableText, UnstorableTextRemovedHandler, ViewOptions } from "shared-react";
+import { describe, expect, vi } from "vitest";
 
 // Located relative to the working directory, as the other testUSFM corpus suites do: the platform
 // project root under nx, the repo root otherwise.
@@ -735,26 +735,30 @@ function holdsHtmlLossyContent(fragment: Item[]): boolean {
 const isMarkerHidden = (view: ViewOptions) => view.markerMode !== "editable";
 
 /**
- * Whether `CommandMenuPlugin` refuses this paste: in a hidden-marker view it swallows any paste
- * whose text/plain holds `\` or `/`, whatever other flavor it carries — the documented over-broad
- * gate (clipboard-semantics S5, deferred). Only a range whose own content holds one of those is
- * excused by it; a `\` the copy added that the content never had is the copy's defect, not the
- * gate's.
+ * What a hidden-marker view's paste of `fragment` inserts: its text without `\` and `//`
+ * (`UnstorableTextPlugin`), which these views cannot store as text. Only text is filtered: a stray
+ * marker (`unmatched`) a node or html flavor carries arrives as that node, its `\` intact. A plain
+ * text flavor carries the stray marker as text, so it reaches here as a string and loses its `\`.
  */
-function isRefusedByPasteGate(view: ViewOptions, fragment: Item[]): boolean {
-  return isMarkerHidden(view) && /[\\/]/.test(contentText(fragment));
+function filterFragment(fragment: Item[]): Item[] {
+  return fragment.flatMap((item): Item[] => {
+    if (typeof item === "string") {
+      const { text } = removeUnstorableText(item);
+      return text ? [text] : [];
+    }
+    if (item.type === "unmatched" || item.content === undefined) return [item];
+    return [withContent(item, filterFragment(item.content), originOf(item))];
+  });
 }
 
-/** The text `fragment` holds, a stray marker (`unmatched`, shown as its own bytes in every view)
- * included. */
-function contentText(fragment: Item[]): string {
-  return fragment
-    .map((item) => {
-      if (typeof item === "string") return item;
-      if (item.type === "unmatched") return `\\${item.marker ?? ""}`;
-      return contentText(item.content ?? []);
-    })
-    .join("");
+/** Whether a hidden-marker view's paste of `fragment` loses any text ({@link filterFragment}). */
+function isFiltered(fragment: Item[]): boolean {
+  return JSON.stringify(filterFragment(fragment)) !== JSON.stringify(fragment);
+}
+
+/** What a hidden-marker view reports for a paste of `fragment`: one notice if it lost any text. */
+function expectedNotices(view: ViewOptions, fragment: Item[]): number {
+  return isMarkerHidden(view) && isFiltered(fragment) ? 1 : 0;
 }
 
 /**
@@ -773,7 +777,8 @@ function plainFragment(content: Item[], at: TextPoint, text: string): Item[] {
 }
 
 async function runRangeRow(row: RangeRow, usj: Usj): Promise<void> {
-  const mounted = await mountInView(usj, row.view);
+  const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+  const mounted = await mountInView(usj, row.view, { onUnstorableTextRemoved: onRemoved });
   try {
     const original = contentOf(mounted);
     // The load round trip is another suite's subject; this one starts from what loaded.
@@ -797,11 +802,8 @@ async function runRangeRow(row: RangeRow, usj: Usj): Promise<void> {
         return;
       }
       await paste(lexical, clipboard);
-      if (isRefusedByPasteGate(row.view, copied)) {
-        expect(contentOf(mounted), "after the refused paste").toEqual(cutContent);
-        return;
-      }
       expect(contentOf(mounted), "after pasting the cut back").toEqual(original);
+      expect(onRemoved, "notices").toHaveBeenCalledTimes(expectedNotices(row.view, copied));
       await undo(mounted);
       expect(contentOf(mounted), "after undoing the paste").toEqual(cutContent);
       await redo(mounted);
@@ -822,19 +824,22 @@ async function runRangeRow(row: RangeRow, usj: Usj): Promise<void> {
     await select(lexical, usj, destination);
     await paste(lexical, payload);
 
-    let expected: Item[];
-    if (isRefusedByPasteGate(row.view, copied)) {
-      expected = original;
-    } else if (isMarkerHidden(row.view) && row.operation === "copy, paste plain text") {
-      expected = plain(
-        insertFragment(original, destination, plainFragment(original, destination, text), options),
-      );
+    let pasted: Item[];
+    if (isMarkerHidden(row.view) && row.operation === "copy, paste plain text") {
+      pasted = plainFragment(original, destination, text);
     } else {
-      const fragment = isInternal ? copied : withoutDerivedAttributes(copied);
-      expected = plain(insertFragment(original, destination, fragment, options));
+      pasted = isInternal ? copied : withoutDerivedAttributes(copied);
     }
+    const expected = plain(
+      insertFragment(
+        original,
+        destination,
+        isMarkerHidden(row.view) ? filterFragment(pasted) : pasted,
+        options,
+      ),
+    );
     expect(contentOf(mounted), "after the paste").toEqual(expected);
-    if (expected === original) return;
+    expect(onRemoved, "notices").toHaveBeenCalledTimes(expectedNotices(row.view, pasted));
     await undo(mounted);
     expect(contentOf(mounted), "after undoing the paste").toEqual(original);
     await redo(mounted);
@@ -846,11 +851,12 @@ async function runRangeRow(row: RangeRow, usj: Usj): Promise<void> {
 
 /**
  * Plain text that looks like USFM. Standard view tokenizes a paste (clipboard-semantics S3), so the
- * markers arrive as structure. The hidden-marker views have no tokenizer and refuse any paste
- * holding `\` (`CommandMenuPlugin`, S5): nothing is inserted, and nothing else changes.
+ * markers arrive as structure. The hidden-marker views have no tokenizer and cannot store a `\` as
+ * text, so the text goes in without it ({@link filterFragment}) and the host is told once.
  */
 async function runUsfmRow(row: UsfmRow, usj: Usj): Promise<void> {
-  const mounted = await mountInView(usj, row.view);
+  const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+  const mounted = await mountInView(usj, row.view, { onUnstorableTextRemoved: onRemoved });
   try {
     const original = contentOf(mounted);
     expect(original).toEqual(usj.content);
@@ -859,7 +865,17 @@ async function runUsfmRow(row: UsfmRow, usj: Usj): Promise<void> {
     await select(mounted.lexical, usj, destination);
     await paste(mounted.lexical, new Map([["text/plain", row.text]]));
     if (isMarkerHidden(row.view)) {
-      expect(contentOf(mounted), "after the refused paste").toEqual(original);
+      const filtered = filterFragment(plainFragment(original, destination, row.text));
+      const expected = plain(
+        insertFragment(original, destination, filtered, { spaceBeforeVerse: true }),
+      );
+      expect(contentOf(mounted), "after the paste").toEqual(expected);
+      expect(onRemoved, "notices").toHaveBeenCalledTimes(1);
+      expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["\\"] });
+      await undo(mounted);
+      expect(contentOf(mounted), "after undoing the paste").toEqual(original);
+      await redo(mounted);
+      expect(contentOf(mounted), "after redoing the paste").toEqual(expected);
       return;
     }
     const tokens: Item[] =
