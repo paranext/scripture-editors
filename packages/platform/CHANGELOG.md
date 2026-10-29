@@ -108,9 +108,10 @@ refused. The public surface grew substantially; nothing was removed.
   with the option on Standard view keeps `~` as `~`, shows a stored U+00A0 as a blank the width of
   a space (as a no-break space looks), and saves both as themselves — loaded, typed, pasted,
   dropped, copied, and through a marker settle. A U+00A0 typed or pasted is kept as one. The
-  Markers view's copy and the Unformatted view's marker settle follow the same spelling. Views
-  that hide markers are unaffected, and so is `getViewMode`. Off (the default) is unchanged: `~`
-  is a no-break space. Standard view holds such a U+00A0 as an internal stand-in (U+001A), which
+  Markers view's copy and the Unformatted view's marker settle follow the same spelling. In views
+  that hide markers the option decides only how a no-break space is typed and copied (see
+  Changed), and it does not affect `getViewMode`. Off (the default) is unchanged: `~` is a
+  no-break space. Standard view holds such a U+00A0 as an internal stand-in (U+001A), which
   never leaves the editor: `getUsj`, `onUsjChange` and its ops, `getNoteOps`, `getOpsAfterNote`,
   `takeOpsAfterNote`, the clipboard and drag data, annotation callbacks and note-caller previews
   all give U+00A0, and ops given to `applyUpdate`/`replaceEmbedUpdate` may carry U+00A0 for a
@@ -142,6 +143,15 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Changed
 
+- **Invisible characters are typed, pasted and copied as in Paratext 9, in every view.** A
+  zero-width no-break space (U+FEFF) the user types, pastes or drops is dropped, whatever
+  `ViewOptions.allowInvisibleCharacters` says, since Paratext 9 removes every one when it saves;
+  one the document already holds is kept. With the option off, a no-break space (U+00A0) typed as a
+  character goes in as a space outside Standard view too (the author's no-break space is typed as
+  `~`), and a view that hides markers copies a stored no-break space as `~` in its plain text; its
+  html and internal flavors keep U+00A0, which its own paste reads back as the no-break space. A
+  pasted U+00A0 is still a no-break space, and with the option on a typed or copied one is still
+  itself.
 - **Delta ops carry a milestone under `ms`**, the key `OTEmbedTypes` declares and
   `isInsertEmbedOpOfType("ms", op)` finds (`{ insert: { ms: { style: "qt-s", sid: "q1" } } }`);
   they carried it under `milestone`. `applyUpdate` and `replaceEmbedUpdate` still accept
