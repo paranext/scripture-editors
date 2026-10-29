@@ -15,20 +15,35 @@ import {
   PASTE_COMMAND,
 } from "lexical";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
-import { FORMATTED_VIEW_MODE, getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
+import {
+  FORMATTED_VIEW_MODE,
+  getViewOptions,
+  STANDARD_VIEW_MODE,
+  UnstorableTextRemovedHandler,
+  ViewOptions,
+} from "shared-react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The Editor-level gate controls shared-react's `CommandMenuPlugin`, which `preventDefault`s a
 // typed or pasted `\` and `/` so those characters never land in the document. Editable marker
 // modes (Standard view) need a literal `\` to reach the editor - the marker-edit engine and the
-// `\` marker menu both consume it - so the gate leaves CommandMenuPlugin UNMOUNTED there. In
-// non-editable views (Formatted) a literal `\`/`/` is garbage, so the gate keeps CommandMenuPlugin
-// mounted to swallow it.
+// `\` marker menu both consume it - so the gate leaves CommandMenuPlugin UNMOUNTED there. The
+// Markers view (markerMode "visible") keeps CommandMenuPlugin mounted to swallow a literal `\`/`/`.
+// The hidden-marker views (Formatted) mount `UnstorableTextPlugin` in its place, which takes a
+// paste with `\` or `//` in it, leaving those out.
 //
 // These tests assert the gate's real, user-facing effect rather than merely which plugin mounts:
 // they render the actual Editor (no mock) and dispatch a real `\`/`/` keydown through Lexical's
 // command pipeline, then check whether a handler called `preventDefault`. The key is allowed to
-// land in Standard view and is blocked in Formatted view.
+// land in Standard view and is blocked in the Markers view.
+
+/** The Markers view's options: markers shown as read-only text. */
+const markersView: ViewOptions = {
+  markerMode: "visible",
+  noteMode: "expanded",
+  hasSpacing: false,
+  isFormattedFont: false,
+};
 
 const sampleUsj: Usj = {
   type: "USJ",
@@ -48,13 +63,15 @@ const sampleUsj: Usj = {
  * is captured through a child `EditorRefPlugin` (which `<Editor>` renders inside its composer)
  * rather than a `.__lexicalEditor` DOM reach-in. */
 async function renderEditorWithRef(
-  viewMode: string,
+  viewMode: string | ViewOptions,
+  onUnstorableTextRemoved?: UnstorableTextRemovedHandler,
 ): Promise<{ editor: LexicalEditor; ref: RefObject<EditorRef | null> }> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
+  const view = typeof viewMode === "string" ? getViewOptions(viewMode) : viewMode;
   await act(async () => {
     render(
-      <Editor ref={ref} defaultUsj={sampleUsj} options={{ view: getViewOptions(viewMode) }}>
+      <Editor ref={ref} defaultUsj={sampleUsj} options={{ view, onUnstorableTextRemoved }}>
         <EditorRefPlugin editorRef={lexicalRef} />
       </Editor>,
     );
@@ -63,8 +80,11 @@ async function renderEditorWithRef(
   return { editor: lexicalRef.current, ref };
 }
 
-async function renderEditor(viewMode: string): Promise<LexicalEditor> {
-  return (await renderEditorWithRef(viewMode)).editor;
+async function renderEditor(
+  viewMode: string | ViewOptions,
+  onUnstorableTextRemoved?: UnstorableTextRemovedHandler,
+): Promise<LexicalEditor> {
+  return (await renderEditorWithRef(viewMode, onUnstorableTextRemoved)).editor;
 }
 
 /**
@@ -86,8 +106,8 @@ describe("CommandMenuPlugin editable-mode gate", () => {
     expect(await keyWasBlocked(editor, "/")).toBe(false);
   });
 
-  it("blocks a literal \\ and / in a non-editable marker mode (Formatted view)", async () => {
-    const editor = await renderEditor(FORMATTED_VIEW_MODE);
+  it("blocks a literal \\ and / in the Markers view", async () => {
+    const editor = await renderEditor(markersView);
     expect(await keyWasBlocked(editor, "\\")).toBe(true);
     expect(await keyWasBlocked(editor, "/")).toBe(true);
   });
@@ -236,8 +256,9 @@ describe("MarkerEditPlugin's Standard-view clipboard handlers do not leak into F
     expect(text).not.toContain("+");
   });
 
-  it("an external \\-bearing paste is swallowed by CommandMenuPlugin's gate, not claimed by the Standard-view paste handler — nothing is inserted", async () => {
-    const editor = await renderEditor(FORMATTED_VIEW_MODE);
+  it("an external \\-bearing paste goes in without its `\\`, not claimed by the Standard-view paste handler, and is reported once", async () => {
+    const onUnstorableTextRemoved = vi.fn<UnstorableTextRemovedHandler>();
+    const editor = await renderEditor(FORMATTED_VIEW_MODE, onUnstorableTextRemoved);
     let before = "";
     editor.getEditorState().read(() => {
       before = $getRoot().getTextContent();
@@ -270,18 +291,19 @@ describe("MarkerEditPlugin's Standard-view clipboard handlers do not leak into F
       handled = editor.dispatchCommand(PASTE_COMMAND, event);
     });
 
-    // CommandMenuPlugin's PASTE_COMMAND handler (COMMAND_PRIORITY_NORMAL, shared-react) is the
-    // one that claims this: it swallows any paste containing `\` or `/`. The consolidated
+    // UnstorableTextPlugin's PASTE_COMMAND handler (COMMAND_PRIORITY_NORMAL, shared-react) is the
+    // one that claims this: it inserts the plain text without its `\`. The consolidated
     // Standard-view handler ($handlePasteForStandardView, COMMAND_PRIORITY_HIGH inside
     // MarkerEditPlugin) is not registered in Formatted view at all, so it never enters the race —
     // were it wrongly registered here, its HIGHER priority would let it win instead, tokenize the
-    // marker text, and insert real structure, which the unchanged-document assertion below would
-    // catch.
+    // marker text, and insert real structure, which the text assertion below would catch.
     expect(handled).toBe(true);
     expect(prevented).toBe(true);
     editor.getEditorState().read(() => {
-      expect($getRoot().getTextContent()).toBe(before);
+      expect($getRoot().getTextContent()).toBe(`${before}nd insertednd*`);
     });
+    expect(onUnstorableTextRemoved).toHaveBeenCalledTimes(1);
+    expect(onUnstorableTextRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["\\"] });
   });
 });
 
