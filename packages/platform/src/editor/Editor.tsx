@@ -2166,6 +2166,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             isEnabled={viewOptions?.markerMode !== "editable"}
             structureProtectionMode={structureProtectionMode}
             copyLimit={copyLimit}
+            refusesCommandCharacters={viewOptions?.markerMode === "visible"}
             onHiddenContentDelete={onHiddenContentDelete}
             logger={stableLogger}
           />
