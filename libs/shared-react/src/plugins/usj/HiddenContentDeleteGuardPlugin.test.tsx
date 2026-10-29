@@ -7,6 +7,7 @@ import {
   HiddenContentDeleteHandler,
   HiddenContentDeleteRequest,
 } from "./hidden-content-delete.model";
+import { CommandMenuPlugin } from "./CommandMenuPlugin";
 import { HiddenContentDeleteGuardPlugin } from "./HiddenContentDeleteGuardPlugin";
 import { baseTestEnvironment, pressKey, sutUpdate, updateSelection } from "./react-test.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
@@ -96,11 +97,19 @@ async function guardedEnvironment(
     isEnabled?: boolean;
     structureProtectionMode?: StructureProtectionMode;
     copyLimit?: number;
+    refusesCommandCharacters?: boolean;
     logger?: LoggerBasic;
     children?: ReactNode;
   } = {},
 ) {
-  const { isEnabled = true, structureProtectionMode, copyLimit, logger, children } = options;
+  const {
+    isEnabled = true,
+    structureProtectionMode,
+    copyLimit,
+    refusesCommandCharacters,
+    logger,
+    children,
+  } = options;
   return baseTestEnvironment(
     $init,
     <>
@@ -108,6 +117,7 @@ async function guardedEnvironment(
         isEnabled={isEnabled}
         structureProtectionMode={structureProtectionMode}
         copyLimit={copyLimit}
+        refusesCommandCharacters={refusesCommandCharacters}
         onHiddenContentDelete={handler}
         logger={logger}
       />
@@ -1663,6 +1673,39 @@ describe("HiddenContentDeleteGuardPlugin", () => {
 
       expect(handler).toHaveBeenCalledTimes(1);
       expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("does not ask about a paste holding a `/` where every `\\` or `/` refuses the paste", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler, {
+        refusesCommandCharacters: true,
+        children: <CommandMenuPlugin />,
+      });
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "and/or"));
+      });
+      await settle();
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("asks about a paste without `\\` or `/` where every `\\` or `/` refuses the paste", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler, {
+        refusesCommandCharacters: true,
+        children: <CommandMenuPlugin />,
+      });
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "and or"));
+      });
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
     });
 
     it("drops a selection edit when a verse marker was added inside the selection while asking", async () => {
