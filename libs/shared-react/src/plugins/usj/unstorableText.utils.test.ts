@@ -164,6 +164,29 @@ describe("$removeUnstorableTextFromNodes", () => {
   });
 });
 
+describe("$removeUnstorableTextFromNodes — listed children", () => {
+  it("removes an emptied node from the list even when it is still a paragraph's child", async () => {
+    const { editor } = await baseTestEnvironment();
+    let result: { listed: string[]; paraChildren: string[]; removed: string[] } | undefined;
+    await sutUpdate(editor, () => {
+      const para = $createParaNode("p").append(
+        $createTextNode("a"),
+        $createTextNode("\\\\").toggleFormat("bold"),
+      );
+      // The protected-structure sanitizer lists a paragraph's children without detaching them.
+      const nodes: LexicalNode[] = para.getChildren();
+      const removed = $removeUnstorableTextFromNodes(nodes);
+      result = {
+        listed: nodes.map(textOf),
+        paraChildren: para.getChildren().map(textOf),
+        removed,
+      };
+    });
+
+    expect(result).toEqual({ listed: ["a"], paraChildren: ["a"], removed: ["\\"] });
+  });
+});
+
 describe("$textAroundSelection", () => {
   it("reads one character either side of a caret in text", async () => {
     let text: TextNode;

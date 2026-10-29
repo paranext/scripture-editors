@@ -5,17 +5,17 @@ import {
   UnstorableTextRemovedHandler,
 } from "./unstorable-text.model";
 import {
+  $insertsNothing,
   $removeUnstorableTextFromNodes,
   $textAroundSelection,
   removeUnstorableText,
 } from "./unstorableText.utils";
+import { $insertDataTransferForRichText } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
-  $createTabNode,
   $getSelection,
-  $isElementNode,
   $isRangeSelection,
   BaseSelection,
   COMMAND_PRIORITY_CRITICAL,
@@ -104,26 +104,15 @@ function takesPlainTextRoute(data: DataTransfer, editor: LexicalEditor): boolean
 }
 
 /**
- * Inserts plain text at the selection exactly as Lexical's rich-text paste does: each line break a
- * new paragraph, each tab a tab node.
- *
- * Mutating: call inside `editor.update()`.
+ * Plain text as protected structure inserts it, in the paragraph at the caret: each run of line
+ * breaks becomes one space, except a trailing one, which goes (Lexical's own plain-text paste
+ * makes no empty paragraph for it either), and each tab becomes a space.
  */
-function $insertPlainText(text: string): void {
-  const parts = text.split(/(\r?\n|\t)/);
-  if (parts.at(-1) === "") parts.pop();
-  for (const part of parts) {
-    const selection = $getSelection();
-    if (!$isRangeSelection(selection)) continue;
-    if (part === "\n" || part === "\r\n") selection.insertParagraph();
-    else if (part === "\t") selection.insertNodes([$createTabNode()]);
-    else selection.insertText(part);
-  }
-}
-
-/** Whether `node` holds nothing to insert: an element with no leaf anywhere inside it. */
-function $holdsNoLeaf(node: LexicalNode): boolean {
-  return $isElementNode(node) && node.getChildren().every($holdsNoLeaf);
+function joinLines(text: string): string {
+  return text
+    .replace(/[\r\n]+$/, "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\t/g, " ");
 }
 
 /**
@@ -138,8 +127,8 @@ function $holdsNoLeaf(node: LexicalNode): boolean {
  * {@link $filterUnstorablePastedNodes} as its `$filterPastedNodes` to cover those too. Typed text is
  * not this plugin's concern.
  *
- * Under `"protected"` structure a plain-text paste or drop goes into the paragraph at the caret
- * with each line break and tab made a space, as protected structure's html route joins paragraphs:
+ * Under `"protected"` structure a plain-text paste or drop goes into the paragraph at the caret,
+ * its lines joined by one space each, as protected structure's html route joins paragraphs:
  * Lexical would otherwise make each line a paragraph of its own.
  *
  * @param structureProtectionMode - The editor's structure protection.
@@ -171,7 +160,7 @@ export function UnstorableTextPlugin({
   useEffect(() => {
     // Set while a drop that Lexical inserts as nodes is being inserted: its nodes reach
     // `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND` from the same, synchronous dispatch, which is over
-    // by the next microtask.
+    // by the next microtask. This relies on Lexical dispatching that insertion synchronously.
     let isDropping = false;
 
     /**
@@ -188,14 +177,18 @@ export function UnstorableTextPlugin({
       if (!text) return false;
       const joinsLines = structureProtectionModeRef.current === "protected" && /[\r\n]/.test(text);
       const { before, after } = $textAroundSelection(selection);
-      const filtered = removeUnstorableText(
-        joinsLines ? text.replace(/\r\n|[\r\n\t]/g, " ") : text,
-        before,
-        after,
-      );
+      const filtered = removeUnstorableText(joinsLines ? joinLines(text) : text, before, after);
       if (filtered.removed.length === 0 && !joinsLines) return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);
-      if (filtered.text) $insertPlainText(filtered.text);
+      if (filtered.text) {
+        // Lexical reads only `getData` from the transfer, and finds no flavor here but plain text,
+        // so its own plain-text insertion runs on the filtered text; a real `DataTransfer` cannot
+        // be constructed everywhere this runs.
+        const plainOnly = {
+          getData: (type: string) => (type === "text/plain" ? filtered.text : ""),
+        } as Pick<DataTransfer, "getData"> as DataTransfer;
+        $insertDataTransferForRichText(plainOnly, selection, editor);
+      }
       if (filtered.removed.length > 0)
         reportRemoved(
           { source, removed: filtered.removed },
@@ -217,7 +210,7 @@ export function UnstorableTextPlugin({
             loggerRef.current,
           );
           // Claimed only when nothing is left: inserting nothing over a selection would delete it.
-          return removed.length > 0 && nodes.every($holdsNoLeaf);
+          return removed.length > 0 && $insertsNothing(nodes);
         },
         // Critical, so a handler that does insert the nodes cannot insert them unfiltered.
         COMMAND_PRIORITY_CRITICAL,
