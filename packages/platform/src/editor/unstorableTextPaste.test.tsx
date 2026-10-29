@@ -11,6 +11,7 @@ import {
   $getRoot,
   $setSelection,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  COPY_COMMAND,
   PASTE_COMMAND,
 } from "lexical";
 import { StructureProtectionMode, UnstorableTextRemovedHandler } from "shared-react";
@@ -282,6 +283,54 @@ describe.each<[string, StructureProtectionMode]>([
     await paste(mounted, { "text/html": `<p>${PARA_GLYPH}</p>`, "text/plain": "\\q1 " });
 
     expect(savedParas(mounted)).toEqual([VERSE_TEXT]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+});
+
+describe("a paste carrying Lexical's own flavor beside glyph-bearing html", () => {
+  it("inserts what was copied, ignoring the html and plain text, telling no one", async () => {
+    const { mounted, onRemoved } = await mount("paragraph-structure", "off");
+    const selectInVerse = (from: number, to: number) =>
+      act(async () =>
+        mounted.lexical.update(
+          () => {
+            const node = $getRoot()
+              .getAllTextNodes()
+              .find((text) => text.getTextContent().includes(VERSE_TEXT));
+            if (!node) throw new Error("verse text not found");
+            const start = node.getTextContent().indexOf(VERSE_TEXT);
+            node.select(start + from, start + to);
+          },
+          { discrete: true },
+        ),
+      );
+    // A real copy of "verse", so the flavor carries this editor's namespace.
+    await selectInVerse("first ".length, "first verse".length);
+    const copied = new Map<string, string>();
+    const copyEvent = new ClipboardEvent("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copyEvent, "clipboardData", {
+      value: {
+        types: [],
+        files: [],
+        getData: (type: string) => copied.get(type) ?? "",
+        setData: (type: string, data: string) => copied.set(type, data),
+        clearData: () => copied.clear(),
+      },
+    });
+    await act(async () => {
+      mounted.lexical.dispatchCommand(COPY_COMMAND, copyEvent);
+    });
+    const lexicalFlavor = copied.get("application/x-lexical-editor");
+    expect(lexicalFlavor).toContain("platformEditor");
+    await selectInVerse(0, 0);
+
+    await paste(mounted, {
+      "application/x-lexical-editor": lexicalFlavor,
+      "text/html": `<p>${PARA_GLYPH}other</p>`,
+      "text/plain": "\\q1 other",
+    });
+
+    expect(savedParas(mounted)).toEqual(["versefirst verse text"]);
     expect(onRemoved).not.toHaveBeenCalled();
   });
 });
