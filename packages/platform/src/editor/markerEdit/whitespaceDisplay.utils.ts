@@ -73,6 +73,24 @@ export function controlCharactersToSpaces(text: string): string {
   return result;
 }
 
+/** The zero-width no-break space (U+FEFF), also read as a byte order mark. */
+export const ZERO_WIDTH_NO_BREAK_SPACE = "\uFEFF";
+
+/**
+ * Drops every zero-width no-break space (U+FEFF) from text the user enters — typed, pasted or
+ * dropped, in every view and whatever the project's `AllowInvisibleChars`. Paratext 9's editor uses
+ * the character only to position its caret and removes every one when it saves, so one entered
+ * there never reaches the file; one the text already holds is not this function's to remove.
+ *
+ * @param text - Entered text.
+ * @returns The text without U+FEFF; `text` itself when it has none.
+ */
+export function withoutZeroWidthNoBreakSpaces(text: string): string {
+  return text.includes(ZERO_WIDTH_NO_BREAK_SPACE)
+    ? text.replaceAll(ZERO_WIDTH_NO_BREAK_SPACE, "")
+    : text;
+}
+
 /**
  * {@link controlCharactersToSpaces} over every string of a USJ document: text content and
  * attribute values alike, since Standard view shows both as text it re-reads. Objects without such

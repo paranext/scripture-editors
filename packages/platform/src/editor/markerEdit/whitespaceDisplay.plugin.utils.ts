@@ -66,7 +66,10 @@ import {
 import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
 import { $isNoteCallerSlot } from "./noteCallerSlot.utils";
 import { paratext9HtmlToUsfm } from "./paratext9Clipboard.utils";
-import { controlCharactersToSpaces } from "./whitespaceDisplay.utils";
+import {
+  controlCharactersToSpaces,
+  withoutZeroWidthNoBreakSpaces,
+} from "./whitespaceDisplay.utils";
 
 /** Spaces in runs display as NBSP so they are visible while typing, and a lone display NBSP left
  * standing on its own goes back to a plain space ({@link $isLeftoverDisplaySpace}). */
@@ -114,13 +117,8 @@ export function $displayWhitespaceTransform(node: TextNode): void {
  * as a space, as in Paratext 9, whose authors type a no-break space as `~`. A typed C0 control
  * character other than tab, line feed and carriage return goes in as a space either way
  * ({@link controlCharactersToSpaces}), so a typed U+001A never becomes the stand-in for a stored
- * no-break space.
- *
- * Two routes carry typed text, and both are covered: `CONTROLLED_TEXT_INSERTION_COMMAND` (Lexical
- * dispatches it when it inserts the text itself) is re-dispatched with the text respelled, and a
- * `beforeinput` the browser would otherwise apply to the DOM itself (Lexical then reads the text
- * back without a command) is claimed in the capture phase, ahead of Lexical's own listener, and
- * inserted through the command. Text being composed by an input method is left alone.
+ * no-break space, and a typed zero-width no-break space (U+FEFF) is dropped
+ * ({@link withoutZeroWidthNoBreakSpaces}). The typing routes are {@link registerTypedTextRewrite}'s.
  *
  * @param editor - The editor.
  * @param getNbspSpelling - The current spelling, read at each insertion.
@@ -130,40 +128,67 @@ export function registerTypedNbspSpelling(
   editor: LexicalEditor,
   getNbspSpelling: () => string,
 ): () => void {
-  const respelled = (text: string | null | undefined): string | undefined => {
-    if (!text) return undefined;
+  return registerTypedTextRewrite(editor, (text) => {
     const nbspSpelling = getNbspSpelling();
-    let result = controlCharactersToSpaces(text);
-    if (nbspSpelling !== "~") result = result.replaceAll(NBSP, nbspSpelling);
+    const result = withoutZeroWidthNoBreakSpaces(controlCharactersToSpaces(text));
+    return nbspSpelling === "~" ? result : result.replaceAll(NBSP, nbspSpelling);
+  });
+}
+
+/**
+ * Makes the text the user types go in as `rewrite` gives it back.
+ *
+ * Two routes carry typed text, and both are covered: `CONTROLLED_TEXT_INSERTION_COMMAND` (Lexical
+ * dispatches it when it inserts the text itself) is re-dispatched with the rewritten text, and a
+ * `beforeinput` the browser would otherwise apply to the DOM itself (Lexical then reads the text
+ * back without a command) is claimed in the capture phase, ahead of Lexical's own listener, and
+ * inserted through the command. Text being composed by an input method is left alone, and so is a
+ * drop, which carries no typed text.
+ *
+ * Register it once per editor: a second registration's `beforeinput` claim would hide the typing
+ * from the first's.
+ *
+ * @param editor - The editor.
+ * @param rewrite - What typed text goes in as; it must give back text it has already rewritten
+ *   unchanged, since the rewritten text is inserted through the same command.
+ * @returns The teardown.
+ */
+export function registerTypedTextRewrite(
+  editor: LexicalEditor,
+  rewrite: (text: string) => string,
+): () => void {
+  const rewritten = (text: string | null | undefined): string | undefined => {
+    if (!text) return undefined;
+    const result = rewrite(text);
     return result === text ? undefined : result;
   };
-  // Set while the respelled text is inserted, which holds the stand-in: respelling it again would
-  // read that stand-in as a typed control character.
-  let isInsertingRespelled = false;
-  const insertRespelled = (text: string) => {
-    isInsertingRespelled = true;
+  // Set while the rewritten text is inserted: rewriting it again could change it again (the
+  // Standard-view spelling of a stored no-break space is a control character).
+  let isInsertingRewritten = false;
+  const insertRewritten = (text: string) => {
+    isInsertingRewritten = true;
     try {
       editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
     } finally {
-      isInsertingRespelled = false;
+      isInsertingRewritten = false;
     }
   };
   const onBeforeInput = (event: InputEvent) => {
     if (event.inputType !== "insertText" || editor.isComposing()) return;
-    const text = respelled(event.data);
+    const text = rewritten(event.data);
     if (text === undefined) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    insertRespelled(text);
+    insertRewritten(text);
   };
   return mergeRegister(
     editor.registerCommand(
       CONTROLLED_TEXT_INSERTION_COMMAND,
       (payload) => {
-        if (isInsertingRespelled || editor.isComposing()) return false;
-        const text = respelled(typeof payload === "string" ? payload : payload.data);
+        if (isInsertingRewritten || editor.isComposing()) return false;
+        const text = rewritten(typeof payload === "string" ? payload : payload.data);
         if (text === undefined) return false;
-        insertRespelled(text);
+        insertRewritten(text);
         return true;
       },
       COMMAND_PRIORITY_CRITICAL,

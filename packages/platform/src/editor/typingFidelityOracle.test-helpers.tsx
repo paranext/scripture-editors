@@ -875,6 +875,8 @@ interface Keystroke {
   name: string;
   /** For a typed character: the character. */
   text?: string;
+  /** For a typed character the view puts in as something else: what it puts in. */
+  inserts?: string;
   /** For a key: its `KeyboardEvent.key`. */
   key?: string;
   /** For a range typed over: how far it reaches. */
@@ -884,7 +886,9 @@ interface Keystroke {
 const KEYSTROKES: Keystroke[] = [
   { name: 'type "x"', text: "x" },
   { name: "type a space", text: " " },
-  { name: "type a no-break space", text: NBSP },
+  // The oracle's views run with `allowInvisibleCharacters` off, where a no-break space typed as a
+  // character goes in as a space, as in Paratext 9 (the author's no-break space is typed as `~`).
+  { name: "type a no-break space", text: NBSP, inserts: " " },
   { name: "Backspace", key: "Backspace" },
   { name: "Delete", key: "Delete" },
   { name: "Enter", key: "Enter" },
@@ -1425,14 +1429,15 @@ export function describeTypingFidelityOracle(
             let isStructural = false;
             const isCollapsed = first.block === last.block && first.unit === last.unit;
             if (!isCollapsed && keystroke.range === undefined) continue;
-            if (keystroke.text !== undefined) {
+            const inserted = keystroke.inserts ?? keystroke.text;
+            if (inserted !== undefined) {
               if (first.block === last.block)
                 edit = {
                   kind: "replace",
                   block: first.block,
                   from: first.unit,
                   to: last.unit,
-                  text: keystroke.text,
+                  text: inserted,
                 };
               else if (last.block === first.block + 1)
                 edit = {
@@ -1440,7 +1445,7 @@ export function describeTypingFidelityOracle(
                   block: first.block,
                   from: first.unit,
                   to: last.unit,
-                  text: keystroke.text,
+                  text: inserted,
                 };
               isStructural =
                 first.block !== last.block ||
@@ -1541,7 +1546,7 @@ export function describeTypingFidelityOracle(
               usjBlocks[first.block].block.marker === "b" &&
               blockUnits.length === 0;
             const isEmptyVerseSpace =
-              keystroke.text === " " &&
+              inserted === " " &&
               isCollapsed &&
               blockUnits[first.unit - 1]?.kind === "atom" &&
               (blockUnits[first.unit] === undefined || blockUnits[first.unit].kind === "atom");

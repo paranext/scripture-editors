@@ -11,6 +11,7 @@ import {
   mountInView,
   MountedEditor,
   paneRowScaffold,
+  ReadOnlyViewName,
 } from "./editorViews.test-helpers";
 import { press } from "./typingFidelityOracle.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -18,6 +19,7 @@ import { act } from "@testing-library/react";
 import {
   $getRoot,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
@@ -26,7 +28,7 @@ import {
   TextNode,
 } from "lexical";
 import { NBSP, NBSP_STAND_IN } from "shared";
-import { ViewOptions } from "shared-react";
+import { hasStandardViewWhitespace, ViewOptions } from "shared-react";
 import { describe, expect, it } from "vitest";
 
 /** How Standard view shows a stored no-break space when `~` is an ordinary character. */
@@ -46,7 +48,10 @@ function oneParaUsj(content: MarkerContent[]): Usj {
   };
 }
 
-function withInvisibleCharacters(name: EditorViewName, allow = true): ViewOptions {
+function withInvisibleCharacters(
+  name: EditorViewName | ReadOnlyViewName,
+  allow = true,
+): ViewOptions {
   return { ...editorView(name), allowInvisibleCharacters: allow };
 }
 
@@ -119,13 +124,27 @@ async function paste(lexical: LexicalEditor, text: string): Promise<void> {
 
 /** Selects `text` (which must sit in one text node) and copies it; returns `text/plain`. */
 async function copy(lexical: LexicalEditor, text: string): Promise<string> {
+  return (await copyStore(lexical, text)).get("text/plain") ?? "";
+}
+
+/** Selects `text` (which must sit in one text node) and copies it; returns every flavor. */
+async function copyStore(lexical: LexicalEditor, text: string): Promise<Map<string, string>> {
+  let selected: { key: string; start: number } | undefined;
   await act(async () =>
     lexical.update(() => {
       const node = $textNodeContaining(text);
       const start = node.getTextContent().indexOf(text);
       node.select(start, start + text.length);
+      selected = { key: node.getKey(), start };
     }),
   );
+  // A read-only editor leaves the page's selection where it was; a user's copy is of what they
+  // selected on the page.
+  const domText = selected ? lexical.getElementByKey(selected.key)?.firstChild : undefined;
+  if (selected && domText)
+    document
+      .getSelection()
+      ?.setBaseAndExtent(domText, selected.start, domText, selected.start + text.length);
   const store = new Map<string, string>();
   await act(async () =>
     lexical.update(() => {
@@ -133,7 +152,7 @@ async function copy(lexical: LexicalEditor, text: string): Promise<string> {
       lexical.dispatchCommand(COPY_COMMAND, clipboardEvent(store));
     }),
   );
-  return store.get("text/plain") ?? "";
+  return store;
 }
 
 describe("Standard view with allowInvisibleCharacters", () => {
@@ -341,5 +360,237 @@ describeInView("visible")("Markers view with allowInvisibleCharacters", () => {
     );
 
     expect(await copy(mounted.lexical, `a~b${NBSP}c`)).toBe(`a~b${NBSP}c`);
+  });
+});
+
+// Paratext 9 parity for typed, pasted and copied invisible characters, in every view a user enters
+// text in.
+
+/** The views text is typed and pasted in: the app's editable ones and the library's. */
+const ENTRY_VIEWS = enabledViews<EditorViewName>([
+  "standard",
+  "footnotes-pane-row",
+  "formatted",
+  "paragraph-structure",
+  "unformatted",
+]);
+
+const ZWNBSP = "﻿";
+
+/** A footnote whose `\ft` text is `text`. */
+function noteHolding(text: string): MarkerObject {
+  return {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "ft", content: [text] }],
+  };
+}
+
+/** `text` mounted where `name` edits it: a paragraph, or the `\ft` of the pane row's note. */
+async function mountText(
+  name: EditorViewName,
+  text: string,
+  allow: boolean,
+): Promise<{ mounted: MountedEditor; saved: () => unknown }> {
+  const view = withInvisibleCharacters(name, allow);
+  if (name === "footnotes-pane-row") {
+    const mounted = await mountInView(paneRowScaffold(noteHolding(text)), view);
+    const saved = () => {
+      const para = mounted.ref.current?.getUsj()?.content[0];
+      const note = typeof para === "object" ? para.content?.[0] : undefined;
+      const ft = typeof note === "object" ? note.content?.[0] : undefined;
+      return typeof ft === "object" ? ft.content : ft;
+    };
+    return { mounted, saved };
+  }
+  const mounted = await mountInView(oneParaUsj([text]), view);
+  return { mounted, saved: () => firstParaContent(mounted) };
+}
+
+async function pasteFlavors(lexical: LexicalEditor, flavors: [string, string][]): Promise<void> {
+  await act(async () =>
+    lexical.update(() => {
+      lexical.dispatchCommand(PASTE_COMMAND, clipboardEvent(new Map(flavors)));
+    }),
+  );
+  await settle();
+}
+
+async function dropText(lexical: LexicalEditor, text: string): Promise<void> {
+  const dataTransfer = { types: ["text/plain"], files: [], getData: () => text };
+  const event = new InputEvent("beforeinput", { inputType: "insertFromDrop", cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+  await act(async () => {
+    lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, event);
+  });
+  await settle();
+}
+
+describe.each(ENTRY_VIEWS)("%s view: invisible characters entered as in Paratext 9", (name) => {
+  it("saves a no-break space typed with allowInvisibleCharacters off as a space", async () => {
+    const pressed = await mountText(name, "ab", false);
+    await placeCaret(pressed.mounted.lexical, "ab", 1);
+    expect(await press(pressed.mounted, NBSP, NBSP)).toEqual([]);
+    expect(pressed.saved()).toEqual(["a b"]);
+
+    const inserted = await mountText(name, "ab", false);
+    await placeCaret(inserted.mounted.lexical, "ab", 1);
+    await typeText(inserted.mounted.lexical, NBSP);
+    expect(inserted.saved()).toEqual(["a b"]);
+  });
+
+  it("saves a no-break space typed with allowInvisibleCharacters on as one", async () => {
+    const { mounted, saved } = await mountText(name, "ab", true);
+    await placeCaret(mounted.lexical, "ab", 1);
+
+    expect(await press(mounted, NBSP, NBSP)).toEqual([]);
+
+    expect(saved()).toEqual([`a${NBSP}b`]);
+  });
+
+  it.each([false, true])(
+    "keeps a pasted no-break space as one (allowInvisibleCharacters %s)",
+    async (allow) => {
+      const { mounted, saved } = await mountText(name, "ab", allow);
+      await placeCaret(mounted.lexical, "ab", 1);
+
+      await paste(mounted.lexical, `x${NBSP}y`);
+
+      expect(saved()).toEqual([`ax${NBSP}yb`]);
+    },
+  );
+
+  it.each([false, true])(
+    "drops a typed zero-width no-break space (allowInvisibleCharacters %s)",
+    async (allow) => {
+      const pressed = await mountText(name, "ab", allow);
+      await placeCaret(pressed.mounted.lexical, "ab", 1);
+      expect(await press(pressed.mounted, ZWNBSP, ZWNBSP)).toEqual([]);
+      expect(pressed.saved()).toEqual(["ab"]);
+
+      const inserted = await mountText(name, "ab", allow);
+      await placeCaret(inserted.mounted.lexical, "ab", 1);
+      await typeText(inserted.mounted.lexical, `x${ZWNBSP}`);
+      expect(inserted.saved()).toEqual(["axb"]);
+    },
+  );
+
+  it.each([false, true])(
+    "drops a zero-width no-break space pasted or dropped (allowInvisibleCharacters %s)",
+    async (allow) => {
+      const plain = await mountText(name, "ab", allow);
+      await placeCaret(plain.mounted.lexical, "ab", 1);
+      await paste(plain.mounted.lexical, `x${ZWNBSP}y`);
+      expect(plain.saved()).toEqual(["axyb"]);
+
+      const html = await mountText(name, "ab", allow);
+      await placeCaret(html.mounted.lexical, "ab", 1);
+      await pasteFlavors(html.mounted.lexical, [["text/html", `<span>x${ZWNBSP}y</span>`]]);
+      expect(html.saved()).toEqual(["axyb"]);
+
+      const dropped = await mountText(name, "ab", allow);
+      await placeCaret(dropped.mounted.lexical, "ab", 1);
+      await dropText(dropped.mounted.lexical, `x${ZWNBSP}y`);
+      expect(dropped.saved()).toEqual(["axyb"]);
+    },
+  );
+
+  it.each([false, true])(
+    "keeps a zero-width no-break space the text holds when it is edited (allowInvisibleCharacters %s)",
+    async (allow) => {
+      const { mounted, saved } = await mountText(name, `a${ZWNBSP}b cd`, allow);
+      expect(saved()).toEqual([`a${ZWNBSP}b cd`]);
+      await placeCaret(mounted.lexical, "cd", 1);
+
+      await typeText(mounted.lexical, "x");
+
+      expect(saved()).toEqual([`a${ZWNBSP}b cxd`]);
+    },
+  );
+});
+
+/**
+ * The views a copy is taken from: every entry view, and Power mode's read-only Preview, less the
+ * Unformatted view, which only the library offers and whose copy writes the text as it shows it.
+ */
+const COPY_VIEWS = [
+  ...ENTRY_VIEWS.filter((name) => name !== "unformatted"),
+  ...enabledViews(["preview"] as const),
+];
+
+describe.each(COPY_VIEWS)("%s view: a no-break space copied as in Paratext 9", (name) => {
+  it.each<[boolean, string]>([
+    [false, "a~b"],
+    [true, `a${NBSP}b`],
+  ])("allowInvisibleCharacters %s copies it as %j", async (allow, copied) => {
+    const view = withInvisibleCharacters(name, allow);
+    const text = `a${NBSP}b c`;
+    const mounted =
+      name === "footnotes-pane-row"
+        ? await mountInView(paneRowScaffold(noteHolding(text)), view)
+        : await mountInView(oneParaUsj([text]), view, { isReadonly: name === "preview" });
+    const shownNbsp = hasStandardViewWhitespace(view) ? (allow ? NBSP_GLYPH : "~") : NBSP;
+
+    const store = await copyStore(mounted.lexical, `a${shownNbsp}b`);
+
+    expect(store.get("text/plain")).toBe(copied);
+    expect(store.get("text/html") ?? "").not.toContain(NBSP_STAND_IN);
+  });
+});
+
+/** The views that hide markers, whose copy writes the text as they show it. */
+const HIDDEN_MARKER_COPY_VIEWS = enabledViews([
+  "formatted",
+  "paragraph-structure",
+  "preview",
+] as const);
+
+describe.each(HIDDEN_MARKER_COPY_VIEWS)("%s view: a copy of a whole paragraph", (name) => {
+  it("writes only a stored no-break space as `~` in its plain text", async () => {
+    const content: MarkerContent[] = [
+      `a${NBSP}b `,
+      { type: "char", marker: "nd", content: [] },
+      " y",
+      noteHolding("note"),
+      " z",
+    ];
+    const copyParagraph = async (allow: boolean) => {
+      const mounted = await mountInView(oneParaUsj(content), withInvisibleCharacters(name, allow), {
+        isReadonly: name === "preview",
+      });
+      let paraKey = "";
+      await act(async () =>
+        mounted.lexical.update(() => {
+          const para = $getRoot().getChildren()[2];
+          if (!$isElementNode(para)) throw new Error("no paragraph to copy");
+          para.select(0, para.getChildrenSize());
+          paraKey = para.getKey();
+        }),
+      );
+      // A read-only editor leaves the page's selection where it was; a user's copy is of what
+      // they selected on the page.
+      const paraElement = mounted.lexical.getElementByKey(paraKey);
+      if (!paraElement) throw new Error("the paragraph is not rendered");
+      document.getSelection()?.selectAllChildren(paraElement);
+      const store = new Map<string, string>();
+      await act(async () =>
+        mounted.lexical.update(() => {
+          mounted.lexical.dispatchCommand(COPY_COMMAND, clipboardEvent(store));
+        }),
+      );
+      mounted.unmount();
+      return store;
+    };
+    // With the setting on nothing is respelled, so that copy shows where the layout spacing is.
+    const asShown = await copyParagraph(true);
+    const plainShown = asShown.get("text/plain") ?? "";
+    expect(plainShown.split(NBSP).length).toBeGreaterThan(2);
+
+    const copied = await copyParagraph(false);
+
+    expect(copied.get("text/plain")).toBe(plainShown.replace(`a${NBSP}b`, "a~b"));
+    // The html is what the view's own paste reads, where a `~` would come back a literal tilde.
+    expect(copied.get("text/html")).toBe(asShown.get("text/html"));
   });
 });

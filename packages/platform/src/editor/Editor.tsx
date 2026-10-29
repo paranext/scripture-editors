@@ -29,6 +29,7 @@ import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
 import { $insertFirstChapter } from "./markerEdit/firstChapter.utils";
 import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
 import { InlineRangeEditPlugin } from "./InlineRangeEditPlugin";
+import { InvisibleCharactersPlugin } from "./InvisibleCharactersPlugin";
 import {
   COMMIT_PENDING_MARKERS_COMMAND,
   MarkerEditPlugin,
@@ -2005,6 +2006,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       {/* First among the critical-priority key handlers, so each of them sees the caret the user
           can see. */}
       <KeyDownCaretSyncPlugin />
+      {/* Ahead of every plugin with a critical-priority paste or text-insertion handler, so none
+          of them takes in a U+FEFF this drops. */}
+      <InvisibleCharactersPlugin viewOptions={viewOptions} />
       <div className="editor-container">
         {hasExternalUI ? (
           <StateChangePlugin onStateChange={handleStateChange} />

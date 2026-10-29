@@ -302,14 +302,14 @@ forEachView(NBSP_VIEWS, ({ view }) => {
   });
 });
 
-// Standard view shows a typed space run with no-break spaces so it stays visible, and saves an NBSP
-// typed there as a space; these views save what is typed.
+// A no-break space typed as a character is data only where the project stores one as U+00A0
+// (`allowInvisibleCharacters`); otherwise every view saves it as a space, as Paratext 9 does.
 forEachView(
   NBSP_VIEWS.filter(({ name }) => name !== "standard"),
   ({ view }) => {
     describe("a no-break space typed into an empty span", () => {
       it("is saved", async () => {
-        const mounted = await mountInView(spanUsj([]), view);
+        const mounted = await mountInView(spanUsj([]), { ...view, allowInvisibleCharacters: true });
         await act(async () => {
           mounted.ref.current?.setSelection({
             start: { jsonPath: "$.content[2].content[1]", offset: 0 },
@@ -629,10 +629,14 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
 });
 
 forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
+  // Where a typed no-break space is data: a project that stores one as U+00A0.
   describe("a no-break space typed into a span, then left alone in it", () => {
     it("is saved as the span's content", async () => {
       const span: MarkerContent = { type: "char", marker: "nd", content: ["ab"] };
-      const mounted = await mountInView(oneParaUsj(["a ", span, " b"]), view);
+      const mounted = await mountInView(oneParaUsj(["a ", span, " b"]), {
+        ...view,
+        allowInvisibleCharacters: true,
+      });
       const spanText = "$.content[2].content[1].content[0]";
       await act(async () => {
         mounted.ref.current?.setSelection({ start: { jsonPath: spanText, offset: 2 } });
