@@ -416,7 +416,8 @@ depends on the project, through `ViewOptions.allowInvisibleCharacters` (Paratext
 `AllowInvisibleChars`):
 
 - **Off (default):** `~`, Paratext's own USFM spelling, shown as `~`. The project cannot hold a
-  literal tilde — ParatextData reads `~` back as U+00A0 — so the USJ never contains one.
+  literal tilde in body text — ParatextData reads `~` back as U+00A0 there — so the USJ's text
+  never contains one. An attribute value can (below).
 - **On:** the project stores U+00A0 itself and `~` is an ordinary character, so a stored U+00A0 is
   held as `NBSP_STAND_IN` (U+001A, SUBSTITUTE) and `~` is never touched. The `PlatformEditorNbspStandIn`
   font face (one empty glyph a quarter of an em wide, `unicode-range: U+1A`, added to the document
@@ -451,28 +452,53 @@ The stand-in is internal and must never leave the editor, and nothing from outsi
   `\s` reads them as whitespace. Then a U+00A0 that is data becomes the stand-in: typed, pasted or
   dropped (every U+00A0 but an opening marker's separator — `normalizePastedNbsp`), or in applied ops when it is not a marker's
   separator or a lone spacer.
-- **The tokenizer** keeps the spelling as a character: `regularizeSpaces` would otherwise turn a
-  control character into a space before `UsfmFragmentOptions.nbspSpelling` maps it to U+00A0.
+- **The tokenizer** keeps the spellings as characters: `regularizeSpaces` would otherwise turn a
+  control character into a space before `UsfmFragmentOptions.nbspSpelling` (or
+  `attributeNbspSpelling`) maps it to U+00A0.
 
-Every layer that turns display or fragment text into data, or data into display, takes the spelling
-from `getNbspSpelling(viewOptions)` and never writes a literal `~`: the load and save adaptors, the
-settle's fragment tokenizer (`UsfmFragmentOptions.nbspSpelling`), the Unformatted view's content
-fragments, paste, drop, copy (the copy writes U+00A0 itself when the spelling is not `~`), and a
-typed U+00A0 (kept as the spelling when it is not `~`; a space otherwise, as in Paratext 9). A
-layer that spelled it on its own would load under one spelling and save under another.
+Every layer that turns body display or fragment text into data, or data into display, takes the
+spelling from `getNbspSpelling(viewOptions)` and never writes a literal `~`: the load and save
+adaptors, the settle's fragment tokenizer (`UsfmFragmentOptions.nbspSpelling`), the Unformatted
+view's content fragments, paste, drop, copy (the copy writes U+00A0 itself when the spelling is not
+`~`), and a typed U+00A0 (kept as the spelling when it is not `~`; a space otherwise, as in Paratext
+9). A layer that spelled it on its own would load under one spelling and save under another.
 
-An attribute value — a char span's `|lemma`, a milestone's `who`, a figure's `src`, a note's `\cat`,
-a verse's `\va`/`\vp`, a chapter's `\ca`/`\cp` — is text on screen too, so its U+00A0 takes the same
-spelling (`\w g|lemma="h~i"\w*`). The adaptor spells it as it builds each run
-(`canonicalAttributeText`/`unknownDisplayParts`/`nbspValueToDisplay` with the spelling); the
-display-run syncs, which redraw a run from node state and never see view options, read the spelling
-`MarkerEditPlugin` registers for the editor (`registerNbspDisplaySpelling`,
-`$getNbspDisplaySpelling`), as do the other writers that turn attribute state into display text (an
-unwrapped or emptied span's leftover `|…` bytes, a collapsed note's copied `\cat`). The tokenizer
-reads the spelling back as U+00A0 inside milestone, figure and `\periph` attribute values, as it
-already did in body text, char spans and the attribute markers. Outside Standard view a value shows
-U+00A0 itself; the Unformatted view's settle respells it past the run's leading separator
-(`attributeFragmentText`), as it does content.
+An attribute value — a char span's `|lemma`, a milestone's `who`, a figure's `src`, a note's or
+sidebar's `\cat`, a verse's `\va`/`\vp`, a chapter's `\ca`/`\cp` — is text on screen too, but
+Paratext keeps its bytes as they are under either setting: `UsfmParser` reads `~` as U+00A0 only in
+body text, and the attribute lists and folded `\va`/`\vp`/`\ca`/`\cp`/`\cat` values are written byte
+for byte. So a value's `~` is an ordinary character in every project, and a value's U+00A0 takes
+`ATTRIBUTE_NBSP_SPELLING` (`NBSP_STAND_IN`) in Standard view whatever the body text's spelling
+(`\w g|lemma="h<U+001A>i~j"\w*`). The adaptor spells it as it builds each run
+(`canonicalAttributeText`/`unknownDisplayParts`/`nbspValueToDisplay` with `attributeNbspSpelling()`);
+the display-run syncs, which redraw a run from node state and never see view options, read
+`$getAttributeNbspDisplaySpelling`, which answers `ATTRIBUTE_NBSP_SPELLING` wherever
+`MarkerEditPlugin` registered a body spelling for the editor (`registerNbspDisplaySpelling`), as do
+a collapsed note's copied `\cat` and the annotation byte maps. The settle tokenizes with
+`UsfmFragmentOptions.attributeNbspSpelling` (`tokenizeFragment`, `chapterFragmentContent`), which
+reads the stand-in as U+00A0 in a milestone's, figure's or char span's attribute list and in a folded
+value, and keeps every other byte. A char span's `|…` list is part of its content until the span
+closes, so the tokenizer reads body text last (`finishContent`), after `extractAttributes` has read
+the list with its bytes intact. In note content a `\cat` span opening the fragment is the note's
+category (the note-content settle folds it, `extractLeadingCategoryFold`), so its text is read as a
+value too. The stand-in is never data, so the tokenizer reads it as U+00A0 in body text as well.
+
+Two places stay body text, because they are body text to Paratext: a `\periph` line (its title and
+its attributes) keeps the body spelling, and the `|…` bytes a span leaves behind when it is
+unwrapped or emptied (`$unknownAttributesText`, `$removeCharKeepingAttributeBytes`) are written with
+`$getNbspDisplaySpelling`, so with the setting off a `~` among them becomes a no-break space, as it
+does in Paratext 9's file. A `\vp` that is not folded into its verse is a char span, and its text is
+body text.
+
+Out of the editor a value's stand-in becomes U+00A0 like any other: the copy
+(`$selectionToUsfmText`) and `toUsfmNbspSpelling` turn it back under either setting and leave `~`
+alone. A paste reads a pasted U+00A0 as body text's spelling (`normalizePastedNbsp`), so with the
+setting off a value's copied U+00A0 pastes back as `~` — Paratext 9's paste does the same. A paste
+landing wholly inside one value node skips that rule (paste ≡ typing), so a pasted U+00A0 there is
+display spacing and settles as a space under either setting, and a pasted `~` is a `~`. Outside
+Standard view a value shows U+00A0 itself; the Unformatted view's settle spells it
+`ATTRIBUTE_NBSP_SPELLING` past the run's leading separator (`attributeFragmentText`), so its `~`
+survives too.
 
 ---
 

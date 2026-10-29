@@ -150,7 +150,12 @@ describe("usfmFragmentToUsjContent — core", () => {
 
   it("maps the given NBSP spelling to NBSP and keeps ~ when another spelling is given", () => {
     const text = `\\p a~b${NBSP_STAND_IN}c \\nd d~e${NBSP_STAND_IN}f\\nd* \\w g|lemma="h~i${NBSP_STAND_IN}j"\\w*`;
-    expect(usfmFragmentToUsjContent(text, { nbspSpelling: NBSP_STAND_IN })).toEqual([
+    expect(
+      usfmFragmentToUsjContent(text, {
+        nbspSpelling: NBSP_STAND_IN,
+        attributeNbspSpelling: NBSP_STAND_IN,
+      }),
+    ).toEqual([
       {
         type: "para",
         marker: "p",
@@ -164,52 +169,65 @@ describe("usfmFragmentToUsjContent — core", () => {
     ]);
   });
 
-  describe("reads the NBSP spelling inside an attribute value as NBSP, as in body text", () => {
+  describe("reads only the attribute spelling inside an attribute value as NBSP, keeping `~`", () => {
+    // Paratext reads `~` as a no-break space only in body text: an attribute value's bytes are kept
+    // as they are, whatever the project's `AllowInvisibleChars`.
+    const S = NBSP_STAND_IN;
     for (const nbspSpelling of ["~", NBSP_STAND_IN]) {
-      const other = nbspSpelling === "~" ? NBSP_STAND_IN : "~";
       const label = nbspSpelling === "~" ? "~" : "the stand-in";
+      const options = { nbspSpelling, attributeNbspSpelling: NBSP_STAND_IN };
 
-      it(`in a milestone's attributes, spelled ${label}`, () => {
+      it(`in a milestone's attributes, body text spelling ${label}`, () => {
         expect(
-          usfmFragmentToUsjContent(
-            `\\p a\\qt-s |who="A${nbspSpelling}B${other}C"\\*b \\ts-s |x${nbspSpelling}y\\*`,
-            {
-              nbspSpelling,
-            },
-          ),
+          usfmFragmentToUsjContent(`\\p a\\qt-s |who="A${S}B~C"\\*b \\ts-s |x${S}y~z\\*`, options),
         ).toEqual([
           {
             type: "para",
             marker: "p",
             content: [
               "a",
-              { type: "ms", marker: "qt-s", who: `A${NBSP}B${other}C` },
+              { type: "ms", marker: "qt-s", who: `A${NBSP}B~C` },
               "b ",
-              { type: "ms", marker: "ts-s", sid: `x${NBSP}y` },
+              { type: "ms", marker: "ts-s", sid: `x${NBSP}y~z` },
             ],
           },
         ]);
       });
 
-      it(`in a repaired list a milestone absorbs, spelled ${label}`, () => {
-        expect(
-          usfmFragmentToUsjContent(`\\p \\qt-s\\*|who="A${nbspSpelling}B"\\*`, { nbspSpelling }),
-        ).toEqual([
+      it(`in a repaired list a milestone absorbs, body text spelling ${label}`, () => {
+        expect(usfmFragmentToUsjContent(`\\p \\qt-s\\*|who="A${S}B~C"\\*`, options)).toEqual([
           {
             type: "para",
             marker: "p",
-            content: [{ type: "ms", marker: "qt-s", who: `A${NBSP}B` }],
+            content: [{ type: "ms", marker: "qt-s", who: `A${NBSP}B~C` }],
           },
         ]);
       });
 
-      it(`in a figure's attributes, spelled ${label}`, () => {
+      it(`in a character span's attributes, body text spelling ${label}`, () => {
         expect(
           usfmFragmentToUsjContent(
-            `\\p \\fig c${nbspSpelling}d|src="a${nbspSpelling}b.jpg" size="col"\\fig*`,
-            {
-              nbspSpelling,
-            },
+            `\\p \\w g${nbspSpelling}h|h${S}i~j\\w* \\w k|lemma="l${S}m~n" strong="o~p"\\w*`,
+            options,
+          ),
+        ).toEqual([
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "char", marker: "w", lemma: `h${NBSP}i~j`, content: [`g${NBSP}h`] },
+              " ",
+              { type: "char", marker: "w", lemma: `l${NBSP}m~n`, strong: "o~p", content: ["k"] },
+            ],
+          },
+        ]);
+      });
+
+      it(`in a figure's attributes, body text spelling ${label}`, () => {
+        expect(
+          usfmFragmentToUsjContent(
+            `\\p \\fig c${nbspSpelling}d|src="a${S}b~c.jpg" size="col"\\fig*`,
+            options,
           ),
         ).toEqual([
           {
@@ -219,7 +237,7 @@ describe("usfmFragmentToUsjContent — core", () => {
               {
                 type: "figure",
                 marker: "fig",
-                file: `a${NBSP}b.jpg`,
+                file: `a${NBSP}b~c.jpg`,
                 size: "col",
                 content: [`c${NBSP}d`],
               },
@@ -228,11 +246,110 @@ describe("usfmFragmentToUsjContent — core", () => {
         ]);
       });
 
-      it(`in a peripheral's attributes, spelled ${label}`, () => {
+      it(`in a verse's \\va and \\vp and a chapter's \\ca and \\cp, body text spelling ${label}`, () => {
         expect(
-          usfmFragmentToUsjContent(`\\periph T${nbspSpelling}P|id="a${nbspSpelling}b"\\mt1 X`, {
-            nbspSpelling,
+          usfmFragmentToUsjContent(
+            `\\c 1 \\ca 2${S}a~b\\ca*\n\\cp I${S}A~B\n\\p \\v 1 \\va 3${S}c~d\\va*\\vp 4${S}e~f\\vp* g${nbspSpelling}h`,
+            options,
+          ),
+        ).toEqual([
+          {
+            type: "chapter",
+            marker: "c",
+            number: "1",
+            altnumber: `2${NBSP}a~b`,
+            pubnumber: `I${NBSP}A~B`,
+          },
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              {
+                type: "verse",
+                marker: "v",
+                number: "1",
+                altnumber: `3${NBSP}c~d`,
+                pubnumber: `4${NBSP}e~f`,
+              },
+              ` g${NBSP}h`,
+            ],
+          },
+        ]);
+      });
+
+      it(`in a note's \\cat, body text spelling ${label}`, () => {
+        expect(
+          usfmFragmentToUsjContent(
+            `\\p \\f + \\cat c${S}d~e\\cat*\\ft n${nbspSpelling}o\\f*`,
+            options,
+          ),
+        ).toEqual([
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              {
+                type: "note",
+                marker: "f",
+                caller: "+",
+                category: `c${NBSP}d~e`,
+                content: [{ type: "char", marker: "ft", content: [`n${NBSP}o`], closed: "false" }],
+              },
+            ],
+          },
+        ]);
+      });
+
+      it(`in a leading \\cat of note content, body text spelling ${label}`, () => {
+        expect(
+          usfmFragmentToUsjContent(`\\cat c${S}d~e\\cat*\\ft n${nbspSpelling}o~p \\cat q~r\\cat*`, {
+            ...options,
+            isNoteContext: true,
           }),
+        ).toEqual([
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "char", marker: "cat", content: [`c${NBSP}d~e`] },
+              {
+                type: "char",
+                marker: "ft",
+                content: [nbspSpelling === "~" ? `n${NBSP}o${NBSP}p ` : `n${NBSP}o~p `],
+                closed: "false",
+              },
+              {
+                type: "char",
+                marker: "cat",
+                content: [nbspSpelling === "~" ? `q${NBSP}r` : "q~r"],
+              },
+            ],
+          },
+        ]);
+      });
+
+      it(`as body text where a value's bytes are body text, body text spelling ${label}`, () => {
+        expect(usfmFragmentToUsjContent(`\\p a${S}b \\w c|lemma=""\\w* d|e${S}f`, options)).toEqual(
+          [
+            {
+              type: "para",
+              marker: "p",
+              content: [
+                `a${NBSP}b `,
+                { type: "char", marker: "w", content: ['c|lemma=""'] },
+                ` d|e${NBSP}f`,
+              ],
+            },
+          ],
+        );
+      });
+
+      it(`not in a peripheral's line, which is body text, body text spelling ${label}`, () => {
+        expect(
+          usfmFragmentToUsjContent(
+            `\\periph T${nbspSpelling}P|id="a${nbspSpelling}b"\\mt1 X`,
+            options,
+          ),
         ).toEqual([
           {
             type: "periph",
@@ -243,6 +360,26 @@ describe("usfmFragmentToUsjContent — core", () => {
         ]);
       });
     }
+
+    it("keeps every byte of a value when no attribute spelling is given", () => {
+      expect(
+        usfmFragmentToUsjContent(
+          `\\p \\w g~h|lemma="i~j"\\w*\\qt-s |k~l\\*\\v 1 \\va 2~a\\va* m~n`,
+          { nbspSpelling: "~" },
+        ),
+      ).toEqual([
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            { type: "char", marker: "w", lemma: "i~j", content: [`g${NBSP}h`] },
+            { type: "ms", marker: "qt-s", who: "k~l" },
+            { type: "verse", marker: "v", number: "1", altnumber: "2~a" },
+            ` m${NBSP}n`,
+          ],
+        },
+      ]);
+    });
   });
 
   it("regularizes whitespace runs in text", () => {
@@ -2048,6 +2185,10 @@ describe("regularizeSpaces — Paratext 9 RegularizeSpaces vectors", () => {
 
   it("preserves NBSP rather than flattening it to a space", () => {
     expect(regularizeSpaces("a\u00A0b")).toBe("a\u00A0b");
+  });
+
+  it("keeps the characters it is told to keep, control characters included", () => {
+    expect(regularizeSpaces("a\u001Ab\u0001c~d", [NBSP_STAND_IN, "~"])).toBe("a\u001Ab c~d");
   });
 
   it("preserves the ZWSP that breaks words in Thai, Khmer, and Lao", () => {

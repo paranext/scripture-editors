@@ -95,11 +95,22 @@ export interface UsfmFragmentOptions {
    */
   opensNamelessParagraph?: boolean;
   /**
-   * The character that spells a no-break space in the fragment; each one becomes U+00A0 in the USJ.
-   * Defaults to `~`, Paratext's USFM spelling. Pass `NBSP_STAND_IN` for a project that stores a
-   * no-break space as the literal U+00A0: there `~` is an ordinary character and is kept as one.
+   * The character that spells a no-break space in the fragment's body text; each one becomes U+00A0
+   * in the USJ. Defaults to `~`, Paratext's USFM spelling. Pass `NBSP_STAND_IN` for a project that
+   * stores a no-break space as the literal U+00A0: there `~` is an ordinary character and is kept as
+   * one.
    */
   nbspSpelling?: string;
+  /**
+   * The character that spells a no-break space in an attribute value — a char span's `|…` list, a
+   * milestone's or figure's attributes, a folded `\va`/`\vp`/`\ca`/`\cp`/`\cat` — each one becoming
+   * U+00A0 there. Every other byte of a value, `~` included, is kept as it is, as Paratext keeps
+   * them: it reads `~` as a no-break space only in body text. A `\periph` line is body text to
+   * Paratext, so it takes {@link UsfmFragmentOptions.nbspSpelling}. Leave it out to keep values
+   * byte for byte. Standard view passes `NBSP_STAND_IN`, which is never data, so it is read as
+   * U+00A0 in body text too.
+   */
+  attributeNbspSpelling?: string;
 }
 
 const VERSE_MARKER = "v";
@@ -109,6 +120,7 @@ const TABLE_ROW_MARKER = "tr";
 const SIDEBAR_MARKER = "esb";
 const SIDEBAR_END_MARKER = "esbe";
 const PERIPH_MARKER = "periph";
+const NOTE_CATEGORY_MARKER = "cat";
 /** The USJ property a periph's marker-line title lands on — the same name a pipe pair would use,
  * which is why a line carrying both spellings is refused rather than resolved. */
 const PERIPH_TITLE_ATTRIBUTE = "alt";
@@ -209,11 +221,11 @@ const INVISIBLE_CHAR_OR_WHITESPACE =
  * marker-boundary handling of a full fragment parse in between.
  *
  * @param text - The text to regularize.
- * @param kept - A character kept as an ordinary character even when it is a control character:
- *   the no-break-space spelling the fragment uses (`UsfmFragmentOptions.nbspSpelling`), which is
- *   U+001A where `~` is an ordinary character.
+ * @param kept - Characters kept as ordinary characters even when they are control characters: the
+ *   no-break-space spellings the fragment uses (`UsfmFragmentOptions.nbspSpelling` and
+ *   `attributeNbspSpelling`), which are U+001A where `~` is an ordinary character.
  */
-export function regularizeSpaces(text: string, kept?: string): string {
+export function regularizeSpaces(text: string, kept: readonly string[] = []): string {
   let result = "";
   let lastCharWasSpace = false;
   // Placeholder previous character, so the first iteration cannot report a duplicate
@@ -223,7 +235,7 @@ export function regularizeSpaces(text: string, kept?: string): string {
   let runIndex = -1;
   for (let i = 0; i < text.length; i += 1) {
     const ch = text[i];
-    if (ch === kept) {
+    if (kept.includes(ch)) {
       result += ch;
       lastCharWasSpace = false;
       runIndex = -1;
@@ -402,7 +414,8 @@ function tokenize(
   isNoteContext: boolean,
   placeholders: readonly PreservedNodeKind[],
   opensNamelessParagraph: boolean,
-  nbspSpelling: string,
+  nbspSpellings: readonly string[],
+  attributeNbspSpelling: string | undefined,
 ): Token[] {
   const tokens: Token[] = [];
   let index = 0;
@@ -443,7 +456,7 @@ function tokenize(
       const nextMarker = fragment.indexOf("\\", index);
       let end = nextMarker === -1 ? fragment.length : nextMarker;
       if (nextNoteEnding < noteEnding.length) end = Math.min(end, noteEnding[nextNoteEnding]);
-      pushTextWithOptbreaks(regularizeSpaces(fragment.slice(index, end), nbspSpelling));
+      pushTextWithOptbreaks(regularizeSpaces(fragment.slice(index, end), nbspSpellings));
       index = end;
       continue;
     }
@@ -512,7 +525,7 @@ function tokenize(
       continue;
     }
     if (kind === MarkerType.Milestone || (kind === undefined && isMilestoneHeuristicName(name))) {
-      const milestone = scanMilestone(fragment, rawStart, name, index, nbspSpelling);
+      const milestone = scanMilestone(fragment, rawStart, name, index, attributeNbspSpelling);
       if (milestone) {
         tokens.push(milestone.token);
         if (milestone.ejectedText) pushText(milestone.ejectedText);
@@ -695,9 +708,9 @@ function pairsCoverList(text: string, pairs: RegExpExecArray[] | RegExpMatchArra
 
 /**
  * The attributes `attributeText` (the bytes after a `|`) spells, or `undefined` when they do not
- * parse. `nbspSpelling`, when given, is the fragment's spelling of a no-break space, and each one
- * in a value is read as U+00A0, as in body text; callers whose bytes were already read that way
- * (a char span's content) leave it out.
+ * parse. `nbspSpelling`, when given, is how the fragment spells a no-break space there, and each one
+ * in a value is read as U+00A0 (`UsfmFragmentOptions.attributeNbspSpelling`, or the body text's
+ * spelling for a `\periph` line); every other byte of a value is kept.
  */
 function parseAttributeText(
   attributeText: string,
@@ -705,8 +718,7 @@ function parseAttributeText(
   defaultAttributeName = DEFAULT_MARKER_ATTRIBUTES[marker],
   nbspSpelling?: string,
 ): { [attributeName: string]: string } | undefined {
-  const toValue = (value: string) =>
-    nbspSpelling === undefined ? value : value.replaceAll(nbspSpelling, NBSP);
+  const toValue = (value: string) => toUsjAttributeValue(value, nbspSpelling);
   const regularizedText = attributeText.replace(ATTRIBUTE_LINE_BREAK_RUN_REGEX, " ");
   // Null-prototype accumulator: on a plain `{}`, `attributes["__proto__"] = value` hits
   // Object.prototype's accessor and is a silent no-op, so an attribute literally named
@@ -812,7 +824,7 @@ function scanAbsorbableAttributes(
   fragment: string,
   start: number,
   name: string,
-  nbspSpelling: string,
+  attributeNbspSpelling: string | undefined,
 ): { attributes: { [attributeName: string]: string }; next: number } | undefined {
   let index = start;
   while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
@@ -823,7 +835,7 @@ function scanAbsorbableAttributes(
     fragment.slice(index + 1, closeIndex),
     name,
     milestoneDefaultAttribute(name),
-    nbspSpelling,
+    attributeNbspSpelling,
   );
   if (!attributes) return undefined;
   return { attributes, next: closeIndex + 2 };
@@ -838,7 +850,7 @@ function scanMilestone(
   _rawStart: number,
   name: string,
   index: number,
-  nbspSpelling: string,
+  attributeNbspSpelling: string | undefined,
 ): { token: Token; next: number; ejectedText?: string } | undefined {
   const closeIndex = fragment.indexOf("\\", index);
   if (closeIndex === -1 || fragment.slice(closeIndex, closeIndex + 2) !== "\\*") return undefined;
@@ -852,7 +864,7 @@ function scanMilestone(
       between.slice(pipeIndex + 1),
       name,
       milestoneDefaultAttribute(name),
-      nbspSpelling,
+      attributeNbspSpelling,
     );
     // A list with CONTENT that will not parse becomes CONTENT, and a milestone cannot hold
     // content — so the milestone ends immediately and the bytes follow it as siblings. Resuming
@@ -904,7 +916,7 @@ function scanMilestone(
   // any the milestone already carries: the list the author just fixed is the one they mean. Only
   // the clean path absorbs: when content was ejected above, the `\*` is deliberately left to scan
   // as an unmatched closer, so there is no "past the closer" position to absorb from.
-  const absorbed = scanAbsorbableAttributes(fragment, closeIndex + 2, name, nbspSpelling);
+  const absorbed = scanAbsorbableAttributes(fragment, closeIndex + 2, name, attributeNbspSpelling);
   if (absorbed)
     return {
       token: {
@@ -917,11 +929,22 @@ function scanMilestone(
   return { token: { kind: "milestone", marker: name, attributes }, next: closeIndex + 2 };
 }
 
-/** Convert `nbspSpelling` (`~` unless the caller says otherwise) to NBSP for USJ text content (PT9
- * read-side `UsfmParser` behavior), and normalize the line-break marker `regularizeSpaces`
- * preserved back to a plain space. */
-function toUsjText(text: string, nbspSpelling: string): string {
-  return text.replaceAll("\n", " ").replaceAll(nbspSpelling, NBSP);
+/** Convert each of `nbspSpellings` (`~` unless the caller says otherwise) to NBSP for USJ text
+ * content (PT9 read-side `UsfmParser` behavior), and normalize the line-break marker
+ * `regularizeSpaces` preserved back to a plain space. Converting text twice changes nothing more,
+ * since no spelling survives the first time. */
+function toUsjText(text: string, nbspSpellings: readonly string[]): string {
+  let result = text.replaceAll("\n", " ");
+  for (const spelling of nbspSpellings) result = result.replaceAll(spelling, NBSP);
+  return result;
+}
+
+/** An attribute value's bytes as USJ: the line-break marker `regularizeSpaces` preserved as a plain
+ * space, and `nbspSpelling`, when given, as NBSP. Nothing else changes: Paratext keeps a value's
+ * bytes as they are. */
+function toUsjAttributeValue(value: string, nbspSpelling: string | undefined): string {
+  const result = value.replaceAll("\n", " ");
+  return nbspSpelling === undefined ? result : result.replaceAll(nbspSpelling, NBSP);
 }
 
 /** Get (and lazily initialize) a marker object's content array without a non-null assertion. */
@@ -958,6 +981,19 @@ export function usfmFragmentToUsjContent(
   const result: MarkerContent[] = [];
   const isNoteContext = options?.isNoteContext ?? false;
   const nbspSpelling = options?.nbspSpelling ?? "~";
+  const attributeNbspSpelling = options?.attributeNbspSpelling;
+  // Body text reads both spellings as a no-break space: `attributeNbspSpelling` is never data, so
+  // where it reaches body text (a value's bytes left as text) it can only be one.
+  const nbspSpellings =
+    attributeNbspSpelling === undefined || attributeNbspSpelling === nbspSpelling
+      ? [nbspSpelling]
+      : [nbspSpelling, attributeNbspSpelling];
+  const toBodyText = (text: string) => toUsjText(text, nbspSpellings);
+  const toAttributeValue = (value: string) => toUsjAttributeValue(value, attributeNbspSpelling);
+  // In note content, a `\cat` span opening the fragment sits directly after the note's caller,
+  // where Paratext reads it as the note's category (an attribute value), so a caller folding it onto
+  // the note reads its text as one. See `finishContent`.
+  let noteCategorySpan: MarkerObject | undefined;
   let para: MarkerObject | undefined;
   let note: ClosableMarkerObject | undefined;
   const charStack: CharFrame[] = [];
@@ -1119,7 +1155,7 @@ export function usfmFragmentToUsjContent(
     | undefined;
 
   const flushHeldWhitespace = () => {
-    if (heldWhitespace) pushContent(toUsjText(heldWhitespace, nbspSpelling));
+    if (heldWhitespace) pushContent(toBodyText(heldWhitespace));
     heldWhitespace = "";
   };
   const clearAttrTarget = (atBlockBoundary = false) => {
@@ -1143,7 +1179,7 @@ export function usfmFragmentToUsjContent(
   const materializeCaptureAsChar = () => {
     if (!attrCapture) return;
     const object: MarkerObject = { type: "char", marker: attrCapture.marker, content: [] };
-    if (attrCapture.value) object.content = [toUsjText(attrCapture.value, nbspSpelling)];
+    if (attrCapture.value) object.content = [toBodyText(attrCapture.value)];
     container().push(object);
     charStack.push({ object });
     attrCapture = undefined;
@@ -1156,7 +1192,7 @@ export function usfmFragmentToUsjContent(
     closeCharStack();
     closeNote(false);
     para = { type: "para", marker, content: [] };
-    if (initialText) para.content = [toUsjText(initialText, nbspSpelling)];
+    if (initialText) para.content = [toBodyText(initialText)];
     blockTarget().push(para);
   };
   /** Abort a para-shaped capture (`\cp` with markup): materialize the standalone paragraph. */
@@ -1218,7 +1254,7 @@ export function usfmFragmentToUsjContent(
     const title = refused ? value : parsedTitle;
     const opened: MarkerObject = {
       type: "periph",
-      ...(title ? { [PERIPH_TITLE_ATTRIBUTE]: toUsjText(title, nbspSpelling) } : {}),
+      ...(title ? { [PERIPH_TITLE_ATTRIBUTE]: toBodyText(title) } : {}),
       ...attributes,
     };
     opened.content = [];
@@ -1244,7 +1280,7 @@ export function usfmFragmentToUsjContent(
       startParagraph(FIGURE_MARKER, figCapture.value);
     } else {
       const object: MarkerObject = { type: "char", marker: FIGURE_MARKER, content: [] };
-      if (figCapture.value) object.content = [toUsjText(figCapture.value, nbspSpelling)];
+      if (figCapture.value) object.content = [toBodyText(figCapture.value)];
       container().push(object);
       charStack.push({ object });
     }
@@ -1257,7 +1293,8 @@ export function usfmFragmentToUsjContent(
     isNoteContext,
     options?.placeholders ?? [],
     !isNoteContext && options?.opensNamelessParagraph === true,
-    nbspSpelling,
+    nbspSpellings,
+    attributeNbspSpelling,
   );
   for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
     const token = tokens[tokenIndex];
@@ -1301,7 +1338,7 @@ export function usfmFragmentToUsjContent(
         // (`\vp 11 vp\vp* This…` → text starts with the space), per its
         // treat-space-after-attribute-markers-as-content behavior.
         Object.assign(attrCapture.target, {
-          [attrCapture.attrName]: toUsjText(attrCapture.value.trim(), nbspSpelling),
+          [attrCapture.attrName]: toAttributeValue(attrCapture.value.trim()),
         });
         const foldedMarker = attrCapture.marker;
         attrCapture = undefined;
@@ -1349,7 +1386,7 @@ export function usfmFragmentToUsjContent(
           // The cp "paragraph" ended with plain-text content only: fold (trailing line
           // whitespace is structural).
           Object.assign(attrCapture.target, {
-            [attrCapture.attrName]: toUsjText(cpValue, nbspSpelling),
+            [attrCapture.attrName]: toAttributeValue(cpValue),
           });
           attrCapture = undefined;
         }
@@ -1412,7 +1449,7 @@ export function usfmFragmentToUsjContent(
                 figCapture.value.slice(pipeIndex + 1),
                 FIGURE_MARKER,
                 undefined,
-                nbspSpelling,
+                attributeNbspSpelling,
               )
             : undefined;
         if (attributes) {
@@ -1428,7 +1465,7 @@ export function usfmFragmentToUsjContent(
             ...figureAttributes,
           };
           const description = figCapture.value.slice(0, pipeIndex);
-          if (description) figure.content = [toUsjText(description, nbspSpelling)];
+          if (description) figure.content = [toBodyText(description)];
           pushContent(figure);
           figCapture = undefined;
           continue;
@@ -1516,7 +1553,10 @@ export function usfmFragmentToUsjContent(
           if (next === undefined || next.kind === "para" || next.kind === "chapter")
             text = text.slice(0, -1);
         }
-        if (text) pushContent(toUsjText(text, nbspSpelling));
+        // Kept as the fragment spells it until the end: a char span's `|…` list is part of its
+        // content until the span closes (`extractAttributes`), and must reach the attribute parse
+        // with its bytes intact.
+        if (text) pushContent(text);
         break;
       }
       case "para": {
@@ -1669,6 +1709,8 @@ export function usfmFragmentToUsjContent(
         const object: MarkerObject = { type: "char", marker: token.marker, content: [] };
         target.push(object);
         charStack.push({ object });
+        if (isNoteContext && tokenIndex === 0 && token.marker === NOTE_CATEGORY_MARKER)
+          noteCategorySpan = object;
         break;
       }
       case "end": {
@@ -1680,7 +1722,7 @@ export function usfmFragmentToUsjContent(
           (frame, index) => index >= searchBase && frame.object.marker === marker,
         );
         if (frameIndex >= 0) {
-          extractAttributes(charStack[frameIndex].object);
+          extractAttributes(charStack[frameIndex].object, attributeNbspSpelling);
           // Nested spans above the explicitly-closed frame are closed IMPLICITLY by it.
           markImplicitlyClosed(frameIndex + 1);
           charStack.length = frameIndex;
@@ -1731,7 +1773,7 @@ export function usfmFragmentToUsjContent(
       if (cpValue === "") startParagraph(attrCapture.marker);
       else
         Object.assign(attrCapture.target, {
-          [attrCapture.attrName]: toUsjText(cpValue, nbspSpelling),
+          [attrCapture.attrName]: toAttributeValue(cpValue),
         });
       attrCapture = undefined;
     } else {
@@ -1745,17 +1787,30 @@ export function usfmFragmentToUsjContent(
   // Fragment ended without `\esbe`: the sidebar closes implicitly (closed="false").
   closeSidebar(false);
 
-  // Drop empty content arrays (USJ omits `content` for empty paras).
-  const dropEmpty = (items: MarkerContent[]) => {
-    for (const item of items) {
-      if (typeof item === "string") continue;
+  // Read the body text (text runs arrive as the fragment spells them; see the "text" case), and
+  // drop empty content arrays (USJ omits `content` for empty paras). The text of a leading note
+  // `\cat` span Paratext would fold — explicitly closed, nothing but its one text — is an attribute
+  // value instead.
+  const finishContent = (items: MarkerContent[], readText = toBodyText) => {
+    items.forEach((item, index) => {
+      if (typeof item === "string") {
+        items[index] = readText(item);
+        return;
+      }
       if (item.content) {
-        dropEmpty(item.content);
+        const isCategory =
+          item === noteCategorySpan &&
+          Object.keys(item).every(
+            (key) => key === "type" || key === "marker" || key === "content",
+          ) &&
+          item.content.length === 1 &&
+          typeof item.content[0] === "string";
+        finishContent(item.content, isCategory ? toAttributeValue : toBodyText);
         if (item.content.length === 0) delete item.content;
       }
-    }
+    });
   };
-  dropEmpty(result);
+  finishContent(result);
   return result;
 }
 
@@ -1774,7 +1829,7 @@ export function usfmFragmentToUsjContent(
  * is ParatextData (a failed `SetAttributes` leaves the run literal TEXT, whose post-pipe `//`
  * then genuinely becomes optional breaks).
  */
-function extractAttributes(object: MarkerObject): void {
+function extractAttributes(object: MarkerObject, attributeNbspSpelling: string | undefined): void {
   const content = object.content;
   if (!content || content.length === 0) return;
   // Trailing text run: the maximal contiguous suffix of strings and optbreak objects.
@@ -1794,7 +1849,12 @@ function extractAttributes(object: MarkerObject): void {
     .map((item) => (typeof item === "string" ? item : "//"))
     .join("");
   const pipeIndex = rejoined.indexOf("|");
-  const attributes = parseAttributeText(rejoined.slice(pipeIndex + 1), object.marker ?? "");
+  const attributes = parseAttributeText(
+    rejoined.slice(pipeIndex + 1),
+    object.marker ?? "",
+    undefined,
+    attributeNbspSpelling,
+  );
   if (!attributes) return;
   const text = rejoined.slice(0, pipeIndex);
   content.length = pipeItemIndex;

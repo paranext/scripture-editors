@@ -188,6 +188,12 @@ export interface ViewOptions {
    * so the stand-in is never mistaken for one. That includes U+000B and U+000C, which Paratext's
    * reader keeps; they become spaces on purpose, since JavaScript reads them as whitespace.
    *
+   * An attribute value (a char span's `|lemma`, a milestone's `who`, a note's `\cat`, a verse's
+   * `\va`/`\vp`, …) is the same either way: Paratext reads `~` as a no-break space only in body
+   * text, so a value's `~` is always an ordinary character and is kept as `~`, and Standard view
+   * holds a value's U+00A0 as the stand-in above and shows it as the blank. A copy writes a value's
+   * U+00A0 as U+00A0 under either setting.
+   *
    * Views that hide markers (formatted, paragraph-structure, block verse) show the stored
    * characters as they are either way, so they behave the same with this on or off.
    *
@@ -204,8 +210,8 @@ export interface ViewOptions {
 }
 
 /**
- * The character that spells a stored no-break space (U+00A0) in Standard view's display text and
- * in the USFM its marker settle re-tokenizes: `~`, unless
+ * The character that spells a stored no-break space (U+00A0) in Standard view's body text, on
+ * screen and in the USFM its marker settle re-tokenizes: `~`, unless
  * {@link ViewOptions.allowInvisibleCharacters} is on, when `~` is an ordinary character and
  * `NBSP_STAND_IN` (U+001A, the editor's internal stand-in) spells it instead.
  *

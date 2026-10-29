@@ -101,6 +101,7 @@ import {
   $createTypedMarkNode,
   $displayAnnotationsOf,
   $wrapSelectionInTypedMarkNode,
+  ATTRIBUTE_NBSP_SPELLING,
   closingMarkerText,
   getDisplayAnnotationRegistration,
   getEditableCallerText,
@@ -285,15 +286,18 @@ function preservedNodeKind(run: LexicalNode[]): PreservedNodeKind {
  * placeholders goes through here, so each placeholder parses as the node it stands for (a note or
  * a verse ends the note open in front of it), and a bare `\` the user left in front of a preserved
  * node stays exactly that: the separator `pushSentinel` spells after it is not a byte of the
- * document, and the file reads `\` directly followed by the node's own marker the same way.
+ * document, and the file reads `\` directly followed by the node's own marker the same way. An
+ * attribute value's no-break space is read as the fragment spells it in every view
+ * (`ATTRIBUTE_NBSP_SPELLING`; see {@link attributeFragmentText}).
  */
 export function tokenizeFragment(
   fragment: FragmentAccumulator,
-  options: Omit<UsfmFragmentOptions, "placeholders">,
+  options: Omit<UsfmFragmentOptions, "placeholders" | "attributeNbspSpelling">,
 ): MarkerContent[] {
   return withoutBareBackslashSeparators(
     usfmFragmentToUsjContent(withoutDisplayLineBreaks(fragment.text), {
       ...options,
+      attributeNbspSpelling: ATTRIBUTE_NBSP_SPELLING,
       placeholders: fragment.sentinels.map(preservedNodeKind),
     }),
   );
@@ -348,16 +352,18 @@ export function contentFragmentText(
  * Display text → USFM fragment text for an attribute run (`|lemma="…"`, a milestone's ` |who`, a
  * `\va`/`\vp`/`\cat`/`\ca`/`\cp` value). Its leading NBSP, where it has one, is the file's real
  * separator before the bytes, and flattens to " " in every view. Under Standard-view whitespace a
- * value's own no-break space displays as its spelling (`getNbspSpelling`, applied by the adaptor and
- * the display-run syncs), so every other NBSP is display spacing as well ({@link toFragmentText}).
- * Elsewhere (Unformatted) the value's NBSP IS the data byte, and is spelled the way the tokenizer
- * is told to read one — the rule {@link contentFragmentText} applies to content.
+ * value's own no-break space displays as `ATTRIBUTE_NBSP_SPELLING` (applied by the adaptor and the
+ * display-run syncs), so every other NBSP is display spacing as well ({@link toFragmentText}).
+ * Elsewhere (Unformatted) the value's NBSP IS the data byte, and is spelled
+ * `ATTRIBUTE_NBSP_SPELLING` too, the spelling the tokenizer reads in a value
+ * ({@link tokenizeFragment}). Either way a value's `~` stays an ordinary character, as Paratext
+ * keeps it, whatever the body text's spelling.
  */
 export function attributeFragmentText(text: string, viewOptions: ViewOptions | undefined): string {
   if (hasStandardViewWhitespace(viewOptions)) return toFragmentText(text);
   const hasLead = text.startsWith(NBSP);
   const body = hasLead ? text.slice(1) : text;
-  return (hasLead ? " " : "") + body.replaceAll(NBSP, getNbspSpelling(viewOptions));
+  return (hasLead ? " " : "") + body.replaceAll(NBSP, ATTRIBUTE_NBSP_SPELLING);
 }
 
 /** Leading bytes the tokenizer's name scan runs through (anything but whitespace, a zero-width
@@ -3927,6 +3933,7 @@ export function chapterFragmentContent(
   const content = usfmFragmentToUsjContent(withoutDisplayLineBreaks(text), {
     getMarker: getMarkerFn,
     nbspSpelling,
+    attributeNbspSpelling: ATTRIBUTE_NBSP_SPELLING,
   });
   const [first, ...others] = content;
   if (
@@ -4415,15 +4422,16 @@ export function $idleSettleWouldDiscardCaretHeldBytes(
   });
   if (content.length === 0) return false;
   const counts = new Map<string, number>();
-  for (const ch of fragment.text)
+  // Fragment text spells a data NBSP as `nbspSpelling` in body text and `ATTRIBUTE_NBSP_SPELLING`
+  // in an attribute value (in every view: the standard-view display already shows it that way, and
+  // `contentFragmentText`/`attributeFragmentText` spell unformatted NBSPs the same way), while the
+  // fold emits the real NBSP byte — which `\s` matches, so it would silently vanish from this count
+  // and report every caret-held data NBSP as a discard. Count both spellings as `nbspSpelling`, and
+  // the fold's NBSP the same way.
+  for (const ch of fragment.text.replaceAll(ATTRIBUTE_NBSP_SPELLING, nbspSpelling))
     if (!FRAGMENT_WS.test(ch)) counts.set(ch, (counts.get(ch) ?? 0) + 1);
   const folded: string[] = [];
   appendContentBytes(content, folded);
-  // Fragment text spells a data NBSP as `nbspSpelling` (in every view: the standard-view display
-  // already shows it that way, and `contentFragmentText` spells unformatted content NBSPs the same
-  // way), while the fold emits the real NBSP byte — which `\s` matches, so it would silently vanish
-  // from this count and report every caret-held data NBSP as a discard. Count it as the fragment
-  // spells it.
   for (const ch of folded.join("").replaceAll(NBSP, nbspSpelling)) {
     if (FRAGMENT_WS.test(ch)) continue;
     const remaining = counts.get(ch);

@@ -12,8 +12,9 @@ export const NBSP = "\u00A0";
 export const ZWSP = "\u200B";
 /**
  * SUBSTITUTE (U+001A), the character Standard view holds in place of a stored no-break space, instead
- * of `~`, in a project where `~` is an ordinary character (see
- * `ViewOptions.allowInvisibleCharacters` in shared-react). It never leaves the editor: every way
+ * of `~`, wherever `~` is an ordinary character: in body text where the project stores U+00A0 itself
+ * (see `ViewOptions.allowInvisibleCharacters` in shared-react), and in every attribute value, whose
+ * `~` Paratext always keeps as `~` (`ATTRIBUTE_NBSP_SPELLING`). It never leaves the editor: every way
  * text goes out turns it back into U+00A0, and every way text comes in turns a U+001A (like every
  * other C0 control character but tab, line feed and carriage return) into a space first, so the
  * only U+001A an editor holds is its own. It is safe for that because Paratext's own reader

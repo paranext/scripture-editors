@@ -36,6 +36,10 @@ describe("displayTextToUsj", () => {
     expect(displayTextToUsj(`3~000${NBSP}${NBSP}men`)).toBe(`3${NBSP}000  men`);
   });
 
+  it("maps the attribute spelling back to NBSP too, whatever the body text's spelling", () => {
+    expect(displayTextToUsj(`a${NBSP_STAND_IN}b~c`)).toBe(`a${NBSP}b${NBSP}c`);
+  });
+
   it("round-trips with usjTextToDisplay for normalized text", () => {
     const data = `In the days${NBSP}of the judges`;
     expect(displayTextToUsj(usjTextToDisplay(data))).toBe(data);
@@ -45,9 +49,13 @@ describe("displayTextToUsj", () => {
 describe("toUsfmNbspSpelling", () => {
   const standard = { markerMode: "editable", hasSpacing: true, isFormattedFont: true } as const;
 
-  it("leaves displayed text alone when the project spells a no-break space `~`", () => {
-    expect(toUsfmNbspSpelling(`a~b${NBSP_STAND_IN}c`, standard)).toBe(`a~b${NBSP_STAND_IN}c`);
+  it("leaves `~` alone when the project spells a no-break space `~`", () => {
+    expect(toUsfmNbspSpelling("a~b", standard)).toBe("a~b");
     expect(toUsfmNbspSpelling("a~b", undefined)).toBe("a~b");
+  });
+
+  it("turns an attribute value's displayed no-break space into U+00A0 either way", () => {
+    expect(toUsfmNbspSpelling(`|h${NBSP_STAND_IN}i~j`, standard)).toBe(`|h${NBSP}i~j`);
   });
 
   it("turns each displayed no-break space into U+00A0 when `~` is an ordinary character", () => {

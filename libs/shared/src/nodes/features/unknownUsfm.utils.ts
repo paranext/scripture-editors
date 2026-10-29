@@ -181,14 +181,18 @@ export function tableCellMarkerWithSpan(
  * @param tag - The `UnknownNode`'s USJ type (e.g. "figure", "table:row", "optbreak").
  * @param marker - The node's stored USFM marker, when the USJ shape carries one.
  * @param unknownAttributes - The node's stored attribute bag, when the USJ shape carries one.
- * @param nbspSpelling - What the display shows a stored no-break space in a value as
- *   (`nbspValueToDisplay`); `undefined` keeps U+00A0.
+ * @param nbspSpelling - What the display shows a stored no-break space in body text as
+ *   (`nbspValueToDisplay`), which is what a `\periph` line is to Paratext, title and attributes
+ *   alike; `undefined` keeps U+00A0.
+ * @param attributeNbspSpelling - What the display shows a stored no-break space in every other
+ *   attribute value as; `undefined` keeps U+00A0.
  */
 export function unknownDisplayParts(
   tag: string,
   marker: string | undefined,
   unknownAttributes: UnknownAttributes | undefined,
   nbspSpelling?: string,
+  attributeNbspSpelling?: string,
 ): UnknownDisplayParts {
   const attributes = unknownAttributes ?? {};
   const closed = isExplicitlyClosed(attributes);
@@ -230,7 +234,7 @@ export function unknownDisplayParts(
         closingAttributes: canonicalAttributeText(
           renameFigureFileToSrc(attributes),
           undefined,
-          nbspSpelling,
+          attributeNbspSpelling,
         ),
         closing: closed ? `\\${marker}*` : "",
       };
@@ -238,10 +242,12 @@ export function unknownDisplayParts(
     case "sidebar": {
       const { [SIDEBAR_CATEGORY_ATTRIBUTE]: category, ...rest } = attributes;
       const categoryBytes =
-        category === undefined ? "" : ` \\cat ${nbspValueToDisplay(category, nbspSpelling)}\\cat*`;
+        category === undefined
+          ? ""
+          : ` \\cat ${nbspValueToDisplay(category, attributeNbspSpelling)}\\cat*`;
       return {
         opening: "\\esb",
-        attributes: categoryBytes + canonicalAttributeText(rest, undefined, nbspSpelling),
+        attributes: categoryBytes + canonicalAttributeText(rest, undefined, attributeNbspSpelling),
         closingAttributes: "",
         closing: closed ? "\\esbe" : "",
       };
@@ -265,7 +271,7 @@ export function unknownDisplayParts(
       return {
         opening: `\\${marker} `,
         attributes: "",
-        closingAttributes: canonicalAttributeText(attributes, undefined, nbspSpelling),
+        closingAttributes: canonicalAttributeText(attributes, undefined, attributeNbspSpelling),
         closing: closed ? `\\${marker}*` : "",
       };
   }

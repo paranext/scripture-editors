@@ -18,6 +18,7 @@ import {
 } from "lexical";
 import {
   authoredNbspState,
+  ATTRIBUTE_NBSP_SPELLING,
   ATTRIBUTE_RUN_VERSION,
   AttributeRunKind,
   AttributeRunNode,
@@ -294,12 +295,19 @@ function isStandardView(): boolean {
 }
 
 /**
- * What an attribute value's no-break space displays as: the body text's spelling in Standard view
- * (`getNbspSpelling`), where an on-screen U+00A0 is display spacing, and U+00A0 itself elsewhere.
- * `MarkerEditPlugin` registers the same answer for the display-run syncs
- * (`registerNbspDisplaySpelling`), which redraw these runs from node state.
+ * What an attribute value's no-break space displays as: `ATTRIBUTE_NBSP_SPELLING` in Standard view,
+ * where an on-screen U+00A0 is display spacing and a value's `~` is an ordinary character under
+ * either `allowInvisibleCharacters` setting, and U+00A0 itself elsewhere. The display-run syncs,
+ * which redraw these runs from node state, give the same answer
+ * (`$getAttributeNbspDisplaySpelling`).
  */
 function attributeNbspSpelling(): string | undefined {
+  return isStandardView() ? ATTRIBUTE_NBSP_SPELLING : undefined;
+}
+
+/** What a no-break space in body text displays as: the project's spelling (`getNbspSpelling`) in
+ * Standard view, and U+00A0 itself elsewhere. */
+function bodyNbspSpelling(): string | undefined {
   return isStandardView() ? getNbspSpelling(_viewOptions) : undefined;
 }
 
@@ -860,6 +868,7 @@ function createUnknown(
       tag,
       marker,
       unknownAttributes,
+      bodyNbspSpelling(),
       attributeNbspSpelling(),
     );
     if (opening) children.push(createImmutableTypedText("marker", opening));

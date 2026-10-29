@@ -41,7 +41,7 @@ import {
 import { $hasCaretGracedSeparatorGap } from "../nodes/usj/markerSeparators.utils.js";
 import { $isMilestoneNode } from "../nodes/usj/MilestoneNode.js";
 import {
-  $getNbspDisplaySpelling,
+  $getAttributeNbspDisplaySpelling,
   nbspValueToDisplay,
 } from "../nodes/usj/nbspDisplaySpelling.utils.js";
 import { NBSP } from "../nodes/usj/node-constants.js";
@@ -182,7 +182,7 @@ function verseDescriptor(marker: VerseAttributeMarker): DisplayRunDescriptor {
       if (value === undefined) return NO_RUN;
       return {
         wantsRun: true,
-        valueText: NBSP + nbspValueToDisplay(value, $getNbspDisplaySpelling()),
+        valueText: NBSP + nbspValueToDisplay(value, $getAttributeNbspDisplaySpelling()),
       };
     },
     scanPieces: (owner) =>
@@ -239,7 +239,7 @@ const charDescriptor: DisplayRunDescriptor = {
     const text = canonicalAttributeText(
       owner.getUnknownAttributes() ?? {},
       defaultMarkerAttribute(owner.getMarker()),
-      $getNbspDisplaySpelling(),
+      $getAttributeNbspDisplaySpelling(),
     );
     return text === "" ? NO_RUN : { wantsRun: true, valueText: text };
   },
@@ -329,7 +329,7 @@ const catDescriptor: DisplayRunDescriptor = {
     if (category === undefined) return NO_RUN;
     return {
       wantsRun: true,
-      valueText: NBSP + nbspValueToDisplay(category, $getNbspDisplaySpelling()),
+      valueText: NBSP + nbspValueToDisplay(category, $getAttributeNbspDisplaySpelling()),
     };
   },
   scanPieces: (owner) => ($isNoteNode(owner) ? $noteCategoryRunPieces(owner) : NO_PIECES),
@@ -431,7 +431,7 @@ function chapterDescriptor(marker: "ca" | "cp"): DisplayRunDescriptor {
       if (value === undefined) return NO_RUN;
       return {
         wantsRun: true,
-        valueText: NBSP + nbspValueToDisplay(value, $getNbspDisplaySpelling()),
+        valueText: NBSP + nbspValueToDisplay(value, $getAttributeNbspDisplaySpelling()),
       };
     },
     scanPieces: (owner) =>
@@ -527,7 +527,7 @@ const milestoneDescriptor: DisplayRunDescriptor = {
     const text = canonicalAttributeText(
       attributes,
       milestoneDefaultAttribute(owner.getMarker()),
-      $getNbspDisplaySpelling(),
+      $getAttributeNbspDisplaySpelling(),
     );
     // The glyph pair is unconditional: a milestone always displays `\qt-s …\*`, so the run is
     // wanted even when no attribute text rides between the glyphs.

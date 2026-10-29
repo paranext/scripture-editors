@@ -42,6 +42,7 @@ import {
   $isNoteNode,
   $isTypedMarkNode,
   $isUnknownNode,
+  ATTRIBUTE_NBSP_SPELLING,
   GENERATOR_NOTE_CALLER,
   MarkerLookup,
   MarkerType,
@@ -1060,21 +1061,17 @@ function $isNoteInternalDisplaySeparator(node: TextNode): boolean {
  * front of the run that followed (`\f -\cat People\cat*`). The sibling caller rule
  * guards its own boundary the same way.
  *
- * The category's no-break spaces are spelled `nbspSpelling`, as the rest of the copy's display
- * text spells them, so the caller's one respelling covers these bytes too.
+ * The category's no-break spaces are spelled `ATTRIBUTE_NBSP_SPELLING`, as an expanded note's
+ * `\cat` run displays them, so the caller's one respelling of display text covers these bytes too.
  */
-function $collapsedNoteCategoryBytes(
-  node: TextNode,
-  isLast: boolean,
-  nbspSpelling: string,
-): string {
+function $collapsedNoteCategoryBytes(node: TextNode, isLast: boolean): string {
   if (isLast) return "";
   if (node.getTextContent() !== NBSP) return "";
   const note = node.getParent();
   if (!$isNoteNode(note)) return "";
   if (!$isImmutableNoteCallerNode(node.getPreviousSibling())) return "";
   const category = note.getCategory();
-  return category ? `\\cat ${nbspValueToDisplay(category, nbspSpelling)}\\cat*` : "";
+  return category ? `\\cat ${nbspValueToDisplay(category, ATTRIBUTE_NBSP_SPELLING)}\\cat*` : "";
 }
 
 /** The nearest enclosing `NoteNode`'s USJ caller value, falling back to the auto-generated-caller
@@ -1131,9 +1128,11 @@ function $startsBlockLine(node: LexicalNode): boolean {
  *    instead of becoming phantom spaces; every other NBSP (marker-trailing spaces, a char span's
  *    structural leading separator, a verse's own marker-to-number gap, the `\id` line's
  *    book-code separator a decorator carries) represents a real source space and still maps to
- *    one. A data NBSP is displayed as `nbspSpelling`: `~` is already its USFM spelling and is left
- *    alone, and any other spelling (`NBSP_STAND_IN`, where `~` is an ordinary character and the
- *    project stores U+00A0 itself) is written as U+00A0.
+ *    one. A data NBSP is displayed as `nbspSpelling` in body text: `~` is already its USFM spelling
+ *    and is left alone, and any other spelling (`NBSP_STAND_IN`, where `~` is an ordinary character
+ *    and the project stores U+00A0 itself) is written as U+00A0. In an attribute value it is
+ *    displayed as `NBSP_STAND_IN` whatever the body text's spelling (`ATTRIBUTE_NBSP_SPELLING`),
+ *    and is written as U+00A0 too; the value's `~` is its own byte and is left alone.
  * 3. A block boundary INSIDE an opaque construct contributes no line break, so the construct
  *    copies out on ONE line (see {@link $startsBlockLine}).
  *
@@ -1179,8 +1178,7 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
       }
       text += $isNoteInternalDisplaySeparator(node)
         ? ""
-        : nodeText.replaceAll(NBSP, " ") +
-          $collapsedNoteCategoryBytes(node, node === lastNode, nbspSpelling);
+        : nodeText.replaceAll(NBSP, " ") + $collapsedNoteCategoryBytes(node, node === lastNode);
     } else if (
       ($isDecoratorNode(node) || $isLineBreakNode(node)) &&
       (node !== lastNode || !selection.isCollapsed())
@@ -1188,7 +1186,8 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
       text += node.getTextContent().replaceAll(NBSP, " ");
     }
   }
-  return nbspSpelling === "~" ? text : text.replaceAll(nbspSpelling, NBSP);
+  const withBodySpelling = nbspSpelling === "~" ? text : text.replaceAll(nbspSpelling, NBSP);
+  return withBodySpelling.replaceAll(ATTRIBUTE_NBSP_SPELLING, NBSP);
 }
 
 /**

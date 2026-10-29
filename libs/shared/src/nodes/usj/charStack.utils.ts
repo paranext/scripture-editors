@@ -159,7 +159,8 @@ function $ownsDisplayRun(char: CharNode): boolean {
  * thing that carried them — dropping it silently would delete `|lemma="grace"` from the file.
  * Routed through {@link canonicalAttributeText}, the same one serializer `$unwrapCharNode` uses, so
  * the two paths cannot spell the same attributes differently: a lone default attribute collapses to
- * `|value`, anything else stays `|name="value" …`.
+ * `|value`, anything else stays `|name="value" …`. The bytes are body text from here on, so a
+ * value's no-break space is spelled as body text spells one.
  *
  * Mutating: call inside `editor.update()`.
  */

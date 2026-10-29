@@ -42,7 +42,7 @@
  */
 
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
-import { NBSP } from "shared";
+import { ATTRIBUTE_NBSP_SPELLING, NBSP } from "shared";
 import { getNbspSpelling, hasStandardViewWhitespace, ViewOptions } from "shared-react";
 
 /** Whether `code` is a C0 control character other than tab, line feed and carriage return. */
@@ -145,23 +145,29 @@ export function usjTextToDisplay(text: string, nbspSpelling = "~"): string {
 }
 
 /**
- * Display → data: `nbspSpelling` → NBSP; display-NBSP → plain space. Does not collapse runs.
+ * Display → data: `nbspSpelling` → NBSP; display-NBSP → plain space. Does not collapse runs. The
+ * attribute-value spelling (`ATTRIBUTE_NBSP_SPELLING`) is never data either, so a value's bytes
+ * that end up in body text read it as NBSP too.
  *
  * @param text - Display text.
  * @param nbspSpelling - What a stored NBSP displays as (`getNbspSpelling`); `~` by default.
  */
 export function displayTextToUsj(text: string, nbspSpelling = "~"): string {
-  return text.replaceAll(NBSP, " ").replaceAll(nbspSpelling, NBSP);
+  return text
+    .replaceAll(NBSP, " ")
+    .replaceAll(nbspSpelling, NBSP)
+    .replaceAll(ATTRIBUTE_NBSP_SPELLING, NBSP);
 }
 
 /**
  * Respells the no-break spaces in text a host takes from the editor's display — a DOM selection or
  * an element's `textContent`, for a copy or a search — the way the project's USFM spells them.
- * Standard view shows a stored no-break space as `~` while `ViewOptions.allowInvisibleCharacters`
- * is off, which is already the USFM spelling, so the text is returned unchanged. With it on, the
- * editor holds a no-break space as an internal stand-in it draws as a blank the width of a space;
- * each one becomes U+00A0 here, and `~` stays an ordinary character. Other display characters (the
- * no-break spaces a space run or a marker separator shows as) are left as they are.
+ * Standard view shows a stored no-break space in body text as `~` while
+ * `ViewOptions.allowInvisibleCharacters` is off, which is already the USFM spelling, so that is left
+ * as it is. With it on, and in an attribute value under either setting, the editor holds a no-break
+ * space as an internal stand-in it draws as a blank the width of a space; each one becomes U+00A0
+ * here, and `~` stays an ordinary character. Other display characters (the no-break spaces a space
+ * run or a marker separator shows as) are left as they are.
  *
  * Expected to be removed once Standard view holds a stored no-break space as itself (PT-4931):
  * display text will then already carry the project's spelling.
@@ -178,7 +184,9 @@ export function toUsfmNbspSpelling(
   viewOptions: ViewOptions | undefined,
 ): string {
   const nbspSpelling = getNbspSpelling(viewOptions);
-  return nbspSpelling === "~" ? displayText : displayText.replaceAll(nbspSpelling, NBSP);
+  const withBodySpelling =
+    nbspSpelling === "~" ? displayText : displayText.replaceAll(nbspSpelling, NBSP);
+  return withBodySpelling.replaceAll(ATTRIBUTE_NBSP_SPELLING, NBSP);
 }
 
 /** An opening marker glyph (`\nd`, `\+nd`, `\c`) at the end of a text; a closer ends in `*`. */

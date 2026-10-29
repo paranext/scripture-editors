@@ -686,7 +686,9 @@ export function MarkerEditPlugin({
   const copyLimitRef = useRef(copyLimit);
 
   // The display-run syncs redraw attribute values from node state, so they must spell a value's
-  // no-break space as the adaptor did when it built the run (its `attributeNbspSpelling`).
+  // no-break space as the adaptor did when it built the run (its `attributeNbspSpelling`, which
+  // `$getAttributeNbspDisplaySpelling` derives from this registration), and the writers of bytes
+  // that become body text spell one as body text does.
   const nbspDisplaySpelling = hasStandardViewWhitespace(viewOptions)
     ? getNbspSpelling(viewOptions)
     : undefined;
