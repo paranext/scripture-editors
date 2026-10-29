@@ -19,7 +19,8 @@ import {
   mountViewEditor,
   requireStandardViewOptions,
 } from "../settledGetUsj.test-helpers";
-import { requireDefined } from "./markerEdit.test-helpers";
+import { $insertFirstChapter } from "./firstChapter.utils";
+import { $pendGlyphEdit, requireDefined } from "./markerEdit.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import { act } from "@testing-library/react";
@@ -46,15 +47,22 @@ import {
   $chapterGlyphTextNode,
   $chapterPubnumberRunPieces,
   $isChapterNode,
+  $isMarkerNode,
+  $isMarkerTrailingSeparator,
+  $isParaNode,
   $isTypedMarkNode,
   ChapterNode,
   defaultStyleInfo,
   getVisibleOpenMarkerText,
+  MarkerStyleInfo,
   NBSP,
+  ParaNode,
   StyleInfo,
   ZWSP,
 } from "shared";
 import {
+  $createCaretHostNode,
+  $isCaretHost,
   FORMATTED_VIEW_MODE,
   getViewOptions,
   PARAGRAPH_STRUCTURE_VIEW_MODE,
@@ -87,6 +95,12 @@ const PARAGRAPH_SHEET: StyleInfo = {
   },
 };
 
+/** `sheet` with `marker`'s entry changed by `change`. */
+function withMarker(sheet: StyleInfo, marker: string, change: Partial<MarkerStyleInfo>): StyleInfo {
+  const entry = requireDefined(sheet.markers[marker], `no \`${marker}\` in the stylesheet`);
+  return { ...sheet, markers: { ...sheet.markers, [marker]: { ...entry, ...change } } };
+}
+
 const chapterDoc: Usj = {
   type: "USJ",
   version: "3.1",
@@ -95,6 +109,16 @@ const chapterDoc: Usj = {
 
 function $chapter(): ChapterNode {
   return requireDefined($getRoot().getChildren().find($isChapterNode), "chapter not found");
+}
+
+/** Expects a collapsed caret at the end of Standard view's chapter line. */
+function $expectCaretAtChapterLineEnd(): void {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) throw new Error("expected a caret");
+  const end = requireDefined($chapter().getLastDescendant() ?? undefined, "empty chapter line");
+  expect(selection.isCollapsed()).toBe(true);
+  expect(selection.focus.key).toBe(end.getKey());
+  expect(selection.focus.offset).toBe(end.getTextContentSize());
 }
 
 function $glyph(): TextNode {
@@ -1121,8 +1145,9 @@ describe("a chapter inserted into a book with no chapters", () => {
     scrRef: SerializedVerseRef = GEN_1_1,
     view = requireStandardViewOptions(),
     usj = emptyBook,
+    styleInfo?: StyleInfo,
   ) {
-    const mounted = await mountViewEditor(usj, view, { scrRef });
+    const mounted = await mountViewEditor(usj, view, { scrRef, styleInfo });
     await act(async () =>
       mounted.lexical.update(() => {
         const book = requireDefined($getRoot().getFirstChild() ?? undefined, "no book");
@@ -1215,15 +1240,11 @@ describe("a chapter inserted into a book with no chapters", () => {
     expect(ref.current?.getUsj()?.content).toEqual([BOOK, title, CHAPTER_1, text]);
     // `getUsj()` reads the same whichever chapter node was built, so check that it is Standard
     // view's editable chapter line (`$chapter` finds only that kind) and that the caret is on it.
-    lexical.getEditorState().read(() => {
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection)) throw new Error("expected a caret");
-      expect(selection.isCollapsed()).toBe(true);
-      expect(selection.focus.getNode().getTopLevelElement()?.is($chapter())).toBe(true);
-    });
+    lexical.getEditorState().read($expectCaretAtChapterLineEnd);
   });
 
-  it("is inserted with empty verses by `insertFirstChapter`", async () => {
+  // A book that is all front matter has no paragraph for the verses, so they get a new `\p`.
+  it("is inserted with empty verses, in a paragraph, by `insertFirstChapter`", async () => {
     const { ref } = await mountEmptyBook();
 
     let inserted: boolean | undefined;
@@ -1235,8 +1256,14 @@ describe("a chapter inserted into a book with no chapters", () => {
     expect(ref.current?.getUsj()?.content).toEqual([
       BOOK,
       CHAPTER_1,
-      { type: "verse", marker: "v", number: "1" },
-      { type: "verse", marker: "v", number: "2" },
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "verse", marker: "v", number: "1" },
+          { type: "verse", marker: "v", number: "2" },
+        ],
+      },
     ]);
   });
 
@@ -1246,8 +1273,9 @@ describe("a chapter inserted into a book with no chapters", () => {
     const V1: MarkerContent = { type: "verse", marker: "v", number: "1" };
     const V2: MarkerContent = { type: "verse", marker: "v", number: "2" };
 
-    async function insertWithVerses(content: MarkerContent[], view = requireStandardViewOptions()) {
-      const { ref } = await mountEmptyBook(GEN_1_1, view, { ...emptyBook, content });
+    async function insertWithVerses(content: MarkerContent[], styleInfo?: StyleInfo) {
+      const view = requireStandardViewOptions();
+      const { ref } = await mountEmptyBook(GEN_1_1, view, { ...emptyBook, content }, styleInfo);
       await act(async () => {
         ref.current?.insertFirstChapter(2);
       });
@@ -1282,10 +1310,27 @@ describe("a chapter inserted into a book with no chapters", () => {
       expect(await insertWithVerses([BOOK, para])).toEqual([BOOK, CHAPTER_1, para]);
     });
 
-    it("adds verses above a paragraph whose text is only whitespace and a zero-width space", async () => {
-      const blank: MarkerContent = { type: "para", marker: "p", content: [`${ZWSP} `] };
+    // Spaces there would only sit before verse 1, so they go.
+    it("puts verses in a paragraph whose text is only spaces, dropping the spaces", async () => {
+      const blank: MarkerContent = { type: "para", marker: "p", content: [" \t "] };
 
-      expect(await insertWithVerses([BOOK, blank])).toEqual([BOOK, CHAPTER_1, V1, V2, blank]);
+      expect(await insertWithVerses([BOOK, blank])).toEqual([
+        BOOK,
+        CHAPTER_1,
+        { type: "para", marker: "p", content: [V1, V2] },
+      ]);
+    });
+
+    // A zero-width space in the file is the document's, such as a word break in Thai, so it stays
+    // with the text it is in. Only one that holds a caret goes (see "inside the update" below).
+    it("keeps a zero-width space from the file, before verse 1", async () => {
+      const para: MarkerContent = { type: "para", marker: "p", content: [`${ZWSP} `] };
+
+      expect(await insertWithVerses([BOOK, para])).toEqual([
+        BOOK,
+        CHAPTER_1,
+        { type: "para", marker: "p", content: [`${ZWSP} `, V1, V2] },
+      ]);
     });
 
     // A heading already belongs to the chapter, so it counts as content like any other text.
@@ -1296,7 +1341,7 @@ describe("a chapter inserted into a book with no chapters", () => {
     });
 
     // Only the chapter content counts: text in the front matter above it does not.
-    it("adds verses below a titled front matter", async () => {
+    it("puts verses in the empty paragraph below a titled front matter", async () => {
       const title: MarkerContent = { type: "para", marker: "mt1", content: ["Genesis"] };
       const empty: MarkerContent = { type: "para", marker: "p" };
 
@@ -1304,17 +1349,197 @@ describe("a chapter inserted into a book with no chapters", () => {
         BOOK,
         title,
         CHAPTER_1,
-        V1,
-        V2,
+        { type: "para", marker: "p", content: [V1, V2] },
+      ]);
+    });
+
+    it("puts verses in an empty poetry paragraph, keeping its marker", async () => {
+      const empty: MarkerContent = { type: "para", marker: "q1" };
+
+      expect(await insertWithVerses([BOOK, empty])).toEqual([
+        BOOK,
+        CHAPTER_1,
+        { type: "para", marker: "q1", content: [V1, V2] },
+      ]);
+    });
+
+    it("puts verses in the first empty paragraph only", async () => {
+      const empty: MarkerContent = { type: "para", marker: "p" };
+
+      expect(await insertWithVerses([BOOK, empty, empty])).toEqual([
+        BOOK,
+        CHAPTER_1,
+        { type: "para", marker: "p", content: [V1, V2] },
         empty,
       ]);
     });
 
-    // Standard view shows the `\p` as text, which is a marker, not the chapter's text.
-    it("adds verses above an empty paragraph", async () => {
+    // What the paragraph holds, other than spaces, stays at its start, so nothing the user put there
+    // is lost or ends up in the last verse.
+    it("keeps an empty character style in the paragraph, before verse 1", async () => {
+      const nameOfGod: MarkerContent = { type: "char", marker: "nd" };
+      const para: MarkerContent = { type: "para", marker: "p", content: [nameOfGod] };
+
+      expect(await insertWithVerses([BOOK, para])).toEqual([
+        BOOK,
+        CHAPTER_1,
+        // The space is the editor's, between a character style and a verse after it, as
+        // ParatextData writes it.
+        { type: "para", marker: "p", content: [nameOfGod, " ", V1, V2] },
+      ]);
+    });
+
+    // The paragraph is kept, not rebuilt, so a marker edit the user has not finished settles as
+    // typed instead of reverting.
+    it("keeps a paragraph marker edit that has not settled", async () => {
+      const empty: MarkerContent = { type: "para", marker: "p" };
+      const { ref, lexical } = await mountEmptyBook(GEN_1_1, requireStandardViewOptions(), {
+        ...emptyBook,
+        content: [BOOK, empty],
+      });
+      await act(async () =>
+        lexical.update(() =>
+          $pendGlyphEdit(
+            requireDefined(
+              $getRoot()
+                .getAllTextNodes()
+                .find((node) => $isMarkerNode(node) && node.getTextContent() === "\\p"),
+              "no `\\p` marker",
+            ),
+            "\\q1",
+          ),
+        ),
+      );
+
+      await act(async () => {
+        ref.current?.insertFirstChapter(2);
+      });
+
+      expect(ref.current?.getUsj()?.content).toEqual([
+        BOOK,
+        CHAPTER_1,
+        { type: "para", marker: "q1", content: [V1, V2] },
+      ]);
+    });
+
+    // The `\` menu's pick asks for no verses, so it leaves the empty paragraph as it was.
+    it("leaves an empty paragraph alone when no verses are asked for", async () => {
+      const empty: MarkerContent = { type: "para", marker: "p" };
+      const { ref } = await mountEmptyBook(GEN_1_1, requireStandardViewOptions(), {
+        ...emptyBook,
+        content: [BOOK, empty],
+      });
+
+      await pickChapterFromMenu(ref);
+
+      expect(ref.current?.getUsj()?.content).toEqual([BOOK, CHAPTER_1, empty]);
+    });
+
+    // An introduction is front matter, so its text is not chapter content and does not stop the
+    // verses. A book that is all front matter has no paragraph to put them in, so they get a new
+    // one after it.
+    it("adds verses after a book's introduction", async () => {
+      const frontMatter: MarkerContent[] = [
+        BOOK,
+        { type: "para", marker: "h", content: ["Genesis"] },
+        { type: "para", marker: "toc1", content: ["The Book of Genesis"] },
+        { type: "para", marker: "mt1", content: ["Genesis"] },
+        { type: "para", marker: "is1", content: ["Introduction"] },
+        { type: "para", marker: "ip", content: ["Genesis tells of the beginning."] },
+      ];
+
+      expect(await insertWithVerses(frontMatter)).toEqual([
+        ...frontMatter,
+        CHAPTER_1,
+        { type: "para", marker: "p", content: [V1, V2] },
+      ]);
+    });
+
+    // A project stylesheet may declare `\v` with no parents, which allows it anywhere, and may
+    // spell a text type in another case.
+    it.each<[string, (sheet: StyleInfo) => StyleInfo]>([
+      ["allows `\\v` anywhere", (sheet) => withMarker(sheet, "v", { occursUnder: [] })],
+      [
+        "spells the text type in another case",
+        (sheet) => withMarker(sheet, "p", { textType: "verseText" }),
+      ],
+    ])("puts verses in an empty paragraph when the stylesheet %s", async (_name, adapt) => {
       const empty: MarkerContent = { type: "para", marker: "p" };
 
-      expect(await insertWithVerses([BOOK, empty])).toEqual([BOOK, CHAPTER_1, V1, V2, empty]);
+      expect(await insertWithVerses([BOOK, empty], adapt(defaultStyleInfo))).toEqual([
+        BOOK,
+        CHAPTER_1,
+        { type: "para", marker: "p", content: [V1, V2] },
+      ]);
+    });
+
+    it("puts the caret at the end of the chapter line", async () => {
+      const { ref, lexical } = await mountEmptyBook(GEN_1_1, requireStandardViewOptions(), {
+        ...emptyBook,
+        content: [BOOK, { type: "para", marker: "p" }],
+      });
+
+      await act(async () => {
+        ref.current?.insertFirstChapter(2);
+      });
+
+      lexical.getEditorState().read($expectCaretAtChapterLineEnd);
+    });
+
+    it("is undone in one step, leaving the empty paragraph as it was", async () => {
+      const empty: MarkerContent = { type: "para", marker: "p" };
+      const { ref, lexical } = await mountEmptyBook(GEN_1_1, requireStandardViewOptions(), {
+        ...emptyBook,
+        content: [BOOK, empty],
+      });
+      await act(async () => {
+        ref.current?.insertFirstChapter(2);
+      });
+
+      await act(async () => {
+        lexical.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+
+      expect(ref.current?.getUsj()?.content).toEqual([BOOK, empty]);
+    });
+
+    // These look inside the update itself, since the editor puts back a separator, and drops a
+    // caret's zero-width space, once the update ends.
+    describe("inside the update", () => {
+      /**
+       * Whether the empty `\p` holds a node that `$test` accepts once the chapter is inserted,
+       * before the update ends. `$setUp` changes the paragraph first, in the same update.
+       */
+      async function paraHoldsAfterInsert(
+        $test: (node: LexicalNode) => boolean,
+        $setUp: (para: ParaNode) => void = () => undefined,
+      ) {
+        const viewOptions = requireStandardViewOptions();
+        const { lexical } = await mountEmptyBook(GEN_1_1, viewOptions, {
+          ...emptyBook,
+          content: [BOOK, { type: "para", marker: "p" }],
+        });
+        let holds: boolean | undefined;
+        await act(async () =>
+          lexical.update(() => {
+            const para = requireDefined($getRoot().getChildren().find($isParaNode), "no `\\p`");
+            $setUp(para);
+            $insertFirstChapter({ chapterNum: 1, verseCount: 2, viewOptions });
+            holds = para.getChildren().some($test);
+          }),
+        );
+        return holds;
+      }
+
+      it("keeps the separator after the paragraph marker", async () => {
+        expect(await paraHoldsAfterInsert($isMarkerTrailingSeparator)).toBe(true);
+      });
+
+      it("drops a zero-width space that holds a caret", async () => {
+        const $addCaretHost = (para: ParaNode) => para.append($createCaretHostNode());
+
+        expect(await paraHoldsAfterInsert($isCaretHost, $addCaretHost)).toBe(false);
+      });
     });
   });
 
@@ -1325,9 +1550,9 @@ describe("a chapter inserted into a book with no chapters", () => {
       const V1: MarkerContent = { type: "verse", marker: "v", number: "1" };
       const V2: MarkerContent = { type: "verse", marker: "v", number: "2" };
 
-      async function insertWithVerses(content: MarkerContent[]) {
+      async function insertWithVerses(content: MarkerContent[], styleInfo?: StyleInfo) {
         const view = requireDefined(getViewOptions(viewMode), "no view options");
-        const { ref } = await mountEmptyBook(GEN_1_1, view, { ...emptyBook, content });
+        const { ref } = await mountEmptyBook(GEN_1_1, view, { ...emptyBook, content }, styleInfo);
         await act(async () => {
           ref.current?.insertFirstChapter(2);
         });
@@ -1348,11 +1573,67 @@ describe("a chapter inserted into a book with no chapters", () => {
         expect(await insertWithVerses([BOOK, para])).toEqual([BOOK, CHAPTER_1, para]);
       });
 
-      // Standard view shows each no-break space as `~`, which is still whitespace.
-      it("adds verses above a paragraph of no-break spaces", async () => {
+      // A new book is its `\id` line and, where the project names the book, its header lines.
+      it("puts verses in a new paragraph after a new book's header lines", async () => {
+        const header: MarkerContent[] = [
+          BOOK,
+          { type: "para", marker: "h", content: ["Genesis"] },
+          { type: "para", marker: "toc1", content: ["The Book of Genesis"] },
+        ];
+
+        expect(await insertWithVerses(header)).toEqual([
+          ...header,
+          CHAPTER_1,
+          { type: "para", marker: "p", content: [V1, V2] },
+        ]);
+      });
+
+      it("puts verses in an empty paragraph", async () => {
+        const empty: MarkerContent = { type: "para", marker: "p" };
+
+        expect(await insertWithVerses([BOOK, empty])).toEqual([
+          BOOK,
+          CHAPTER_1,
+          { type: "para", marker: "p", content: [V1, V2] },
+        ]);
+      });
+
+      // A heading or a blank line holds no verse text, so the verses go above it, as before.
+      // `\d` is declared just like `\p` in the stylesheet, but it is a heading too.
+      it.each(["s1", "ms", "r", "d", "b"])(
+        "adds verses above an empty `\\%s`, which cannot hold them",
+        async (marker) => {
+          const empty: MarkerContent = { type: "para", marker };
+
+          expect(await insertWithVerses([BOOK, empty])).toEqual([BOOK, CHAPTER_1, V1, V2, empty]);
+        },
+      );
+
+      // A stylesheet that allows `\v` anywhere does not make a blank line hold verses: where the
+      // markers are hidden the editor empties a `\b`, so verses put in one would be lost.
+      it("adds verses above an empty `\\b` when the stylesheet allows `\\v` anywhere", async () => {
+        const blank: MarkerContent = { type: "para", marker: "b" };
+        const anywhere = withMarker(defaultStyleInfo, "v", { occursUnder: [] });
+
+        expect(await insertWithVerses([BOOK, blank], anywhere)).toEqual([
+          BOOK,
+          CHAPTER_1,
+          V1,
+          V2,
+          blank,
+        ]);
+      });
+
+      // Standard view shows each no-break space as `~`, which is still whitespace, so the verses
+      // go in. A no-break space is the document's text, so the spaces stay, before verse 1.
+      it("puts verses in a paragraph of no-break spaces, after the spaces", async () => {
         const spaces: MarkerContent = { type: "para", marker: "p", content: [NBSP + NBSP] };
 
-        expect(await insertWithVerses([BOOK, spaces])).toEqual([BOOK, CHAPTER_1, V1, V2, spaces]);
+        expect(await insertWithVerses([BOOK, spaces])).toEqual([
+          BOOK,
+          CHAPTER_1,
+          { type: "para", marker: "p", content: [NBSP + NBSP, V1, V2] },
+        ]);
       });
     },
   );
@@ -1375,10 +1656,45 @@ describe("a chapter inserted into a book with no chapters", () => {
         expect(ref.current?.getUsj()?.content).toEqual([
           BOOK,
           CHAPTER_1,
-          { type: "verse", marker: "v", number: "1" },
-          // The space is the editor's, ahead of the next verse, as when typing in a loaded chapter.
-          "In the beginning ",
-          { type: "verse", marker: "v", number: "2" },
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "verse", marker: "v", number: "1" },
+              // The space is the editor's, ahead of the next verse, as when typing in a loaded
+              // chapter.
+              "In the beginning ",
+              { type: "verse", marker: "v", number: "2" },
+            ],
+          },
+        ]);
+      });
+
+      // Paragraph-structure view starts the paragraph with its marker in the gutter, ahead of
+      // verse 1.
+      it("puts the caret after verse 1 in an empty paragraph, so typing goes into verse 1", async () => {
+        const { ref, lexical } = await mountHiddenMarkers({
+          ...emptyBook,
+          content: [BOOK, { type: "para", marker: "p" }],
+        });
+
+        await act(async () => {
+          ref.current?.insertFirstChapter(2);
+        });
+        await typeText(lexical, "In the beginning");
+
+        expect(ref.current?.getUsj()?.content).toEqual([
+          BOOK,
+          CHAPTER_1,
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "verse", marker: "v", number: "1" },
+              "In the beginning ",
+              { type: "verse", marker: "v", number: "2" },
+            ],
+          },
         ]);
       });
 
@@ -1393,8 +1709,11 @@ describe("a chapter inserted into a book with no chapters", () => {
         expect(ref.current?.getUsj()?.content).toEqual([
           BOOK,
           CHAPTER_1,
-          { type: "verse", marker: "v", number: "1" },
-          "In the beginning",
+          {
+            type: "para",
+            marker: "p",
+            content: [{ type: "verse", marker: "v", number: "1" }, "In the beginning"],
+          },
         ]);
       });
 

@@ -682,6 +682,12 @@ export interface EditorRef {
    * verses are added: they would go above that content, leaving all of it in the last verse. A
    * section heading counts, so a book holding only one gets `\c 1` without verses.
    *
+   * When that content starts with an empty paragraph of verse text, such as `\p`, `\q1` or `\li1`,
+   * the verses go inside it rather than above it. Spaces in it are dropped; anything else it holds,
+   * such as no-break spaces, stays ahead of verse 1. Verse text means the stylesheet makes it verse
+   * text and lets `\v` occur in it. An empty section heading, `\b` or `\d` keeps the verses above
+   * it. A book that is all front matter, as a new book is, gets them in a new `\p`.
+   *
    * Where the markers show (Standard view), the caret goes at the end of the chapter line. Where
    * they are hidden there is no chapter line, so the caret goes after verse 1, or with no verses to
    * the start of the paragraph that follows; with neither, it stays where it was.
