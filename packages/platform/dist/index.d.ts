@@ -1381,6 +1381,21 @@ export declare function filterAndRankItems<T extends Item>(
 export declare function generateUsjCss(styleInfo: StyleInfo, options?: UsjCssOptions): string;
 
 /**
+ * Generate only the font part of {@link generateUsjCss}'s output: the base rule for the project
+ * default font family and size, and a `font-family` rule for each marker that names a font (the
+ * marker's font, then the project default font, then the Scripture fallback chain). Weight, colour,
+ * size, margins, alignment and every other marker declaration are left out, as are the
+ * chapter-nested `\ca`/`\cp` rules, so a view that keeps its own marker layout can take the
+ * project's fonts without the project's layout.
+ *
+ * @public
+ */
+export declare function generateUsjFontCss(
+  styleInfo: StyleInfo,
+  options?: Pick<UsjCssOptions, "zoom" | "containerSelector">,
+): string;
+
+/**
  * Note caller will be auto-generated.
  * @public
  */
