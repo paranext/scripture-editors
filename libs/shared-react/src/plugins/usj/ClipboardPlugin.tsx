@@ -1,17 +1,35 @@
 import {
   copySelection,
   cutSelection,
-  pasteSelection,
+  pasteNatively,
   pasteSelectionAsPlainText,
   registerEmptyCopyGuard,
   registerInlineProsePaste,
 } from "./clipboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
-export function ClipboardPlugin(): null {
+/**
+ * Takes the editor's copy, cut and paste shortcuts (Ctrl/Cmd+C, X, V and Shift+V) and guards
+ * copies of nothing.
+ *
+ * @param requestNativePaste - When set, Ctrl/Cmd+V asks the host to run its native paste, which
+ *   carries every clipboard format; resolving `false` falls back to reading the clipboard. Without
+ *   it, Ctrl/Cmd+V reads the clipboard. See {@link pasteNatively}.
+ */
+export function ClipboardPlugin({
+  requestNativePaste,
+}: {
+  requestNativePaste?: () => Promise<boolean>;
+} = {}): null {
   const [editor] = useLexicalComposerContext();
+  // A ref, so a host handing a fresh callback each render does not re-register the guards below
+  // (which would move them to the end of their priority and flip same-priority ties).
+  const requestNativePasteRef = useRef(requestNativePaste);
+  useEffect(() => {
+    requestNativePasteRef.current = requestNativePaste;
+  }, [requestNativePaste]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -30,9 +48,11 @@ export function ClipboardPlugin(): null {
         event.preventDefault();
         cutSelection(editor);
       } else if (key.toLowerCase() === "v") {
+        // Claimed even when the host pastes natively: the host's paste replaces the keystroke's,
+        // and on macOS a prevented Cmd+V also never reaches the app menu's own Paste.
         event.preventDefault();
         if (shiftKey) pasteSelectionAsPlainText(editor);
-        else pasteSelection(editor);
+        else pasteNatively(editor, requestNativePasteRef.current);
       }
     };
 
