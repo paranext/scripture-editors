@@ -10,7 +10,8 @@
 import { MarkerStyleInfo, StyleInfo } from "shared";
 
 /**
- * Options controlling {@link generateUsjCss}'s output.
+ * Options controlling {@link generateUsjCss}'s output. {@link generateUsjFontCss} takes `zoom` and
+ * `containerSelector` from these.
  *
  * @public
  */
@@ -146,6 +147,17 @@ function safeContainerSelector(containerSelector: string, generator: string): st
   return DEFAULT_CONTAINER_SELECTOR;
 }
 
+/**
+ * A marker's `font-family` declaration, or `undefined` when the marker names no font. Shared by
+ * {@link generateUsjCss} and {@link generateUsjFontCss} so their marker fonts cannot drift.
+ */
+function markerFontDeclaration(
+  entry: MarkerStyleInfo,
+  projectDefaultFont: string | undefined,
+): string | undefined {
+  return entry.fontName ? fontFamilyDeclaration(entry.fontName, projectDefaultFont) : undefined;
+}
+
 function markerDeclarations(
   marker: string,
   entry: MarkerStyleInfo,
@@ -154,7 +166,8 @@ function markerDeclarations(
   projectDefaultFont: string | undefined,
 ): string[] {
   const decls: string[] = [];
-  if (entry.fontName) decls.push(fontFamilyDeclaration(entry.fontName, projectDefaultFont));
+  const fontDecl = markerFontDeclaration(entry, projectDefaultFont);
+  if (fontDecl) decls.push(fontDecl);
   if (entry.bold) decls.push("font-weight: bold");
   if (entry.italic) decls.push("font-style: italic");
   if (entry.color) {
@@ -332,10 +345,8 @@ export function generateUsjFontCss(
   const base = baseRule(styleInfo, zoom, scope);
   if (base) rules.push(base);
   for (const [marker, entry] of Object.entries(styleInfo.markers)) {
-    if (entry.fontName)
-      rules.push(
-        markerRule(scope, marker, [fontFamilyDeclaration(entry.fontName, styleInfo.defaultFont)]),
-      );
+    const fontDecl = markerFontDeclaration(entry, styleInfo.defaultFont);
+    if (fontDecl) rules.push(markerRule(scope, marker, [fontDecl]));
   }
   return rules.join("\n");
 }
