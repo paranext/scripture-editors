@@ -14,7 +14,7 @@ import {
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   TextNode,
 } from "lexical";
-import { textTypeState } from "shared";
+import { MARKER_TEXT_TYPE, textTypeState } from "shared";
 
 function cleanupText(text: string): string {
   return text.replaceAll("\t", " ");
@@ -166,3 +166,18 @@ export const pasteSelectionAsPlainText = (editor: LexicalEditor) => {
     editor.dispatchCommand(PASTE_COMMAND, event);
   });
 };
+
+/**
+ * Removes every marker glyph element (`data-text-type="marker"`) under `root`, in place. A marker
+ * glyph is presentation, not content: a paragraph's gutter marker (a triple-clicked heading copies
+ * its `\s1`) and an inline marker glyph alike. Parsed back from pasted or dropped html, each would
+ * arrive as plain text such as `\s1 ` or `\w `, and saved, as a real marker.
+ *
+ * @param root - Parsed html, such as a `DOMParser` document.
+ * @returns Whether any glyph was removed.
+ */
+export function removeMarkerGlyphElements(root: ParentNode): boolean {
+  const glyphs = root.querySelectorAll(`[data-text-type="${MARKER_TEXT_TYPE}"]`);
+  glyphs.forEach((glyph) => glyph.remove());
+  return glyphs.length > 0;
+}

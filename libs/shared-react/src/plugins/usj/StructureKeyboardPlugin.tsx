@@ -57,8 +57,8 @@ import {
   $isSomeParaNode,
   $recordClipboardSpans,
   $selectParaMarker,
-  MARKER_TEXT_TYPE,
 } from "shared";
+import { removeMarkerGlyphElements } from "./clipboard.utils";
 import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
@@ -320,13 +320,8 @@ export function StructureKeyboardPlugin({
       // Lexical only reconstructs known node types, but this also clears the taint flow).
       const safeHtml = DOMPurify.sanitize(html);
       const dom = new DOMParser().parseFromString(safeHtml, "text/html");
-      // Every marker glyph is presentation, not content: a paragraph's gutter marker (a
-      // triple-clicked heading copies its `\s1`) and an inline marker glyph alike. Parsed back,
-      // each would arrive as plain text such as `\s1 ` or `\w `, and saved, as a real marker — so
-      // all of them are dropped.
-      dom
-        .querySelectorAll(`[data-text-type="${MARKER_TEXT_TYPE}"]`)
-        .forEach((glyph) => glyph.remove());
+      // Every marker glyph is presentation, not content; parsed back, each would be marker text.
+      removeMarkerGlyphElements(dom);
       const sanitized = $sanitizeNodesForProtectedStructure($generateNodesFromDOM(editor, dom));
       // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
       const selection = $getSelection();

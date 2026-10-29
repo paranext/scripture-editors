@@ -286,8 +286,12 @@ refused. The public surface grew substantially; nothing was removed.
   plain-text paste of it loses its `\`. Typing a `\`, or a `/` beside a `/`, is refused at the
   keystroke; text typed without a keystroke (a virtual keyboard, autocorrect) is filtered the same
   way, and text an input method composes is not filtered. A paste or drop left with nothing to
-  insert changes nothing. The read-only Markers view still refuses `\` and `/`, and Standard view
-  is unchanged.
+  insert changes nothing. Html pasted or dropped there loses its marker glyph elements first, as it
+  already did under `"protected"` structure: a glyph is presentation, and read back it went in as
+  marker text, so a drag-move across a paragraph break in the paragraph-structure view (which
+  carries the next paragraph's gutter glyph) or a paste of a Markers-view copy would have inserted
+  text such as `q1 ` that the user never wrote. The read-only Markers view still refuses `\` and
+  `/`, and Standard view is unchanged.
 
 ### Fixed
 
