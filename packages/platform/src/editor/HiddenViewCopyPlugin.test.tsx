@@ -5,11 +5,15 @@
  * own node copy, tagged so only a hidden-marker view reads it back.
  */
 import { editorView, enabledViews, mountInView } from "./editorViews.test-helpers";
+import { $hiddenViewLexicalFlavor } from "./hiddenViewCopy.utils";
+import { $generateJSONFromSelectedNodes } from "@lexical/clipboard";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
   $getRoot,
+  $getSelection,
+  $isRangeSelection,
   $setSelection,
   COPY_COMMAND,
   CUT_COMMAND,
@@ -204,6 +208,34 @@ describe("HiddenViewCopyPlugin", () => {
       }
     },
   );
+
+  // The node copy is built by a walk of its own, which must stay Lexical's own serialization but
+  // for the two things it changes; a Lexical upgrade that changes Lexical's walk fails here.
+  it("writes Lexical's own serialization where there is no gutter glyph or childless construct", async () => {
+    // The formatted view builds no gutter glyphs, and Matthew holds no unknown construct.
+    const mounted = await mountInView(matthew, editorView("formatted"));
+    try {
+      await select(
+        mounted.lexical,
+        { text: "But when he thought about these things", offset: 4 },
+        { text: "is of the Holy Spirit. ", offset: -3 },
+      );
+      const { ours, lexicals } = mounted.lexical.read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        return {
+          ours: JSON.parse($hiddenViewLexicalFlavor(selection) ?? "{}") as { nodes: unknown[] },
+          lexicals: $generateJSONFromSelectedNodes(mounted.lexical, selection),
+        };
+      });
+      expect(JSON.stringify(lexicals.nodes)).toContain('"note"');
+      expect(JSON.stringify(lexicals.nodes)).not.toContain("isGutterMarker");
+      // As Lexical's own copy writes them (`$getLexicalContent` stringifies them too).
+      expect(ours.nodes).toEqual(JSON.parse(JSON.stringify(lexicals.nodes)));
+    } finally {
+      mounted.unmount();
+    }
+  });
 
   // 2 Samuel 1's first figure paragraph: text, a figure with no caption, text.
   const captionlessParagraph = (samuel.content[91] as MarkerObject).content ?? [];
