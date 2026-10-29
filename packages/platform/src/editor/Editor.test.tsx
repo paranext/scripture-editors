@@ -3450,3 +3450,139 @@ describe("options.copyLimit", () => {
     expect(selectedTextLength(lexical)).toBe(verseTextLength);
   });
 });
+
+describe("options.requestNativePaste", () => {
+  // jsdom has no async clipboard API. A read that never settles is enough: these tests assert only
+  // whether a paste fell back to reading the clipboard, not what that read would paste.
+  beforeEach(() => {
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { read: vi.fn(() => new Promise(() => undefined)) },
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function clipboardRead() {
+    return vi.mocked(navigator.clipboard.read);
+  }
+
+  function editorRoot(): HTMLElement {
+    const root = document.querySelector<HTMLElement>(".editor-input");
+    if (!root) throw new Error("Editor root not found");
+    return root;
+  }
+
+  /** Lets the deferred host request and any fallback read run. */
+  async function settlePaste() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it("EditorRef.paste() focuses the editor's root before asking the host, and reads no clipboard when the host pastes", async () => {
+    let focusedWhenAsked: Element | null = null;
+    const requestNativePaste = vi.fn(() => {
+      focusedWhenAsked = document.activeElement;
+      return Promise.resolve(true);
+    });
+    const ref = await createEditorRefForTesting({ options: { requestNativePaste } });
+    const other = document.createElement("button");
+    document.body.appendChild(other);
+    await act(async () => other.focus());
+
+    await act(async () => getEditorRef(ref).paste());
+    await settlePaste();
+
+    expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(focusedWhenAsked).toBe(editorRoot());
+    expect(clipboardRead()).not.toHaveBeenCalled();
+    other.remove();
+  });
+
+  it("EditorRef.paste() reads the clipboard itself when the host declines", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(false));
+    const ref = await createEditorRefForTesting({ options: { requestNativePaste } });
+
+    await act(async () => getEditorRef(ref).paste());
+    await settlePaste();
+
+    expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
+  it("EditorRef.paste() reads the clipboard itself when the host offers no native paste", async () => {
+    const ref = await createEditorRefForTesting();
+
+    await act(async () => getEditorRef(ref).paste());
+    await settlePaste();
+
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
+  it("EditorRef.pastePlainText() never asks the host", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    const ref = await createEditorRefForTesting({ options: { requestNativePaste } });
+
+    await act(async () => getEditorRef(ref).pastePlainText());
+    await settlePaste();
+
+    expect(requestNativePaste).not.toHaveBeenCalled();
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
+  it("EditorRef.paste() still refuses in readonly mode, without asking the host", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    const ref = await createEditorRefForTesting({
+      options: { isReadonly: true, requestNativePaste },
+    });
+
+    expect(() => getEditorRef(ref).paste()).toThrow("Cannot paste in readonly mode");
+    await settlePaste();
+    expect(requestNativePaste).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl/Cmd+V asks the host", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    await createEditorRefForTesting({ options: { requestNativePaste } });
+    const root = editorRoot();
+    await act(async () => root.focus());
+    const event = new KeyboardEvent("keydown", {
+      key: "v",
+      ctrlKey: !IS_APPLE,
+      metaKey: IS_APPLE,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    await act(async () => root.dispatchEvent(event));
+    await settlePaste();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(clipboardRead()).not.toHaveBeenCalled();
+  });
+
+  it("the context menu's Paste asks the host", async () => {
+    const requestNativePaste = vi.fn(() => Promise.resolve(true));
+    await createEditorRefForTesting({ options: { requestNativePaste } });
+    const root = editorRoot();
+    const target = root.firstElementChild;
+    if (!target) throw new Error("expected the editor to have rendered content to right-click");
+    await act(async () => {
+      target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    const paste = Array.from(
+      document.querySelectorAll<HTMLLIElement>(".typeahead-popover li"),
+    ).find((li) => li.querySelector(".text")?.textContent === "Paste");
+    if (!paste) throw new Error('expected a "Paste" menu item');
+
+    await act(async () => paste.click());
+    await settlePaste();
+
+    expect(requestNativePaste).toHaveBeenCalledTimes(1);
+    expect(clipboardRead()).not.toHaveBeenCalled();
+  });
+});
