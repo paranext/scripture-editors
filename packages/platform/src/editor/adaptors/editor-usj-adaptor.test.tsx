@@ -28,6 +28,7 @@ import {
   usjMarks,
   usjWithUnknownItems,
 } from "../../../../utilities/src/converters/usj/converter-test.data";
+import { editorView, itInView, paneRowScaffold } from "../editorViews.test-helpers";
 import editorUsjAdaptor, {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,
@@ -53,6 +54,7 @@ import {
   $setState,
   LexicalEditor,
   SerializedEditorState,
+  SerializedLexicalNode,
   SerializedTextNode,
   TextNode,
 } from "lexical";
@@ -456,6 +458,19 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
     expect(JSON.stringify(usj).includes(withZwsp)).toBe(true);
   });
 
+  /** The first serialized text node under `nodes`, depth-first, whose text contains `needle`. */
+  function findSerializedText(nodes: SerializedLexicalNode[], needle: string): SerializedTextNode {
+    const found = nodes
+      .flatMap(function flatten(node): SerializedLexicalNode[] {
+        const children = (node as { children?: SerializedLexicalNode[] }).children;
+        return [node, ...(Array.isArray(children) ? children.flatMap(flatten) : [])];
+      })
+      .find((node) => isSerializedTextNode(node) && node.text.includes(needle));
+    if (!found || !isSerializedTextNode(found))
+      throw new Error(`no serialized text containing ${needle}`);
+    return found;
+  }
+
   function buildPatchedStandardState(displayText: string) {
     const usj = usxStringToUsj(
       `<usx version="3.0"><book code="RUT" style="id" /><chapter number="1" style="c" /><para style="p"><verse number="1" style="v" />in the days</para></usx>`,
@@ -482,17 +497,40 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
     expect(JSON.stringify(roundTripped)).toContain(`in${NBSP}the days`);
   });
 
-  it("inverts display whitespace when deserializing editable+expanded standard view", () => {
-    // Expanded notes do not change that this is standard-view text: the display `~` (= data NBSP)
-    // and display-NBSP space run MUST invert on deserialization exactly as in collapsed standard
-    // view. Before the gating fix, editable+expanded skipped inversion, so a display `~` survived
-    // into the saved data as a literal tilde.
-    const state = buildPatchedStandardState(`in~the${NBSP}${NBSP}days`);
+  itInView("standard+expandedNotes")(
+    "inverts display whitespace when deserializing editable+expanded standard view",
+    () => {
+      // Expanded notes do not change that this is standard-view text: the display `~` (= data NBSP)
+      // and display-NBSP space run MUST invert on deserialization exactly as in collapsed standard
+      // view. Before the gating fix, editable+expanded skipped inversion, so a display `~` survived
+      // into the saved data as a literal tilde.
+      const state = buildPatchedStandardState(`in~the${NBSP}${NBSP}days`);
+      initializeDeserialize(undefined);
+      const standard = getViewOptions(STANDARD_VIEW_MODE);
+      if (!standard) throw new Error("standard view options not found");
+      const expandedStandard = { ...standard, noteMode: "expanded" as const };
+      const roundTripped = deserializeSerializedEditorState(state, expandedStandard);
+      expect(JSON.stringify(roundTripped)).toContain(`in${NBSP}the days`);
+    },
+  );
+
+  it("inverts display whitespace in a note's text when deserializing in the footnotes pane's row editor", () => {
+    // The row editor is Standard view with the note expanded: a display `~` (= data NBSP) and a
+    // display-NBSP space run in the note's text must invert exactly as in the text.
+    const paneRow = editorView("footnotes-pane-row");
+    const note: MarkerObject = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [{ type: "char", marker: "ft", content: ["in the days"] }],
+    };
+    initializeSerialize(undefined, undefined);
+    reset();
+    const state = serializeEditorState(paneRowScaffold(note), paneRow);
+    const text = findSerializedText(state.root.children, "in the days");
+    text.text = `in~the${NBSP}${NBSP}days`;
     initializeDeserialize(undefined);
-    const standard = getViewOptions(STANDARD_VIEW_MODE);
-    if (!standard) throw new Error("standard view options not found");
-    const expandedStandard = { ...standard, noteMode: "expanded" as const };
-    const roundTripped = deserializeSerializedEditorState(state, expandedStandard);
+    const roundTripped = deserializeSerializedEditorState(state, paneRow);
     expect(JSON.stringify(roundTripped)).toContain(`in${NBSP}the days`);
   });
 

@@ -9,8 +9,13 @@
  * The suite also covers a co-settling note whose bytes cannot be lined up with its settled self: a
  * settled position in it lands at the note's front, never on whatever live child happens to sit at
  * the settled index.
+ *
+ * A note's content pends only where the note shows expanded in the text: in Standard view, a note
+ * with no closer; with notes expanded (library-only), any note. The footnotes pane's row editor
+ * holds its note alone, with no paragraph text, glyph or husk to settle around it.
  */
-import { mountExpandedNoteEditor, requireStandardViewOptions } from "../settledGetUsj.test-helpers";
+import { editorView, mountInView, rowsInEnabledViews } from "../editorViews.test-helpers";
+import { requireStandardViewOptions } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes } from "./settledScopes.utils";
 import {
   $livePointFromSettledLocation,
@@ -36,9 +41,20 @@ import { hasStandardViewWhitespace } from "shared-react";
  * "paragraph, note, item" instead of a bare 2. */
 const PARA_TOP_INDEX = 2;
 
+/** The views the suite runs in, with whether the fixture's note is unclosed there. */
+const nestedViews = rowsInEnabledViews([
+  { view: "standard", unclosed: true },
+  { view: "standard+expandedNotes", unclosed: false },
+]);
+
+type NestedView = (typeof nestedViews)[number];
+
 /** Mount the fixture and pend the note, its paragraph, and the paragraph's optbreak husk. */
-async function nested({ pendParaGlyph = true }: { pendParaGlyph?: boolean } = {}) {
-  const mounted = await mountExpandedNoteEditor(huskBeforeNoteUsj());
+async function nested(
+  { view, unclosed }: NestedView,
+  { pendParaGlyph = true }: { pendParaGlyph?: boolean } = {},
+) {
+  const mounted = await mountInView(huskBeforeNoteUsj({ unclosed }), editorView(view));
   await pendNoteInsideSettlingPara(mounted.lexical, { pendParaGlyph });
   const context = settledPositionContext(mounted.lexical);
   const para = settledPara(mounted.ref.current?.getUsj(), 2);
@@ -64,91 +80,101 @@ function $liveNoteIndexWithinPara(): number {
   return index;
 }
 
-describe("a note settling inside its own settling paragraph", () => {
-  it("reports a point in the note's content at the note's SETTLED index", async () => {
-    const { lexical, context, note, noteIndex } = await nested();
-    const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
+describe.each(nestedViews)(
+  "a note settling inside its own settling paragraph ($view)",
+  (nestedView) => {
+    it("reports a point in the note's content at the note's SETTLED index", async () => {
+      const { lexical, context, note, noteIndex } = await nested(nestedView);
+      const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
 
-    const location = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      // The premise: the two documents disagree about where the note sits, so a translation that
-      // restates only the TOP index cannot be right by accident.
-      expect(noteIndex).not.toBe($liveNoteIndexWithinPara());
-      return $settledLocationFromLivePoint(prepared, $textContaining("note body"), 5);
-    });
+      const location = lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        // The premise: the two documents disagree about where the note sits, so a translation that
+        // restates only the TOP index cannot be right by accident.
+        expect(noteIndex).not.toBe($liveNoteIndexWithinPara());
+        return $settledLocationFromLivePoint(prepared, $textContaining("note body"), 5);
+      });
 
-    expect(location).toEqual({
-      jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
-      offset: 5,
-    });
-  });
-
-  it("resolves a settled location inside the note back to the live node", async () => {
-    const { lexical, context, note, noteIndex } = await nested();
-    const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
-
-    const [key, offset] = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      const point = $livePointFromSettledLocation(context, prepared, {
+      expect(location).toEqual({
         jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
         offset: 5,
       });
-      return [point?.key, point?.offset] as const;
     });
 
-    const text = lexical.getEditorState().read(() => $getNodeByKey(key ?? "")?.getTextContent());
-    expect(text).toContain("note body");
-    expect(offset).toBe(5);
-  });
-});
+    it("resolves a settled location inside the note back to the live node", async () => {
+      const { lexical, context, note, noteIndex } = await nested(nestedView);
+      const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
 
-describe("a husk-only paragraph scope carrying a settling note", () => {
-  it("reports a point in the note's content against the note's SETTLED content", async () => {
-    // No pend on the paragraph itself: the emptied husk is the only thing planning it, which
-    // routes the paragraph through a different plan builder than the one the case above uses.
-    const { lexical, context, note, noteIndex } = await nested({ pendParaGlyph: false });
-    const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
+      const [key, offset] = lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const point = $livePointFromSettledLocation(context, prepared, {
+          jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
+          offset: 5,
+        });
+        return [point?.key, point?.offset] as const;
+      });
 
-    const location = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      return $settledLocationFromLivePoint(prepared, $textContaining("note body"), 5);
+      const text = lexical.getEditorState().read(() => $getNodeByKey(key ?? "")?.getTextContent());
+      expect(text).toContain("note body");
+      expect(offset).toBe(5);
     });
+  },
+);
 
-    expect(location).toEqual({
-      jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
-      offset: 5,
-    });
-  });
+describe.each(nestedViews)(
+  "a husk-only paragraph scope carrying a settling note ($view)",
+  (nestedView) => {
+    it("reports a point in the note's content against the note's SETTLED content", async () => {
+      // No pend on the paragraph itself: the emptied husk is the only thing planning it, which
+      // routes the paragraph through a different plan builder than the one the case above uses.
+      const { lexical, context, note, noteIndex } = await nested(nestedView, {
+        pendParaGlyph: false,
+      });
+      const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
 
-  it("resolves a settled location inside the note back to the live node", async () => {
-    // The paragraph's settled tree is what a settled path inside it is resolved against, and the
-    // note it carries must be the note's SETTLED self — the note's own rebuild changed how many
-    // content items it has, so a paragraph holding the pending note cannot resolve the settled
-    // index at all.
-    const { lexical, context, note, noteIndex } = await nested({ pendParaGlyph: false });
-    const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
+      const location = lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        return $settledLocationFromLivePoint(prepared, $textContaining("note body"), 5);
+      });
 
-    const [key, offset] = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      const point = $livePointFromSettledLocation(context, prepared, {
+      expect(location).toEqual({
         jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
         offset: 5,
       });
-      return [point?.key, point?.offset] as const;
     });
 
-    const text = lexical.getEditorState().read(() => $getNodeByKey(key ?? "")?.getTextContent());
-    expect(text).toContain("note body");
-    expect(offset).toBe(5);
-  });
-});
+    it("resolves a settled location inside the note back to the live node", async () => {
+      // The paragraph's settled tree is what a settled path inside it is resolved against, and the
+      // note it carries must be the note's SETTLED self — the note's own rebuild changed how many
+      // content items it has, so a paragraph holding the pending note cannot resolve the settled
+      // index at all.
+      const { lexical, context, note, noteIndex } = await nested(nestedView, {
+        pendParaGlyph: false,
+      });
+      const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
 
-describe("an element boundary beside a preserved node", () => {
+      const [key, offset] = lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const point = $livePointFromSettledLocation(context, prepared, {
+          jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
+          offset: 5,
+        });
+        return [point?.key, point?.offset] as const;
+      });
+
+      const text = lexical.getEditorState().read(() => $getNodeByKey(key ?? "")?.getTextContent());
+      expect(text).toContain("note body");
+      expect(offset).toBe(5);
+    });
+  },
+);
+
+describe.each(nestedViews)("an element boundary beside a preserved node ($view)", (nestedView) => {
   it("reports the boundary right after the note", async () => {
     // An element point is a boundary between children, and the child before this one is the note
     // — a preserved node, whose inner bytes the scope's fragment does not spell out at all. The
     // boundary still has a settled position: just past the construct.
-    const { lexical, context, para } = await nested();
+    const { lexical, context, para } = await nested(nestedView);
 
     const location = lexical.getEditorState().read(() => {
       const prepared = $prepareSettleScopes(context);
@@ -164,92 +190,95 @@ describe("an element boundary beside a preserved node", () => {
   });
 });
 
-describe("a co-settling note whose bytes cannot be lined up", () => {
-  /** The live point in front of the paragraph's note. */
-  function $inFrontOfNote() {
-    const para = $getRoot().getChildren().filter($isParaNode)[0];
-    const note = para.getChildren().find($isNoteNode);
-    if (!note) throw new Error("no live note");
-    return { key: para.getKey(), offset: note.getIndexWithinParent(), type: "element" };
-  }
+describe.each(nestedViews)(
+  "a co-settling note whose bytes cannot be lined up ($view)",
+  (nestedView) => {
+    /** The live point in front of the paragraph's note. */
+    function $inFrontOfNote() {
+      const para = $getRoot().getChildren().filter($isParaNode)[0];
+      const note = para.getChildren().find($isNoteNode);
+      if (!note) throw new Error("no live note");
+      return { key: para.getKey(), offset: note.getIndexWithinParent(), type: "element" };
+    }
 
-  it("places a settled point in a note with no live fragment at the note's front", async () => {
-    // The note rides through the paragraph's rebuild as its SETTLED self, so its live content is
-    // not the same subtree: the only thing the two sides still share is bytes. Without the note's
-    // own live fragment there is nothing to resolve those bytes against, and walking the settled
-    // child path down the LIVE note instead lands on whatever child happens to sit at that index.
-    const { lexical, context, note, noteIndex } = await nested();
-    const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
+    it("places a settled point in a note with no live fragment at the note's front", async () => {
+      // The note rides through the paragraph's rebuild as its SETTLED self, so its live content is
+      // not the same subtree: the only thing the two sides still share is bytes. Without the note's
+      // own live fragment there is nothing to resolve those bytes against, and walking the settled
+      // child path down the LIVE note instead lands on whatever child happens to sit at that index.
+      const { lexical, context, note, noteIndex } = await nested(nestedView);
+      const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
 
-    const [point, front] = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      const notePlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "note");
-      if (!notePlan) throw new Error("expected a note plan");
-      // Writing a plan field directly is the only way to reach this branch: every natural path
-      // that drops the live fragment also drops the plan.
-      (notePlan as { liveFragment?: unknown }).liveFragment = undefined;
-      return [
-        $livePointFromSettledLocation(context, prepared, {
-          jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
-          offset: 5,
-        }),
-        $inFrontOfNote(),
-      ];
+      const [point, front] = lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const notePlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "note");
+        if (!notePlan) throw new Error("expected a note plan");
+        // Writing a plan field directly is the only way to reach this branch: every natural path
+        // that drops the live fragment also drops the plan.
+        (notePlan as { liveFragment?: unknown }).liveFragment = undefined;
+        return [
+          $livePointFromSettledLocation(context, prepared, {
+            jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
+            offset: 5,
+          }),
+          $inFrontOfNote(),
+        ];
+      });
+
+      expect(point).toEqual(front);
     });
 
-    expect(point).toEqual(front);
-  });
+    it("places a settled point in a run the paragraph could not pair in front of that live run", async () => {
+      // The paragraph's pairing leaves the note's live run without a settled partner, so a settled
+      // point inside the note has no live member to walk down; it lands in front of the live run
+      // whose placeholder lines up with the settled one.
+      const { lexical, context, note, noteIndex } = await nested(nestedView);
+      const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
 
-  it("places a settled point in a run the paragraph could not pair in front of that live run", async () => {
-    // The paragraph's pairing leaves the note's live run without a settled partner, so a settled
-    // point inside the note has no live member to walk down; it lands in front of the live run
-    // whose placeholder lines up with the settled one.
-    const { lexical, context, note, noteIndex } = await nested();
-    const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
+      const [point, front] = lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const paraPlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "para");
+        const noteRun = paraPlan?.liveFragment?.sentinels.findIndex((run) => $isNoteNode(run[0]));
+        if (!paraPlan?.sentinelMap || noteRun === undefined || noteRun < 0)
+          throw new Error("expected a paragraph plan pairing the note's run");
+        // As below: no natural pending state leaves a run unpaired inside an otherwise paired scope.
+        (paraPlan as { sentinelMap?: unknown }).sentinelMap = paraPlan.sentinelMap.map(
+          (run, index) => (index === noteRun ? run.map(() => undefined) : run),
+        );
+        return [
+          $livePointFromSettledLocation(context, prepared, {
+            jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
+            offset: 5,
+          }),
+          $inFrontOfNote(),
+        ];
+      });
 
-    const [point, front] = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      const paraPlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "para");
-      const noteRun = paraPlan?.liveFragment?.sentinels.findIndex((run) => $isNoteNode(run[0]));
-      if (!paraPlan?.sentinelMap || noteRun === undefined || noteRun < 0)
-        throw new Error("expected a paragraph plan pairing the note's run");
-      // As below: no natural pending state leaves a run unpaired inside an otherwise paired scope.
-      (paraPlan as { sentinelMap?: unknown }).sentinelMap = paraPlan.sentinelMap.map(
-        (run, index) => (index === noteRun ? run.map(() => undefined) : run),
-      );
-      return [
-        $livePointFromSettledLocation(context, prepared, {
-          jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
-          offset: 5,
-        }),
-        $inFrontOfNote(),
-      ];
+      expect(point).toEqual(front);
     });
 
-    expect(point).toEqual(front);
-  });
+    it("places a settled point in a note whose preserved runs cannot be paired at the note's front", async () => {
+      // With no run correspondence the note's two byte sequences do not line up, so a byte anchor
+      // would resolve one byte off per placeholder instead of landing where the host meant.
+      const { lexical, context, note, noteIndex } = await nested(nestedView);
+      const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
 
-  it("places a settled point in a note whose preserved runs cannot be paired at the note's front", async () => {
-    // With no run correspondence the note's two byte sequences do not line up, so a byte anchor
-    // would resolve one byte off per placeholder instead of landing where the host meant.
-    const { lexical, context, note, noteIndex } = await nested();
-    const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
+      const [point, front] = lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const notePlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "note");
+        if (!notePlan) throw new Error("expected a note plan");
+        // As above: no natural path reaches a note plan without a pairing but with a live fragment.
+        (notePlan as { sentinelMap?: unknown }).sentinelMap = undefined;
+        return [
+          $livePointFromSettledLocation(context, prepared, {
+            jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
+            offset: 5,
+          }),
+          $inFrontOfNote(),
+        ];
+      });
 
-    const [point, front] = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      const notePlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "note");
-      if (!notePlan) throw new Error("expected a note plan");
-      // As above: no natural path reaches a note plan without a pairing but with a live fragment.
-      (notePlan as { sentinelMap?: unknown }).sentinelMap = undefined;
-      return [
-        $livePointFromSettledLocation(context, prepared, {
-          jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
-          offset: 5,
-        }),
-        $inFrontOfNote(),
-      ];
+      expect(point).toEqual(front);
     });
-
-    expect(point).toEqual(front);
-  });
-});
+  },
+);

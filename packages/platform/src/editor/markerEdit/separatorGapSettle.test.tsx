@@ -16,7 +16,7 @@ import {
   ORACLE_TYPE,
   oracleView,
 } from "../annotationLocations/annotationLocations.test-helpers";
-import { enabledViews, isViewEnabled, itInView } from "../editorViews.test-helpers";
+import { enabledViews, isViewEnabled, itInView, mountInPaneRow } from "../editorViews.test-helpers";
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { copyEvent, pasteEvent } from "./markerEdit.test-helpers";
 import { $textContaining, contentPath, twoParaUsj } from "../positions/positions.test-helpers";
@@ -1115,8 +1115,14 @@ describe("removing a span's separator keeps every byte, as ParatextData reads th
   /** The document between the chapter and the paragraph the caret departs to. */
   const body = (usj: Usj | undefined) => usj?.content.slice(2, -1);
 
+  /** The note in `content`. */
+  const noteIn = (content: MarkerContent[] | undefined) =>
+    content?.find((item) => typeof item !== "string" && item.type === "note");
+
   for (const key of ["Backspace", "Delete"] as const)
-    it.each(cases)(`${key} on $name`, async ({ content, view, expected }) => {
+    it.each(
+      cases.filter(({ view }) => view !== NOTE_VIEW || isViewEnabled("standard+expandedNotes")),
+    )(`${key} on $name`, async ({ content, view, expected }) => {
       const usj = twoParaUsj(content);
       const mounted =
         view === NOTE_VIEW
@@ -1129,4 +1135,28 @@ describe("removing a span's separator keeps every byte, as ParatextData reads th
       expect(body(mounted.ref.current?.getUsj())).toEqual(expected);
       mounted.unmount();
     });
+
+  // The note rows again in the footnotes pane's row editor, which holds the note alone; the caret
+  // leaves it by the editor losing focus.
+  for (const key of ["Backspace", "Delete"] as const)
+    it.each(cases.filter(({ view }) => view === NOTE_VIEW))(
+      `${key} on $name in the footnotes pane's row editor`,
+      async ({ content, expected }) => {
+        const note = noteIn(content);
+        const expectedNote = noteIn((expected[0] as MarkerObject).content);
+        if (typeof note !== "object" || !expectedNote) throw new Error("expected a note row");
+        const mounted = await mountInPaneRow(note);
+        const savedNote = () =>
+          noteIn((mounted.ref.current?.getUsj()?.content[0] as MarkerObject | undefined)?.content);
+        await removeSeparator(mounted.lexical, key);
+
+        expect(savedNote()).toEqual(expectedNote);
+        const rootElement = mounted.lexical.getRootElement();
+        if (!rootElement) throw new Error("editor root not found");
+        act(() => rootElement.blur());
+        act(() => mounted.ref.current?.commitPendingMarkerEdits());
+        expect(savedNote()).toEqual(expectedNote);
+        mounted.unmount();
+      },
+    );
 });

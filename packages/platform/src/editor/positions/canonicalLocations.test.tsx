@@ -24,6 +24,7 @@ import {
   reset,
   serializeEditorState,
 } from "../adaptors/usj-editor.adaptor";
+import { editorView, isViewEnabled, paneRowScaffold } from "../editorViews.test-helpers";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import {
   $textContaining,
@@ -688,6 +689,23 @@ const CALLER_END_ROWS: Row[] = [
   },
 ];
 
+/** {@link CALLER_END_ROWS} in the footnotes pane's row editor, which holds the note alone in its
+ * scaffold paragraph: there a caret at the start of the note's content can sit at the end of the
+ * caller, so it has to report the next byte too. */
+const PANE_ROW_CALLER_END_ROWS: Row[] = CALLER_END_ROWS.map((row) => {
+  const note = (row.usj.content[2] as MarkerObject).content?.[1];
+  if (!note || typeof note === "string") throw new Error("expected the row's note");
+  return {
+    ...row,
+    usj: paneRowScaffold(note),
+    point: endOf((view) => $callerAt([0, 0], view)),
+    location: {
+      ...row.location,
+      jsonPath: row.location.jsonPath.replace("$.content[2].content[1]", "$.content[0].content[0]"),
+    } as UsjDocumentLocation,
+  };
+});
+
 /** Assert a row's report, and that resolving the reported location puts the caret where it reports
  * the same location again. */
 function expectReportAndRoundTrip({ usj, point, location }: Row, view: ViewOptions) {
@@ -707,11 +725,16 @@ function expectReportAndRoundTrip({ usj, point, location }: Row, view: ViewOptio
 
 describe.each<[string, ViewOptions, Row[]]>([
   ["Standard", requireView(STANDARD_VIEW_MODE), VERSE_END_ROWS],
-  [
-    "Standard, notes expanded",
-    { ...requireView(STANDARD_VIEW_MODE), noteMode: "expanded" },
-    [...VERSE_END_ROWS, ...CALLER_END_ROWS],
-  ],
+  ["the footnotes pane's row editor", editorView("footnotes-pane-row"), PANE_ROW_CALLER_END_ROWS],
+  ...(isViewEnabled("standard+expandedNotes")
+    ? [
+        [
+          "Standard, notes expanded",
+          editorView("standard+expandedNotes"),
+          [...VERSE_END_ROWS, ...CALLER_END_ROWS],
+        ] as [string, ViewOptions, Row[]],
+      ]
+    : []),
   ["Unformatted", requireView(UNFORMATTED_VIEW_MODE), [...VERSE_END_ROWS, ...CALLER_END_ROWS]],
 ])("reporting a caret behind a glyph's trailing separator (%s)", (_name, view, rows) => {
   it.each(rows)("reports a caret $caret as that next byte", (row) => {

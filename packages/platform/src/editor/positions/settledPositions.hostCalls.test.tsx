@@ -6,7 +6,8 @@
  * typing over a selection that ends where a footnote's text does, and `selectNote` counting the
  * settled document's notes while one is still a typed literal.
  */
-import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { editorView, enabledViews, itInView, mountInView } from "../editorViews.test-helpers";
+import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $textContaining, contentPath, twoParaUsj, typeOver } from "./positions.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { $findMatchingParent } from "@lexical/utils";
@@ -346,8 +347,8 @@ describe("selectNote(index) counts the settled document's notes", () => {
   /** A pending note literal typed in front of an existing note the paragraph already carries, so
    * the settled document has two notes — the literal's (first) and the existing one (second) —
    * while the live tree still spells the first as plain text. */
-  async function literalBeforeCarriedNote() {
-    const mounted = await mountExpandedNoteEditor(
+  async function literalBeforeCarriedNote(view: "standard" | "standard+expandedNotes") {
+    const mounted = await mountInView(
       twoParaUsj([
         "head made text ",
         {
@@ -358,44 +359,73 @@ describe("selectNote(index) counts the settled document's notes", () => {
         },
         " after",
       ]),
+      editorView(view),
     );
     await typeOver(mounted.lexical, "head made text ", `head ${LITERAL} text `);
     expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
     return mounted;
   }
 
-  it("selects the settled second note — the carried note — with the caret inside it", async () => {
-    const { ref, lexical } = await literalBeforeCarriedNote();
+  itInView("standard+expandedNotes")(
+    "selects the settled second note — the carried note — with the caret inside it (standard+expandedNotes)",
+    async () => {
+      const { ref, lexical } = await literalBeforeCarriedNote("standard+expandedNotes");
+
+      await act(async () => {
+        ref.current?.selectNote(1);
+        await Promise.resolve();
+      });
+
+      expect(
+        lexical.getEditorState().read(() => $selectionInsideNoteContaining("existing body")),
+      ).toBe(true);
+    },
+  );
+
+  it("selects the settled second note — the carried note — by the caret in front of it (standard)", async () => {
+    const { ref, lexical } = await literalBeforeCarriedNote("standard");
 
     await act(async () => {
       ref.current?.selectNote(1);
       await Promise.resolve();
     });
 
-    expect(
-      lexical.getEditorState().read(() => $selectionInsideNoteContaining("existing body")),
-    ).toBe(true);
-  });
-
-  it("puts a collapsed caret at the settled first note's `\\`, while it is still a typed literal", async () => {
-    const { ref, lexical } = await literalBeforeCarriedNote();
-    const literal = lexical.getEditorState().read(() => ({
-      key: $textContaining(LITERAL).getKey(),
-      offset: $textContaining(LITERAL).getTextContent().indexOf(LITERAL),
-    }));
-
-    await act(async () => {
-      ref.current?.selectNote(0);
-      await Promise.resolve();
-    });
-
+    // A collapsed note is selected by the end of the node in front of it: the text the literal is
+    // typed in, not the literal's own settled note.
     const caret = lexical.getEditorState().read(() => {
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
-      return { key: selection.anchor.getNode().getKey(), offset: selection.anchor.offset };
+      return {
+        text: selection.anchor.getNode().getTextContent(),
+        offset: selection.anchor.offset,
+      };
     });
-    expect(caret).toEqual(literal);
+    const typed = `head ${LITERAL} text `;
+    expect(caret).toEqual({ text: typed, offset: typed.length });
   });
+
+  it.each(enabledViews(["standard", "standard+expandedNotes"] as const))(
+    "puts a collapsed caret at the settled first note's `\\`, while it is still a typed literal (%s)",
+    async (view) => {
+      const { ref, lexical } = await literalBeforeCarriedNote(view);
+      const literal = lexical.getEditorState().read(() => ({
+        key: $textContaining(LITERAL).getKey(),
+        offset: $textContaining(LITERAL).getTextContent().indexOf(LITERAL),
+      }));
+
+      await act(async () => {
+        ref.current?.selectNote(0);
+        await Promise.resolve();
+      });
+
+      const caret = lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+        return { key: selection.anchor.getNode().getKey(), offset: selection.anchor.offset };
+      });
+      expect(caret).toEqual(literal);
+    },
+  );
 
   it("with nothing pending, selects the note at that index unchanged", async () => {
     const { ref, lexical } = await mountStandardViewEditor(

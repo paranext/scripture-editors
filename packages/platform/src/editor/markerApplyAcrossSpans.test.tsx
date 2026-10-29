@@ -5,7 +5,14 @@
  * of a span's marker glyphs, a selection that crosses a border is refused. Either way the editor
  * must not freeze, lose a span, move text, or leave a marker unmatched.
  */
-import { EDITING_VIEWS, editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
+import {
+  EDITING_VIEWS,
+  editorView,
+  itInView,
+  mountInPaneRow,
+  mountInView,
+  MountedEditor,
+} from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -123,6 +130,26 @@ async function applied(
   act(() => apply(mounted, marker));
   await settle();
   const result = { paragraph: paragraphOf(mounted), logs: [...mounted.logs] };
+  mounted.unmount();
+  return result;
+}
+
+/** {@link applied}, in the footnotes pane's row editor over `note` alone; `paragraph` is the
+ * scaffold paragraph's content. */
+async function appliedInPaneRow(
+  apply: (mounted: MountedEditor, marker: string) => void,
+  marker: string,
+  start: Endpoint,
+  end: Endpoint,
+  note: MarkerObject,
+): Promise<{ paragraph: MarkerContent[]; logs: string[] }> {
+  const mounted = await mountInPaneRow(note, { scrRef });
+  await select(mounted.lexical, start, end);
+  act(() => apply(mounted, marker));
+  await settle();
+  const para = mounted.ref.current?.getUsj()?.content[0];
+  if (typeof para !== "object") throw new Error("no scaffold paragraph");
+  const result = { paragraph: para.content ?? [], logs: [...mounted.logs] };
   mounted.unmount();
   return result;
 }
@@ -282,25 +309,42 @@ describe("applying a marker over part of one marker glyph in standard view", () 
       expect(logs).toContainEqual(expect.stringContaining("holds only a marker's bytes"));
     });
 
-    it("refuses \\fq inside a footnote's \\ft glyph without looping", async () => {
-      const footnote = {
-        type: "note",
-        marker: "f",
-        caller: "+",
-        content: [char("ft", "a ", char("nd", "b"))],
-      } as MarkerObject;
-      const content: MarkerContent[] = ["a ", footnote, " c"];
-      const { paragraph, logs } = await applied(
-        "standard+expandedNotes",
+    const footnote = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [char("ft", "a ", char("nd", "b"))],
+    } as MarkerObject;
+
+    it("refuses \\fq inside a footnote's \\ft glyph without looping (footnotes-pane-row)", async () => {
+      const { paragraph, logs } = await appliedInPaneRow(
         apply,
         "fq",
         ["\\ft", 0],
         ["\\ft", 1],
-        content,
+        footnote,
       );
 
-      expect(paragraph).toEqual(content);
+      expect(paragraph).toEqual([footnote]);
       expect(logs).toContainEqual(expect.stringContaining("holds only a marker's bytes"));
     });
+
+    itInView("standard+expandedNotes")(
+      "refuses \\fq inside a footnote's \\ft glyph without looping (standard+expandedNotes)",
+      async () => {
+        const content: MarkerContent[] = ["a ", footnote, " c"];
+        const { paragraph, logs } = await applied(
+          "standard+expandedNotes",
+          apply,
+          "fq",
+          ["\\ft", 0],
+          ["\\ft", 1],
+          content,
+        );
+
+        expect(paragraph).toEqual(content);
+        expect(logs).toContainEqual(expect.stringContaining("holds only a marker's bytes"));
+      },
+    );
   });
 });

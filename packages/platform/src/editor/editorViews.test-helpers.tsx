@@ -23,7 +23,11 @@
  * An expected-failure entry naming a view that is off is not stale ({@link knownFailureRunner}).
  * A test that builds a library-only view's options itself, rather than naming a registry view,
  * still runs: it is either about code every view shares, with the view incidental, or a
- * millisecond unit test of an option the library still publishes.
+ * millisecond unit test of an option the library still publishes. The exception is Standard view
+ * with notes expanded (`mountExpandedNoteEditor`, `testEnvironmentExpanded`, or the options spelled
+ * out): those rows register through {@link isViewEnabled} under `standard+expandedNotes`, because
+ * the app edits a note's content in the footnotes pane's row editor ({@link mountInPaneRow}), and
+ * shows a note with no closer expanded in Standard view's own text.
  *
  * What an app view can reach is tested in an app view, by default; a library-only view's rows
  * carry only what no app view reaches. A suite that never edits (it loads, reads, annotates or
@@ -37,7 +41,7 @@
  */
 import Editor from "./Editor";
 import { EditorOptions, EditorProps, EditorRef } from "./editor.model";
-import { Usj } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
 import { act, render } from "@testing-library/react";
@@ -443,6 +447,24 @@ function namesViewLeftOut(key: string): boolean {
       !isViewEnabled(entry) &&
       new RegExp(`(^|[^\\w+-])${entry.name.replace(/[+]/g, "\\+")}([^\\w+-]|$)`).test(key),
   );
+}
+
+/**
+ * The document the footnotes pane's row editor (`footnotes-pane-row`) holds while it edits `note`:
+ * that note alone in a `\p`, the scaffold paranext-core's `FootnoteEditor` mounts (its paragraph is
+ * unnamed there, which the editor reads as `\p`). The row editor never holds the chapter, so a row
+ * that runs there runs in this shape, with the note at `$.content[0].content[0]`.
+ */
+export function paneRowScaffold(note: MarkerObject, version = "3.1"): Usj {
+  return { type: "USJ", version, content: [{ type: "para", marker: "p", content: [note] }] };
+}
+
+/** Mounts `note` in the footnotes pane's row editor, over {@link paneRowScaffold}. */
+export async function mountInPaneRow(
+  note: MarkerObject,
+  options: MountOptions = {},
+): Promise<MountedEditor> {
+  return mountInView(paneRowScaffold(note), editorView("footnotes-pane-row"), options);
 }
 
 /** The editor's host-facing change-notification callback type. */

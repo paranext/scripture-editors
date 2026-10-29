@@ -1,4 +1,6 @@
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
+import { isViewEnabled, mountInPaneRow, MountedEditor } from "../editorViews.test-helpers";
+import { EditorRef } from "../editor.model";
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import {
   copyEvent,
@@ -32,6 +34,7 @@ import {
   usjJsonPathFromIndexes,
   usxStringToUsj,
   MarkerContent,
+  MarkerObject,
 } from "@eten-tech-foundation/scripture-utilities";
 import { $dfs, mergeRegister } from "@lexical/utils";
 import {
@@ -241,6 +244,62 @@ describe("a lone display NBSP", () => {
     },
   );
 
+  /**
+   * Mounts the note in `usj`'s paragraph in the footnotes pane's row editor, alone as that editor
+   * holds it, and reports `getUsj()` as `usj` with the note swapped for the one the row editor
+   * saves — so a row written against the paragraph checks the note the row editor gives back.
+   */
+  async function mountNoteInPaneRow(usj: Usj): Promise<MountedEditor> {
+    const para = usj.content[2];
+    if (typeof para === "string" || !para.content) throw new Error("no paragraph");
+    const paraContent = para.content;
+    const noteIndex = paraContent.findIndex(
+      (item) => typeof item !== "string" && item.type === "note",
+    );
+    if (noteIndex < 0) throw new Error("no note in the paragraph");
+    const mounted = await mountInPaneRow(paraContent[noteIndex] as MarkerObject);
+    const asParagraph = (rowUsj: Usj | undefined): Usj | undefined => {
+      const scaffold = rowUsj?.content[0];
+      const note = typeof scaffold === "object" ? scaffold.content?.[0] : undefined;
+      if (note === undefined) return undefined;
+      const content = paraContent.map((item, index) => (index === noteIndex ? note : item));
+      return {
+        ...usj,
+        content: usj.content.map((item) => (item === para ? { ...para, content } : item)),
+      };
+    };
+    const ref = {
+      get current(): EditorRef | null {
+        const editor = mounted.ref.current;
+        return editor && { ...editor, getUsj: () => asParagraph(editor.getUsj()) };
+      },
+    };
+    return { ...mounted, ref };
+  }
+
+  type Mount = typeof mountStandardViewEditor;
+
+  /**
+   * `rows` (whose last item is the mount), with every row mounted with expanded notes run again in
+   * the footnotes pane's row editor ({@link mountNoteInPaneRow}) unless its label is in `without`,
+   * and kept itself only while this run includes `standard+expandedNotes`.
+   */
+  function withPaneRowTwins<Row extends [string, ...unknown[]]>(
+    rows: Row[],
+    without: string[] = [],
+  ): Row[] {
+    return rows.flatMap((row) => {
+      if (row[row.length - 1] !== mountExpandedNoteEditor) return [row];
+      if (without.includes(row[0])) return isViewEnabled("standard+expandedNotes") ? [row] : [];
+      const twin = [
+        `${row[0]} in the footnotes pane's row editor`,
+        ...row.slice(1, -1),
+        mountNoteInPaneRow,
+      ] as unknown as Row;
+      return isViewEnabled("standard+expandedNotes") ? [twin, row] : [twin];
+    });
+  }
+
   /** `content` with every two-space string reduced to the one space it saves as. */
   function oneSpace(content: Usj["content"]): Usj["content"] {
     return JSON.parse(JSON.stringify(content).replaceAll('"  "', '" "'));
@@ -315,7 +374,7 @@ describe("a lone display NBSP", () => {
     ],
   ];
 
-  it.each(nestedSpaceRuns)(
+  it.each(withPaneRowTwins(nestedSpaceRuns))(
     "saves the space a backspace leaves %s",
     async (_label, content, mount) => {
       const { lexical, ref } = await mount(paraUsj(content));
@@ -330,7 +389,7 @@ describe("a lone display NBSP", () => {
     },
   );
 
-  it.each(nestedSpaceRuns)(
+  it.each(withPaneRowTwins(nestedSpaceRuns))(
     "saves the space %s when a second one is typed and backspaced",
     async (_label, content, mount) => {
       const saved = paraUsj(oneSpace(content));
@@ -417,77 +476,90 @@ describe("a lone display NBSP", () => {
     " after",
   ];
 
-  it.each<[string, Usj["content"], typeof mountStandardViewEditor]>([
-    [
-      "an empty char span",
-      ["before ", { type: "char", marker: "nd" }, " after"],
-      mountStandardViewEditor,
-    ],
-    [
-      "a char span opening with a nested span",
+  it.each<[string, Usj["content"], Mount]>(
+    withPaneRowTwins(
       [
-        "say ",
-        {
-          type: "char",
-          marker: "nd",
-          content: [{ type: "char", marker: "wj", content: ["God"] }],
-        },
-        " now",
-      ],
-      mountStandardViewEditor,
-    ],
-    [
-      "a nested span opening with a nested span",
-      [
-        {
-          type: "char",
-          marker: "nd",
-          content: [{ type: "char", marker: "wj", content: [twoWords[0], " ", twoWords[2]] }],
-        },
-      ],
-      mountStandardViewEditor,
-    ],
-    [
-      "an empty span nested in a span",
-      [{ type: "char", marker: "nd", content: ["Lord ", { type: "char", marker: "w" }, " now"] }],
-      mountStandardViewEditor,
-    ],
-    ["a collapsed footnote", footnote, mountStandardViewEditor],
-    ["an expanded footnote", footnote, mountExpandedNoteEditor],
-    ...([mountStandardViewEditor, mountExpandedNoteEditor] as const).map(
-      (mount) =>
         [
-          `${mount === mountStandardViewEditor ? "a collapsed" : "an expanded"} footnote with a space between spans and a span opening with a nested one`,
+          "an empty char span",
+          ["before ", { type: "char", marker: "nd" }, " after"],
+          mountStandardViewEditor,
+        ],
+        [
+          "a char span opening with a nested span",
           [
-            "before",
+            "say ",
             {
-              type: "note",
-              marker: "f",
-              caller: "+",
-              content: [
-                { type: "char", marker: "fr", content: ["1.1 "] },
-                { type: "char", marker: "ft", content: [twoWords[0], " ", twoWords[2]] },
-                " ",
-                { type: "char", marker: "fq", content: ["b"] },
-              ],
+              type: "char",
+              marker: "nd",
+              content: [{ type: "char", marker: "wj", content: ["God"] }],
             },
-            " after",
+            " now",
           ],
-          mount,
-        ] as [string, Usj["content"], typeof mountStandardViewEditor],
-    ),
-    [
-      "a footnote inside a char span",
-      [
-        {
-          type: "char",
-          marker: "nd",
-          content: ["Lord", footnote[1], " ", twoWords[2]],
-        },
+          mountStandardViewEditor,
+        ],
+        [
+          "a nested span opening with a nested span",
+          [
+            {
+              type: "char",
+              marker: "nd",
+              content: [{ type: "char", marker: "wj", content: [twoWords[0], " ", twoWords[2]] }],
+            },
+          ],
+          mountStandardViewEditor,
+        ],
+        [
+          "an empty span nested in a span",
+          [
+            {
+              type: "char",
+              marker: "nd",
+              content: ["Lord ", { type: "char", marker: "w" }, " now"],
+            },
+          ],
+          mountStandardViewEditor,
+        ],
+        ["a collapsed footnote", footnote, mountStandardViewEditor],
+        ["an expanded footnote", footnote, mountExpandedNoteEditor],
+        ...([mountStandardViewEditor, mountExpandedNoteEditor] as const).map(
+          (mount) =>
+            [
+              `${mount === mountStandardViewEditor ? "a collapsed" : "an expanded"} footnote with a space between spans and a span opening with a nested one`,
+              [
+                "before",
+                {
+                  type: "note",
+                  marker: "f",
+                  caller: "+",
+                  content: [
+                    { type: "char", marker: "fr", content: ["1.1 "] },
+                    { type: "char", marker: "ft", content: [twoWords[0], " ", twoWords[2]] },
+                    " ",
+                    { type: "char", marker: "fq", content: ["b"] },
+                  ],
+                },
+                " after",
+              ],
+              mount,
+            ] as [string, Usj["content"], typeof mountStandardViewEditor],
+        ),
+        [
+          "a footnote inside a char span",
+          [
+            {
+              type: "char",
+              marker: "nd",
+              content: ["Lord", footnote[1], " ", twoWords[2]],
+            },
+          ],
+          mountStandardViewEditor,
+        ],
+        // The expanded footnote's only lone NBSP is its paragraph's `\\p` separator, which the collapsed
+        // row covers in Standard view; the row editor shows no paragraph prefix, so it has no twin.
       ],
-      mountStandardViewEditor,
-    ],
-  ])("leaves the structural spacers of %s alone", async (_label, content, mount) => {
+      ["an expanded footnote"],
+    ),
+  )("leaves the structural spacers of %s alone", async (_label, content, mount) => {
     const usj = paraUsj(content);
     const { lexical, ref } = await mount(usj);
     const loaded = ref.current?.getUsj();
@@ -523,56 +595,58 @@ describe("a lone display NBSP", () => {
     caller: "+",
     content: [{ type: "char", marker: "fr", content: ["1.1 "] }, ...content],
   });
-  it.each<[string, Usj["content"], string, Usj["content"], typeof mountStandardViewEditor]>([
-    [
-      "a span opening with a nested span, at paragraph start",
-      [{ type: "char", marker: "nd", content: [w("a"), " b"] }, " z"],
-      "nd",
-      [w("a"), " b z"],
-      mountStandardViewEditor,
-    ],
-    [
-      "a span opening with a milestone",
-      [{ type: "char", marker: "nd", content: [milestone, "Lord"] }, " z"],
-      "nd",
-      [milestone, "Lord z"],
-      mountStandardViewEditor,
-    ],
-    [
-      "a span opening with a footnote",
-      [{ type: "char", marker: "nd", content: [note, "Lord"] }, " z"],
-      "nd",
-      [note, "Lord z"],
-      mountStandardViewEditor,
-    ],
-    [
-      "a nested span opening with a nested span",
+  it.each<[string, Usj["content"], string, Usj["content"], Mount]>(
+    withPaneRowTwins([
       [
-        {
-          type: "char",
-          marker: "nd",
-          content: [{ type: "char", marker: "wj", content: [w("a")] }],
-        },
+        "a span opening with a nested span, at paragraph start",
+        [{ type: "char", marker: "nd", content: [w("a"), " b"] }, " z"],
+        "nd",
+        [w("a"), " b z"],
+        mountStandardViewEditor,
       ],
-      "wj",
-      [{ type: "char", marker: "nd", content: [w("a")] }],
-      mountStandardViewEditor,
-    ],
-    [
-      "an expanded footnote's span opening with a nested span",
-      [expandedNote([{ type: "char", marker: "ft", content: [w("a"), " b"] }])],
-      "ft",
-      [expandedNote([w("a"), " b"])],
-      mountExpandedNoteEditor,
-    ],
-    [
-      "an expanded footnote's empty span",
-      [expandedNote([{ type: "char", marker: "ft" }])],
-      "ft",
-      [expandedNote([])],
-      mountExpandedNoteEditor,
-    ],
-  ])(
+      [
+        "a span opening with a milestone",
+        [{ type: "char", marker: "nd", content: [milestone, "Lord"] }, " z"],
+        "nd",
+        [milestone, "Lord z"],
+        mountStandardViewEditor,
+      ],
+      [
+        "a span opening with a footnote",
+        [{ type: "char", marker: "nd", content: [note, "Lord"] }, " z"],
+        "nd",
+        [note, "Lord z"],
+        mountStandardViewEditor,
+      ],
+      [
+        "a nested span opening with a nested span",
+        [
+          {
+            type: "char",
+            marker: "nd",
+            content: [{ type: "char", marker: "wj", content: [w("a")] }],
+          },
+        ],
+        "wj",
+        [{ type: "char", marker: "nd", content: [w("a")] }],
+        mountStandardViewEditor,
+      ],
+      [
+        "an expanded footnote's span opening with a nested span",
+        [expandedNote([{ type: "char", marker: "ft", content: [w("a"), " b"] }])],
+        "ft",
+        [expandedNote([w("a"), " b"])],
+        mountExpandedNoteEditor,
+      ],
+      [
+        "an expanded footnote's empty span",
+        [expandedNote([{ type: "char", marker: "ft" }])],
+        "ft",
+        [expandedNote([])],
+        mountExpandedNoteEditor,
+      ],
+    ]),
+  )(
     "saves no space when the opening glyph of %s is deleted",
     async (_label, content, marker, expected, mount) => {
       const { lexical, ref } = await mount(paraUsj(content));

@@ -10,9 +10,10 @@ import {
   enabledViews,
   mountInView,
   MountedEditor,
+  paneRowScaffold,
 } from "./editorViews.test-helpers";
 import { press } from "./typingFidelityOracle.test-helpers";
-import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $getRoot,
@@ -168,11 +169,21 @@ describe("Standard view with allowInvisibleCharacters", () => {
         content: [{ type: "char", marker: "ft", content: [`c~d${NBSP}e`] }],
       },
     ];
-    for (const view of [standardOn, withInvisibleCharacters("standard+expandedNotes")]) {
-      const mounted = await mountInView(oneParaUsj(content), view);
+    for (const view of enabledViews(["standard", "standard+expandedNotes"] as const)) {
+      const mounted = await mountInView(oneParaUsj(content), withInvisibleCharacters(view));
       expect(firstParaContent(mounted)).toEqual(content);
       mounted.unmount();
     }
+    // The footnotes pane's row editor, where the app shows the note's text, holds it alone.
+    const note = content[3];
+    const paneRow = await mountInView(
+      paneRowScaffold(note as MarkerObject),
+      withInvisibleCharacters("footnotes-pane-row"),
+    );
+    expect(paneRow.ref.current?.getUsj()?.content).toEqual([
+      { type: "para", marker: "p", content: [note] },
+    ]);
+    paneRow.unmount();
   });
 
   it("saves a typed tilde as a tilde", async () => {

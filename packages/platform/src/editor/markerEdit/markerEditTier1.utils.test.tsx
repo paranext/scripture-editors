@@ -1,3 +1,4 @@
+import { enabledViews } from "../editorViews.test-helpers";
 import {
   $resolvePendingMarkers,
   $settlePendedDisplayOwner,
@@ -1641,178 +1642,186 @@ describe("$resolvePendingMarkers routes a pended run PIECE through its owner's g
   });
 });
 
-describe("Tier 1 note-caller leading attribute (map-derived)", () => {
-  // The markers map declares `caller` a leading attribute of the note-marker family
-  // (`leadingAttributeNames`, shared), so the caller gets the same one-rule treatment as a
-  // verse's number: whitespace between the marker and the value is structural and collapses,
-  // and the value retags to the typed word. These pins drive the expanded editable caller —
-  // collapsed notes render an atomic ImmutableNoteCallerNode this arm can never see.
+// A note with no closer shows expanded in Standard view's text with its caller as editable text,
+// as every note does with notes expanded (library-only). The footnotes pane's row editor makes the
+// caller atomic (`isNoteShellEditable: false`) and sets it from its own dropdown.
+describe.each(enabledViews(["standard", "standard+expandedNotes"] as const))(
+  "Tier 1 note-caller leading attribute (map-derived) (%s)",
+  (view) => {
+    // The markers map declares `caller` a leading attribute of the note-marker family
+    // (`leadingAttributeNames`, shared), so the caller gets the same one-rule treatment as a
+    // verse's number: whitespace between the marker and the value is structural and collapses,
+    // and the value retags to the typed word. These pins drive the expanded editable caller —
+    // collapsed notes render an atomic ImmutableNoteCallerNode this arm can never see.
 
-  /** `\p x` + an expanded (unclosed) `\f + \ft body` note; returns the caller TextNode. */
-  async function mountExpandedNote() {
-    let note!: NoteNodeClass;
-    let callerText!: TextNode;
-    const environment = await testEnvironmentExpanded(() => {
-      note = $createNoteNode("f", "+", false);
-      // Unmergeable, as both note builders make the caller text.
-      callerText = $createTextNode(getEditableCallerText("+")).toggleUnmergeable();
-      const ft = $createCharNode("ft");
-      ft.setUnknownAttributes({ closed: "false" });
-      $getRoot().append(
-        $createParaNode("p").append(
-          $createMarkerNode("p"),
-          $createTextNode(NBSP),
-          $createTextNode("x "),
-          note.append(
-            $createMarkerNode("f"),
-            callerText,
-            ft.append($createMarkerNode("ft"), $createTextNode(`${NBSP}body`)),
-          ),
-        ),
+    /** `\p x` + an expanded (unclosed) `\f + \ft body` note; returns the caller TextNode. */
+    async function mountExpandedNote() {
+      let note!: NoteNodeClass;
+      let callerText!: TextNode;
+      const environment = await (view === "standard" ? testEnvironment : testEnvironmentExpanded)(
+        () => {
+          note = $createNoteNode("f", "+", false);
+          // Unmergeable, as both note builders make the caller text.
+          callerText = $createTextNode(getEditableCallerText("+")).toggleUnmergeable();
+          const ft = $createCharNode("ft");
+          ft.setUnknownAttributes({ closed: "false" });
+          $getRoot().append(
+            $createParaNode("p").append(
+              $createMarkerNode("p"),
+              $createTextNode(NBSP),
+              $createTextNode("x "),
+              note.append(
+                $createMarkerNode("f"),
+                callerText,
+                ft.append($createMarkerNode("ft"), $createTextNode(`${NBSP}body`)),
+              ),
+            ),
+          );
+        },
+      );
+      return { editor: environment.editor, note, callerText };
+    }
+
+    async function typeInCallerText(
+      editor: ReturnType<typeof createBasicTestEnvironment>["editor"],
+      callerText: TextNode,
+      offset: number,
+      text: string,
+    ) {
+      await act(async () =>
+        editor.update(() => {
+          callerText.select(offset, offset);
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.insertText(text);
+        }),
+      );
+    }
+
+    it("an extra space typed next to the caller cannot demote it (whitespace collapses)", async () => {
+      const { editor, note, callerText } = await mountExpandedNote();
+
+      // ` |+⍽` → type a space: `\f  +` must still be caller `+` — the extra whitespace is
+      // structural and collapses, exactly as `\v  5` is still verse 5.
+      await typeInCallerText(editor, callerText, 1, " ");
+
+      editor.getEditorState().read(() => {
+        expect(note.getCaller()).toBe("+");
+        expect(callerText.getTextContent()).toBe(getEditableCallerText("+"));
+      });
+      // And nothing leaks into the note's content: the caller text serializes as the caller,
+      // never as note text (the pre-arm failure — the reverse adaptor only drops a byte-exact
+      // caller, so a diverged one leaked wholesale into content).
+      initializeDeserialize(undefined);
+      const usj = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
+      const para = usj?.content?.[0];
+      const noteUsj = typeof para === "object" ? para.content?.[1] : undefined;
+      if (typeof noteUsj !== "object") throw new Error("expected the note in the serialized USJ");
+      expect(noteUsj.caller).toBe("+");
+      expect(noteUsj.content).toHaveLength(1);
+      expect(typeof noteUsj.content?.[0] === "object" ? noteUsj.content[0].marker : undefined).toBe(
+        "ft",
       );
     });
-    return { editor: environment.editor, note, callerText };
-  }
 
-  async function typeInCallerText(
-    editor: ReturnType<typeof createBasicTestEnvironment>["editor"],
-    callerText: TextNode,
-    offset: number,
-    text: string,
-  ) {
-    await act(async () =>
-      editor.update(() => {
-        callerText.select(offset, offset);
+    it("retags the caller to the typed word (PT9 GetNextWord: whole word, valid or not)", async () => {
+      const { editor, note, callerText } = await mountExpandedNote();
+
+      // ` +|⍽` → type `x`: the caller word becomes `+x`, mirroring `\v 1a` extending the number.
+      await typeInCallerText(editor, callerText, 2, "x");
+
+      editor.getEditorState().read(() => {
+        expect(note.getCaller()).toBe("+x");
+        expect(callerText.getTextContent()).toBe(getEditableCallerText("+x"));
+      });
+    });
+
+    it("puts back a caller whose flanking separator was deleted", async () => {
+      // The caller's own bytes damaged: the note keeps its caller and the screen shows it again,
+      // since the writer emits `\f + ` whatever the caller text holds.
+      const { editor, note, callerText } = await mountExpandedNote();
+
+      await act(async () =>
+        editor.update(() => {
+          callerText.setTextContent(`+${NBSP}`); // leading separator deleted
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        expect(note.getCaller()).toBe("+");
+        expect(callerText.getTextContent()).toBe(getEditableCallerText("+"));
+      });
+    });
+
+    it("splits text typed past the caller's trailing separator into the note's own content, leaving the caller byte-exact", async () => {
+      const { editor, note, callerText } = await mountExpandedNote();
+
+      // ` +⍽|` → type `xy` right after the caller's trailing NBSP: the caller must not absorb it,
+      // and the caret must follow the typed bytes into the new content node.
+      await typeInCallerText(editor, callerText, getEditableCallerText("+").length, "xy");
+
+      editor.getEditorState().read(() => {
+        expect(note.getCaller()).toBe("+");
+        expect(callerText.getTextContent()).toBe(getEditableCallerText("+"));
+        const restNode = callerText.getNextSibling();
+        if (!$isTextNode(restNode)) throw new Error("expected a plain text node after the caller");
+        expect(restNode.getTextContent()).toBe("xy");
         const selection = $getSelection();
-        if ($isRangeSelection(selection)) selection.insertText(text);
-      }),
-    );
-  }
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        expect(selection.anchor.key).toBe(restNode.getKey());
+        expect(selection.anchor.offset).toBe(2);
+      });
 
-  it("an extra space typed next to the caller cannot demote it (whitespace collapses)", async () => {
-    const { editor, note, callerText } = await mountExpandedNote();
-
-    // ` |+⍽` → type a space: `\f  +` must still be caller `+` — the extra whitespace is
-    // structural and collapses, exactly as `\v  5` is still verse 5.
-    await typeInCallerText(editor, callerText, 1, " ");
-
-    editor.getEditorState().read(() => {
-      expect(note.getCaller()).toBe("+");
-      expect(callerText.getTextContent()).toBe(getEditableCallerText("+"));
-    });
-    // And nothing leaks into the note's content: the caller text serializes as the caller,
-    // never as note text (the pre-arm failure — the reverse adaptor only drops a byte-exact
-    // caller, so a diverged one leaked wholesale into content).
-    initializeDeserialize(undefined);
-    const usj = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
-    const para = usj?.content?.[0];
-    const noteUsj = typeof para === "object" ? para.content?.[1] : undefined;
-    if (typeof noteUsj !== "object") throw new Error("expected the note in the serialized USJ");
-    expect(noteUsj.caller).toBe("+");
-    expect(noteUsj.content).toHaveLength(1);
-    expect(typeof noteUsj.content?.[0] === "object" ? noteUsj.content[0].marker : undefined).toBe(
-      "ft",
-    );
-  });
-
-  it("retags the caller to the typed word (PT9 GetNextWord: whole word, valid or not)", async () => {
-    const { editor, note, callerText } = await mountExpandedNote();
-
-    // ` +|⍽` → type `x`: the caller word becomes `+x`, mirroring `\v 1a` extending the number.
-    await typeInCallerText(editor, callerText, 2, "x");
-
-    editor.getEditorState().read(() => {
-      expect(note.getCaller()).toBe("+x");
-      expect(callerText.getTextContent()).toBe(getEditableCallerText("+x"));
-    });
-  });
-
-  it("puts back a caller whose flanking separator was deleted", async () => {
-    // The caller's own bytes damaged: the note keeps its caller and the screen shows it again,
-    // since the writer emits `\f + ` whatever the caller text holds.
-    const { editor, note, callerText } = await mountExpandedNote();
-
-    await act(async () =>
-      editor.update(() => {
-        callerText.setTextContent(`+${NBSP}`); // leading separator deleted
-      }),
-    );
-
-    editor.getEditorState().read(() => {
-      expect(note.getCaller()).toBe("+");
-      expect(callerText.getTextContent()).toBe(getEditableCallerText("+"));
-    });
-  });
-
-  it("splits text typed past the caller's trailing separator into the note's own content, leaving the caller byte-exact", async () => {
-    const { editor, note, callerText } = await mountExpandedNote();
-
-    // ` +⍽|` → type `xy` right after the caller's trailing NBSP: the caller must not absorb it,
-    // and the caret must follow the typed bytes into the new content node.
-    await typeInCallerText(editor, callerText, getEditableCallerText("+").length, "xy");
-
-    editor.getEditorState().read(() => {
-      expect(note.getCaller()).toBe("+");
-      expect(callerText.getTextContent()).toBe(getEditableCallerText("+"));
-      const restNode = callerText.getNextSibling();
-      if (!$isTextNode(restNode)) throw new Error("expected a plain text node after the caller");
-      expect(restNode.getTextContent()).toBe("xy");
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
-      expect(selection.anchor.key).toBe(restNode.getKey());
-      expect(selection.anchor.offset).toBe(2);
+      // Serialized, the typed bytes are the note's own content ahead of its existing `\ft` run —
+      // never the caller, which still serializes byte-exact and is dropped from content.
+      initializeDeserialize(undefined);
+      const usj = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
+      const para = usj?.content?.[0];
+      const noteUsj = typeof para === "object" ? para.content?.[1] : undefined;
+      if (typeof noteUsj !== "object") throw new Error("expected the note in the serialized USJ");
+      expect(noteUsj.caller).toBe("+");
+      expect(noteUsj.content).toHaveLength(2);
+      expect(noteUsj.content?.[0]).toBe("xy");
+      expect(typeof noteUsj.content?.[1] === "object" ? noteUsj.content[1].marker : undefined).toBe(
+        "ft",
+      );
     });
 
-    // Serialized, the typed bytes are the note's own content ahead of its existing `\ft` run —
-    // never the caller, which still serializes byte-exact and is dropped from content.
-    initializeDeserialize(undefined);
-    const usj = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
-    const para = usj?.content?.[0];
-    const noteUsj = typeof para === "object" ? para.content?.[1] : undefined;
-    if (typeof noteUsj !== "object") throw new Error("expected the note in the serialized USJ");
-    expect(noteUsj.caller).toBe("+");
-    expect(noteUsj.content).toHaveLength(2);
-    expect(noteUsj.content?.[0]).toBe("xy");
-    expect(typeof noteUsj.content?.[1] === "object" ? noteUsj.content[1].marker : undefined).toBe(
-      "ft",
-    );
-  });
+    /** The note's serialized content after typing `typed` right after the caller's separator. */
+    async function noteContentAfterTypingPastCaller(typed: string) {
+      const { editor, callerText } = await mountExpandedNote();
+      await typeInCallerText(editor, callerText, getEditableCallerText("+").length, typed);
+      initializeDeserialize(undefined);
+      const usj = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
+      const para = usj?.content?.[0];
+      const noteUsj = typeof para === "object" ? para.content?.[1] : undefined;
+      if (typeof noteUsj !== "object") throw new Error("expected the note in the serialized USJ");
+      return { editor, callerText, content: noteUsj.content };
+    }
 
-  /** The note's serialized content after typing `typed` right after the caller's separator. */
-  async function noteContentAfterTypingPastCaller(typed: string) {
-    const { editor, callerText } = await mountExpandedNote();
-    await typeInCallerText(editor, callerText, getEditableCallerText("+").length, typed);
-    initializeDeserialize(undefined);
-    const usj = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
-    const para = usj?.content?.[0];
-    const noteUsj = typeof para === "object" ? para.content?.[1] : undefined;
-    if (typeof noteUsj !== "object") throw new Error("expected the note in the serialized USJ");
-    return { editor, callerText, content: noteUsj.content };
-  }
+    it("saves a space typed after the caller collapsed into the caller's separator, as Paratext 9 reformats `\\f +  ` to `\\f + `", async () => {
+      const { editor, callerText, content } = await noteContentAfterTypingPastCaller(" ");
 
-  it("saves a space typed after the caller collapsed into the caller's separator, as Paratext 9 reformats `\\f +  ` to `\\f + `", async () => {
-    const { editor, callerText, content } = await noteContentAfterTypingPastCaller(" ");
-
-    // Shown while editing, as any other space run is until it is saved...
-    editor.getEditorState().read(() => {
-      expect(callerText.getTextContent()).toBe(getEditableCallerText("+"));
-      expect(callerText.getNextSibling()?.getTextContent()).toBe(" ");
+      // Shown while editing, as any other space run is until it is saved...
+      editor.getEditorState().read(() => {
+        expect(callerText.getTextContent()).toBe(getEditableCallerText("+"));
+        expect(callerText.getNextSibling()?.getTextContent()).toBe(" ");
+      });
+      // ...and collapsed when saved.
+      expect(content).toHaveLength(1);
+      expect(typeof content?.[0] === "object" ? content[0].marker : undefined).toBe("ft");
     });
-    // ...and collapsed when saved.
-    expect(content).toHaveLength(1);
-    expect(typeof content?.[0] === "object" ? content[0].marker : undefined).toBe("ft");
-  });
 
-  it("keeps what follows such a space as the note's own content", async () => {
-    const { content } = await noteContentAfterTypingPastCaller(" xy");
+    it("keeps what follows such a space as the note's own content", async () => {
+      const { content } = await noteContentAfterTypingPastCaller(" xy");
 
-    expect(content?.[0]).toBe("xy");
-    expect(typeof content?.[1] === "object" ? content[1].marker : undefined).toBe("ft");
-  });
+      expect(content?.[0]).toBe("xy");
+      expect(typeof content?.[1] === "object" ? content[1].marker : undefined).toBe("ft");
+    });
 
-  it("keeps a no-break space typed after the caller", async () => {
-    const { content } = await noteContentAfterTypingPastCaller("~");
+    it("keeps a no-break space typed after the caller", async () => {
+      const { content } = await noteContentAfterTypingPastCaller("~");
 
-    expect(content?.[0]).toBe(NBSP);
-  });
-});
+      expect(content?.[0]).toBe(NBSP);
+    });
+  },
+);
