@@ -12,6 +12,7 @@ import {
   $getRoot,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   DROP_COMMAND,
+  KEY_DOWN_COMMAND,
   LexicalEditor,
   LexicalNode,
   PASTE_COMMAND,
@@ -459,13 +460,50 @@ describe("UnstorableTextPlugin — drop", () => {
     expect(readParas(editor)).toEqual(["xab"]);
     expect(onRemoved).toHaveBeenCalledWith({ source: "drop", removed: ["\\"] });
   });
+});
 
-  it("leaves typed text alone", async () => {
+describe("UnstorableTextPlugin — typing", () => {
+  it("refuses a typed `\\`, says it was typing, and logs it", async () => {
+    const { editor, onRemoved, logger } = await environment("x");
+
+    const isClaimed = await dispatch(editor, () =>
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "\\"),
+    );
+
+    expect(isClaimed).toBe(true);
+    expect(readParas(editor)).toEqual(["x"]);
+    expect(onRemoved).toHaveBeenCalledTimes(1);
+    expect(onRemoved).toHaveBeenCalledWith({ source: "typing", removed: ["\\"] });
+    expect(logger.info).toHaveBeenCalledWith("UnstorableTextPlugin: removed \\ from typed text.");
+  });
+
+  it("refuses the `keydown` of a `/` beside a `/`", async () => {
+    const { editor, onRemoved } = await environment("a/b", { anchor: 2 });
+    const event = new KeyboardEvent("keydown", { key: "/", cancelable: true });
+
+    await dispatch(editor, () => editor.dispatchCommand(KEY_DOWN_COMMAND, event));
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onRemoved).toHaveBeenCalledTimes(1);
+    expect(onRemoved).toHaveBeenCalledWith({ source: "typing", removed: ["//"] });
+  });
+
+  it("lets the `keydown` of a lone `/` through", async () => {
+    const { editor, onRemoved } = await environment("a/b", { anchor: 0 });
+    const event = new KeyboardEvent("keydown", { key: "/", cancelable: true });
+
+    await dispatch(editor, () => editor.dispatchCommand(KEY_DOWN_COMMAND, event));
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("leaves typed text with nothing to remove to Lexical", async () => {
     const { editor, onRemoved } = await environment("x");
 
-    await dispatch(editor, () => editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "\\"));
+    await dispatch(editor, () => editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "a/b"));
 
-    expect(readParas(editor)).toEqual(["x\\"]);
+    expect(readParas(editor)).toEqual(["xa/b"]);
     expect(onRemoved).not.toHaveBeenCalled();
   });
 });
