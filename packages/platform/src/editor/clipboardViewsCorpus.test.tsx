@@ -73,6 +73,7 @@ import { join } from "node:path";
 import { NBSP } from "shared";
 import {
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+  NODE_COPY_HTML_ATTRIBUTE,
   removeUnstorableText,
   StructureProtectionMode,
   UnstorableTextRemovedHandler,
@@ -694,20 +695,24 @@ function viewsFor(kind: RangeKind | undefined): { name: string; view: ViewOption
 }
 
 /**
- * The paste payloads. "Ctrl+V" in a hidden-marker view is everything the copy wrote, the view's own
- * node copy (`application/x-lexical-editor`) included: there Ctrl+V, the context menu's Paste and
- * the Edit menu's Paste run the host's native paste (`EditorOptions.requestNativePaste`), which
- * delivers every flavor. In Standard view they read the clipboard itself, which delivers the html
- * and plain text alone ({@link isWithoutLexicalFlavor}). "another app's html" is the html and plain
- * text alone, as a copy that went through another program arrives. "plain text" is Ctrl+Shift+V
- * (`pasteSelectionAsPlainText`). A cut is pasted back where it was cut from, both ways.
+ * The paste payloads, each what really arrives. "Ctrl+V" is what an async clipboard read delivers,
+ * as the context menu's Paste and the Edit menu's Paste get it too: the html and plain text, with no
+ * `application/x-lexical-editor` flavor. A hidden-marker view's own node copy rides in an attribute
+ * of that html ({@link NODE_COPY_HTML_ATTRIBUTE}). "native paste" is a paste the browser runs itself
+ * (the macOS app menu's Paste), which delivers every flavor; only the hidden-marker views get these
+ * rows, as Standard view's own node-copy path is pinned elsewhere (`markerEdit/`). "another app's
+ * html" is the html with that attribute gone, as a copy that went through another program arrives,
+ * and the plain text. "plain text" is Ctrl+Shift+V (`pasteSelectionAsPlainText`). A cut is pasted
+ * back where it was cut from, each way.
  */
 type Operation =
   | "copy, Ctrl+V"
+  | "copy, native paste"
   | "copy, paste from another app's html"
   | "copy, paste plain text"
   | "cut"
   | "cut, Ctrl+V back"
+  | "cut, native paste back"
   | "cut, paste back from another app's html";
 
 const OPERATIONS: Operation[] = [
@@ -719,15 +724,17 @@ const OPERATIONS: Operation[] = [
   "cut, paste back from another app's html",
 ];
 
+const NATIVE_OPERATIONS: Operation[] = ["copy, native paste", "cut, native paste back"];
+
+/** The operations a view's rows run. */
+const operationsFor = (view: ViewOptions): Operation[] =>
+  view.markerMode === "hidden" ? [...OPERATIONS, ...NATIVE_OPERATIONS] : OPERATIONS;
+
 const isCut = (operation: Operation) => operation.startsWith("cut");
 
-/**
- * Whether a range row's paste carries no node copy: every operation but Ctrl+V, and Ctrl+V in a
- * view without the host's native paste, which only the hidden-marker views use.
- */
-const isWithoutLexicalFlavor = ({ operation, view }: Pick<RangeRow, "operation" | "view">) =>
-  (operation !== "copy, Ctrl+V" && operation !== "cut, Ctrl+V back") ||
-  view.markerMode !== "hidden";
+const isNativePaste = (operation: Operation) => NATIVE_OPERATIONS.includes(operation);
+
+const isFromAnotherApp = (operation: Operation) => operation.includes("another app's html");
 
 const LEXICAL_FLAVOR = "application/x-lexical-editor";
 
@@ -874,7 +881,7 @@ function rowsFor(fixture: string, usj: Usj): { ranges: RangeRow[]; plainTexts: P
     for (const { name: viewName, view } of viewsFor(range.kind)) {
       const scaffold = viewName === "footnotes-pane-row" ? inNoteScaffold(usj, range) : undefined;
       for (const protection of protectionsFor(viewName))
-        for (const operation of OPERATIONS)
+        for (const operation of operationsFor(view))
           ranges.push({
             key: `${fixture} | ${range.kind} | ${viewName} | ${protection} | ${operation}`,
             range: scaffold?.range ?? range,
@@ -904,15 +911,49 @@ function rowsFor(fixture: string, usj: Usj): { ranges: RangeRow[]; plainTexts: P
 type PasteRoute = "lexical" | "html" | "plain";
 
 /**
- * The route a range row's paste takes: plain text for Ctrl+Shift+V; html for the payloads without
- * a node copy, and for a copy that writes none ({@link writesNodeCopy}); the node copy otherwise —
- * under `protected` structure too, whose sanitizer (`StructureKeyboardPlugin`) flattens it as it
- * flattens html.
+ * The route a range row's paste takes: plain text for Ctrl+Shift+V; the node copy for a paste
+ * carrying one, which in a hidden-marker view is Ctrl+V and a native paste — under `protected`
+ * structure too, whose sanitizer (`StructureKeyboardPlugin`) flattens it as it flattens html; html
+ * otherwise, and for a copy that writes no node copy ({@link writesNodeCopy}). Standard view's
+ * Ctrl+V reads its html and plain text.
  */
 function pasteRoute(row: RangeRow): PasteRoute {
   if (row.operation === "copy, paste plain text") return "plain";
-  if (isWithoutLexicalFlavor(row) || !writesNodeCopy(row.range)) return "html";
+  if (
+    !writesNodeCopy(row.range) ||
+    isFromAnotherApp(row.operation) ||
+    row.view.markerMode !== "hidden"
+  )
+    return "html";
   return "lexical";
+}
+
+/** What a range row's paste carries of what the copy wrote to `clipboard`. */
+function pastePayload(row: RangeRow, clipboard: Map<string, string>): Map<string, string> {
+  const payload = new Map(clipboard);
+  if (!isNativePaste(row.operation)) payload.delete(LEXICAL_FLAVOR);
+  if (row.operation === "copy, paste plain text") payload.delete("text/html");
+  const html = payload.get("text/html");
+  if (html && isFromAnotherApp(row.operation))
+    payload.set("text/html", withoutCarrierAttribute(html));
+  return payload;
+}
+
+/** `html` with {@link NODE_COPY_HTML_ATTRIBUTE} gone, as a program that kept the rest would leave it. */
+function withoutCarrierAttribute(html: string): string {
+  const { body } = new DOMParser().parseFromString(html, "text/html");
+  body
+    .querySelectorAll(`[${NODE_COPY_HTML_ATTRIBUTE}]`)
+    .forEach((element) => element.removeAttribute(NODE_COPY_HTML_ATTRIBUTE));
+  return body.innerHTML;
+}
+
+/** What a copy's html holds in {@link NODE_COPY_HTML_ATTRIBUTE}, if anything. */
+function carriedNodeCopy(html: string | undefined): string | null | undefined {
+  return new DOMParser()
+    .parseFromString(html ?? "", "text/html")
+    .querySelector(`[${NODE_COPY_HTML_ATTRIBUTE}]`)
+    ?.getAttribute(NODE_COPY_HTML_ATTRIBUTE);
 }
 
 /**
@@ -1391,10 +1432,8 @@ async function runRangeRow(row: RangeRow, usj: Usj): Promise<void> {
         expect(contentOf(mounted), "after redoing the cut").toEqual(cutContent);
         return;
       }
-      const payload = new Map(clipboard);
-      if (isWithoutLexicalFlavor(row)) payload.delete(LEXICAL_FLAVOR);
       // The caret the cut leaves where the range started.
-      await paste(lexical, payload);
+      await paste(lexical, pastePayload(row, clipboard));
       const { inserted, notices, removed } = pastedIn(
         row.view,
         pasteFragment(row, cutModel, start, copied, clipboard.get("text/plain") ?? ""),
@@ -1426,13 +1465,15 @@ async function runRangeRow(row: RangeRow, usj: Usj): Promise<void> {
         HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
       );
     if (isMarkerHidden(copyView)) expectHiddenViewPlainCopy(text, copied);
-    const payload = new Map(clipboard);
-    if (isWithoutLexicalFlavor(row)) payload.delete(LEXICAL_FLAVOR);
-    if (row.operation === "copy, paste plain text") payload.delete("text/html");
+    expect(carriedNodeCopy(clipboard.get("text/html")), "what the copy's html carries").toBe(
+      copyView.markerMode === "hidden" && writesNodeCopy(row.range)
+        ? clipboard.get(LEXICAL_FLAVOR)
+        : undefined,
+    );
 
     const destination = pasteDestination(usj, row.range);
     await select(lexical, usj, destination);
-    await paste(lexical, payload);
+    await paste(lexical, pastePayload(row, clipboard));
 
     const { inserted, notices, removed } = pastedIn(
       row.view,
@@ -1540,14 +1581,14 @@ function withoutMarkers(usfm: string): string {
 }
 
 /**
- * A copy in one view family, pasted into the other with every flavor it wrote, goes in as its html
- * and plain text alone would: each family's node copy holds node shapes only that family builds
- * (Standard view's marker text, a hidden-marker view's display nodes), so neither reads the other's.
- * Into a hidden-marker view that means Standard view's text with its marker tokens gone
- * ({@link withoutMarkers}), which the node copy's presence is what permits.
+ * A copy in one view family, pasted into the other, goes in as its text alone would, whether by
+ * Ctrl+V (html and plain text) or a native paste (every flavor it wrote): each family's node copy
+ * holds node shapes only that family builds (Standard view's marker text, a hidden-marker view's
+ * display nodes), so neither reads the other's, as a flavor or from the html. Into a hidden-marker
+ * view that means Standard view's text with its marker tokens gone ({@link withoutMarkers}), which
+ * the node copy, or its html's mark on a Ctrl+V, is what permits.
  * What the html and plain text make of a copy is the other rows' subject; this pins that the node
- * copy is passed over. Into Standard view, whose Ctrl+V reads the html and plain text itself, every
- * flavor is what a native paste (a host menu's own Paste) delivers.
+ * copy is passed over.
  */
 async function runCrossViewRow(row: CrossViewRow, usj: Usj): Promise<void> {
   const { start, end } = row.range;
@@ -1560,14 +1601,18 @@ async function runCrossViewRow(row: CrossViewRow, usj: Usj): Promise<void> {
     source.unmount();
   }
   expect(clipboard.has(LEXICAL_FLAVOR), "the copy wrote its node copy").toBe(true);
-  const withoutNodeCopy = new Map(clipboard);
-  withoutNodeCopy.delete(LEXICAL_FLAVOR);
-  // Standard view's copy is USFM, and its node copy tells a hidden-marker view so: the view takes
-  // the marker tokens out, so what goes in is that text without them.
+  const ctrlV = new Map(clipboard);
+  ctrlV.delete(LEXICAL_FLAVOR);
+  const textAlone = new Map(ctrlV);
+  // Standard view's copy is USFM, and says so to a hidden-marker view: the view takes the marker
+  // tokens out, so what goes in is that text without them. Into Standard view, a hidden-marker
+  // view's html with the node copy gone.
   if (isMarkerHidden(row.to.view)) {
     const text = withoutMarkers(clipboard.get("text/plain") ?? "");
-    withoutNodeCopy.set("text/plain", text);
-    withoutNodeCopy.set("text/html", usfmToClipboardHtml(text));
+    textAlone.set("text/plain", text);
+    textAlone.set("text/html", usfmToClipboardHtml(text));
+  } else {
+    textAlone.set("text/html", withoutCarrierAttribute(ctrlV.get("text/html") ?? ""));
   }
 
   const target = await mountInView(usj, row.to.view, { structureProtectionMode: row.protection });
@@ -1581,8 +1626,12 @@ async function runCrossViewRow(row: CrossViewRow, usj: Usj): Promise<void> {
     await undo(target);
     expect(contentOf(target), "after undoing the paste").toEqual(original);
     await select(target.lexical, usj, destination);
-    await paste(target.lexical, withoutNodeCopy);
+    await paste(target.lexical, textAlone);
     expect(pasted, "as the html and plain text alone go in").toEqual(contentOf(target));
+    await undo(target);
+    await select(target.lexical, usj, destination);
+    await paste(target.lexical, ctrlV);
+    expect(pasted, "as Ctrl+V goes in").toEqual(contentOf(target));
   } finally {
     target.unmount();
   }
