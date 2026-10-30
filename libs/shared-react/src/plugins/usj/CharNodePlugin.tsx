@@ -278,8 +278,8 @@ function $wereAlikeSpansBeforeUpdate(preceding: CharNode, following: CharNode): 
 
 /**
  * Combine glyph-less `following` into `preceding`, the same-attribute glyph-less span right before
- * it. An empty span's placeholder ({@link $emptySpanPlaceholder}) is only a caret host, so it is
- * never carried into content: wherever it landed — after a nested span, or merged into the text
+ * it. An empty span's placeholder ({@link $emptySpanPlaceholder}) only gives the caret a place to
+ * rest, so it is never carried into content: wherever it landed — after a nested span, or merged into the text
  * before it — it would read as content and be saved as an NBSP nobody wrote. The empty side gives
  * up its children instead (read-only glyphs included), and a caret on its placeholder moves to the
  * seam between the two spans' content.
@@ -412,7 +412,7 @@ export function $dropFilledCharPlaceholder(node: TextNode): void {
 /**
  * Marks a lone no-break space that an edit left as a glyph-less span's text as the author's own `~`.
  *
- * Where a span renders no glyphs, its lone NBSP is also the caret host an EMPTY span holds
+ * Where a span renders no glyphs, its lone NBSP is also the placeholder an EMPTY span holds
  * ({@link $emptySpanPlaceholder}), and the editor→USJ conversion drops that one. A text node that
  * held more than that in the last committed state is not an empty span's placeholder: the edit
  * removed text around the author's NBSP (a cut or delete ending just before `trail~`'s `~`), so

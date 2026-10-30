@@ -2,7 +2,7 @@
  * What a user's gestures save around a content string that is exactly one no-break space (USFM
  * `~`), in every view, through the real `Editor` and its `getUsj` — what a host saves. The two
  * rules under test: an author's `~` is never dropped, and the engine's own lone-NBSP placeholder
- * (an empty char span's caret host) never reaches the saved document.
+ * (an empty char span's placeholder) never reaches the saved document.
  */
 import {
   EDITOR_VIEWS,

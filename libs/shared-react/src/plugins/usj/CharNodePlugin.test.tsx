@@ -581,7 +581,7 @@ describe("CharNodePlugin", () => {
   });
 
   describe("a no-break space an edit leaves as a span's only text", () => {
-    // Without glyphs, a span's lone NBSP is also what an EMPTY span holds as its caret host, and
+    // Without glyphs, a span's lone NBSP is also what an EMPTY span holds as its placeholder, and
     // the save drops that one. A span whose other text was just removed is not empty: the NBSP that
     // is left is the author's, and it has to survive the save.
     async function $spanAfterRemoving(start: number, end: number) {
