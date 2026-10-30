@@ -5,11 +5,17 @@ import {
   pasteSelectionAsPlainText,
   registerEmptyCopyGuard,
   registerInlineProsePaste,
+  registerTabsAsSpaces,
 } from "./clipboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
 import { useEffect } from "react";
 
+/**
+ * Takes the editor's copy, cut and paste shortcuts (Ctrl/Cmd+C, X, V and Shift+V), guards
+ * copies of nothing, and turns every tab node a paste makes into a space
+ * ({@link registerTabsAsSpaces}).
+ */
 export function ClipboardPlugin(): null {
   const [editor] = useLexicalComposerContext();
 
@@ -41,6 +47,7 @@ export function ClipboardPlugin(): null {
       // editor ref synthesizes against the same editor — passes through this guard.
       registerEmptyCopyGuard(editor),
       registerInlineProsePaste(editor),
+      registerTabsAsSpaces(editor),
       editor.registerRootListener(
         (rootElement: HTMLElement | null, prevRootElement: HTMLElement | null) => {
           if (prevRootElement !== null) {

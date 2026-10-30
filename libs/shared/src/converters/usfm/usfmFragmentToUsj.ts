@@ -298,6 +298,13 @@ export function separatorRemovalTokenizesIdentically(followingBytes: string): bo
   return false; // a name character: the marker name grows through it
 }
 
+/**
+ * The byte class CONTENTS (no brackets) of the marker-name run the editor RECOGNIZES as a marker in
+ * text: `\w` plus the milestone hyphen. `markerName.pattern.ts` in the platform package documents
+ * it and derives its regexes from it; it lives here so `shared-react` can derive from it too.
+ */
+export const ENGINE_MARKER_NAME_BYTES = String.raw`\w-`;
+
 /** Marker name chars per PT9 scan: stop at `\`, `|`, whitespace; `*` ends and is included. */
 function scanMarkerName(fragment: string, start: number): { name: string; next: number } {
   let index = start;

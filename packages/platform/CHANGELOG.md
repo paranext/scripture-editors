@@ -292,9 +292,36 @@ refused. The public surface grew substantially; nothing was removed.
   carries the next paragraph's gutter glyph) or a paste of a Markers-view copy would have inserted
   text such as `q1 ` that the user never wrote. The read-only Markers view still refuses `\` and
   `/`, and Standard view is unchanged.
+- **A copy in the views that hide markers tags its node copy (`application/x-lexical-editor`)
+  with the namespace `"platformEditor/hidden-markers"`**, and only those views read it back. A
+  copy from Standard view pasted into one of them, or one of theirs pasted into Standard view,
+  goes in by its html or plain text instead of rebuilding the other view's node shapes. The node
+  copy holds no gutter marker glyph, and is not written for a selection with either end inside a
+  construct the view hides (a figure, an optional break, any other unknown construct, or a table)
+  or one that touches a book or chapter line. Where it is written, the copy's `text/html` holds it
+  too, in the attribute `data-platform-editor-node-copy` of a `<span>` around the html's own content,
+  because reading the clipboard asynchronously returns no custom flavor. That attribute also shows
+  a hidden construct's text to anything that reads the html's attributes. What the html shows is
+  unchanged.
+- **Standard view's and the Markers view's `text/html` carries one new attribute**, the empty
+  `data-platform-editor-marker-text` on its first `<p>`, which tells a view that hides markers that
+  the text is USFM. The text a consumer reads is unchanged.
 
 ### Fixed
 
+- **A copy from the block-verse layout pastes as normal paragraphs.** The text grid's aligned column
+  cuts a paragraph into one fragment per verse for its rows, and its node copy carried those
+  fragments, so a Ctrl+V into paragraph-structure started a paragraph at each verse, moved the space
+  before the verse with it and could leave an empty `\p`; under `"protected"` structure the pieces
+  joined with an extra space. The node copy now rejoins the fragments of one paragraph. What the
+  column shows, and its plain text and html, are unchanged.
+- **A copy from a view that shows markers pastes into a view that hides them without its markers.**
+  Standard view, the Markers view and the Footnotes pane's row editor write USFM as their html and
+  plain text, so a copy of `1 \ft TR and ` saved as `1 ft TR and `, a marker's name as a word of
+  Scripture. A paste carrying the mark on their html, or their `"platformEditor"` node copy, now
+  loses its marker tokens first (`1 TR and `), with no `onUnstorableTextRemoved` report for them. A
+  verse's number, a note's caller and an attribute list stay as text. A paste with neither
+  (another program's) is unchanged, as are Standard and Markers views.
 - Ctrl+V and Ctrl+Shift+V no longer paste into a read-only editor (`isReadonly`, e.g. a preview or a
   resource text). `ClipboardPlugin` listens for its shortcuts on the editor root itself, outside
   Lexical's read-only gate, so the clipboard was inserted and reported through `onUsjChange`. A
@@ -537,3 +564,19 @@ refused. The public surface grew substantially; nothing was removed.
   as one, a trailing one is dropped, and each tab in it becomes a space), as an html paste's
   paragraphs are.
   It made a new paragraph per line, which protected structure exists to prevent.
+- A copy and paste within the views that hide markers reproduces the copied Scripture exactly:
+  character and note attributes, note details, milestones, alternate and published verse numbers,
+  optional breaks and figures all survive, under every structure protection (under `"protected"`
+  the paste still joins paragraphs and drops verses and chapters). The paste took the html, which
+  carries none of these; it now takes the node copy on every route: Ctrl+V, the context menu's
+  Paste and `EditorRef.paste()` read it from the html, and a native paste, which also carries the
+  `application/x-lexical-editor` flavor, reads it from either. No host support is needed. A cut and
+  paste back of a caption-less figure or an optional break restores it; the node copy left it out.
+  Html from another program is pasted as before.
+- A note pasted in the editor opens like the one copied: clicking its caller calls
+  `nodes.noteCallerOnClick`. A caller rebuilt from the editor's own node copy had no click handler,
+  so the click did nothing, in every view.
+- In the views that hide markers, a pasted tab is saved as a space however it arrives, as a paste
+  that reads the clipboard itself already saved it: a native paste (a host menu's own Paste), a
+  drop, and html whose whitespace is preformatted. Such a tab was
+  saved as nothing, joining the words either side of it.

@@ -1,23 +1,34 @@
 /**
  * What a copy or cut in a hidden-marker view writes to the clipboard: the text the view shows,
  * without a paragraph's gutter marker glyph or the text of a construct the view hides (a figure's
- * caption), and with the text of a collapsed note, which a plain-text paste needs.
+ * caption), and with the text of a collapsed note, which a plain-text paste needs; and the view's
+ * own node copy, tagged so only a hidden-marker view reads it back.
  */
 import { editorView, enabledViews, mountInView } from "./editorViews.test-helpers";
+import { $hiddenViewLexicalFlavor } from "./hiddenViewCopy.utils";
+import { $generateJSONFromSelectedNodes } from "@lexical/clipboard";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
   $getRoot,
+  $getSelection,
+  $isRangeSelection,
   $setSelection,
   COPY_COMMAND,
   CUT_COMMAND,
   LexicalEditor,
+  RangeSelection,
   TextNode,
 } from "lexical";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { StructureProtectionMode } from "shared-react";
+import { $isParaNode, $isUnknownNode } from "shared";
+import {
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+  NODE_COPY_HTML_ATTRIBUTE,
+  StructureProtectionMode,
+} from "shared-react";
 
 // Located relative to the working directory, as the other testUSFM corpus suites do: the platform
 // project root under nx, the repo root otherwise.
@@ -35,6 +46,23 @@ const matthew = readFixture("web-matthew-1-and-2.usj");
 const samuel = readFixture("testUSFM-2SA-1.usj");
 
 const LEXICAL_FLAVOR = "application/x-lexical-editor";
+
+interface SerializedNode {
+  type: string;
+  children?: SerializedNode[];
+  [key: string]: unknown;
+}
+
+/** The node copy a copy wrote: its namespace and its nodes, every depth flattened. */
+function nodeCopy(store: Map<string, string>): { namespace: string; nodes: SerializedNode[] } {
+  const payload = JSON.parse(store.get(LEXICAL_FLAVOR) ?? "{}") as {
+    namespace: string;
+    nodes: SerializedNode[];
+  };
+  const flatten = (nodes: SerializedNode[]): SerializedNode[] =>
+    nodes.flatMap((node) => [node, ...flatten(node.children ?? [])]);
+  return { namespace: payload.namespace, nodes: flatten(payload.nodes ?? []) };
+}
 
 /** The one plain text node whose text `matches`. */
 function $textNode(matches: (text: string) => boolean): TextNode {
@@ -141,6 +169,85 @@ describe("HiddenViewCopyPlugin", () => {
     }
   });
 
+  describe("a block-verse copy", () => {
+    /** The top-level nodes of the node copy of the range `from`-`to` in `viewName`. */
+    async function copiedNodes(
+      viewName: "block-verse" | "paragraph-structure",
+      from: At,
+      to: At,
+      usj: Usj = matthew,
+    ): Promise<SerializedNode[]> {
+      const mounted = await mountInView(usj, editorView(viewName));
+      try {
+        await select(mounted.lexical, from, to);
+        const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+        const payload = JSON.parse(store.get(LEXICAL_FLAVOR) ?? "{}") as {
+          nodes?: SerializedNode[];
+        };
+        return payload.nodes ?? [];
+      } finally {
+        mounted.unmount();
+      }
+    }
+
+    const flatten = (nodes: SerializedNode[]): SerializedNode[] =>
+      nodes.flatMap((node) => [node, ...flatten(node.children ?? [])]);
+
+    // Matthew 2:7-8, one `\\p`, and the next paragraph, 2:9.
+    const VERSE_7 = { text: "Then Herod secretly", offset: 2 };
+    const VERSE_8 = { text: "He sent them", offset: 2 };
+    const VERSE_9 = { text: "They, having heard", offset: 2 };
+
+    it("across two verses of one paragraph holds no verse block and no paragraph break", async () => {
+      const nodes = await copiedNodes("block-verse", VERSE_7, VERSE_8);
+      const types = flatten(nodes).map(({ type }) => type);
+      expect(types).not.toContain("verse-block");
+      expect(types.filter((type) => type === "para")).toHaveLength(0);
+      expect(nodes).toEqual(await copiedNodes("paragraph-structure", VERSE_7, VERSE_8));
+    });
+
+    it("from two verses of one paragraph into the next rejoins the first as one paragraph", async () => {
+      const nodes = await copiedNodes("block-verse", VERSE_7, VERSE_9);
+      expect(flatten(nodes).map(({ type }) => type)).not.toContain("verse-block");
+      expect(nodes.map(({ type }) => type)).toEqual(["para", "para"]);
+      expect(nodes).toEqual(await copiedNodes("paragraph-structure", VERSE_7, VERSE_9));
+    });
+
+    it("keeps a unit that is not a fragment as its own paragraph", async () => {
+      const usj: Usj = {
+        type: "USJ",
+        version: "3.1",
+        content: [
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "verse", marker: "v", number: "1" },
+              "verse one ",
+              { type: "verse", marker: "v", number: "2" },
+              "verse two",
+            ],
+          },
+          { type: "para", marker: "s", content: ["a heading"] },
+        ],
+      };
+      const from = { text: "verse one", offset: 2 };
+      const to = { text: "a heading", offset: 2 };
+      const nodes = await copiedNodes("block-verse", from, to, usj);
+      expect(nodes.map(({ marker }) => marker)).toEqual(["p", "s"]);
+      expect(nodes).toEqual(await copiedNodes("paragraph-structure", from, to, usj));
+    });
+
+    it("across a poetry break keeps both paragraph markers", async () => {
+      const nodes = await copiedNodes("block-verse", ACROSS_PARAGRAPHS.from, ACROSS_PARAGRAPHS.to);
+      expect(flatten(nodes).map(({ type }) => type)).not.toContain("verse-block");
+      expect(nodes.map(({ marker }) => marker)).toEqual(["q2", "q1"]);
+      expect(nodes).toEqual(
+        await copiedNodes("paragraph-structure", ACROSS_PARAGRAPHS.from, ACROSS_PARAGRAPHS.to),
+      );
+    });
+  });
+
   // 2 Samuel 1's second figure paragraph: text, a figure with a caption, text.
   const figureParagraph = (samuel.content[92] as MarkerObject).content ?? [];
   const beforeFigure = figureParagraph[0] as string;
@@ -165,6 +272,211 @@ describe("HiddenViewCopyPlugin", () => {
       );
       const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
       expect(store.get("text/plain")).toBe(beforeFigure + afterFigure);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it.each(enabledViews(["formatted", "paragraph-structure"] as const))(
+    "%s copy writes its node copy tagged for hidden-marker views, without gutter glyphs",
+    async (viewName) => {
+      const mounted = await mountInView(matthew, editorView(viewName));
+      try {
+        await select(mounted.lexical, ACROSS_PARAGRAPHS.from, ACROSS_PARAGRAPHS.to);
+        const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+        const { namespace, nodes } = nodeCopy(store);
+        expect(namespace).toBe(HIDDEN_VIEW_CLIPBOARD_NAMESPACE);
+        expect(nodes.filter((node) => node.type === "para")).toHaveLength(2);
+        expect(nodes.filter((node) => node.type === "immutable-typed-text")).toEqual([]);
+      } finally {
+        mounted.unmount();
+      }
+    },
+  );
+
+  // The node copy is built by a walk of its own, which must stay Lexical's own serialization but
+  // for the three things it changes; a Lexical upgrade that changes Lexical's walk fails here.
+  it("writes Lexical's own serialization where there is no gutter glyph or childless construct", async () => {
+    // The formatted view builds no gutter glyphs, and Matthew holds no unknown construct.
+    const mounted = await mountInView(matthew, editorView("formatted"));
+    try {
+      await select(
+        mounted.lexical,
+        { text: "But when he thought about these things", offset: 4 },
+        { text: "is of the Holy Spirit. ", offset: -3 },
+      );
+      const { ours, lexicals } = mounted.lexical.read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        return {
+          ours: JSON.parse($hiddenViewLexicalFlavor(selection) ?? "{}") as { nodes: unknown[] },
+          lexicals: $generateJSONFromSelectedNodes(mounted.lexical, selection),
+        };
+      });
+      expect(JSON.stringify(lexicals.nodes)).toContain('"note"');
+      expect(JSON.stringify(lexicals.nodes)).not.toContain("isGutterMarker");
+      // As Lexical's own copy writes them (`$getLexicalContent` stringifies them too).
+      expect(ours.nodes).toEqual(JSON.parse(JSON.stringify(lexicals.nodes)));
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  // 2 Samuel 1's first figure paragraph: text, a figure with no caption, text.
+  const captionlessParagraph = (samuel.content[91] as MarkerObject).content ?? [];
+  const beforeCaptionless = captionlessParagraph[0] as string;
+  const captionless = captionlessParagraph[1] as MarkerObject;
+
+  it.each(enabledViews(["formatted", "paragraph-structure"] as const))(
+    "%s copy over a caption-less figure keeps the figure in its node copy",
+    async (viewName) => {
+      const mounted = await mountInView(samuel, editorView(viewName));
+      try {
+        await select(
+          mounted.lexical,
+          { text: beforeCaptionless, offset: -4 },
+          { text: captionlessParagraph[2] as string, offset: 4 },
+        );
+        const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+        const figures = nodeCopy(store).nodes.filter((node) => node.tag === "figure");
+        expect(figures).toHaveLength(1);
+        expect(figures[0]).toMatchObject({
+          marker: captionless.marker,
+          unknownAttributes: {
+            file: Reflect.get(captionless, "file"),
+            size: Reflect.get(captionless, "size"),
+            ref: Reflect.get(captionless, "ref"),
+          },
+        });
+      } finally {
+        mounted.unmount();
+      }
+    },
+  );
+
+  // 2 Samuel 1's optional breaks: `Here ` // ` is one with spaces around it. Here` // `is one…`.
+  const optbreakParagraph = (samuel.content[85] as MarkerObject).content ?? [];
+  const beforeOptbreak = optbreakParagraph[0] as string;
+  const afterOptbreak = optbreakParagraph[2] as string;
+
+  /** The node copy's optional breaks, for a selection from `anchor` to `focus`, each a text point
+   * (`At`) or an element point given as the optional break and an offset into its parent. */
+  async function optbreaksCopied(
+    viewName: string,
+    anchor: At | { optbreak: "on" | "before" | "after" },
+    focus: At | { optbreak: "on" | "before" | "after" },
+  ): Promise<SerializedNode[] | undefined> {
+    const mounted = await mountInView(samuel, editorView(viewName));
+    try {
+      await act(async () =>
+        mounted.lexical.update(
+          () => {
+            const optbreak = $getRoot()
+              .getChildren()
+              .flatMap((child) => ($isParaNode(child) ? child.getChildren() : []))
+              .find((node) => $isUnknownNode(node) && node.getTag() === "optbreak");
+            if (!optbreak) throw new Error("no optional break");
+            const parent = optbreak.getParentOrThrow();
+            const setPoint = (
+              point: RangeSelection["anchor"],
+              at: At | { optbreak: "on" | "before" | "after" },
+            ) => {
+              if ("text" in at) {
+                const [node, offset] = $point(at);
+                point.set(node.getKey(), offset, "text");
+              } else if (at.optbreak === "on") point.set(optbreak.getKey(), 0, "element");
+              else
+                point.set(
+                  parent.getKey(),
+                  optbreak.getIndexWithinParent() + (at.optbreak === "after" ? 1 : 0),
+                  "element",
+                );
+            };
+            const selection = $createRangeSelection();
+            setPoint(selection.anchor, anchor);
+            setPoint(selection.focus, focus);
+            $setSelection(selection);
+          },
+          { discrete: true },
+        ),
+      );
+      const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+      if (!store.has(LEXICAL_FLAVOR)) return undefined;
+      return nodeCopy(store).nodes.filter((node) => node.tag === "optbreak");
+    } finally {
+      mounted.unmount();
+    }
+  }
+
+  // An optional break is invisible here, so a selection can only touch it at its edges. Lexical
+  // normalizes a point beside it into the break itself or into the text next to it. A selection with
+  // an end in the break writes no node copy at all (`$rangeReachesIntoOpaqueBlock`), and one that
+  // only touches it leaves it out, so a paste never brings back a break the selection did not cover.
+  describe.each(enabledViews(["formatted", "paragraph-structure"] as const))(
+    "%s copy at an optional break's edge",
+    (viewName) => {
+      const before = { text: beforeOptbreak, offset: 4 };
+      const after = { text: afterOptbreak, offset: 4 };
+
+      it.each([
+        ["from text to text", before, after],
+        ["starting right before it", { optbreak: "before" }, after],
+      ] as const)("keeps an optional break the selection crosses, %s", async (_, from, to) => {
+        expect(await optbreaksCopied(viewName, from, to)).toHaveLength(1);
+      });
+
+      it.each([
+        ["ends on it", before, { optbreak: "on" }],
+        ["ends right before it", before, { optbreak: "before" }],
+        ["ends right after it", before, { optbreak: "after" }],
+        ["starts on it", { optbreak: "on" }, after],
+      ] as const)("writes no node copy for a selection that %s", async (_, from, to) => {
+        expect(await optbreaksCopied(viewName, from, to)).toBeUndefined();
+      });
+
+      it("leaves out an optional break the selection starts right after", async () => {
+        expect(await optbreaksCopied(viewName, { optbreak: "after" }, after)).toEqual([]);
+      });
+    },
+  );
+
+  it("a copy ending inside a figure's caption writes no node copy", async () => {
+    const mounted = await mountInView(samuel, editorView("formatted"));
+    try {
+      await act(async () =>
+        mounted.lexical.update(
+          () => {
+            const start = $textNode((text) => text === beforeFigure);
+            const caption = $textNode((text) => text.startsWith("Caption"));
+            const selection = $createRangeSelection();
+            selection.anchor.set(start.getKey(), 0, "text");
+            selection.focus.set(caption.getKey(), 3, "text");
+            $setSelection(selection);
+          },
+          { discrete: true },
+        ),
+      );
+      const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+      expect(store.get("text/plain")).toBeTruthy();
+      expect(store.has(LEXICAL_FLAVOR)).toBe(false);
+      expect(store.get("text/html")).not.toContain(NODE_COPY_HTML_ATTRIBUTE);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it("a copy across a chapter line writes no node copy", async () => {
+    const mounted = await mountInView(matthew, editorView("paragraph-structure"));
+    try {
+      await select(
+        mounted.lexical,
+        { text: "He named him Jesus.", offset: -2 },
+        { text: "Now when Jesus was born in Bethlehem", offset: 2 },
+      );
+      const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+      expect(store.get("text/plain")).toBeTruthy();
+      expect(store.has(LEXICAL_FLAVOR)).toBe(false);
+      expect(store.get("text/html")).not.toContain(NODE_COPY_HTML_ATTRIBUTE);
     } finally {
       mounted.unmount();
     }

@@ -141,6 +141,11 @@ export class ContextMenuOption {
   }
 }
 
+/**
+ * The editor's context menu: Cut, Copy, Paste, Paste as Plain Text, then any extra `options`.
+ *
+ * @param options - Extra items, after the built-in ones.
+ */
 export function ContextMenuPlugin({
   options: extraOptions,
 }: {

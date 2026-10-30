@@ -1,11 +1,16 @@
 import { ClipboardPlugin } from "./ClipboardPlugin";
 import { copySelection } from "./clipboard.utils";
-import { baseTestEnvironment } from "./react-test.utils";
+import { baseTestEnvironment, settle } from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
   $createNodeSelection,
+  $createRangeSelection,
+  $createTabNode,
   $createTextNode,
   $getRoot,
+  $getSelection,
+  $isRangeSelection,
+  $isTabNode,
   $setSelection,
   LexicalEditor,
   PASTE_COMMAND,
@@ -191,6 +196,54 @@ describe("ClipboardPlugin — paste keys are unaffected", () => {
     // now follow must not reach these.
     expect((await pressShortcut(editor, "v")).defaultPrevented).toBe(true);
     expect((await pressShortcut(editor, "v", true)).defaultPrevented).toBe(true);
+  });
+});
+
+/** The async clipboard read `pasteSelection`/`pasteSelectionAsPlainText` start with. */
+function clipboardRead() {
+  return vi.mocked(navigator.clipboard.read);
+}
+
+describe("ClipboardPlugin — Ctrl+V", () => {
+  it("reads the clipboard, claiming the keystroke", async () => {
+    const { editor, text } = await clipboardEnvironment();
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    const event = await pressShortcut(editor, "v");
+    await settle();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ClipboardPlugin — a tab becomes a space", () => {
+  it("replaces a tab node with a space, keeping a selection of the tab on the space", async () => {
+    const { editor, text } = await clipboardEnvironment();
+
+    await act(async () =>
+      editor.update(
+        () => {
+          const tab = $createTabNode();
+          text.insertAfter(tab);
+          tab.insertAfter($createTextNode("and"));
+          const selection = $createRangeSelection();
+          selection.anchor.set(tab.getKey(), 0, "text");
+          selection.focus.set(tab.getKey(), 1, "text");
+          $setSelection(selection);
+        },
+        { discrete: true },
+      ),
+    );
+
+    editor.getEditorState().read(() => {
+      const nodes = $getRoot().getAllTextNodes();
+      expect(nodes.some($isTabNode)).toBe(false);
+      expect($getRoot().getTextContent()).toBe("In the beginning and");
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.getTextContent()).toBe(" ");
+    });
   });
 });
 

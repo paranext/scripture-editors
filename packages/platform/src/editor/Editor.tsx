@@ -181,8 +181,10 @@ import {
   getInsertedNodeKey,
   getViewClassList,
   HiddenContentDeleteGuardPlugin,
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   isBlockVerseLayout,
   LoadStatePlugin,
+  MARKER_VIEW_CLIPBOARD_NAMESPACE,
   NoteCallerHighlightHandle,
   NoteCallerHighlightPlugin,
   NoteEnterGuardPlugin,
@@ -509,9 +511,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // option genuinely changes.
   //
   // `nodeOptions` and `contextMenuOptions`, destructured just below, don't need this treatment:
-  // `nodeOptions` is only a dependency of `LoadStatePlugin`'s separate adaptor-*initialize* effect,
-  // not its reload effect, and `contextMenuOptions` isn't passed to `LoadStatePlugin` at all - so
-  // of the three, only `viewOptions`'s identity can trigger the spurious reload this fix addresses.
+  // `nodeOptions` is a dependency of `LoadStatePlugin`'s separate adaptor-*initialize* effect, not
+  // its reload effect, and `contextMenuOptions` isn't passed to `LoadStatePlugin` at all - so of
+  // the three, only `viewOptions`'s identity can trigger the spurious reload this fix addresses.
+  // `nodeOptions` is memoized on `nodes` alone, though, because its `noteCallerOnClick` (built
+  // below) is also a dependency of `NoteNodePlugin`'s registration effect: a new identity
+  // re-registers that plugin's handlers and re-runs its caller transform over every note. A host
+  // should therefore memoize `nodes` (`EditorOptions.nodes`).
   const requestedViewOptions = view ?? defaultViewOptions;
   // Paragraph-level features that cannot work once a verse owns the block:
   // - a visible or editable `markerMode`, and gutter markers, both put a marker prefix in the
@@ -744,7 +750,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
 
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
-      namespace: "platformEditor",
+      namespace: MARKER_VIEW_CLIPBOARD_NAMESPACE,
       theme: { ...editorTheme, showCharMarkerTitles: viewOptions.showCharMarkerTitles },
       editable: !effectiveIsReadonly,
       editorState: undefined,
@@ -2195,12 +2201,19 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           />
           <ParaNodePlugin />
           {/* Only the hidden-marker views filter what the sanitizer inserts: Standard view stores a
-              pasted `\` as the marker it spells. */}
+              pasted `\` as the marker it spells. And only they read their own node copy, which
+              Standard view's node shapes do not match. Standard view stores a pasted marker too,
+              so only they take marker tokens out of a marker view's copy. */}
           <StructureKeyboardPlugin
             structureProtectionMode={structureProtectionMode}
             $filterPastedNodes={
               viewOptions?.markerMode === "hidden" ? $filterHiddenViewPastedNodes : undefined
             }
+            nodeCopyNamespace={
+              viewOptions?.markerMode === "hidden" ? HIDDEN_VIEW_CLIPBOARD_NAMESPACE : undefined
+            }
+            removesMarkerTokens={viewOptions?.markerMode === "hidden"}
+            logger={stableLogger}
           />
           <TextDirectionPlugin textDirection={textDirection} />
           <TextSpacingPlugin />

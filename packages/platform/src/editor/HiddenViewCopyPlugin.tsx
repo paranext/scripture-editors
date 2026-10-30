@@ -12,6 +12,7 @@ import {
   CUT_COMMAND,
 } from "lexical";
 import { useEffect } from "react";
+import { htmlWithNodeCopy } from "shared-react";
 
 /**
  * Copies a hidden-marker view's selection as the text it shows. Lexical's own copy would write
@@ -22,8 +23,11 @@ import { useEffect } from "react";
  * - `text/plain`: the selection's text without what {@link $isLeftOutOfHiddenViewCopy} picks. A
  *   collapsed note's text stays in.
  * - `text/html`: Lexical's HTML export, which leaves out gutter glyphs and hidden constructs
- *   through their own `exportDOM`.
- * - `application/x-lexical-editor`: {@link $hiddenViewLexicalFlavor}.
+ *   through their own `exportDOM`, holding {@link $hiddenViewLexicalFlavor} in an attribute
+ *   (`htmlWithNodeCopy`): an async clipboard read, which is how Ctrl+V and every Paste command get
+ *   the clipboard, returns no custom flavor.
+ * - `application/x-lexical-editor`: {@link $hiddenViewLexicalFlavor}, for a paste the browser runs
+ *   itself, such as the macOS app menu's Paste.
  *
  * A cut in a read-only editor copies but removes nothing (`$writeCopyPayload` owns that rule).
  *
@@ -41,11 +45,12 @@ export function HiddenViewCopyPlugin({ copyLimit }: { copyLimit?: number }): nul
     const $copy = (event: ClipboardEvent | KeyboardEvent | null, isCut: boolean): boolean => {
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+      const html = $getHtmlContent(editor, selection);
+      const lexicalFlavor = $hiddenViewLexicalFlavor(selection);
       const data: LexicalClipboardData = {
         "text/plain": $selectionShownText(selection, $isLeftOutOfHiddenViewCopy),
-        "text/html": $getHtmlContent(editor, selection),
+        "text/html": lexicalFlavor === undefined ? html : htmlWithNodeCopy(html, lexicalFlavor),
       };
-      const lexicalFlavor = $hiddenViewLexicalFlavor(editor, selection);
       if (lexicalFlavor !== undefined) data["application/x-lexical-editor"] = lexicalFlavor;
       return $writeCopyPayload(
         // COPY_COMMAND's payload is `ClipboardEvent | KeyboardEvent | null`; this duck-checks the

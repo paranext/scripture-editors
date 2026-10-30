@@ -290,7 +290,10 @@ export declare interface EditorOptions {
   textDirection?: TextDirection;
   /** Key to trigger the marker menu. Defaults to '\'. */
   markerMenuTrigger?: string;
-  /** Options for some editor nodes. */
+  /**
+   * Options for some editor nodes. Memoize it: a new object, even an equal one, re-registers the
+   * note handling and re-runs its caller update over every note.
+   */
   nodes?: UsjNodeOptions;
   /** Additional items to append to the editor context menu. */
   contextMenu?: ContextMenuOptionConfig[];
