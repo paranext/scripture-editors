@@ -5,7 +5,7 @@
 import {
   copySelection,
   cutSelection,
-  pasteNatively,
+  pasteSelection,
   pasteSelectionAsPlainText,
   registerEmptyCopyGuard,
 } from "./clipboard.utils";
@@ -145,16 +145,11 @@ export class ContextMenuOption {
  * The editor's context menu: Cut, Copy, Paste, Paste as Plain Text, then any extra `options`.
  *
  * @param options - Extra items, after the built-in ones.
- * @param requestNativePaste - When set, Paste asks the host to run its native paste, which carries
- *   every clipboard format; resolving `false` falls back to reading the clipboard. See
- *   {@link pasteNatively}.
  */
 export function ContextMenuPlugin({
   options: extraOptions,
-  requestNativePaste,
 }: {
   options?: ContextMenuOptionConfig[];
-  requestNativePaste?: () => Promise<boolean>;
 } = {}): ReactElement | null {
   const [editor] = useLexicalComposerContext();
   const [isReadonly, setIsReadonly] = useState(() => !editor.isEditable());
@@ -164,11 +159,6 @@ export function ContextMenuPlugin({
     y: 0,
   });
   const [selectedIndex, setSelectedIndex] = useState<number | undefined>(undefined);
-  // A ref, so a host handing a fresh callback each render does not rebuild the option list.
-  const requestNativePasteRef = useRef(requestNativePaste);
-  useEffect(() => {
-    requestNativePasteRef.current = requestNativePaste;
-  }, [requestNativePaste]);
 
   const options = useMemo(() => {
     const builtIn = [
@@ -188,10 +178,9 @@ export function ContextMenuPlugin({
           copySelection(editor);
         },
       }),
-      // eslint-disable-next-line react-hooks/refs -- `ContextMenuOption` only stores `onSelect`; the menu's click and Enter handlers run it, never render, so the ref is read at paste time.
       new ContextMenuOption(`Paste`, {
         onSelect: () => {
-          pasteNatively(editor, requestNativePasteRef.current);
+          pasteSelection(editor);
         },
         isDisabled: isReadonly,
       }),

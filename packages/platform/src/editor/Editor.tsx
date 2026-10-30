@@ -195,7 +195,7 @@ import {
   ParaMarkerPrefixCursorGuardPlugin,
   ParaMarkerSelectionPlugin,
   ParaNodePlugin,
-  pasteNatively,
+  pasteSelection,
   pasteSelectionAsPlainText,
   readLatest,
   releaseTagsAfterNextCommit,
@@ -481,7 +481,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     structureProtectionMode = "off",
     onHiddenContentDelete,
     onUnstorableTextRemoved,
-    requestNativePaste,
     hasExternalUI = false,
     hasSpellCheck = false,
     textDirection = "ltr",
@@ -551,10 +550,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     viewOptionsRef.current = resolvedViewOptions;
   }
   const viewOptions = viewOptionsRef.current;
-  // Only the views that hide markers read their own node copy (`HIDDEN_VIEW_CLIPBOARD_NAMESPACE`),
-  // which only the host's native paste delivers. Standard view pastes the USFM text its copy
-  // writes, which reading the clipboard itself delivers too, so it keeps doing that.
-  const nativePaste = viewOptions?.markerMode === "hidden" ? requestNativePaste : undefined;
   const nodeOptions = useMemo(() => {
     const options = nodes ?? defaultNodeOptions;
     const { noteCallerOnClick } = options;
@@ -1134,7 +1129,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     paste() {
       assertEditable("paste");
-      if (editorRef.current) pasteNatively(editorRef.current, nativePaste);
+      if (editorRef.current) pasteSelection(editorRef.current);
     },
     pastePlainText() {
       assertEditable("paste as plain text");
@@ -2111,7 +2106,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <ArrowNavigationPlugin viewOptions={viewOptions} />
           <CharNodePlugin />
           {/* Both keep the callback in a ref, so a fresh one each render moves no registration. */}
-          <ClipboardPlugin requestNativePaste={nativePaste} />
+          <ClipboardPlugin />
           {/* Editable marker modes require literal backslash input (the marker-edit engine and
               the `\` marker menu consume it), so neither plugin here acts in Standard view. The
               hidden-marker views take a paste or drop with `\` or `//` in it, leaving those out,
@@ -2125,7 +2120,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             />
           )}
           {viewOptions?.markerMode === "visible" && <CommandMenuPlugin logger={stableLogger} />}
-          <ContextMenuPlugin options={contextMenuOptions} requestNativePaste={nativePaste} />
+          <ContextMenuPlugin options={contextMenuOptions} />
           {/* Must mount before every plugin with a CRITICAL cut handler (MarkerEditPlugin,
               OpaqueBlockGuardPlugin, StructureKeyboardPlugin). Its CRITICAL fit shortens the
               selection of a limited copy or cut, and at equal priority handlers run in the order

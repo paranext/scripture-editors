@@ -19,8 +19,6 @@ import { act, render } from "@testing-library/react";
 import {
   $createTextNode,
   $getRoot,
-  $getSelection,
-  $isRangeSelection,
   COMMAND_PRIORITY_LOW,
   COMMAND_PRIORITY_NORMAL,
   COPY_COMMAND,
@@ -29,7 +27,7 @@ import {
   LexicalEditor,
   TextNode,
 } from "lexical";
-import { ReactElement, useEffect, useState } from "react";
+import { ReactElement, useEffect } from "react";
 import { $createParaNode, TypedMarkNode } from "shared";
 import { usjReactNodes } from "../../nodes/usj";
 
@@ -623,7 +621,6 @@ afterEach(async () => {
 
 async function contextMenuEnvironment(
   withClipboardPlugin = true,
-  requestNativePaste?: () => Promise<boolean>,
 ): Promise<{ editor: LexicalEditor; text: TextNode }> {
   let text: TextNode | undefined;
   const { editor } = await baseTestEnvironment(
@@ -632,8 +629,8 @@ async function contextMenuEnvironment(
       $getRoot().append($createParaNode("p").append(text));
     },
     <>
-      {withClipboardPlugin && <ClipboardPlugin requestNativePaste={requestNativePaste} />}
-      <ContextMenuPlugin requestNativePaste={requestNativePaste} />
+      {withClipboardPlugin && <ClipboardPlugin />}
+      <ContextMenuPlugin />
     </>,
   );
   if (!text) throw new Error("expected the initial text node to exist");
@@ -664,8 +661,6 @@ async function chooseContextMenuOption(editor: LexicalEditor, index: number): Pr
 
 const COPY_OPTION = 1;
 const CUT_OPTION = 0;
-const PASTE_OPTION = 2;
-const PASTE_AS_PLAIN_TEXT_OPTION = 3;
 
 /**
  * Opens the context menu and clicks the option titled `title` the way a mouse user does: the
@@ -774,10 +769,10 @@ describe("ContextMenuPlugin — Escape", () => {
   });
 });
 
-describe("ContextMenuPlugin — Paste through the host's native paste", () => {
+describe("ContextMenuPlugin — Paste", () => {
   beforeEach(() => {
-    // jsdom has no async clipboard API. A read that never settles is enough: these tests assert
-    // only whether a paste reached it.
+    // jsdom has no async clipboard API. A read that never settles is enough: this asserts only
+    // that a paste reached it.
     vi.stubGlobal("navigator", {
       ...navigator,
       clipboard: { read: vi.fn(() => new Promise(() => undefined)) },
@@ -788,110 +783,13 @@ describe("ContextMenuPlugin — Paste through the host's native paste", () => {
     vi.unstubAllGlobals();
   });
 
-  function clipboardRead() {
-    return vi.mocked(navigator.clipboard.read);
-  }
-
-  it("puts focus back in the editor before asking the host, since a native paste lands where focus is", async () => {
-    let focusedWhenAsked: Element | null = null;
-    const requestNativePaste = vi.fn(() => {
-      focusedWhenAsked = document.activeElement;
-      return Promise.resolve(true);
-    });
-    const { editor, text } = await contextMenuEnvironment(true, requestNativePaste);
-    await act(async () => editor.update(() => text.select(3, 3)));
-
-    await clickContextMenuOption(editor, "Paste");
-    await settle();
-
-    expect(requestNativePaste).toHaveBeenCalledTimes(1);
-    expect(focusedWhenAsked).toBe(editor.getRootElement());
-    expect(clipboardRead()).not.toHaveBeenCalled();
-    // Focusing the root does not move the caret the paste is meant for.
-    editor.getEditorState().read(() => {
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
-      expect([selection.anchor.key, selection.anchor.offset]).toEqual([text.getKey(), 3]);
-      expect(selection.isCollapsed()).toBe(true);
-    });
-  });
-
-  it("asks the host from the keyboard too, outside the update the menu runs its item in", async () => {
-    let updatingWhenAsked: boolean | undefined;
-    const requestNativePaste = vi.fn(() => {
-      updatingWhenAsked = editor._updating;
-      return Promise.resolve(true);
-    });
-    const { editor, text } = await contextMenuEnvironment(true, requestNativePaste);
-    await act(async () => editor.update(() => text.select(3, 3)));
-    editor.getRootElement()?.focus();
-
-    await chooseContextMenuOption(editor, PASTE_OPTION);
-    await settle();
-
-    expect(requestNativePaste).toHaveBeenCalledTimes(1);
-    expect(updatingWhenAsked).toBe(false);
-    expect(clipboardRead()).not.toHaveBeenCalled();
-  });
-
-  it("reads the clipboard itself when the host declines the paste", async () => {
-    const requestNativePaste = vi.fn(() => Promise.resolve(false));
-    const { editor, text } = await contextMenuEnvironment(true, requestNativePaste);
-    await act(async () => editor.update(() => text.select(3, 3)));
-
-    await clickContextMenuOption(editor, "Paste");
-    await settle();
-
-    expect(requestNativePaste).toHaveBeenCalledTimes(1);
-    expect(clipboardRead()).toHaveBeenCalledTimes(1);
-  });
-
-  it("pastes as plain text without asking the host", async () => {
-    const requestNativePaste = vi.fn(() => Promise.resolve(true));
-    const { editor, text } = await contextMenuEnvironment(true, requestNativePaste);
-    await act(async () => editor.update(() => text.select(3, 3)));
-
-    await chooseContextMenuOption(editor, PASTE_AS_PLAIN_TEXT_OPTION);
-    await settle();
-
-    expect(requestNativePaste).not.toHaveBeenCalled();
-    expect(clipboardRead()).toHaveBeenCalledTimes(1);
-  });
-
-  it("asks through the latest callback the host handed over", async () => {
-    const first = vi.fn(() => Promise.resolve(true));
-    const second = vi.fn(() => Promise.resolve(true));
-    let setCallback: ((callback: () => Promise<boolean>) => void) | undefined;
-    function Host() {
-      const [callback, setState] = useState<() => Promise<boolean>>(() => first);
-      useEffect(() => {
-        setCallback = (next) => setState(() => next);
-      }, []);
-      return <ContextMenuPlugin requestNativePaste={callback} />;
-    }
-    const { editor } = await baseTestEnvironment(
-      () => {
-        $getRoot().append($createParaNode("p").append($createTextNode("In the beginning")));
-      },
-      <Host />,
-    );
-    await act(async () => editor.update(() => $getRoot().selectEnd()));
-
-    await act(async () => setCallback?.(second));
-    await clickContextMenuOption(editor, "Paste");
-    await settle();
-
-    expect(second).toHaveBeenCalledTimes(1);
-    expect(first).not.toHaveBeenCalled();
-  });
-
-  it("reads the clipboard itself when the host offers no native paste", async () => {
+  it("reads the clipboard", async () => {
     const { editor, text } = await contextMenuEnvironment();
     await act(async () => editor.update(() => text.select(3, 3)));
 
     await clickContextMenuOption(editor, "Paste");
     await settle();
 
-    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(navigator.clipboard.read)).toHaveBeenCalledTimes(1);
   });
 });

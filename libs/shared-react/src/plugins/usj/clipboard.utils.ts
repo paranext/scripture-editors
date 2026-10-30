@@ -1,14 +1,12 @@
 import { $generateNodesFromSerializedNodes } from "@lexical/clipboard";
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
-  $addUpdateTag,
   $createTextNode,
   $getState,
   $getSelection,
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
-  $setSelection,
   COMMAND_PRIORITY_LOW,
   COPY_COMMAND,
   CUT_COMMAND,
@@ -17,7 +15,6 @@ import {
   PASTE_COMMAND,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   SerializedLexicalNode,
-  SKIP_SCROLL_INTO_VIEW_TAG,
   TabNode,
   TextNode,
 } from "lexical";
@@ -171,125 +168,6 @@ export const pasteSelection = (editor: LexicalEditor) => {
     });
     editor.dispatchCommand(PASTE_COMMAND, event);
   });
-};
-
-/**
- * How long {@link pasteNatively} waits for focus to come back to the editor before reading the
- * clipboard itself.
- */
-const NATIVE_PASTE_FOCUS_WAIT_MS = 500;
-
-/** Whether `rootElement`, or something inside it, holds focus in a document that has focus. */
-function holdsFocus(rootElement: HTMLElement): boolean {
-  const { activeElement } = rootElement.ownerDocument;
-  return rootElement.ownerDocument.hasFocus() && rootElement.contains(activeElement);
-}
-
-/**
- * Pastes at the selection, through the host's native paste when the host offers one.
- *
- * A native paste is the browser's own: it fires a trusted `paste` event carrying every clipboard
- * format, including `@lexical/clipboard`'s `application/x-lexical-editor`, which
- * `navigator.clipboard.read()` cannot see. The host runs it into whatever has focus, so:
- * - focus is put back on the editor's root first (a click on a menu item takes it away), and the
- *   Lexical selection is re-asserted in the DOM so the paste lands where the caret was;
- * - the host is asked only after that update has committed, from a microtask, so the DOM caret is
- *   in place and no editor update is active while the host's callback runs;
- * - if focus is not in the root by then (something else took it after the refocus), the host is
- *   asked once focus comes back, for up to {@link NATIVE_PASTE_FOCUS_WAIT_MS}; after that the
- *   paste reads the clipboard itself, which does not depend on focus.
- *
- * Focus moving away AFTER the host has been asked is out of reach here: a caller that knows focus
- * will move (a menu that returns focus to its trigger on close) should call this once focus is
- * back in the editor.
- *
- * If the host declines (resolves `false`), its request fails, or the callback throws, the paste
- * falls back to {@link pasteSelection}: a failed request means the host did not paste, and losing
- * the paste is worse than pasting without the editor's own format. With no `requestNativePaste`,
- * this is {@link pasteSelection}. So it is with no Lexical selection: the host is not asked and
- * focus is left where it is, since a native paste would land wherever focusing the root puts the
- * browser's caret.
- *
- * Callers apply the read-only gate; this pastes regardless of whether the editor is editable.
- *
- * @param editor - The editor to paste into.
- * @param requestNativePaste - Asks the host to run its native paste into the focused frame;
- *   resolves `true` only after it did.
- */
-export const pasteNatively = (
-  editor: LexicalEditor,
-  requestNativePaste?: () => Promise<boolean>,
-) => {
-  const rootElement = editor.getRootElement();
-  if (!requestNativePaste || !rootElement) {
-    pasteSelection(editor);
-    return;
-  }
-
-  const fallBack = () => pasteSelection(editor);
-
-  function ask(request: () => Promise<boolean>) {
-    let pasted: Promise<boolean>;
-    try {
-      pasted = request();
-    } catch {
-      fallBack();
-      return;
-    }
-    pasted.then((didPaste) => {
-      if (!didPaste) fallBack();
-    }, fallBack);
-  }
-
-  function askOnceFocused(root: HTMLElement, request: () => Promise<boolean>) {
-    if (holdsFocus(root)) {
-      ask(request);
-      return;
-    }
-    const stopWaiting = () => {
-      root.removeEventListener("focusin", onFocusIn);
-      clearTimeout(timeout);
-    };
-    const onFocusIn = () => {
-      if (!holdsFocus(root)) return;
-      stopWaiting();
-      ask(request);
-    };
-    const timeout = setTimeout(() => {
-      stopWaiting();
-      fallBack();
-    }, NATIVE_PASTE_FOCUS_WAIT_MS);
-    root.addEventListener("focusin", onFocusIn);
-  }
-
-  if (holdsFocus(rootElement)) {
-    // Still deferred, so the callback never runs inside the update or event handler this was
-    // called from; the selection is read there, once any update this was called from is in.
-    queueMicrotask(() => {
-      if (editor.read(() => $getSelection()) === null) fallBack();
-      else askOnceFocused(rootElement, requestNativePaste);
-    });
-    return;
-  }
-  let hasSelection = false;
-  editor.update(
-    () => {
-      const selection = $getSelection();
-      if (!selection) return;
-      hasSelection = true;
-      rootElement.focus({ preventScroll: true });
-      // A dirty selection is written back to the DOM on commit, which keeps the caret where
-      // Lexical has it whatever focusing the root did to the DOM selection.
-      $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
-      if (!selection.dirty) $setSelection(selection.clone());
-    },
-    {
-      onUpdate: () =>
-        queueMicrotask(() =>
-          hasSelection ? askOnceFocused(rootElement, requestNativePaste) : fallBack(),
-        ),
-    },
-  );
 };
 
 export const pasteSelectionAsPlainText = (editor: LexicalEditor) => {

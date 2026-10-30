@@ -136,7 +136,6 @@ export interface EditorOptions {
     nodes?: UsjNodeOptions;
     onHiddenContentDelete?: HiddenContentDeleteHandler;
     onUnstorableTextRemoved?: UnstorableTextRemovedHandler;
-    requestNativePaste?: () => Promise<boolean>;
     structureProtectionMode?: StructureProtectionMode;
     styleInfo?: StyleInfo;
     textDirection?: TextDirection;
