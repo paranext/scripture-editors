@@ -231,8 +231,8 @@ export const MARKER_TEXT_HTML_ATTRIBUTE = "data-platform-editor-marker-text";
  * element's inline children, so another program's copy of this html would paste differently.
  *
  * The attribute holds all of the node copy, a hidden construct's text included, for any program
- * that reads the html to see. A browser's own paste into an editable element drops it, so a copy
- * that went through another editor no longer carries it.
+ * that reads the html to see. Chromium's own paste into an editable element drops it, so a copy
+ * that went through such an editor no longer carries it.
  *
  * @param html - The html the copy shows.
  * @param nodeCopy - The node copy, as written to {@link LEXICAL_CLIPBOARD_TYPE}.
