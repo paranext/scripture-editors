@@ -16,6 +16,8 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Added
 
+- `generateUsjFontCss` — the font part of `generateUsjCss`'s output only (the base font family and
+  size, and each marker's font family), for a view that keeps its own marker layout.
 - `STANDARD_VIEW_MODE`, plus `"standard"` in `getDefaultViewMode()` and `viewModeToViewNames`.
 - `EditorRef` methods: `isFocused`, `commitPendingMarkerEdits`, `setTransientInput`,
   `getMarkerMenuContext`, `applyMarkerMenuSelection`, `splitParagraphWithMarker`,
@@ -51,7 +53,8 @@ refused. The public surface grew substantially; nothing was removed.
   inside a marker glyph (`glyph: { index, offset }`: the glyph's order among those at that offset,
   and how far into its text) - a run's `\ft`, `\ft*` or `\+nd`, an unmatched marker, or `\cat` /
   `\cat*`.
-- `generateUsjCss` — builds a project stylesheet from `StyleInfo`.
+- `generateUsjCss` — builds a project stylesheet from `StyleInfo`. A default or marker font size
+  that is zero, negative or not finite is left out, as is the case in `generateUsjFontCss`.
 - `getMarkerMenuItems` / `getEnterMenuItems` / `filterAndRankItems` — the marker-menu item source and
   ranking a host needs to build its own marker palette.
 - `defaultStyleInfo` and the `StyleInfo` / `MarkerStyleInfo` / `StyleType` types.
@@ -301,6 +304,19 @@ refused. The public surface grew substantially; nothing was removed.
   the text after the selection stays where it was instead of landing in the span or the note.
 - Pressing Enter just before a space that a no-break, ideographic or zero-width no-break space
   follows no longer removes that character along with the space; Paratext 9 keeps it after a marker.
+- In views that hide markers, an empty paragraph right after a chapter can now be deleted with
+  Backspace or Delete. When it is the only paragraph in its chapter, it leaves a blank line with no
+  marker, where a marker can be picked with the `\` menu or `formatPara`. A blank line left empty
+  saves as nothing, and a chapter with no line after it now loads with the same blank line, so a
+  click below the chapter number no longer puts the caret before the chapter. Deleting an empty
+  paragraph next to another paragraph, by Delete inside it or by Backspace from the start of the
+  paragraph after it, now removes the empty one instead of moving the other paragraph's text under
+  its marker. None of this applies in Standard view, where markers are editable text.
+- A text node holding only zero-width spaces that the author typed (a line-break opportunity in
+  Thai, Khmer and Lao), which an annotation or other split leaves in a node of its own, is now kept
+  by `getUsj()`, sent in delta ops, and counted in annotation and OT positions. It used to be taken
+  for the editor's caret placeholder and dropped, which put every later op one unit early relative
+  to the saved document. Only the editor's own marked caret host is left out now.
 - Placing the caret in an empty verse no longer moves the next verse number onto a new line, and the
   caret is drawn right after the empty verse's number. The verse holding the caret now carries
   `psc-empty-text-active` instead of no class, and its caret host carries `data-caret-host`. A host

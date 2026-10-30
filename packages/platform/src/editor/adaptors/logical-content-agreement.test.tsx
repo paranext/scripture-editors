@@ -28,6 +28,7 @@ import {
 } from "lexical";
 import {
   $createAttributeRunNode,
+  $createCaretHostNode,
   $createCharNode,
   $createImmutableTypedTextNode,
   $createMarkerNode,
@@ -44,6 +45,7 @@ import {
   NBSP,
   NODE_ATTRIBUTE_PREFIX,
   textTypeState,
+  ZWSP,
 } from "shared";
 import {
   $createImmutableNoteCallerNode,
@@ -265,6 +267,39 @@ const cases: AgreementCase[] = [
       );
     },
     expected: [{ kind: "text", text: "pre" }, { kind: "ms" }, { kind: "text", text: "post" }],
+  },
+  {
+    // The caret-host mark keeps Lexical from merging the host into its neighbors, so it stays a
+    // separate ZWSP-only node inside the run. Both projections must skip it by its mark and
+    // coalesce across it; counting it would put a ZWSP into the saved text.
+    name: "a marked caret host inside a text run is skipped and the run coalesces across it",
+    $build: () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("first"),
+          $createCaretHostNode(),
+          $createTextNode("second"),
+        ),
+      );
+    },
+    expected: [{ kind: "text", text: "firstsecond" }],
+  },
+  {
+    // ZWSP is authored text in Thai, Khmer and Lao (a line-break opportunity). Any split leaves
+    // one alone in its own node: here a verse boundary, and most often in practice an annotation
+    // boundary. Without the caret-host mark it is content on both sides, byte-identical to a host
+    // or not.
+    name: "an unmarked ZWSP-only text node is a content item",
+    $build: () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createVerseNode("1", getVisibleOpenMarkerText("v", "1")),
+          $createTextNode(ZWSP),
+          $createVerseNode("2", getVisibleOpenMarkerText("v", "2")),
+        ),
+      );
+    },
+    expected: [{ kind: "verse" }, { kind: "text", text: ZWSP }, { kind: "verse" }],
   },
 ];
 

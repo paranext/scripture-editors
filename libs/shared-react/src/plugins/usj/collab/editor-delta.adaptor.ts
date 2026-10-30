@@ -26,6 +26,7 @@ import Delta from "quill-delta";
 import {
   $findFirstAncestorNoteNode,
   $isBookNode,
+  $isCaretHost,
   $isCharNode,
   $isDisplayRunPiece,
   $isImmutableUnmatchedNode,
@@ -46,7 +47,6 @@ import {
   charIdState,
   CharNode,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
-  isCursorPlaceholderOnly,
   ImmutableUnmatchedNode,
   MilestoneNode,
   NBSP,
@@ -320,9 +320,10 @@ function $handleTextNodes(
   // must never enter content ops.
   if ($getState(currentNode, textTypeState) === "marker-trailing-space") return;
   let text = currentNode.getTextContent();
-  // A bare cursor host (EmptyVerseCaretGuardPlugin) is collab-invisible: its insertion is never
-  // emitted, so it must never appear in a delta op either.
-  if (isCursorPlaceholderOnly(text)) return;
+  // A bare caret host (transientCaretHost.utils.ts) is collab-invisible: its insertion is never
+  // emitted, so it must never appear in a delta op either. Recognized by its mark, not its text: an
+  // authored zero-width-space-only run is content and must reach peers.
+  if ($isCaretHost(currentNode)) return;
   // An expanded note's editable caller text is presentation of the note's `caller` attribute, so
   // none of its own bytes are content; only bytes typed into a caller that waits as the user left
   // them are, as the editor→USJ conversion reads them ({@link $editableNoteCallerContent}).

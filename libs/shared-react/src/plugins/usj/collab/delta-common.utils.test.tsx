@@ -22,6 +22,7 @@ import { ReactNode } from "react";
 import {
   $createAttributeRunNode,
   $createBookNode,
+  $createCaretHostNode,
   $createChapterNode,
   $createCharNode,
   $createImmutableChapterNode,
@@ -29,7 +30,6 @@ import {
   $createMarkerNode,
   $createMilestoneNode,
   $createNoteNode,
-  $createCursorPlaceholderNode,
   $createParaNode,
   $createUnknownNode,
   $createVerseNode,
@@ -47,6 +47,7 @@ import {
   NoteNode,
   segmentState,
   textTypeState,
+  ZWSP,
 } from "shared";
 
 describe("$getOTPositionOfNode", () => {
@@ -78,7 +79,7 @@ describe("$getOTPositionOfNode", () => {
     expect(position).toBe(0);
   });
 
-  it("counts a bare cursor host as 0 so OT positions stay aligned with peers (PT-4308)", async () => {
+  it("counts a bare caret host as 0 so OT positions stay aligned with peers", async () => {
     const { editor } = await testEnvironment(() => {
       targetNode = $createTextNode("text");
       // The real empty-verse shape: a host sits between two verse markers (the verses keep it from
@@ -87,7 +88,7 @@ describe("$getOTPositionOfNode", () => {
       $getRoot().append(
         $createImpliedParaNode().append(
           $createImmutableVerseNode("1"),
-          $createCursorPlaceholderNode(),
+          $createCaretHostNode(),
           $createImmutableVerseNode("2"),
           targetNode,
         ),
@@ -99,6 +100,28 @@ describe("$getOTPositionOfNode", () => {
     const position = editor.getEditorState().read(() => $getOTPositionOfNode(textNode));
 
     expect(position).toBe(2);
+  });
+
+  it("counts an authored zero-width-space-only run as content", async () => {
+    const { editor } = await testEnvironment(() => {
+      targetNode = $createTextNode("text");
+      // The same shape with an unmarked zero-width space between the verses: it is content a peer
+      // also holds, so verse (1) + ZWSP (1) + verse (1) puts the text at 3.
+      $getRoot().append(
+        $createImpliedParaNode().append(
+          $createImmutableVerseNode("1"),
+          $createTextNode(ZWSP),
+          $createImmutableVerseNode("2"),
+          targetNode,
+        ),
+      );
+    });
+    if (!targetNode) throw new Error("targetNode not initialized");
+    const textNode = targetNode;
+
+    const position = editor.getEditorState().read(() => $getOTPositionOfNode(textNode));
+
+    expect(position).toBe(3);
   });
 
   it("should return correct position for chapter embed", async () => {

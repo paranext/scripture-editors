@@ -1,7 +1,6 @@
 import { $createImmutableTypedTextNode } from "../features/ImmutableTypedTextNode.js";
 import { $createMarkerNode } from "../features/MarkerNode.js";
 import { $createTypedMarkNode, TypedMarkNode } from "../features/TypedMarkNode.js";
-import { $createCursorPlaceholderNode } from "../../plugins/CursorHandler/index.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { $createAttributeRunNode } from "./AttributeRunNode.js";
 import { $createChapterNode, ChapterNode } from "./ChapterNode.js";
@@ -38,9 +37,10 @@ import {
   removeNodeAndAfter,
   removeNodesBeforeNode,
 } from "./node.utils.js";
-import { IMMUTABLE_NOTE_CALLER_NODE_TYPE, NBSP } from "./node-constants.js";
+import { IMMUTABLE_NOTE_CALLER_NODE_TYPE, NBSP, ZWSP } from "./node-constants.js";
 import { $createParaNode } from "./ParaNode.js";
 import { createBasicTestEnvironment } from "./test.utils.js";
+import { $createCaretHostNode } from "./transientCaretHost.utils.js";
 import { $createVerseNode, VerseNode } from "./VerseNode.js";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import {
@@ -975,14 +975,14 @@ describe("Editor Node Utilities", () => {
       });
     });
 
-    it("skips a bare cursor host so it does not shift annotation content indexes", () => {
-      // A transient caret host (EmptyVerseCaretGuardPlugin) carries no content, so it must not
-      // appear as a content item — otherwise annotations after it would be mis-anchored (PT-4308).
+    it("skips a bare caret host so it does not shift annotation content indexes", () => {
+      // A transient caret host carries no content, so it must not appear as a content item —
+      // otherwise annotations after it would be mis-anchored.
       const { editor } = createBasicTestEnvironment(nodes, () => {
         $getRoot().append(
           $createParaNode().append(
             $createCharNode("nd").append($createTextNode("aaa")),
-            $createCursorPlaceholderNode(),
+            $createCaretHostNode(),
             $createCharNode("nd").append($createTextNode("bbb")),
           ),
         );
@@ -994,6 +994,48 @@ describe("Editor Node Utilities", () => {
         expect(items).toHaveLength(2);
         expect(items[0].type).toBe("element");
         expect(items[1].type).toBe("element");
+      });
+    });
+
+    it("keeps an authored zero-width-space-only run as a content item", () => {
+      // Unmarked, the same zero-width space is a Thai/Khmer/Lao line-break opportunity, which an
+      // annotation can anchor to like any other content.
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        $getRoot().append(
+          $createParaNode().append(
+            $createCharNode("nd").append($createTextNode("aaa")),
+            $createTextNode(ZWSP),
+            $createCharNode("nd").append($createTextNode("bbb")),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        const items = $getFirstParaItems();
+
+        expect(items).toHaveLength(3);
+        expect(items[1].type).toBe("text");
+      });
+    });
+
+    it("keeps an annotated lone NBSP whose char span's other content is an authored zero-width space", () => {
+      // A lone NBSP in a mark is content unless its char span has nothing else (the empty-span
+      // placeholder's shape). An authored zero-width space is something else, so the NBSP stays.
+      let nbsp: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        nbsp = $createTextNode(NBSP);
+        $getRoot().append(
+          $createParaNode().append(
+            $createCharNode("w").append(
+              $createTypedMarkNode({ t: ["1"] }).append(nbsp),
+              $createTextNode(ZWSP),
+            ),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        expect($shouldIgnoreNodeForContentIndexes(nbsp)).toBe(false);
       });
     });
 

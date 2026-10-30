@@ -68,6 +68,7 @@ import {
   NodeKey,
   PointType,
   SerializedLexicalNode,
+  SerializedTextNode,
   TextNode,
 } from "lexical";
 import {
@@ -79,9 +80,11 @@ import {
   $isAttributeRunNode,
   $isBookNode,
   $isBookPrefixGlyph,
+  $isCaretHost,
   $isChapterNode,
   $isCharNode,
   $isImmutableUnmatchedNode,
+  isSerializedCaretHost,
   isSerializedImmutableUnmatchedNode,
   $isImpliedParaNode,
   $isMarkerNode,
@@ -773,6 +776,7 @@ function $isPlainSignatureText(
 ): node is TextNode {
   return (
     $isTextNode(node) &&
+    !$isCaretHost(node) &&
     !$isVerseNode(node) &&
     !$isMarkerNode(node) &&
     !$isImmutableUnmatchedNode(node) &&
@@ -932,6 +936,11 @@ function $appendSignature(
       out.push(ATOMIC_SENTINEL);
     } else if ($isLineBreakNode(node)) {
       out.push(lineBreakFragmentText($isVerseLineBreak(node)));
+    } else if ($isCaretHost(node)) {
+      // Mirrors `$appendNodesFragment`, which leaves a caret host out of the bytes: signing it would
+      // make a scope holding one compare unequal to its own rebuild, and splice the host away from
+      // under the resting caret for no change to the document.
+      continue;
     } else if ($isTextNode(node) && $getState(node, textTypeState) === "attribute") {
       // Tagged like a glyph: bytes typed into an attribute run at its start read as the span's
       // content once re-tokenized (`\w gracex|g\w*`), and only the run's own delimiting shows
@@ -1245,6 +1254,9 @@ function appendSerializedSignature(
       continue;
     }
     const text = serializedText(node);
+    // Mirrors `$appendSignature`'s caret-host skip. A fresh rebuild never holds a host, so this is
+    // a defensive mirror, not a load-bearing gate.
+    if (text !== undefined && isSerializedCaretHost(node as SerializedTextNode)) continue;
     if (text !== undefined && serializedTextType(node) === "attribute") {
       // Tagged, mirroring `$appendSignature`'s attribute-run branch.
       out.push(SIGNATURE_OPEN, "attribute", toFragmentText(text), SIGNATURE_CLOSE);
@@ -1380,6 +1392,12 @@ function $appendNodesFragment(
     } else if ($isLineBreakNode(node)) {
       consumeCharLead();
       pushText(out, node, lineBreakFragmentText($isVerseLineBreak(node)));
+    } else if ($isCaretHost(node)) {
+      // A caret host's placeholder is not document text: re-tokenized, it would come back as an
+      // unmarked zero-width space, which is authored content. It contributes no bytes and no span,
+      // and holds no content position, so a char span's structural lead stays pending past it. A
+      // point in it is anchored at the boundary it stands at (`$anchorForPoint`).
+      continue;
     } else if ($isTextNode(node)) {
       // Glyph-adjacent structural text (the para-prefix separator, a chapter's `\c N` glyph
       // text — whose NBSP is the separator after `\c`) keeps the blanket NBSP-to-space
@@ -1767,6 +1785,9 @@ export function spanFor(
  * Shared by the settle's caret capture and the settled-position translation, so a caret and a
  * position at the same boundary spell the same anchor.
  *
+ * A point in a caret host is the boundary the host stands at: the host contributes no bytes to a
+ * fragment ({@link $appendNodesFragment}), so it is spelled as that boundary's element point.
+ *
  * Read-only: resolves span node keys, so call inside a read of the tree the fragment was built
  * over.
  */
@@ -1791,6 +1812,10 @@ export function $anchorForPoint(
     const anchor = $caretSpanByteAnchor(fragment, span.key, keyOffset);
     return anchor ? { anchor, position: span.start + keyOffset } : undefined;
   };
+  if ($isCaretHost(node)) {
+    const parent = node.getParent();
+    return parent ? $anchorForPoint(fragment, parent, node.getIndexWithinParent()) : undefined;
+  }
   if (!$isElementNode(node)) return anchored(node.getKey(), offset);
   const before = new Set<NodeKey>();
   node
@@ -2804,10 +2829,11 @@ function $captureCaret(fragment: FragmentAccumulator, point: PointType): Capture
   const preserved = $preservedRunMember(fragment, node);
   const path = preserved && $childPath(preserved.member, node);
   return {
-    // An element point (a click past a paragraph's trailing note) has no span of its own, so it
-    // is spelled from the child bytes beside it, the same way a settled position spells one.
+    // An element point (a click past a paragraph's trailing note) has no span of its own, and
+    // neither does a caret host, so each is spelled from the child bytes beside it, the same way a
+    // settled position spells one.
     anchor:
-      point.type === "element"
+      point.type === "element" || $isCaretHost(node)
         ? $anchorForPoint(fragment, node, point.offset)?.anchor
         : $caretSpanByteAnchor(fragment, point.key, point.offset),
     inRun:

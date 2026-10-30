@@ -1,10 +1,12 @@
 import {
+  $deletePara,
+  $getParaAncestor,
   $isArmedSelection,
   $isUnmergeableParaStart,
-  $mergeParaIntoPrevious,
   $moveCaretPastGutterGlyph,
   $narrowSelectionPastGutterGlyph,
   $paraDeleteEffect,
+  $paraDeleteIntent,
   $placeCaretAfterParaChild,
   $placeCaretAtEnd,
   $rangeSnapshot,
@@ -101,10 +103,11 @@ function $restorerFor(selection: RangeSelection): () => void {
  * would remove — except inside an opaque block, left to `OpaqueBlockGuardPlugin`, and on the `\id`
  * line, which it judges from the caret and then hands on (see `$guardExtendingDelete`).
  *
- * A paragraph merge (Backspace at a paragraph's start, Delete at the end of the one before, or
+ * A paragraph delete (Backspace at a paragraph's start, Delete at the end of the one before, or
  * either on a selected gutter marker) is two-step too: the first press marks the marker it
- * removes — never the paragraph's text, which stays — and the second merges. A Backspace arm
- * selects that marker; a Delete arm leaves the caret where it is.
+ * removes — never the paragraph's text, which stays — and the second merges, or removes the
+ * paragraph outright when it is empty. A Backspace arm selects that marker; a Delete arm leaves
+ * the caret where it is.
  *
  * The armed state is published to the DOM (rather than rendered here) so the host app owns the
  * user-facing hint: the root element carries the `verse-delete-armed` class plus
@@ -200,8 +203,9 @@ export function StructureKeyboardPlugin({
             editor.dispatchCommand(DELETE_CHARACTER_COMMAND, intent === "deleteBackward");
           }
         } else if ($isSomeParaNode(node)) {
-          // Only paragraphs merge into paragraphs; never merge some other ElementNode.
-          $mergeParaIntoPrevious(node);
+          // Only a paragraph is merged or removed; never some other ElementNode. The direction was
+          // settled at the arm, where the caret was (see `$paraDeleteIntent`).
+          $deletePara(node, armed.paraIntent ?? intent);
         }
         return true;
       }
@@ -216,16 +220,23 @@ export function StructureKeyboardPlugin({
           $setSelection(ns);
           setArmedState({ key: target.node.getKey(), kind: target.kind, intent });
         } else {
-          // A merge removes only the paragraph's marker; its text stays. So a Backspace arm
-          // selects the marker, as a click on it would, and never the text. Removing a selected
-          // marker joins its paragraph to the one before, whichever key was pressed. A Delete arm
-          // keeps the caret at the end of its paragraph: selecting the NEXT paragraph's marker
-          // would move the caret there, so typing or an arrow key after the arm would act in that
-          // paragraph. With no marker selected, the caret stays where it is, and the armed class
-          // (still on the marker, when there is one) and the host's hint say what is armed.
+          // A merge removes only the paragraph's marker; its text stays (an empty paragraph goes
+          // whole). So a Backspace arm on the caret's own paragraph selects its marker, as a click
+          // on it would, and never the text. Removing a selected marker joins its paragraph to the
+          // one before, whichever key was pressed. Any other arm keeps the caret where it is: a
+          // Delete arm, whose target is the NEXT paragraph (or an empty one the caret is in), and a
+          // Backspace arm on an empty paragraph BEFORE the caret's. Selecting that other
+          // paragraph's marker would move the caret there, so typing or an arrow key after the arm
+          // would act in that paragraph. With no marker selected, the armed class (still on the
+          // marker, when there is one) and the host's hint say what is armed.
           const isMarkerSelected = !!$getSelectedParaMarkerPara(selection);
+          const caretPara = $isRangeSelection(selection)
+            ? $getParaAncestor(selection.focus.getNode())
+            : undefined;
           const glyph =
-            intent === "deleteBackward" ? $getSelectableParaMarker(target.node) : undefined;
+            intent === "deleteBackward" && target.node.is(caretPara)
+              ? $getSelectableParaMarker(target.node)
+              : undefined;
           const isMarkerArmed = isMarkerSelected || (!!glyph && $selectParaMarker(glyph));
           const caret = !isMarkerArmed && $isRangeSelection(selection) ? selection : undefined;
           setArmedState({
@@ -236,6 +247,7 @@ export function StructureKeyboardPlugin({
               target.node,
               isMarkerSelected ? "deleteBackward" : intent,
             ),
+            paraIntent: $paraDeleteIntent(selection, target.node, intent),
             ...(caret && {
               anchor: snapshotPoint(caret.anchor),
               focus: snapshotPoint(caret.focus),
@@ -266,9 +278,9 @@ export function StructureKeyboardPlugin({
         event?.preventDefault();
         return true;
       }
-      // A paragraph start with a block before it that it cannot merge into, and that no target
-      // above armed: refused, as the same key is under "protected". Let through, the native delete would
-      // remove that block.
+      // A paragraph start with a block before it that no paragraph delete may act on (a paragraph
+      // with text after a chapter, say): refused, as the same key is under "protected". Let
+      // through, the native delete would remove that block.
       if (intent === "deleteBackward" && $isUnmergeableParaStart(selection)) {
         event?.preventDefault();
         return true;
