@@ -1558,11 +1558,11 @@ async function runPlainRow(row: PlainRow, usj: Usj): Promise<void> {
 
 /**
  * `usfm` with its marker tokens gone: each `\`, with a nested marker's `+`, its name, and a closer's
- * `*` or an opener's one separator space. Spelled here rather than taken from the editor, so the
- * model does not lean on what it checks.
+ * `*` or, after a name, one separator space; a bare `\` leaves the space after it. Spelled here
+ * rather than taken from the editor, so the model does not lean on what it checks.
  */
 function withoutMarkers(usfm: string): string {
-  return usfm.replace(/\\\+?[\w-]*(?:\*| ?)/g, "");
+  return usfm.replace(/\\\+?(?:[\w-]+(?:\*| ?)|\*?)/g, "");
 }
 
 /**

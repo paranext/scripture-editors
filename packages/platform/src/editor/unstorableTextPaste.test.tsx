@@ -356,7 +356,7 @@ describe.each<StructureProtectionMode>(["off", "guarded", "protected"])(
     it.each([
       ["an opening marker", "1 \\ft TR and ", "1 TR and "],
       ["a closer and a nested marker", "\\nd Lord \\+wj x\\+wj*\\nd* y", "Lord x y"],
-      ["the nameless marker", "\\ a", "a"],
+      ["the nameless marker, keeping the space after it", "\\ a", " a"],
       ["a whole note", "\\f + \\fr 1:1 \\ft note\\f*", "+ 1:1 note"],
       ["a whole verse", "\\v 2 two", "2 two"],
     ])("leaves out %s, telling no one", async (_name, usfm, inserted) => {

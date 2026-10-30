@@ -344,24 +344,29 @@ export const HIDDEN_VIEW_CLIPBOARD_NAMESPACE = "platformEditor/hidden-markers";
 /**
  * The namespace a view that shows markers leaves on its node copy ({@link LEXICAL_CLIPBOARD_TYPE}):
  * the Lexical namespace of every platform editor, which only a hidden-marker view changes
- * ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}). A paste carrying it comes from a view whose text flavors
- * are USFM, which is how a hidden-marker view can tell its markers from a `\` anyone else wrote.
+ * ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}). That is how a hidden-marker view can tell a `\` that
+ * spells a marker from one anyone else wrote: the text flavors of a paste carrying it are USFM, from
+ * Standard view's own copy, or text with its markers showing, from Lexical's own copy in the views
+ * with no copy of their own (a Markers-view range `MarkersViewCopyPlugin` declines is one). The html
+ * of Lexical's copy, which goes in ahead of the plain text, loses its marker glyphs as well.
  */
 export const MARKER_VIEW_CLIPBOARD_NAMESPACE = "platformEditor";
 
 /**
  * A whole marker token: the `\`, a nested marker's `+`, the name, and either a closer's `*` or an
  * opening marker's one separator space. The name may be empty: `\*` closes a milestone, and a bare
- * `\` is the nameless marker. A byte outside the name class stays: it may be text.
+ * `\` is the nameless marker, whose following space stays, as it is probably the user's. A byte
+ * outside the name class stays: it may be text.
  */
 const MARKER_TOKEN_REGEX = new RegExp(
-  String.raw`\\\+?[${ENGINE_MARKER_NAME_BYTES}]*(?:\*| ?)`,
+  String.raw`\\\+?(?:[${ENGINE_MARKER_NAME_BYTES}]+(?:\*| ?)|\*?)`,
   "g",
 );
 
 /**
  * `usfm` without its marker tokens, and nothing else gone: a verse's number, a note's caller and an
- * attribute list are text here, so they stay.
+ * attribute list are text here, so they stay. A `\` inside an attribute value counts as a marker
+ * like any other (`src="c:\pics\a.jpg"` leaves `src="c:.jpg"`): this does not parse USFM.
  *
  * @param usfm - USFM text, known to be USFM: every `\` in it is taken for a marker.
  */
