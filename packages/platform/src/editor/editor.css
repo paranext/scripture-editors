@@ -601,27 +601,13 @@ button.toolbar-item:disabled .chevron-down {
    `.verse` element that carries the marker's own padding/margin. So the roomier background must be
    applied here, on the element that actually paints the red. Padding widens the painted background;
    an equal negative margin cancels the added width so neighboring text does not shift when the
-   marker arms (the red fills the space that was previously the outer marker's ~3px gap). An armed
-   chapter has no decorator span, so StructureKeyboardPlugin puts the class on the chapter's own
-   block element; see the `.usfm_c.verse-selected` rules below. */
+   marker arms (the red fills the space that was previously the outer marker's ~3px gap). */
 .verse-selected {
   background-color: color-mix(in srgb, #dc2626 15%, transparent);
   color: #dc2626;
   border-radius: 4px;
   padding: 0 3px;
   margin: 0 -3px;
-}
-
-/* An armed chapter is a block, so its tint would run the full width of the line; it is sized to
-   the chapter number instead, which also keeps a host's "press again" hint anchored to it. */
-.usfm_c.verse-selected {
-  width: fit-content;
-}
-
-/* The paragraph-structure view's own chapter padding wins over the padding above, so the negative
-   margin that offsets that padding goes too, or the chapter number shifts when it arms. */
-.psc-gutter-markers .usfm_c.verse-selected {
-  margin-inline: 0;
 }
 
 /* Caret-like glow-underline blink, only while armed (see StructureKeyboardPlugin root class). */
