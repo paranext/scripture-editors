@@ -500,6 +500,33 @@ describe("ContextMenuPlugin scrolling", () => {
   });
 });
 
+describe("ContextMenuPlugin window focus", () => {
+  it("closes when the window loses focus", async () => {
+    await openMenuWithEndNoteHighlighted(vi.fn());
+
+    // A click in another iframe or application never produces a `pointerdown` in this document, so
+    // the window's own `blur` is the only signal that the user has moved on.
+    await act(async () => {
+      globalThis.dispatchEvent(new Event("blur"));
+    });
+
+    expect(menuList()).toBeNull();
+  });
+
+  it("stays open when an element inside the menu loses focus", async () => {
+    await openMenuWithEndNoteHighlighted(vi.fn());
+    const list = menuList();
+    if (!list) throw new Error("menu list did not render");
+
+    // An element's `blur` does not bubble, so it never reaches the window-level listener.
+    await act(async () => {
+      list.dispatchEvent(new Event("blur", { bubbles: false }));
+    });
+
+    expect(menuList()).not.toBeNull();
+  });
+});
+
 describe("ContextMenuPlugin highlight follows the mouse, not a stationary pointer", () => {
   it("does not highlight an item the pointer merely ends up over without moving", async () => {
     const { editor } = await baseTestEnvironment(
