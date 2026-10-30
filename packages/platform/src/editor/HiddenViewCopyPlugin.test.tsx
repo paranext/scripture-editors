@@ -24,7 +24,11 @@ import {
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { $isParaNode, $isUnknownNode } from "shared";
-import { HIDDEN_VIEW_CLIPBOARD_NAMESPACE, StructureProtectionMode } from "shared-react";
+import {
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+  NODE_COPY_HTML_ATTRIBUTE,
+  StructureProtectionMode,
+} from "shared-react";
 
 // Located relative to the working directory, as the other testUSFM corpus suites do: the platform
 // project root under nx, the repo root otherwise.
@@ -291,7 +295,7 @@ describe("HiddenViewCopyPlugin", () => {
   );
 
   // The node copy is built by a walk of its own, which must stay Lexical's own serialization but
-  // for the two things it changes; a Lexical upgrade that changes Lexical's walk fails here.
+  // for the three things it changes; a Lexical upgrade that changes Lexical's walk fails here.
   it("writes Lexical's own serialization where there is no gutter glyph or childless construct", async () => {
     // The formatted view builds no gutter glyphs, and Matthew holds no unknown construct.
     const mounted = await mountInView(matthew, editorView("formatted"));
@@ -455,6 +459,7 @@ describe("HiddenViewCopyPlugin", () => {
       const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
       expect(store.get("text/plain")).toBeTruthy();
       expect(store.has(LEXICAL_FLAVOR)).toBe(false);
+      expect(store.get("text/html")).not.toContain(NODE_COPY_HTML_ATTRIBUTE);
     } finally {
       mounted.unmount();
     }
@@ -471,6 +476,7 @@ describe("HiddenViewCopyPlugin", () => {
       const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
       expect(store.get("text/plain")).toBeTruthy();
       expect(store.has(LEXICAL_FLAVOR)).toBe(false);
+      expect(store.get("text/html")).not.toContain(NODE_COPY_HTML_ATTRIBUTE);
     } finally {
       mounted.unmount();
     }

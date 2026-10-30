@@ -16,6 +16,7 @@ import {
   CUT_COMMAND,
 } from "lexical";
 import { useEffect } from "react";
+import { htmlWithNodeCopy } from "shared-react";
 
 /**
  * Copies a hidden-marker view's selection as the text it shows. Lexical's own copy would write
@@ -28,9 +29,12 @@ import { useEffect } from "react";
  *   the text stores is written as `~`, as Paratext 9 copies one; one the view shows for its layout
  *   stays as it is.
  * - `text/html`: Lexical's HTML export, which leaves out gutter glyphs and hidden constructs
- *   through their own `exportDOM`. It and the internal flavor keep U+00A0, since this editor's own
- *   paste reads them, and a `~` would come back as a literal tilde.
- * - `application/x-lexical-editor`: {@link $hiddenViewLexicalFlavor}.
+ *   through their own `exportDOM`, holding {@link $hiddenViewLexicalFlavor} in an attribute
+ *   (`htmlWithNodeCopy`): an async clipboard read, which is how Ctrl+V and every Paste command get
+ *   the clipboard, returns no custom flavor. It and the node copy keep U+00A0, since this editor's
+ *   own paste reads them, and a `~` would come back as a literal tilde.
+ * - `application/x-lexical-editor`: {@link $hiddenViewLexicalFlavor}, for a paste the browser runs
+ *   itself, such as the macOS app menu's Paste.
  *
  * A cut in a read-only editor copies but removes nothing (`$writeCopyPayload` owns that rule).
  *
@@ -55,15 +59,16 @@ export function HiddenViewCopyPlugin({
     const $copy = (event: ClipboardEvent | KeyboardEvent | null, isCut: boolean): boolean => {
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+      const html = $getHtmlContent(editor, selection);
+      const lexicalFlavor = $hiddenViewLexicalFlavor(selection);
       const shownText = $selectionShownText(selection, $isLeftOutOfHiddenViewCopy);
       const plainText = allowInvisibleCharacters
         ? undefined
         : withStoredNbspsAsTildes(shownText, $storedNbsps(selection, $isLeftOutOfHiddenViewCopy));
       const data: LexicalClipboardData = {
         "text/plain": plainText ?? shownText,
-        "text/html": $getHtmlContent(editor, selection),
+        "text/html": lexicalFlavor === undefined ? html : htmlWithNodeCopy(html, lexicalFlavor),
       };
-      const lexicalFlavor = $hiddenViewLexicalFlavor(selection);
       if (lexicalFlavor !== undefined) data["application/x-lexical-editor"] = lexicalFlavor;
       return $writeCopyPayload(
         // COPY_COMMAND's payload is `ClipboardEvent | KeyboardEvent | null`; this duck-checks the
