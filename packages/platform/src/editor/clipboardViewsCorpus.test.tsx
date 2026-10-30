@@ -973,15 +973,16 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | PlainRow): stri
       holdsHtmlLossyContent(row.protection === "protected" ? protectedFragment(copied) : copied)
     )
       return "accepted: html from another program, or from a copy ending inside a figure, carries no char attributes (`closed`), note details, milestones, alternate or published verse numbers, or figures, and brings a note's display spacers back as text";
-    // Not yet tracked: a hidden-marker view's plain-text paste leaves out the leading spaces of a
-    // line it starts a new paragraph with, which the node copy keeps.
+    // Accepted: a hidden-marker view's plain-text paste leaves out the leading spaces of a line it
+    // starts a new paragraph with, which the node copy keeps. The space is never saved anyway:
+    // ParatextData drops a paragraph's plain leading spaces, and Standard view drops them on save.
     if (
       isMarkerHidden(row.view) &&
       pasteRoute(row) === "plain" &&
       row.protection !== "protected" &&
       startsALaterParagraphWithASpace(copied)
     )
-      return "not yet tracked: a hidden-marker view's plain-text paste drops the leading spaces of each line it starts a new paragraph with";
+      return "accepted: a hidden-marker view's plain-text paste drops the leading spaces of each line it starts a new paragraph with; the space is never saved anyway, since ParatextData drops a paragraph's plain leading spaces and Standard view drops them on save too";
   }
   // TODO(PT-4388): read a bare `\` as a nameless marker once ParatextData 9.6 is in; the
   // tokenizer change waits on that upgrade.
