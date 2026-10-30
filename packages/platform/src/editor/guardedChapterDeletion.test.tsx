@@ -2,12 +2,10 @@
  * Backspace or Delete beside a chapter marker, in the views that show the chapter as an atomic
  * glyph (formatted and paragraph-structure).
  *
- * Under `"guarded"` structure protection (Simple mode) a structural deletion is a deliberate
- * two-press gesture: the first press arms the target and the second deletes it. A chapter is a
- * structural target like a paragraph or a verse, so a press beside it arms the CHAPTER — never
- * deletes it outright, and never arms the neighboring paragraph instead (a paragraph cannot merge
- * across a chapter, so that arm would lead nowhere). `"protected"` refuses both presses, and with
- * the guard `"off"` (Power mode) the keys behave natively.
+ * The caret cannot sit on that glyph, so no delete from the keyboard removes it: `"guarded"`
+ * structure protection (Simple mode) and `"protected"` both refuse the key, leaving the document as
+ * it was. With the guard `"off"` (Power mode) the keys behave natively. An empty paragraph beside a
+ * chapter is a separate matter: it may go, and the chapter stays.
  */
 import {
   EditingViewName,
@@ -22,16 +20,16 @@ import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
   $getRoot,
-  $getSelection,
   $isElementNode,
-  $isNodeSelection,
-  $isRangeSelection,
   $setSelection,
+  DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
   ElementNode,
+  LexicalCommand,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
-import { $isSomeChapterNode } from "shared";
-import { StructureProtectionMode, VERSE_SELECTED_CLASS_NAME } from "shared-react";
+import { StructureProtectionMode } from "shared-react";
 import { describe, expect, it } from "vitest";
 
 installSelectionModify();
@@ -96,28 +94,24 @@ async function placeCaretBesideChapter(m: MountedEditor, number: string, key: Ke
   });
 }
 
+/** Collapses the caret in the root's child `index`: at `offset`, or by default at its end. */
+async function placeCaretInBlock(m: MountedEditor, index: number, offset?: number) {
+  await act(async () => {
+    m.lexical.update(() => {
+      const block = $getRoot().getChildAtIndex(index);
+      if (!$isElementNode(block)) throw new Error(`no block at ${index}`);
+      block.select(offset ?? block.getChildrenSize(), offset ?? block.getChildrenSize());
+      m.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+    await Promise.resolve();
+  });
+}
+
 function leadingGlyphCount(block: ElementNode): number {
   const children = block.getChildren();
   let count = 0;
   while (count < children.length && isLeadingGlyph(children[count].getType())) count += 1;
   return count;
-}
-
-/** Whether chapter `number` is node-selected and shown as armed. */
-function isChapterArmed(m: MountedEditor, number: string): boolean {
-  const key = m.lexical.getEditorState().read(() => {
-    const selection = $getSelection();
-    if (!$isNodeSelection(selection)) return undefined;
-    const [node] = selection.getNodes();
-    return $isSomeChapterNode(node) && node.getNumber() === number ? node.getKey() : undefined;
-  });
-  if (!key) return false;
-  const root = m.lexical.getRootElement();
-  const element = m.lexical.getElementByKey(key);
-  return (
-    !!root?.classList.contains("verse-delete-armed") &&
-    !!element?.classList.contains(VERSE_SELECTED_CLASS_NAME)
-  );
 }
 
 async function mount(view: EditingViewName, mode: StructureProtectionMode | undefined) {
@@ -133,48 +127,112 @@ const GESTURES: { key: Key; number: string; name: string }[] = [
 
 const GUARDED_VIEWS = ["paragraph-structure", "formatted"] as const;
 
-describe("guarded: a chapter beside the caret is armed, then deleted", () => {
+/** Presses `key` on the editor root, and says whether the editor claimed the keydown. */
+function pressClaimed(m: MountedEditor, key: Key): Promise<boolean> {
+  return act(async () => {
+    const keydown = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    m.lexical.getRootElement()?.dispatchEvent(keydown);
+    await Promise.resolve();
+    return keydown.defaultPrevented;
+  });
+}
+
+const COMMAND_DELETES: [string, LexicalCommand<boolean>][] = [
+  ["a character delete", DELETE_CHARACTER_COMMAND],
+  ["a word delete", DELETE_WORD_COMMAND],
+  ["a line delete", DELETE_LINE_COMMAND],
+];
+
+describe("guarded: a chapter beside the caret is never deleted", () => {
   for (const view of enabledViews(GUARDED_VIEWS)) {
     describe(`in ${view} view`, () => {
       for (const { key, number, name } of GESTURES) {
-        it(`${name}: the first press arms the chapter, the second deletes it`, async () => {
+        it(`${name}: both presses are refused`, async () => {
           const m = await mount(view, "guarded");
           await placeCaretBesideChapter(m, number, key);
 
-          expect(await press(m, key)).toEqual([]);
+          expect(await pressClaimed(m, key)).toBe(true);
           expect(m.ref.current?.getUsj()).toEqual(DOC);
-          expect(isChapterArmed(m, number)).toBe(true);
-          // The host renders its "press again" hint from these, naming the chapter marker.
-          const intent = key === "Backspace" ? "deleteBackward" : "deleteForward";
+          // Nothing is armed, so the host shows no "press again" hint.
           const root = m.lexical.getRootElement();
-          expect(root?.getAttribute("data-verse-delete-kind")).toBe("chapter");
-          expect(root?.getAttribute("data-verse-delete-intent")).toBe(intent);
+          expect(root?.classList.contains("verse-delete-armed")).toBe(false);
+          expect(root?.hasAttribute("data-verse-delete-kind")).toBe(false);
 
-          expect(await press(m, key)).toEqual([]);
-          expect(m.ref.current?.getUsj()).toEqual(withoutChapter(number));
-          expect(m.lexical.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
-          expect(m.lexical.getRootElement()?.hasAttribute("data-verse-delete-kind")).toBe(false);
-          // The caret is left in the text, so the next keystroke has somewhere to go.
-          const isCollapsedCaret = m.lexical.getEditorState().read(() => {
-            const selection = $getSelection();
-            return $isRangeSelection(selection) && selection.isCollapsed();
-          });
-          expect(isCollapsedCaret).toBe(true);
+          expect(await pressClaimed(m, key)).toBe(true);
+          expect(m.ref.current?.getUsj()).toEqual(DOC);
           m.unmount();
         });
+
+        it.each(COMMAND_DELETES)(
+          `${name}: %s with no keydown, as a mapped shortcut delivers one, is refused`,
+          async (_, command) => {
+            const m = await mount(view, "guarded");
+            await placeCaretBesideChapter(m, number, key);
+
+            for (let count = 0; count < 2; count++)
+              await act(async () => {
+                m.lexical.dispatchCommand(command, key === "Backspace");
+              });
+
+            expect(m.ref.current?.getUsj()).toEqual(DOC);
+            m.unmount();
+          },
+        );
       }
 
-      it("the opposite key cancels an armed chapter without deleting it", async () => {
-        const m = await mount(view, "guarded");
-        await placeCaretBesideChapter(m, "2", "Backspace");
+      it("Delete in an empty paragraph right before \\c 2 is refused", async () => {
+        const usj = usjOf([
+          { type: "chapter", marker: "c", number: "1" },
+          { type: "para", marker: "p", content: ["one"] },
+          { type: "para", marker: "s" },
+          { type: "chapter", marker: "c", number: "2" },
+          { type: "para", marker: "p", content: ["two"] },
+        ]);
+        const m = await mountInView(usj, editorView(view), {
+          structureProtectionMode: "guarded",
+        });
+        // Both places a caret can be in that paragraph: past its marker, and in front of it.
+        for (const offset of [undefined, 0]) {
+          await placeCaretInBlock(m, 3, offset);
 
-        await press(m, "Backspace");
-        expect(isChapterArmed(m, "2")).toBe(true);
-        await press(m, "Delete");
+          await press(m, "Delete");
+          await press(m, "Delete");
 
-        expect(m.ref.current?.getUsj()).toEqual(DOC);
-        expect(m.lexical.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
+          expect(m.ref.current?.getUsj()).toEqual(usj);
+        }
         m.unmount();
+      });
+
+      describe("an empty paragraph with a chapter on both sides", () => {
+        const usj = usjOf([
+          { type: "chapter", marker: "c", number: "1" },
+          { type: "para", marker: "p" },
+          { type: "chapter", marker: "c", number: "2" },
+          { type: "para", marker: "p", content: ["two"] },
+        ]);
+        const withoutPara = {
+          ...usj,
+          content: usj.content.filter((item) => typeof item === "string" || item.type !== "para"),
+        };
+        withoutPara.content.push({ type: "para", marker: "p", content: ["two"] });
+
+        it("Delete blanks it; another Delete in the blank line leaves the document alone", async () => {
+          const m = await mountInView(usj, editorView(view), {
+            structureProtectionMode: "guarded",
+          });
+          await placeCaretInBlock(m, 2);
+
+          // The first press arms the paragraph; the second blanks it, and the blank saves as nothing.
+          await press(m, "Delete");
+          expect(m.ref.current?.getUsj()).toEqual(usj);
+          await press(m, "Delete");
+          expect(m.ref.current?.getUsj()).toEqual(withoutPara);
+
+          expect(await pressClaimed(m, "Delete")).toBe(true);
+          expect(await pressClaimed(m, "Delete")).toBe(true);
+          expect(m.ref.current?.getUsj()).toEqual(withoutPara);
+          m.unmount();
+        });
       });
     });
   }

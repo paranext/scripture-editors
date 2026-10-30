@@ -14,7 +14,9 @@
  *   caret, or as a new string at a gap there, at any depth (a caret at a char span's edge may type
  *   inside or outside it);
  * - Backspace and Delete remove the unit before or after the caret (an atom whole), or, at the
- *   block's edge, merge the block with its sibling, or remove the chapter beside it;
+ *   block's edge, merge the block with its sibling, or remove the chapter beside it (never under
+ *   guarded structure protection, which refuses that key, and which removes an empty block beside a
+ *   chapter only where another chapter or a block follows it);
  * - Enter splits the block there, splitting each char span the caret is inside into two same-marker
  *   spans and keeping both halves' text;
  * - a range selected and typed over is removed (atoms inside it with it) and the letter typed in its
@@ -492,7 +494,7 @@ type Edit =
   | { kind: "split"; block: number; at: number };
 
 /** Items that stand between two leaf blocks as a unit: a deletion across them removes them, and
- * Backspace or Delete beside one removes it. */
+ * Backspace or Delete beside one removes it unless structure protection refuses that. */
 const BETWEEN_BLOCK_ATOMS = new Set(["chapter"]);
 
 function isBetweenBlockAtom(item: Item | undefined): boolean {
@@ -509,8 +511,9 @@ function spaceRun(units: readonly Unit[], fromEnd = false): number {
 /**
  * The documents `edit` may leave `before` as — every acceptable spelling, normalized — or none
  * when the model has no expectation for it (a block boundary at the edge of a sidebar or table).
+ * `isGuarded` is whether the view edits under guarded structure protection.
  */
-function expectedDocs(before: Usj, edit: Edit): Set<string> {
+function expectedDocs(before: Usj, edit: Edit, isGuarded: boolean): Set<string> {
   const blocks = leafBlocks(before);
   const out = new Set<string>();
   const target = blocks[edit.block];
@@ -592,10 +595,19 @@ function expectedDocs(before: Usj, edit: Edit): Set<string> {
     const siblingIndex = index + step;
     const sibling = siblings[siblingIndex];
     const siblingPath = [...target.path.slice(0, -1), siblingIndex];
-    // An empty block may be the one the key removes.
-    if (unitsOf(target.block.content).length === 0) out.add(normalizedDoc(spliced(target.path, 1)));
-    if (isBetweenBlockAtom(sibling)) out.add(normalizedDoc(spliced(siblingPath, 1)));
-    else if (isObject(sibling) && isLeafBlock(sibling)) {
+    // An empty block may be the one the key removes. Under guarded protection Delete in one right
+    // before a chapter is refused, unless a chapter comes before it too, where the block goes blank
+    // and saves as nothing.
+    const isRefusedBeforeChapter =
+      isGuarded &&
+      edit.direction === "forward" &&
+      isBetweenBlockAtom(sibling) &&
+      !isBetweenBlockAtom(siblings[index - 1]);
+    if (unitsOf(target.block.content).length === 0 && !isRefusedBeforeChapter)
+      out.add(normalizedDoc(spliced(target.path, 1)));
+    if (isBetweenBlockAtom(sibling)) {
+      if (!isGuarded) out.add(normalizedDoc(spliced(siblingPath, 1)));
+    } else if (isObject(sibling) && isLeafBlock(sibling)) {
       if (edit.direction === "backward")
         merge(
           { path: siblingPath, block: sibling },
@@ -1530,7 +1542,9 @@ export function describeTypingFidelityOracle(
               after = mounted.ref.current?.getUsj();
             }
             cases += 1;
-            const expected = edit ? expectedDocs(loaded, edit) : new Set<string>();
+            const expected = edit
+              ? expectedDocs(loaded, edit, oracleView.structureProtectionMode === "guarded")
+              : new Set<string>();
             const got = normalizedDoc(after);
             const isUnchanged = JSON.stringify(after) === base;
             // A space typed as an empty verse's whole content is dropped (TextSpacingPlugin): the

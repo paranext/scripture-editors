@@ -212,6 +212,7 @@ describe("in paragraph-structure (guarded) view: Undo after an empty blank line 
       { start: { jsonPath: "$.content[2].content[0]", offset: 5 } },
       "Delete",
     ],
+    ["Delete in the blank line", { start: { jsonPath: "$.content[3]", offset: 0 } }, "Delete"],
   ])("brings the blank line back (%s)", async (_, selection, key) => {
     const mounted = await mountInView(
       BLANK_LINE_BETWEEN_PARAGRAPHS,
@@ -234,6 +235,102 @@ describe("in paragraph-structure (guarded) view: Undo after an empty blank line 
     });
 
     expect(mounted.ref.current?.getUsj()).toEqual(BLANK_LINE_BETWEEN_PARAGRAPHS);
+  });
+});
+
+const VERSE_ONE: MarkerContent = { type: "verse", marker: "v", number: "1" };
+
+/** `\\id`, `\\c 1`, then `content`. */
+function chapterOneUsj(content: MarkerContent[]): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      ...content,
+    ],
+  };
+}
+
+const POETRY_LINE: MarkerContent = {
+  type: "para",
+  marker: "q1",
+  content: [VERSE_ONE, "line"],
+};
+const PROSE: MarkerContent = { type: "para", marker: "p", content: ["first"] };
+const EMPTY_HEADING: MarkerContent = { type: "para", marker: "s" };
+
+const HEADING_MID_CHAPTER = chapterOneUsj([PROSE, EMPTY_HEADING, POETRY_LINE]);
+const HEADING_AFTER_CHAPTER = chapterOneUsj([EMPTY_HEADING, PROSE]);
+
+/** Each way to remove an empty heading: the document, the caret, the key, and what it leaves. */
+const EMPTY_HEADING_REMOVALS: [
+  string,
+  Usj,
+  Parameters<EditorRef["setSelection"]>[0],
+  string,
+  Usj,
+][] = [
+  [
+    "Delete inside an empty \\s between a \\p and a \\q1",
+    HEADING_MID_CHAPTER,
+    { start: { jsonPath: "$.content[3]", offset: 0 } },
+    "Delete",
+    chapterOneUsj([PROSE, POETRY_LINE]),
+  ],
+  [
+    "Backspace at the start of the \\q1 after an empty \\s",
+    HEADING_MID_CHAPTER,
+    { start: { jsonPath: "$.content[4]", offset: 0 } },
+    "Backspace",
+    chapterOneUsj([PROSE, POETRY_LINE]),
+  ],
+  [
+    "Backspace inside an empty \\s right after \\c 1, with a \\p after it",
+    HEADING_AFTER_CHAPTER,
+    { start: { jsonPath: "$.content[2]", offset: 0 } },
+    "Backspace",
+    chapterOneUsj([PROSE]),
+  ],
+  [
+    "Delete inside an empty \\s right after \\c 1, with a \\p after it",
+    HEADING_AFTER_CHAPTER,
+    { start: { jsonPath: "$.content[2]", offset: 0 } },
+    "Delete",
+    chapterOneUsj([PROSE]),
+  ],
+  [
+    "Backspace inside an empty \\s mid-chapter",
+    HEADING_MID_CHAPTER,
+    { start: { jsonPath: "$.content[3]", offset: 0 } },
+    "Backspace",
+    chapterOneUsj([PROSE, POETRY_LINE]),
+  ],
+];
+
+// A deletion that removes a paragraph is armed by the first press and made by the second.
+forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
+  describe("under guarded protection: removing an empty paragraph", () => {
+    it.each(EMPTY_HEADING_REMOVALS)("%s", async (_, usj, selection, key, saved) => {
+      const mounted = await mountInView(usj, view, { structureProtectionMode: "guarded" });
+      await act(async () => {
+        mounted.ref.current?.setSelection(selection);
+      });
+
+      expect(await press(mounted, key)).toEqual([]);
+      expect(mounted.ref.current?.getUsj()).toEqual(usj);
+      expect(await press(mounted, key)).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()).toEqual(saved);
+      expect(paragraphTexts(mounted)).toEqual(await renderedParagraphs(saved, view));
+
+      await act(async () => {
+        mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+
+      expect(mounted.ref.current?.getUsj()).toEqual(usj);
+    });
   });
 });
 
