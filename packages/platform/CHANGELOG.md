@@ -352,6 +352,13 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- **A copy from a view that shows markers pastes into a view that hides them without its markers.**
+  Standard view and the Footnotes pane's row editor write USFM as their html and plain text, so a
+  copy of `1 \ft TR and ` saved as `1 ft TR and `, a marker's name as a word of Scripture. A paste
+  that carries their `"platformEditor"` node copy now loses its marker tokens first (`1 TR and `),
+  with no `onUnstorableTextRemoved` report for them. A verse's number, a note's caller and an
+  attribute list stay as text. A paste without that node copy (another program's, or from a host
+  with no native paste) is unchanged, as are Standard and Markers views.
 - Undoing an edit that restores a char span's separator (its no-break space after the glyph) sends
   the separator to the host as U+00A0, not a space, so the span gains no leading content space.
 - A delta applied in Standard view places the ops after an inserted char span correctly. An insert
