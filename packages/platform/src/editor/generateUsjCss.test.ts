@@ -440,20 +440,24 @@ describe("generateUsjFontCss", () => {
     const options = { zoom: 2, containerSelector: ".x" };
     expect(generateUsjFontCss(base, options)).toBe(generateUsjCss(base, options));
     expect(generateUsjFontCss(base, options)).toBe(
-      `.x { font-family: "Ezra SIL", ${FALLBACK}; font-size: 25pt; }`,
+      `.x { font-family: "PlatformEditorNbspStandIn", "Ezra SIL", ${FALLBACK}; font-size: 25pt; }`,
     );
   });
 
   it("follows a marker font with the project default font, then the fallback", () => {
     expect(
       generateUsjFontCss({ defaultFont: "Ezra SIL", markers: fontMarker("nd", "Noto") }),
-    ).toContain(`${SCOPE} .usfm_nd { font-family: "Noto", "Ezra SIL", ${FALLBACK}; }`);
+    ).toContain(
+      `${SCOPE} .usfm_nd { font-family: "PlatformEditorNbspStandIn", "Noto", "Ezra SIL", ${FALLBACK}; }`,
+    );
   });
 
   it("does not repeat the default font after a marker font equal to it", () => {
     expect(
       generateUsjFontCss({ defaultFont: "Ezra SIL", markers: fontMarker("nd", "Ezra SIL") }),
-    ).toContain(`${SCOPE} .usfm_nd { font-family: "Ezra SIL", ${FALLBACK}; }`);
+    ).toContain(
+      `${SCOPE} .usfm_nd { font-family: "PlatformEditorNbspStandIn", "Ezra SIL", ${FALLBACK}; }`,
+    );
   });
 
   it("emits only the font family for a marker that also sets other presentation", () => {
@@ -471,7 +475,9 @@ describe("generateUsjFontCss", () => {
         },
       },
     });
-    expect(css).toBe(`${SCOPE} .usfm_p { font-family: "X", ${FALLBACK}; }`);
+    expect(css).toBe(
+      `${SCOPE} .usfm_p { font-family: "PlatformEditorNbspStandIn", "X", ${FALLBACK}; }`,
+    );
   });
 
   it("emits no rule for a marker without a font name", () => {
@@ -507,7 +513,7 @@ describe("generateUsjFontCss", () => {
     expect(generateUsjFontCss({ defaultFontSize: size, markers: {} })).toBe("");
     expect(
       generateUsjFontCss({ defaultFont: "Ezra SIL", defaultFontSize: size, markers: {} }),
-    ).toBe(`${SCOPE} { font-family: "Ezra SIL", ${FALLBACK}; }`);
+    ).toBe(`${SCOPE} { font-family: "PlatformEditorNbspStandIn", "Ezra SIL", ${FALLBACK}; }`);
   });
 
   it.each([0, -1, NaN, Infinity])("omits a marker size of %s from generateUsjCss", (size) => {
@@ -524,9 +530,11 @@ describe("generateUsjFontCss", () => {
       defaultFont: 'A\\B"C',
       markers: fontMarker("nd", 'D\\E"F'),
     };
-    const family = `"D\\\\E\\"F", "A\\\\B\\"C", ${FALLBACK}`;
+    const family = `"PlatformEditorNbspStandIn", "D\\\\E\\"F", "A\\\\B\\"C", ${FALLBACK}`;
     for (const css of [generateUsjFontCss(styles), generateUsjCss(styles)]) {
-      expect(css).toContain(`${SCOPE} { font-family: "A\\\\B\\"C", ${FALLBACK}; }`);
+      expect(css).toContain(
+        `${SCOPE} { font-family: "PlatformEditorNbspStandIn", "A\\\\B\\"C", ${FALLBACK}; }`,
+      );
       expect(css).toContain(`${SCOPE} .usfm_nd { font-family: ${family}; }`);
     }
   });
@@ -543,7 +551,9 @@ describe("generateUsjFontCss", () => {
       { markers: fontMarker("nd", "Noto") },
       { containerSelector: ".x { } body" },
     );
-    expect(css).toBe(`${SCOPE} .usfm_nd { font-family: "Noto", ${FALLBACK}; }`);
+    expect(css).toBe(
+      `${SCOPE} .usfm_nd { font-family: "PlatformEditorNbspStandIn", "Noto", ${FALLBACK}; }`,
+    );
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("[generateUsjFontCss]"));
     warn.mockRestore();
   });
@@ -555,7 +565,9 @@ describe("generateUsjFontCss", () => {
       { defaultFont: "Noto", defaultFontSize: 12, markers: {} },
       { containerSelector: footnoteRows },
     );
-    expect(css).toBe(`${footnoteRows} { font-family: "Noto", ${FALLBACK}; font-size: 12pt; }`);
+    expect(css).toBe(
+      `${footnoteRows} { font-family: "PlatformEditorNbspStandIn", "Noto", ${FALLBACK}; font-size: 12pt; }`,
+    );
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
