@@ -310,6 +310,12 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- **A copy from the block-verse layout pastes as normal paragraphs.** The text grid's aligned column
+  cuts a paragraph into one fragment per verse for its rows, and its node copy carried those
+  fragments, so a Ctrl+V into paragraph-structure started a paragraph at each verse, moved the space
+  before the verse with it and could leave an empty `\p`; under `"protected"` structure the pieces
+  joined with an extra space. The node copy now rejoins the fragments of one paragraph. What the
+  column shows, and its plain text and html, are unchanged.
 - **A copy from a view that shows markers pastes into a view that hides them without its markers.**
   Standard view and the Footnotes pane's row editor write USFM as their html and plain text, so a
   copy of `1 \ft TR and ` saved as `1 ft TR and `, a marker's name as a word of Scripture. A paste

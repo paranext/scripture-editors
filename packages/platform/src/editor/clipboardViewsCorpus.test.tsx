@@ -973,10 +973,6 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | PlainRow): stri
       holdsHtmlLossyContent(row.protection === "protected" ? protectedFragment(copied) : copied)
     )
       return "accepted: html from another program, or from a copy ending inside a figure, carries no char attributes (`closed`), note details, milestones, alternate or published verse numbers, or figures, and brings a note's display spacers back as text";
-    // Not yet tracked: the block-verse layout builds each verse as a block of its own, and its node
-    // copy carries those blocks.
-    if (row.copyFrom?.name === "block-verse" && holdsVerseBlockBreak(copied, start, row.protection))
-      return "not yet tracked: the block-verse layout's node copy carries each verse as a block of its own, so pasted into paragraph-structure it starts a paragraph at each verse, the space before the verse moving with it and, after a nameless paragraph, leaving an empty `\\p` (under `protected`, it joins the blocks with an extra space)";
     // Not yet tracked: a hidden-marker view's plain-text paste leaves out the leading spaces of a
     // line it starts a new paragraph with, which the node copy keeps.
     if (
@@ -1006,29 +1002,6 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | PlainRow): stri
       return "PT-4388: Standard's text path over deliberately damaged USFM: a nameless marker re-tokenizes as text, and a bare backslash keeps the paste a pending literal";
   }
   return undefined;
-}
-
-/**
- * Whether a copy of `fragment`, which starts at `start`, in the block-verse layout holds a verse
- * block's edge that a paste into paragraph-structure turns into structure: a verse that does not
- * open a named paragraph opens a block of its own there. Under `protected`, which joins the blocks,
- * only such a verse after the copy's start does.
- */
-function holdsVerseBlockBreak(
-  fragment: Item[],
-  start: TextPoint,
-  protection: StructureProtectionMode,
-): boolean {
-  return fragment.some(
-    (block, blockIndex) =>
-      typeof block !== "string" &&
-      (block.content ?? []).some((item, index) => {
-        if (typeof item === "string" || item.type !== "verse") return false;
-        const indexInParagraph = blockIndex === 0 ? start.path[1] + index : index;
-        if (indexInParagraph === 0 && block.marker) return false;
-        return protection !== "protected" || blockIndex > 0 || index > 0;
-      }),
-  );
 }
 
 /** Whether a fragment holds what the html flavor cannot carry: a note, a milestone, a verse's or

@@ -6,11 +6,18 @@ import {
   $isElementNode,
   $isTextNode,
   LexicalNode,
+  NODE_STATE_KEY,
   NodeKey,
   RangeSelection,
   SerializedLexicalNode,
 } from "lexical";
-import { $isGutterMarkerNode, $isUnknownNode } from "shared";
+import {
+  $isGutterMarkerNode,
+  $isUnknownNode,
+  isSomeSerializedParaNode,
+  SomeSerializedParaNode,
+  verseBlockSourceState,
+} from "shared";
 import { $rangeReachesIntoOpaqueBlock, HIDDEN_VIEW_CLIPBOARD_NAMESPACE } from "shared-react";
 
 /**
@@ -35,13 +42,15 @@ export function $isLeftOutOfHiddenViewCopy(node: LexicalNode): boolean {
  * under protected structure). A paste of it reproduces the copy exactly: attributes, notes and
  * figures included.
  *
- * It differs from Lexical's own serialization (`$getLexicalContent`) twice:
+ * It differs from Lexical's own serialization (`$getLexicalContent`) three times:
  * - it holds no gutter marker glyph: a glyph is the view's reading aid, and
  *   `ParaMarkerPrefixGuardPlugin` builds one for each pasted paragraph;
  * - it holds every `UnknownNode` with no children the selection covers. Here every content-less
  *   construct is one — a caption-less figure, an optional break — since these views build no
  *   display children for a construct; `UnknownNode.excludeFromCopy` leaves it out of Lexical's
- *   serialization so that Standard view's two carriers agree, and a cut would then lose it.
+ *   serialization so that Standard view's two carriers agree, and a cut would then lose it;
+ * - it holds the block-verse layout's paragraphs as the document has them, not as the layout cuts
+ *   them to put each verse on a row ({@link rejoinVerseBlockFragments}).
  *
  * `undefined` — so a paste takes the html or plain text — when nothing is selected, when an end of
  * the selection lies inside an opaque construct (a node copy cannot carry part of one; it would
@@ -58,9 +67,10 @@ export function $hiddenViewLexicalFlavor(selection: RangeSelection): string | un
   )
     return undefined;
   const selectedKeys = new Set(selection.getNodes().map((node) => node.getKey()));
-  const nodes: SerializedLexicalNode[] = [];
+  const copiedNodes: SerializedLexicalNode[] = [];
   for (const child of $getRoot().getChildren())
-    $appendToNodeCopy(selection, selectedKeys, child, nodes);
+    $appendToNodeCopy(selection, selectedKeys, child, copiedNodes);
+  const nodes = rejoinVerseBlockFragments(copiedNodes);
   if (nodes.length === 0) return undefined;
   return JSON.stringify({ namespace: HIDDEN_VIEW_CLIPBOARD_NAMESPACE, nodes });
 }
@@ -104,4 +114,50 @@ function $appendToNodeCopy(
   if (isIncluded && !isExcluded) target.push(serialized);
   else target.push(...serializedChildren);
   return isIncluded;
+}
+
+/**
+ * Writes the block-verse layout's paragraph fragments (`verseBlockSourceState`) back as the
+ * paragraphs they were cut from: consecutive fragments of one source paragraph become one
+ * paragraph, without the layout's state. The `VerseBlockNode` around them is already gone
+ * (`excludeFromCopy`), and a unit without that state stays as it is, so a stanza break or a heading
+ * stays its own paragraph.
+ *
+ * A selection that stays within one source paragraph comes back as that paragraph's selected
+ * content alone, with no paragraph around it: what a node copy of such a range holds in
+ * paragraph-structure.
+ */
+function rejoinVerseBlockFragments(nodes: SerializedLexicalNode[]): SerializedLexicalNode[] {
+  const rejoined: SerializedLexicalNode[] = [];
+  let open: { source: number; paragraph: SomeSerializedParaNode } | undefined;
+  for (const node of nodes) {
+    const source = verseBlockSourceOf(node);
+    if (source === undefined || !isSomeSerializedParaNode(node)) {
+      open = undefined;
+      rejoined.push(node);
+    } else if (open?.source === source) {
+      open.paragraph.children.push(...node.children);
+    } else {
+      open = { source, paragraph: withoutVerseBlockSource(node) };
+      rejoined.push(open.paragraph);
+    }
+  }
+  return open && rejoined.length === 1 && nodes.length > 1 ? open.paragraph.children : rejoined;
+}
+
+/** The source paragraph a serialized fragment was cut from, if it is one. */
+function verseBlockSourceOf(node: SerializedLexicalNode): number | undefined {
+  const source = node[NODE_STATE_KEY]?.[verseBlockSourceState.key];
+  return typeof source === "number" ? source : undefined;
+}
+
+/** A copy of `paragraph` without `verseBlockSourceState`, with its own children array to add to. */
+function withoutVerseBlockSource(paragraph: SomeSerializedParaNode): SomeSerializedParaNode {
+  const { [NODE_STATE_KEY]: nodeState, ...rest } = paragraph;
+  const { [verseBlockSourceState.key]: _source, ...otherState } = nodeState ?? {};
+  return {
+    ...rest,
+    children: [...paragraph.children],
+    ...(Object.keys(otherState).length > 0 ? { [NODE_STATE_KEY]: otherState } : {}),
+  };
 }
