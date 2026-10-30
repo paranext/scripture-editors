@@ -974,7 +974,7 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | PlainRow): stri
     // Not yet tracked: the block-verse layout builds each verse as a block of its own, and its node
     // copy carries those blocks.
     if (row.copyFrom?.name === "block-verse" && holdsVerseBlockBreak(copied, start, row.protection))
-      return "not yet tracked: the block-verse layout's node copy carries each verse as a block of its own, so pasted into paragraph-structure it starts a paragraph at each verse (under `protected`, joins the blocks with an extra space)";
+      return "not yet tracked: the block-verse layout's node copy carries each verse as a block of its own, so pasted into paragraph-structure it starts a paragraph at each verse, the space before the verse moving with it and, after a nameless paragraph, leaving an empty `\\p` (under `protected`, it joins the blocks with an extra space)";
     // Not yet tracked: a hidden-marker view's plain-text paste leaves out the leading spaces of a
     // line it starts a new paragraph with, which the node copy keeps.
     if (
