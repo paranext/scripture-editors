@@ -293,9 +293,11 @@ refused. The public surface grew substantially; nothing was removed.
   it: Paratext reads `~` as a no-break space only in body text. With the option off, a settle of
   the value's paragraph saved the author's `~` as U+00A0. Unformatted view's settle keeps both too.
   A copy writes an attribute value's no-break space as U+00A0 under either setting; a paste reads
-  it the way it reads any pasted U+00A0, so with the option off it comes back as `~`, as Paratext 9
-  pastes one. The bytes an unwrapped span leaves behind are body text, and spell a no-break space
+  it the way it reads any pasted U+00A0, with the caret inside the value too, so with the option off
+  it comes back as `~`, as Paratext 9 pastes one. The bytes an unwrapped span leaves behind are body text, and spell a no-break space
   as body text does.
+- Pressing Enter just before a space that a no-break, ideographic or zero-width no-break space
+  follows no longer removes that character along with the space; Paratext 9 keeps it after a marker.
 - Placing the caret in an empty verse no longer moves the next verse number onto a new line, and the
   caret is drawn right after the empty verse's number. The verse holding the caret now carries
   `psc-empty-text-active` instead of no class, and its caret host carries `data-caret-host`. A host

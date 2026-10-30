@@ -452,14 +452,16 @@ describe("text entered into an attribute value", () => {
       expect(who(mounted)).toEqual({ who: "A~B" });
     });
 
-    it(`takes a pasted \`~\` and U+00A0 as the rest of a value's text, ${label}`, async () => {
+    it(`keeps a \`~\` pasted inside a value, and reads a pasted U+00A0 as Paratext 9 does, ${label}`, async () => {
       const mounted = await mount(allow);
       await select(mounted.lexical, "|AB", 2);
       await paste(mounted.lexical, new Map([["text/plain", `p~q${NBSP}r`]]));
       await commit(mounted);
       const usj = mounted.ref.current?.getUsj();
       expectNoStandIn(usj);
-      expect(pick(objectIn(paraContent(usj), "ms"), ["who"])).toEqual({ who: "Ap~q rB" });
+      expect(pick(objectIn(paraContent(usj), "ms"), ["who"])).toEqual({
+        who: allow ? `Ap~q${NBSP}rB` : "Ap~q~rB",
+      });
     });
   }
 });

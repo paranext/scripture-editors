@@ -710,10 +710,13 @@ function $insertPastedTextIntoAttributeContext(
   nbspSpelling: string,
 ): void {
   const valueBytes = $isSelectionWithinOneAttributeNode(selection);
+  // A U+00A0 pasted into a value is held as the value's text, where display spacing would save as a
+  // space: as Paratext 9 pastes one, it is itself with the setting on and `~` with it off.
   const resolved = valueBytes
-    ? isStructureProtected
-      ? stripPastedBlockMarkers(text, getMarker)
-      : text
+    ? (isStructureProtected ? stripPastedBlockMarkers(text, getMarker) : text).replaceAll(
+        NBSP,
+        nbspSpelling,
+      )
     : normalizePastedNbsp(
         isStructureProtected
           ? stripPastedBlockMarkers(stripPastedChapterAndBookId(text), getMarker)
