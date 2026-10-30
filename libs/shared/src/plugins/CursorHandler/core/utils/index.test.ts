@@ -17,7 +17,7 @@ describe("isCursorPlaceholderOnly", () => {
     expect(isCursorPlaceholderOnly("abc")).toBe(false);
   });
 
-  it("is false when a placeholder is embedded in real content (a Thai/Khmer line break survives)", () => {
+  it("is false when a placeholder is embedded in real content", () => {
     expect(isCursorPlaceholderOnly(`first${ZWSP}second`)).toBe(false);
     expect(isCursorPlaceholderOnly(`${ZWSP}x`)).toBe(false);
   });

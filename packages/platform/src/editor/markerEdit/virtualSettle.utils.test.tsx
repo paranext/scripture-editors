@@ -17,6 +17,7 @@ import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $createTextNode, $getRoot, $isTextNode, $setState } from "lexical";
 import {
+  $createCaretHostNode,
   $createCharNode,
   $createImmutableTypedTextNode,
   $createMarkerNode,
@@ -30,6 +31,7 @@ import {
   $isNoteNode,
   $isParaNode,
   $isUnknownNode,
+  CURSOR_PLACEHOLDER_CHAR,
   getEditableCallerText,
   getMarker as bundledGetMarker,
   NBSP,
@@ -116,6 +118,36 @@ describe("$settledUsj — paragraph scopes", () => {
     );
     // The sentinel serialized IN PLACE: between the two text runs, not moved to an end.
     expect(optbreakIndex).toBe(1);
+  });
+
+  it("leaves a caret host in a settling paragraph out of the settled USJ", async () => {
+    // A host's placeholder is not document text; re-tokenized, it would come back as an unmarked
+    // zero-width space, which the save keeps as authored content.
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $createTextNode(`${NBSP}before `),
+          $createUnknownNode("optbreak", "optbreak"),
+          $createCaretHostNode(),
+        ),
+      );
+    });
+
+    await act(async () => {
+      editor.update(() => {
+        const para = $getRoot().getChildren().find($isParaNode);
+        if (!para) throw new Error("expected a ParaNode");
+        const glyph = para.getFirstChild();
+        if (!$isMarkerNode(glyph)) throw new Error("expected a MarkerNode prefix glyph");
+        $pendGlyphEdit(glyph, "\\q1");
+      });
+      await Promise.resolve();
+    });
+
+    const settled = settledUsjOf(editor, context);
+    expect(markerAt(settled, 0)).toBe("q1");
+    expect(JSON.stringify(settled)).not.toContain(CURSOR_PLACEHOLDER_CHAR);
   });
 
   it("emits ONE milestone for a byte-damaged milestone glyph, never the preserved node AND its re-tokenized twin", async () => {

@@ -5,7 +5,6 @@ import {
   SomeVerseNode,
   wasNodeCreated,
 } from "../../nodes/usj/node-react.utils";
-import { $hasCaretHostMark } from "./transientCaretHost";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -19,6 +18,7 @@ import {
 } from "lexical";
 import { useEffect } from "react";
 import {
+  $hasCaretHostMark,
   $isAttributeRunNode,
   $isCharNode,
   $isNoteNode,

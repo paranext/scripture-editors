@@ -19,6 +19,7 @@ import {
   $createMarkerNode,
   $createParaNode,
   $createVerseNode,
+  $isCaretHost,
   $selectParaMarker,
   registerParaMarkerSelectionOwner,
   CharNode,
@@ -30,7 +31,6 @@ import {
 } from "shared";
 import {
   $createImmutableVerseNode,
-  $isCaretHost,
   EmptyVerseCaretGuardPlugin,
   getViewOptions,
   ImmutableVerseNode,
