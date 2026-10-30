@@ -12,8 +12,9 @@
  * matters most to a translator: a cut or paste changes exactly what was selected or pasted and
  * nothing else, what is pasted arrives intact, and undo and redo land exactly on the states before
  * and after. A copy in one view family pasted into the other ({@link runCrossViewRow}) goes in as
- * its html and plain text alone would; one in another hidden-marker view pasted into
- * paragraph-structure ({@link hiddenCrossViewRowsFor}) goes in exactly.
+ * its html and plain text alone would, without its marker tokens where it comes from Standard view
+ * into a hidden-marker view; one in another hidden-marker view pasted into paragraph-structure
+ * ({@link hiddenCrossViewRowsFor}) goes in exactly.
  *
  * Simple mode's paragraph-structure view runs every row under each structure protection
  * ({@link protectionsFor}); `protected` is its default. There a paste keeps the document's
@@ -49,6 +50,7 @@ import {
   LIBRARY_VIEWS_ENABLED,
   mountInView,
 } from "./editorViews.test-helpers";
+import { usfmToClipboardHtml } from "./markerEdit/whitespaceDisplay.plugin.utils";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -1555,9 +1557,20 @@ async function runPlainRow(row: PlainRow, usj: Usj): Promise<void> {
 }
 
 /**
+ * `usfm` with its marker tokens gone: each `\`, with a nested marker's `+`, its name, and a closer's
+ * `*` or an opener's one separator space. Spelled here rather than taken from the editor, so the
+ * model does not lean on what it checks.
+ */
+function withoutMarkers(usfm: string): string {
+  return usfm.replace(/\\\+?[\w-]*(?:\*| ?)/g, "");
+}
+
+/**
  * A copy in one view family, pasted into the other with every flavor it wrote, goes in as its html
  * and plain text alone would: each family's node copy holds node shapes only that family builds
  * (Standard view's marker text, a hidden-marker view's display nodes), so neither reads the other's.
+ * Into a hidden-marker view that means Standard view's text with its marker tokens gone
+ * ({@link withoutMarkers}), which the node copy's presence is what permits.
  * What the html and plain text make of a copy is the other rows' subject; this pins that the node
  * copy is passed over. Into Standard view, whose Ctrl+V reads the html and plain text itself, every
  * flavor is what a native paste (a host menu's own Paste) delivers.
@@ -1575,6 +1588,13 @@ async function runCrossViewRow(row: CrossViewRow, usj: Usj): Promise<void> {
   expect(clipboard.has(LEXICAL_FLAVOR), "the copy wrote its node copy").toBe(true);
   const withoutNodeCopy = new Map(clipboard);
   withoutNodeCopy.delete(LEXICAL_FLAVOR);
+  // Standard view's copy is USFM, and its node copy tells a hidden-marker view so: the view takes
+  // the marker tokens out, so what goes in is that text without them.
+  if (isMarkerHidden(row.to.view)) {
+    const text = withoutMarkers(clipboard.get("text/plain") ?? "");
+    withoutNodeCopy.set("text/plain", text);
+    withoutNodeCopy.set("text/html", usfmToClipboardHtml(text));
+  }
 
   const target = await mountInView(usj, row.to.view, { structureProtectionMode: row.protection });
   try {

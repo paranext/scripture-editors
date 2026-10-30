@@ -59,7 +59,12 @@ import {
   $selectParaMarker,
   LoggerBasic,
 } from "shared";
-import { $nodesFromNodeCopy, nodeCopyIn, removeMarkerGlyphElements } from "./clipboard.utils";
+import {
+  $nodesFromNodeCopy,
+  nodeCopyIn,
+  removeMarkerGlyphElements,
+  withoutMarkerTokens,
+} from "./clipboard.utils";
 import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
@@ -131,6 +136,9 @@ function $restorerFor(selection: RangeSelection): () => void {
  *   that copy rather than from its html, so attributes, notes and figures arrive whole (e.g.
  *   `HIDDEN_VIEW_CLIPBOARD_NAMESPACE` in a hidden-marker view). Any other paste takes its html, and
  *   so does one whose node copy makes no nodes (see `$nodesFromNodeCopy`).
+ * @param removesMarkerTokens - Under `"protected"`, whether html from a view that shows markers
+ *   goes in without its marker tokens (see `withoutMarkerTokens`), as a view that hides markers
+ *   needs. A paste or drop of nothing else changes nothing. Defaults to `false`.
  * @param logger - Where a node copy that makes no nodes is logged, at `warn`.
  * @returns Always `null`; this plugin renders no UI, only editor behavior and DOM signals.
  */
@@ -138,6 +146,7 @@ export function StructureKeyboardPlugin({
   structureProtectionMode = "off",
   $filterPastedNodes,
   nodeCopyNamespace,
+  removesMarkerTokens = false,
   logger,
 }: {
   structureProtectionMode?: StructureProtectionMode;
@@ -147,6 +156,7 @@ export function StructureKeyboardPlugin({
     source: "paste" | "drop",
   ) => void;
   nodeCopyNamespace?: string;
+  removesMarkerTokens?: boolean;
   logger?: LoggerBasic;
 }): null {
   const [editor] = useLexicalComposerContext();
@@ -365,6 +375,20 @@ export function StructureKeyboardPlugin({
       return true;
     };
 
+    // Sanitize and insert a paste's or drop's html, its marker tokens gone first where they must be.
+    const $sanitizeAndInsertTransfer = (
+      data: DataTransfer | null,
+      event: Event,
+      source: "paste" | "drop",
+    ): boolean => {
+      const stripped = data && removesMarkerTokens ? withoutMarkerTokens(data) : data;
+      if (data && !stripped) {
+        event.preventDefault();
+        return true;
+      }
+      return $sanitizeAndInsert(stripped?.getData("text/html"), event, source);
+    };
+
     const $handlePaste = (event: ClipboardEvent): boolean => {
       if (structureProtectionMode !== "protected") return false;
       const selection = $getSelection();
@@ -378,7 +402,7 @@ export function StructureKeyboardPlugin({
           : undefined;
       const nodes = nodeCopy && $nodesFromNodeCopy(nodeCopy, loggerRef.current);
       if (nodes) return $insertSanitized(nodes, event, "paste");
-      return $sanitizeAndInsert(event.clipboardData?.getData("text/html"), event, "paste");
+      return $sanitizeAndInsertTransfer(event.clipboardData, event, "paste");
     };
 
     const $handleDrop = (event: DragEvent): boolean => {
@@ -391,7 +415,7 @@ export function StructureKeyboardPlugin({
       // With no range to land at, `$sanitizeAndInsert` inserts nothing but still claims the drop:
       // the default handler would let the browser insert the payload itself, structure and all.
       // (A selected paragraph marker has already moved the selection to the drop point.)
-      return $sanitizeAndInsert(event.dataTransfer?.getData("text/html"), event, "drop");
+      return $sanitizeAndInsertTransfer(event.dataTransfer, event, "drop");
     };
 
     // A delete that arrives with no Backspace/Delete keydown (macOS Ctrl+H / Ctrl+D map to none,
@@ -524,7 +548,7 @@ export function StructureKeyboardPlugin({
       ),
       editor.registerUpdateListener(clearStaleLatch),
     );
-  }, [editor, structureProtectionMode, nodeCopyNamespace, setArmedState]);
+  }, [editor, structureProtectionMode, nodeCopyNamespace, removesMarkerTokens, setArmedState]);
 
   // Publish the armed state onto the editor root: the class gates the CSS blink to armed markers,
   // and the data attributes let the host app render a localized destructive hint. The `verse-`

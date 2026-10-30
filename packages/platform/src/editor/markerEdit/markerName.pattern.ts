@@ -23,9 +23,13 @@
  * scan-based rule itself) do not import from here; keeping the byte classes single-sourced is the
  * goal, not forcing every marker test through one regex.
  */
+import { ENGINE_MARKER_NAME_BYTES } from "shared";
 
-/** The engine's marker-name byte class CONTENTS (no brackets): `\w` plus the milestone hyphen. */
-export const ENGINE_MARKER_NAME_BYTES = String.raw`\w-`;
+/**
+ * The engine's marker-name byte class CONTENTS (no brackets): `\w` plus the milestone hyphen. Spelled
+ * in `shared`, so `shared-react`'s marker-token removal derives from the same class.
+ */
+export { ENGINE_MARKER_NAME_BYTES };
 
 /** Canonical USFM marker-name byte class CONTENTS (no brackets): lowercase letters and digits. */
 export const CANONICAL_MARKER_NAME_BYTES = "a-z0-9";

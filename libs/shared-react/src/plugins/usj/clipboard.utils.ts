@@ -21,7 +21,7 @@ import {
   TabNode,
   TextNode,
 } from "lexical";
-import { LoggerBasic, MARKER_TEXT_TYPE, textTypeState } from "shared";
+import { ENGINE_MARKER_NAME_BYTES, LoggerBasic, MARKER_TEXT_TYPE, textTypeState } from "shared";
 
 function cleanupText(text: string): string {
   return text.replaceAll("\t", " ");
@@ -340,6 +340,76 @@ export const LEXICAL_CLIPBOARD_TYPE = "application/x-lexical-editor";
  * from its own family, and a copy from the other one through its html or plain text.
  */
 export const HIDDEN_VIEW_CLIPBOARD_NAMESPACE = "platformEditor/hidden-markers";
+
+/**
+ * The namespace a view that shows markers leaves on its node copy ({@link LEXICAL_CLIPBOARD_TYPE}):
+ * the Lexical namespace of every platform editor, which only a hidden-marker view changes
+ * ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}). A paste carrying it comes from a view whose text flavors
+ * are USFM, which is how a hidden-marker view can tell its markers from a `\` anyone else wrote.
+ */
+export const MARKER_VIEW_CLIPBOARD_NAMESPACE = "platformEditor";
+
+/**
+ * A whole marker token: the `\`, a nested marker's `+`, the name, and either a closer's `*` or an
+ * opening marker's one separator space. The name may be empty: `\*` closes a milestone, and a bare
+ * `\` is the nameless marker. A byte outside the name class stays: it may be text.
+ */
+const MARKER_TOKEN_REGEX = new RegExp(
+  String.raw`\\\+?[${ENGINE_MARKER_NAME_BYTES}]*(?:\*| ?)`,
+  "g",
+);
+
+/**
+ * `usfm` without its marker tokens, and nothing else gone: a verse's number, a note's caller and an
+ * attribute list are text here, so they stay.
+ *
+ * @param usfm - USFM text, known to be USFM: every `\` in it is taken for a marker.
+ */
+export function removeMarkerTokens(usfm: string): string {
+  return usfm.replace(MARKER_TOKEN_REGEX, "");
+}
+
+/**
+ * `html`'s body, parsed, with the marker tokens gone from each of its text nodes; its elements, and
+ * so its paragraphs, stay as they are.
+ */
+function bodyWithoutMarkerTokens(html: string): HTMLElement {
+  const { body } = new DOMParser().parseFromString(html, "text/html");
+  const texts = body.ownerDocument.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  while (texts.nextNode()) {
+    const text = texts.currentNode;
+    text.textContent = removeMarkerTokens(text.textContent ?? "");
+  }
+  return body;
+}
+
+/**
+ * `data` as a hidden-marker view inserts it: when it carries a node copy tagged
+ * {@link MARKER_VIEW_CLIPBOARD_NAMESPACE}, without the marker tokens in its html and plain text
+ * ({@link removeMarkerTokens}), so a marker's name does not go in as a word of Scripture. Any other
+ * `data`, whose `\` could be anything, comes back as it is.
+ *
+ * @param data - The pasted or dropped transfer; the result reads only `getData` from it.
+ * @returns The transfer to insert, or `undefined` when such a copy held nothing but marker tokens
+ *   and line breaks, so there is nothing to insert.
+ */
+export function withoutMarkerTokens(data: DataTransfer): DataTransfer | undefined {
+  if (!nodeCopyIn(data, MARKER_VIEW_CLIPBOARD_NAMESPACE)) return data;
+  const plain = removeMarkerTokens(data.getData("text/plain"));
+  const htmlBody = bodyWithoutMarkerTokens(data.getData("text/html"));
+  const text = plain || (htmlBody.textContent ?? "");
+  if (!text.replace(/[\r\n]/g, "")) return undefined;
+  const html = data.getData("text/html") && htmlBody.ownerDocument.documentElement.outerHTML;
+  // Lexical reads only `getData` from a transfer it inserts, and a real `DataTransfer` cannot be
+  // constructed everywhere this runs.
+  return {
+    getData: (type: string) => {
+      if (type === "text/plain") return plain;
+      if (type === "text/html") return html;
+      return data.getData(type);
+    },
+  } as Pick<DataTransfer, "getData"> as DataTransfer;
+}
 
 /**
  * The serialized nodes of the node copy ({@link LEXICAL_CLIPBOARD_TYPE}) in `data`, when it is

@@ -3,6 +3,7 @@ import {
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   nodeCopyIn,
   removeMarkerGlyphElements,
+  withoutMarkerTokens,
   withoutNodeCopy,
 } from "./clipboard.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
@@ -147,7 +148,10 @@ function joinLines(text: string): string {
  * Reads a node copy (`application/x-lexical-editor`) only from a hidden-marker view, which tags it
  * {@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}: pasted, it goes in exactly as copied, attributes, notes
  * and figures included. A node copy from any other view, such as Standard view, whose node shapes
- * differ, is passed over for its html or plain text.
+ * differ, is passed over for its html or plain text. Such a copy from a view that shows markers
+ * also tells this plugin that those are USFM, so their marker tokens go first
+ * ({@link withoutMarkerTokens}), unreported: they are markup, not text the user was asked to type. A
+ * `\` in any other paste could be anything, so it goes alone, and is reported.
  *
  * Covers each route a paste or drop inserts by: a node copy and html (through
  * `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`), and plain text, pasted (`PASTE_COMMAND`) or dropped
@@ -319,7 +323,9 @@ export function UnstorableTextPlugin({
      *   it;
      * - a transfer with any other node copy — another view's, such as Standard view's (tagged with
      *   the editor's own namespace), or one that makes no nodes ({@link $nodesFromNodeCopy}) — by
-     *   its html or plain text, so another view's node shapes are never rebuilt here;
+     *   its html or plain text, so another view's node shapes are never rebuilt here, without its
+     *   marker tokens if it is a marker view's ({@link withoutMarkerTokens}), and changing nothing
+     *   if nothing else is left;
      * - plain text or html that the filter or the glyph strip changes.
      */
     const $insertTransfer = (
@@ -335,7 +341,9 @@ export function UnstorableTextPlugin({
         $insertGeneratedNodes(editor, nodes, selection);
         return true;
       }
-      const data = withoutNodeCopy(transfer);
+      const stripped = withoutMarkerTokens(transfer);
+      if (!stripped) return true;
+      const data = withoutNodeCopy(stripped);
       if ($insertPlainTransfer(data, source) || $insertHtmlWithoutGlyphs(data, source)) return true;
       if (data === transfer) return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);

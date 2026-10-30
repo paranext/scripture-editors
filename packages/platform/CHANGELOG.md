@@ -310,6 +310,13 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- **A copy from a view that shows markers pastes into a view that hides them without its markers.**
+  Standard view and the Footnotes pane's row editor write USFM as their html and plain text, so a
+  copy of `1 \ft TR and ` saved as `1 ft TR and `, a marker's name as a word of Scripture. A paste
+  that carries their `"platformEditor"` node copy now loses its marker tokens first (`1 TR and `),
+  with no `onUnstorableTextRemoved` report for them. A verse's number, a note's caller and an
+  attribute list stay as text. A paste without that node copy (another program's, or from a host
+  with no native paste) is unchanged, as are Standard and Markers views.
 - Ctrl+V and Ctrl+Shift+V no longer paste into a read-only editor (`isReadonly`, e.g. a preview or a
   resource text). `ClipboardPlugin` listens for its shortcuts on the editor root itself, outside
   Lexical's read-only gate, so the clipboard was inserted and reported through `onUsjChange`. A
