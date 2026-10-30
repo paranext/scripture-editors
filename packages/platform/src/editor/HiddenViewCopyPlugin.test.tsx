@@ -165,6 +165,85 @@ describe("HiddenViewCopyPlugin", () => {
     }
   });
 
+  describe("a block-verse copy", () => {
+    /** The top-level nodes of the node copy of the range `from`-`to` in `viewName`. */
+    async function copiedNodes(
+      viewName: "block-verse" | "paragraph-structure",
+      from: At,
+      to: At,
+      usj: Usj = matthew,
+    ): Promise<SerializedNode[]> {
+      const mounted = await mountInView(usj, editorView(viewName));
+      try {
+        await select(mounted.lexical, from, to);
+        const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+        const payload = JSON.parse(store.get(LEXICAL_FLAVOR) ?? "{}") as {
+          nodes?: SerializedNode[];
+        };
+        return payload.nodes ?? [];
+      } finally {
+        mounted.unmount();
+      }
+    }
+
+    const flatten = (nodes: SerializedNode[]): SerializedNode[] =>
+      nodes.flatMap((node) => [node, ...flatten(node.children ?? [])]);
+
+    // Matthew 2:7-8, one `\\p`, and the next paragraph, 2:9.
+    const VERSE_7 = { text: "Then Herod secretly", offset: 2 };
+    const VERSE_8 = { text: "He sent them", offset: 2 };
+    const VERSE_9 = { text: "They, having heard", offset: 2 };
+
+    it("across two verses of one paragraph holds no verse block and no paragraph break", async () => {
+      const nodes = await copiedNodes("block-verse", VERSE_7, VERSE_8);
+      const types = flatten(nodes).map(({ type }) => type);
+      expect(types).not.toContain("verse-block");
+      expect(types.filter((type) => type === "para")).toHaveLength(0);
+      expect(nodes).toEqual(await copiedNodes("paragraph-structure", VERSE_7, VERSE_8));
+    });
+
+    it("from two verses of one paragraph into the next rejoins the first as one paragraph", async () => {
+      const nodes = await copiedNodes("block-verse", VERSE_7, VERSE_9);
+      expect(flatten(nodes).map(({ type }) => type)).not.toContain("verse-block");
+      expect(nodes.map(({ type }) => type)).toEqual(["para", "para"]);
+      expect(nodes).toEqual(await copiedNodes("paragraph-structure", VERSE_7, VERSE_9));
+    });
+
+    it("keeps a unit that is not a fragment as its own paragraph", async () => {
+      const usj: Usj = {
+        type: "USJ",
+        version: "3.1",
+        content: [
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "verse", marker: "v", number: "1" },
+              "verse one ",
+              { type: "verse", marker: "v", number: "2" },
+              "verse two",
+            ],
+          },
+          { type: "para", marker: "s", content: ["a heading"] },
+        ],
+      };
+      const from = { text: "verse one", offset: 2 };
+      const to = { text: "a heading", offset: 2 };
+      const nodes = await copiedNodes("block-verse", from, to, usj);
+      expect(nodes.map(({ marker }) => marker)).toEqual(["p", "s"]);
+      expect(nodes).toEqual(await copiedNodes("paragraph-structure", from, to, usj));
+    });
+
+    it("across a poetry break keeps both paragraph markers", async () => {
+      const nodes = await copiedNodes("block-verse", ACROSS_PARAGRAPHS.from, ACROSS_PARAGRAPHS.to);
+      expect(flatten(nodes).map(({ type }) => type)).not.toContain("verse-block");
+      expect(nodes.map(({ marker }) => marker)).toEqual(["q2", "q1"]);
+      expect(nodes).toEqual(
+        await copiedNodes("paragraph-structure", ACROSS_PARAGRAPHS.from, ACROSS_PARAGRAPHS.to),
+      );
+    });
+  });
+
   // 2 Samuel 1's second figure paragraph: text, a figure with a caption, text.
   const figureParagraph = (samuel.content[92] as MarkerObject).content ?? [];
   const beforeFigure = figureParagraph[0] as string;
