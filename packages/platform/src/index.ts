@@ -42,7 +42,7 @@ export {
   HIDDEN_NOTE_CALLER,
   MarkerType,
 } from "shared";
-export { generateUsjCss } from "./editor/generateUsjCss";
+export { generateUsjCss, generateUsjFontCss } from "./editor/generateUsjCss";
 export { getEnterMenuItems, getMarkerMenuItems } from "./editor/markerMenu/markerItemSource";
 export {
   BLOCK_VERSE_VIEW_MODE,
