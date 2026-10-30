@@ -1,7 +1,6 @@
 import { $isSomeVerseNode, SomeVerseNode } from "../../nodes/usj";
 import { $isOpaqueBlockNode, $rangeReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $placeCaretAtParaContentStart } from "./ParaMarkerPrefixCursorGuardPlugin";
-import { $isCaretHost } from "./transientCaretHost";
 import { $findMatchingParent } from "@lexical/utils";
 import {
   $createTextNode,
@@ -21,6 +20,7 @@ import {
   $createImpliedParaNode,
   $getSelectableParaMarker,
   $getSelectedParaMarkerPara,
+  $isCaretHost,
   $isGutterMarkerNode,
   $isMarkerTrailingSeparator,
   $isParaLikeNode,

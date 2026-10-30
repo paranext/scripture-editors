@@ -226,6 +226,11 @@ refused. The public surface grew substantially; nothing was removed.
   reload that chapter has no line. Deleting an empty paragraph
   next to another paragraph, by Delete inside it or by Backspace from the start of the paragraph
   after it, now removes the empty one instead of moving the other paragraph's text under its marker.
+- A text node holding only zero-width spaces that the author typed (a line-break opportunity in
+  Thai, Khmer and Lao), which an annotation or other split leaves in a node of its own, is now kept
+  by `getUsj()`, sent in delta ops, and counted in annotation and OT positions. It used to be taken
+  for the editor's caret placeholder and dropped, which put every later op one unit early relative
+  to the saved document. Only the editor's own marked caret host is left out now.
 - Placing the caret in an empty verse no longer moves the next verse number onto a new line, and the
   caret is drawn right after the empty verse's number. The verse holding the caret now carries
   `psc-empty-text-active` instead of no class, and its caret host carries `data-caret-host`. A host

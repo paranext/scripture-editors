@@ -257,9 +257,10 @@ function $selectedTrailingNote(): NoteNode | undefined {
  * the note rather than inside its hidden body.
  *
  * {@link useTransientCaretHost} owns the host's lifetime — created on arrival, removed on departure
- * or blur, stripped the moment real text is typed — and the exclusions that keep it out of saved
- * Scripture and out of collaborative traffic; this file supplies only the rule for WHERE the caret
- * belongs. `EmptyVerseCaretGuardPlugin` supplies the other rule.
+ * or blur, stripped the moment real text is typed. What keeps a host out of saved Scripture and out
+ * of collaborative traffic is its mark, read through shared's `transientCaretHost.utils.ts`. This
+ * file supplies only the rule for WHERE the caret belongs. `EmptyVerseCaretGuardPlugin` supplies the
+ * other rule.
  *
  * An arrow press announces itself as a caret at the boundary, so the caret's own resting place is
  * the rule for it. A pointer never produces that position — every DOM position at the end of that

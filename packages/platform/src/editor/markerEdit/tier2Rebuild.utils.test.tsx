@@ -32,6 +32,7 @@ import {
 import {
   $charAttributeDisplayNode,
   $createAttributeRunNode,
+  $createCaretHostNode,
   $createChapterNode,
   $createCharNode,
   $createImpliedParaNode,
@@ -50,6 +51,7 @@ import {
   $isUnknownNode,
   $isVerseNode,
   CharNode,
+  CURSOR_PLACEHOLDER_CHAR,
   getEditableCallerText,
   getMarker as bundledGetMarker,
   getVisibleOpenMarkerText,
@@ -870,6 +872,110 @@ describe("$rebuildParas", () => {
         expect(selection.anchor.offset).toBe(2); // END of the glyph, not inside it
       }
     });
+  });
+
+  it("leaves a caret host the caret rests in out of the rebuilt bytes", () => {
+    // The caret rests in the host past a paragraph's trailing collapsed note while a typed literal
+    // earlier in the same paragraph settles on departure. A host's placeholder is not document
+    // text: re-tokenized, it would come back as an UNMARKED zero-width space — authored content
+    // the save keeps.
+    const editor = loadEditor(
+      usjFromUsx(
+        `<verse number="1" style="v" />before \\nd Lord\\nd* after<note caller="+" style="f"><char style="ft">n</char></note>`,
+      ),
+    );
+    let noteKey = "";
+    editor.update(
+      () => {
+        const note = requireDefined($lastPara().getChildren().find($isNoteNode), "note not found");
+        noteKey = note.getKey();
+        const host = $createCaretHostNode();
+        note.insertAfter(host);
+        host.select(0, 0);
+        expect($rebuildParas([$lastPara()], context)).toBe(true);
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).not.toContain(CURSOR_PLACEHOLDER_CHAR);
+      const para = $lastPara();
+      expect(para.getLastChild()?.getKey()).toBe(noteKey);
+      const selection = $getSelection();
+      expect($isRangeSelection(selection)).toBe(true);
+      if ($isRangeSelection(selection)) {
+        // The boundary the host stood at: just past the note, not the paragraph's start.
+        expect(selection.anchor.key).toBe(para.getKey());
+        expect(selection.anchor.offset).toBe(para.getChildrenSize());
+      }
+    });
+    const usj = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
+    expect(JSON.stringify(usj)).not.toContain(CURSOR_PLACEHOLDER_CHAR);
+    expect($firstPara(usj)).toMatchObject({
+      content: [
+        { type: "verse", number: "1" },
+        "before ",
+        { type: "char", marker: "nd", content: ["Lord"] },
+        " after",
+        { type: "note", marker: "f" },
+      ],
+    });
+  });
+
+  it("holds a caret resting in a caret host at the host's byte through a rebuild", () => {
+    const editor = loadEditor(
+      usjFromUsx(
+        `<verse number="1" style="v" />before \\nd Lord\\nd* after<verse number="2" style="v" /><verse number="3" style="v" />c`,
+      ),
+    );
+    editor.update(
+      () => {
+        const verse2 = requireDefined(
+          $lastPara()
+            .getChildren()
+            .find((node) => $isVerseNode(node) && node.getNumber() === "2"),
+          "verse 2 not found",
+        );
+        const host = $createCaretHostNode();
+        verse2.insertAfter(host);
+        host.select(0, 0);
+        expect($rebuildParas([$lastPara()], context)).toBe(true);
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      const verse2 = requireDefined(
+        $lastPara()
+          .getChildren()
+          .find((node) => $isVerseNode(node) && node.getNumber() === "2"),
+        "verse 2 not found after rebuild",
+      );
+      const selection = $getSelection();
+      expect($isRangeSelection(selection)).toBe(true);
+      if ($isRangeSelection(selection)) {
+        // The byte the host stood at: the end of verse 2's glyph, not the paragraph's start.
+        expect(selection.anchor.key).toBe(verse2.getKey());
+        expect(selection.anchor.offset).toBe(verse2.getTextContentSize());
+      }
+    });
+  });
+
+  it("treats a scope that differs from its rebuild only by a caret host as a fixed point", () => {
+    // Splicing would destroy the host under the resting caret for no change to the document.
+    const editor = loadEditor(
+      usjFromUsx(
+        `<verse number="1" style="v" />a<note caller="+" style="f"><char style="ft">n</char></note>`,
+      ),
+    );
+    editor.update(
+      () => {
+        const note = requireDefined($lastPara().getChildren().find($isNoteNode), "note not found");
+        const host = $createCaretHostNode();
+        note.insertAfter(host);
+        host.select(0, 0);
+        expect($rebuildParas([$lastPara()], context)).toBe(false);
+      },
+      { discrete: true },
+    );
   });
 });
 

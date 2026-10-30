@@ -93,6 +93,7 @@ import {
   NodeKey,
   SerializedEditorState,
   SerializedLexicalNode,
+  SerializedTextNode,
   TextNode,
 } from "lexical";
 import {
@@ -110,6 +111,7 @@ import {
   CharNode,
   MarkerLookup,
   MarkerNode,
+  isSerializedCaretHost,
   isSerializedVerseNode,
   NoteNode,
   ParaNode,
@@ -864,7 +866,11 @@ function canMergeSerializedText(a: SerializedLexicalNode, b: SerializedLexicalNo
     aNode.style === bNode.style &&
     aNode.mode === bNode.mode &&
     aNode.detail === bNode.detail &&
-    serializedTextTypeState(a) === serializedTextTypeState(b)
+    serializedTextTypeState(a) === serializedTextTypeState(b) &&
+    // Lexical never merges a caret host with its neighbor (its mark is node state that differs),
+    // and merged in, its placeholder would reach the save as authored text.
+    !isSerializedCaretHost(a as SerializedTextNode) &&
+    !isSerializedCaretHost(b as SerializedTextNode)
   );
 }
 

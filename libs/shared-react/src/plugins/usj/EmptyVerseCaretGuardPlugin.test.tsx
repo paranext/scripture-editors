@@ -7,7 +7,7 @@ import { EmptyVerseCaretGuardPlugin } from "./EmptyVerseCaretGuardPlugin";
 import { baseTestEnvironment, deleteTextAtSelection, settle } from "./react-test.utils";
 import { TextSpacingPlugin } from "./TextSpacingPlugin";
 import { TrailingNoteCaretGuardPlugin } from "./TrailingNoteCaretGuardPlugin";
-import { $isCaretHost, CARET_HOST_ATTRIBUTE } from "./transientCaretHost";
+import { CARET_HOST_ATTRIBUTE } from "./transientCaretHost";
 import { createEmptyHistoryState, HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { act } from "@testing-library/react";
 import {
@@ -35,6 +35,7 @@ import {
 import {
   $createCharNode,
   $createParaNode,
+  $isCaretHost,
   $wrapSelectionInTypedMarkNode,
   CURSOR_CHANGE_TAG,
   CURSOR_PLACEHOLDER_CHAR,
