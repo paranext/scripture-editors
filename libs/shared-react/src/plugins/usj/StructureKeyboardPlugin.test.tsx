@@ -37,6 +37,7 @@ import {
   $createBookNode,
   $createChapterNode,
   $createGutterMarkerNode,
+  $createImmutableChapterNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createParaNode,
@@ -1066,7 +1067,7 @@ describe("StructureKeyboardPlugin — an empty paragraph after a chapter", () =>
         empty = $createParaNode("s");
         next = $createParaNode("p");
         $getRoot().append(
-          $createChapterNode("1"),
+          $createImmutableChapterNode("1"),
           hasGutterMarker ? empty.append($createGutterMarkerNode("\\s ")) : empty,
           next.append($createTextNode("first")),
         );
@@ -1094,7 +1095,7 @@ describe("StructureKeyboardPlugin — an empty paragraph after a chapter", () =>
       empty = $createParaNode("s");
       next = $createParaNode("p");
       $getRoot().append(
-        $createChapterNode("1"),
+        $createImmutableChapterNode("1"),
         empty.append($createGutterMarkerNode("\\s ")),
         next.append($createTextNode("first")),
       );
@@ -1113,14 +1114,14 @@ describe("StructureKeyboardPlugin — an empty paragraph after a chapter", () =>
   });
 
   it.each([
-    ["the next chapter", () => [$createChapterNode("2")]],
+    ["the next chapter", () => [$createImmutableChapterNode("2")]],
     ["the end of the book", () => []],
   ])("is refused, not armed, when %s follows it", async (_label, $following) => {
     let empty: ParaNode;
     const { editor } = await guardedEnvironment(() => {
       empty = $createParaNode("s");
       $getRoot().append(
-        $createChapterNode("1"),
+        $createImmutableChapterNode("1"),
         empty.append($createGutterMarkerNode("\\s ")),
         ...$following(),
       );
@@ -1140,7 +1141,7 @@ describe("StructureKeyboardPlugin — an empty paragraph after a chapter", () =>
     const { editor } = await protectedEnvironment(() => {
       empty = $createParaNode("s");
       $getRoot().append(
-        $createChapterNode("1"),
+        $createImmutableChapterNode("1"),
         empty.append($createGutterMarkerNode("\\s ")),
         $createParaNode("p").append($createTextNode("first")),
       );
@@ -1163,7 +1164,7 @@ describe("StructureKeyboardPlugin — an empty paragraph after a chapter", () =>
       second = $createParaNode("s2");
       next = $createParaNode("p");
       $getRoot().append(
-        $createChapterNode("1"),
+        $createImmutableChapterNode("1"),
         first.append($createGutterMarkerNode("\\s ")),
         second.append($createGutterMarkerNode("\\s2 ")),
         next.append($createTextNode("first")),
@@ -1190,7 +1191,7 @@ describe("StructureKeyboardPlugin — an empty paragraph after a chapter", () =>
       () => {
         empty = $createParaNode("s");
         $getRoot().append(
-          $createChapterNode("1"),
+          $createImmutableChapterNode("1"),
           empty.append($createGutterMarkerNode("\\s ")),
           $createParaNode("p").append($createTextNode("first")),
         );
@@ -1332,6 +1333,32 @@ describe("StructureKeyboardPlugin — Backspace after an empty paragraph", () =>
       expectCaretIn(editor, second!);
     },
   );
+
+  // Selecting the empty paragraph's marker would move the caret into that paragraph, so a key
+  // typed after the arm would land there instead of here.
+  it("the first Backspace leaves the caret where it is, not on the empty paragraph's marker", async () => {
+    let secondText: TextNode;
+    const { editor } = await guardedEnvironment(() => {
+      secondText = $createTextNode("second");
+      $getRoot().append(
+        $createParaNode("p").append($createTextNode("first")),
+        $createParaNode("s").append($createGutterMarkerNode("\\s ")),
+        $createParaNode("q1").append(secondText),
+      );
+    });
+    updateSelection(editor, secondText!, 0);
+
+    await pressKey(editor, "Backspace", 0);
+
+    expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(true);
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.isCollapsed()).toBe(true);
+      expect(selection.focus.key).toBe(secondText!.getKey());
+      expect(selection.focus.offset).toBe(0);
+    });
+  });
 });
 
 // The plugin renders no UI; it publishes the armed state to the editor root so the host app can

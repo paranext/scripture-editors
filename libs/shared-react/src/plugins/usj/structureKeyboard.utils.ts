@@ -132,8 +132,10 @@ export function keyDownToIntent(event: KeyboardEvent): EditIntent | undefined {
  * `node`, if any. `ParaLike`, not `SomePara`: the `\id` line is content like any paragraph's —
  * protected mode must recognize it as a block boundary too, or a Delete at the line's own end,
  * or a selection spanning from it into the next real paragraph, merges right through it.
+ *
+ * Read-only: safe in any read or update.
  */
-function $getParaAncestor(node: LexicalNode | null | undefined): LexicalNode | undefined {
+export function $getParaAncestor(node: LexicalNode | null | undefined): LexicalNode | undefined {
   if (!node) return undefined;
   if ($isParaLikeNode(node)) return node;
   const para = $findMatchingParent(node, (n: LexicalNode) => $isParaLikeNode(n));
@@ -484,8 +486,7 @@ export function $structuralDeleteTarget(
     if ($caretAtParaEnd(selection) && $hasNeighborBlock(selection, "forward")) {
       const para = $getParaAncestor(selection.anchor.getNode());
       // An empty paragraph goes itself, rather than taking the next one's text under its marker.
-      if ($isSomeParaNode(para) && $isParaEmpty(para) && $isParaLikeNode(para.getNextSibling()))
-        return { kind: "para", node: para };
+      if ($isSomeParaNode(para) && $canRemoveEmptyPara(para)) return { kind: "para", node: para };
       const next = para?.getNextSibling();
       if ($isSomeParaNode(next)) return { kind: "para", node: next };
     }
@@ -606,18 +607,26 @@ export function $canMergeIntoPrevious(para: SomeParaNode): boolean {
 }
 
 /**
- * True when `para` is empty and sits right after a chapter, with a paragraph after it. It has
- * nothing before it to merge into, but removing it loses nothing, and the paragraph after it takes
- * the caret. Alone in its chapter it stays, so the chapter keeps a line to type in.
+ * True when `para` can be removed outright rather than merged: it is empty, so removing it loses
+ * nothing, and it has a paragraph after it to take the caret. {@link $structuralDeleteTarget},
+ * which picks what to arm, and {@link $deletePara}, which carries it out, both judge removal by
+ * this, so they cannot disagree.
+ *
+ * Read-only: safe in any read or update.
+ */
+function $canRemoveEmptyPara(para: SomeParaNode): boolean {
+  return $isParaEmpty(para) && $isParaLikeNode(para.getNextSibling());
+}
+
+/**
+ * True when `para` is removable ({@link $canRemoveEmptyPara}) and sits right after a chapter. It
+ * has nothing before it to merge into, but removing it loses nothing. Alone in its chapter it
+ * stays, so the chapter keeps a line to type in.
  *
  * Read-only: safe in any read or update.
  */
 function $canRemoveEmptyParaAfterChapter(para: SomeParaNode): boolean {
-  return (
-    $isParaEmpty(para) &&
-    $isSomeChapterNode(para.getPreviousSibling()) &&
-    $isParaLikeNode(para.getNextSibling())
-  );
+  return $canRemoveEmptyPara(para) && $isSomeChapterNode(para.getPreviousSibling());
 }
 
 /**
@@ -639,7 +648,7 @@ export function $canDeletePara(para: SomeParaNode): boolean {
  */
 export function $getEmptyParaBefore(para: SomeParaNode): SomeParaNode | undefined {
   const prev = para.getPreviousSibling();
-  return $isSomeParaNode(prev) && $isParaEmpty(prev) ? prev : undefined;
+  return $isSomeParaNode(prev) && $canRemoveEmptyPara(prev) ? prev : undefined;
 }
 
 /**
@@ -655,14 +664,11 @@ export function $getEmptyParaBefore(para: SomeParaNode): SomeParaNode | undefine
  * @param intent - The key that removes it. Defaults to a Backspace.
  */
 export function $deletePara(para: SomeParaNode, intent: DeleteIntent = "deleteBackward"): void {
-  const next = para.getNextSibling();
-  if (
-    $isParaEmpty(para) &&
-    $isParaLikeNode(next) &&
-    (intent === "deleteForward" || !$canMergeIntoPrevious(para))
-  ) {
+  if ($canRemoveEmptyPara(para) && (intent === "deleteForward" || !$canMergeIntoPrevious(para))) {
+    const next = para.getNextSibling();
     para.remove();
-    $placeCaretAtParaContentStart(next);
+    // Always a paragraph, by `$canRemoveEmptyPara`; the check only narrows its type.
+    if ($isParaLikeNode(next)) $placeCaretAtParaContentStart(next);
     return;
   }
   $mergeParaIntoPrevious(para);

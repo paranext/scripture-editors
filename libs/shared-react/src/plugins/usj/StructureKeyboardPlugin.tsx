@@ -1,5 +1,6 @@
 import {
   $deletePara,
+  $getParaAncestor,
   $isArmedSelection,
   $isUnmergeableParaStart,
   $moveCaretPastGutterGlyph,
@@ -205,16 +206,22 @@ export function StructureKeyboardPlugin({
           setArmedState({ key: target.node.getKey(), kind: target.kind, intent });
         } else {
           // A merge removes only the paragraph's marker; its text stays (an empty paragraph goes
-          // whole). So a Backspace arm selects the marker, as a click on it would, and never the
-          // text. Removing a selected marker joins its paragraph to the one before, whichever key
-          // was pressed. A Delete arm
-          // keeps the caret at the end of its paragraph: selecting the NEXT paragraph's marker
-          // would move the caret there, so typing or an arrow key after the arm would act in that
-          // paragraph. With no marker selected, the caret stays where it is, and the armed class
-          // (still on the marker, when there is one) and the host's hint say what is armed.
+          // whole). So a Backspace arm on the caret's own paragraph selects its marker, as a click
+          // on it would, and never the text. Removing a selected marker joins its paragraph to the
+          // one before, whichever key was pressed. Any other arm keeps the caret where it is: a
+          // Delete arm, whose target is the NEXT paragraph (or an empty one the caret is in), and a
+          // Backspace arm on an empty paragraph BEFORE the caret's. Selecting that other
+          // paragraph's marker would move the caret there, so typing or an arrow key after the arm
+          // would act in that paragraph. With no marker selected, the armed class (still on the
+          // marker, when there is one) and the host's hint say what is armed.
           const isMarkerSelected = !!$getSelectedParaMarkerPara(selection);
+          const caretPara = $isRangeSelection(selection)
+            ? $getParaAncestor(selection.focus.getNode())
+            : undefined;
           const glyph =
-            intent === "deleteBackward" ? $getSelectableParaMarker(target.node) : undefined;
+            intent === "deleteBackward" && target.node.is(caretPara)
+              ? $getSelectableParaMarker(target.node)
+              : undefined;
           const isMarkerArmed = isMarkerSelected || (!!glyph && $selectParaMarker(glyph));
           const caret = !isMarkerArmed && $isRangeSelection(selection) ? selection : undefined;
           setArmedState({

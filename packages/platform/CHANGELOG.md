@@ -220,6 +220,10 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- An empty paragraph right after a chapter can now be deleted with Backspace or Delete, unless it is
+  the only paragraph in its chapter. Deleting an empty paragraph
+  next to another paragraph, by Delete inside it or by Backspace from the start of the paragraph
+  after it, now removes the empty one instead of moving the other paragraph's text under its marker.
 - Placing the caret in an empty verse no longer moves the next verse number onto a new line, and the
   caret is drawn right after the empty verse's number. The verse holding the caret now carries
   `psc-empty-text-active` instead of no class, and its caret host carries `data-caret-host`. A host

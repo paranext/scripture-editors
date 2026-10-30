@@ -132,7 +132,8 @@ describe("Typing after a guarded paragraph merge in Standard view", () => {
 
     const usj = await mergeThenType(lexical, ref, "q1", "X");
 
-    expect(parasOf(usj)).toEqual([{ type: "para", marker: "p", content: ["Xsecond"] }]);
+    // The empty paragraph is removed rather than merged into, so the text keeps its own marker.
+    expect(parasOf(usj)).toEqual([{ type: "para", marker: "q1", content: ["Xsecond"] }]);
   });
 
   it("lands after a footnote that ends the previous paragraph, not in the note", async () => {

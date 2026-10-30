@@ -102,7 +102,9 @@ const TARGETED_INPUT_TYPES = new Set([
  * - Removing the marker (Backspace/Delete, by key, command or input event, or a Backspace from the
  *   start of the text of a paragraph with no leading verse) merges its paragraph into the one
  *   before, or removes it when it is empty and right after a chapter (`$deletePara`) — a no-op
- *   with nothing else before it, and refused under
+ *   with nothing else before it. A Backspace from the start of the text whose paragraph has an
+ *   empty one before it removes that empty one instead, so this paragraph's text never lands
+ *   under the empty one's marker. Refused under
  *   `"protected"`, as `StructureKeyboardPlugin` refuses the same merge from a caret. Under
  *   `"guarded"`, it is `StructureKeyboardPlugin`'s two-step delete, as from a caret: the first
  *   press arms the delete and keeps the marker selected, the second performs it.
@@ -279,7 +281,7 @@ export function ParaMarkerSelectionPlugin({
     // Ctrl+H / Ctrl+D, or a programmatic dispatch) removes a selected marker. With no structure
     // protection, so does a backward delete from the start of the text of a paragraph with no
     // leading verse (a `\q2` line, say), which would otherwise delete the gutter glyph before the
-    // caret. Under "guarded" and "protected" that caret gets `StructureKeyboardPlugin`'s answer —
+    // caret — or, when the paragraph before is empty, it removes that empty one instead. Under "guarded" and "protected" that caret gets `StructureKeyboardPlugin`'s answer —
     // arm, or refuse — the one a Backspace keydown there gets.
     const $handleDeleteCharacter = (isBackward: boolean): boolean => {
       if (!editor.isEditable()) return false;

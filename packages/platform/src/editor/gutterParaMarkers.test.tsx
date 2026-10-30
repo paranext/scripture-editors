@@ -8,10 +8,10 @@
  */
 import Editor from "./Editor";
 import { EditorRef } from "./editor.model";
-import { Usj } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
 import { act, render } from "@testing-library/react";
-import { $getRoot, LexicalEditor } from "lexical";
+import { $getRoot, $getSelection, $isRangeSelection, LexicalEditor } from "lexical";
 import { createRef, RefObject } from "react";
 import { $isGutterMarkerNode, $isParaNode, $selectParaMarker, NBSP } from "shared";
 import { getEditorDelta, getViewOptions, PARAGRAPH_STRUCTURE_VIEW_MODE } from "shared-react";
@@ -46,6 +46,24 @@ const usj: Usj = {
     },
   ],
 };
+
+/** An empty section heading, as a USJ paragraph. */
+const emptyHeading: MarkerObject = { type: "para", marker: "s", content: [] };
+
+/** {@link usj} with an empty `\s` right after `\c 1`. */
+const headingAfterChapterUsj: Usj = {
+  ...usj,
+  content: [...usj.content.slice(0, 2), emptyHeading, ...usj.content.slice(2)],
+};
+
+/** {@link usj} with an empty `\s` between its `\p` and its `\q1`. */
+const headingBetweenParasUsj: Usj = {
+  ...usj,
+  content: [...usj.content.slice(0, 3), emptyHeading, ...usj.content.slice(3)],
+};
+
+/** {@link usj} with an empty `\s` as the only paragraph after `\c 1`. */
+const headingAloneUsj: Usj = { ...usj, content: [...usj.content.slice(0, 2), emptyHeading] };
 
 /** {@link usj} with a second paragraph that has no verse and starts with a space. */
 const leadingSpaceUsj: Usj = {
@@ -177,6 +195,72 @@ describe("gutter paragraph markers in Simple mode", () => {
   });
 });
 
+// The paragraph-structure view's two-step paragraph delete: the first press arms, the second
+// deletes. An empty paragraph goes whole rather than lending its marker to the text next to it.
+describe("deleting an empty paragraph in Simple mode", () => {
+  it("removes an empty paragraph right after a chapter with two Backspaces, and one undo restores it", async () => {
+    const { ref, lexical } = await mountSimple(headingAfterChapterUsj);
+    const before = ref.current?.getUsj();
+    await placeCaretAtParaStart(lexical, 0);
+
+    await pressKeyThroughDom(lexical, "Backspace");
+    await pressKeyThroughDom(lexical, "Backspace");
+
+    expect(ref.current?.getUsj()).toEqual(usj);
+    await act(async () => ref.current?.undo());
+    expect(ref.current?.getUsj()).toEqual(before);
+  });
+
+  it("removes an empty paragraph between two others with two Deletes, and one undo restores it", async () => {
+    const { ref, lexical } = await mountSimple(headingBetweenParasUsj);
+    const before = ref.current?.getUsj();
+    await placeCaretAtParaStart(lexical, 1);
+
+    await pressKeyThroughDom(lexical, "Delete");
+    await pressKeyThroughDom(lexical, "Delete");
+
+    expect(ref.current?.getUsj()).toEqual(usj);
+    await act(async () => ref.current?.undo());
+    expect(ref.current?.getUsj()).toEqual(before);
+  });
+
+  it("removes an empty paragraph with two Backspaces from the start of the one after it, and one undo restores it", async () => {
+    const { ref, lexical } = await mountSimple(headingBetweenParasUsj);
+    const before = ref.current?.getUsj();
+    await placeCaretAtParaStart(lexical, 2);
+
+    await pressKeyThroughDom(lexical, "Backspace");
+    await pressKeyThroughDom(lexical, "Backspace");
+
+    expect(ref.current?.getUsj()).toEqual(usj);
+    await act(async () => ref.current?.undo());
+    expect(ref.current?.getUsj()).toEqual(before);
+  });
+
+  it("keeps an empty paragraph that is the only one in its chapter", async () => {
+    const { ref, lexical } = await mountSimple(headingAloneUsj);
+    const before = ref.current?.getUsj();
+    await placeCaretAtParaStart(lexical, 0);
+
+    await pressKeyThroughDom(lexical, "Backspace");
+    await pressKeyThroughDom(lexical, "Backspace");
+
+    expect(ref.current?.getUsj()).toEqual(before);
+  });
+
+  // Arming the empty paragraph's removal must not move the caret into it, or the key typed next
+  // would land in the heading.
+  it("keeps the caret in the paragraph after an empty one when a key is typed after one Backspace", async () => {
+    const { lexical } = await mountSimple(headingBetweenParasUsj);
+    await placeCaretAtParaStart(lexical, 2);
+
+    await pressKeyThroughDom(lexical, "Backspace");
+    await pressKeyThroughDom(lexical, "x");
+
+    expect(caretParaIndex(lexical)).toBe(2);
+  });
+});
+
 async function mountSimple(initialUsj: Usj = usj): Promise<{
   ref: RefObject<EditorRef | null>;
   lexical: LexicalEditor;
@@ -218,6 +302,34 @@ async function placeCaret(
       const at = offset === "end" ? text.getTextContentSize() : offset;
       text.select(at, at);
     });
+  });
+}
+
+/**
+ * Puts a collapsed caret at the start of the `paraIndex`th paragraph: just past its gutter glyph,
+ * and before anything else, a leading verse included.
+ */
+async function placeCaretAtParaStart(lexical: LexicalEditor, paraIndex: number): Promise<void> {
+  await act(async () => {
+    lexical.update(() => {
+      const para = $getRoot().getChildren().filter($isParaNode)[paraIndex];
+      if (!para) throw new Error(`no paragraph ${paraIndex}`);
+      const at = $isGutterMarkerNode(para.getFirstChild()) ? 1 : 0;
+      para.select(at, at);
+    });
+  });
+}
+
+/** The index, among the paragraphs, of the one the caret is in; undefined with no caret. */
+function caretParaIndex(lexical: LexicalEditor): number | undefined {
+  return lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) return undefined;
+    const focus = selection.focus.getNode();
+    return $getRoot()
+      .getChildren()
+      .filter($isParaNode)
+      .findIndex((para) => para.is(focus) || para.isParentOf(focus));
   });
 }
 

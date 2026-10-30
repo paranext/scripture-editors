@@ -483,7 +483,7 @@ describe("$structuralDeleteTarget", () => {
     const { editor } = await baseTestEnvironment(() => {
       empty = $createParaNode("s");
       $getRoot().append(
-        $createChapterNode("1"),
+        $createImmutableChapterNode("1"),
         empty,
         $createParaNode("p").append($createTextNode("first")),
       );
@@ -501,7 +501,7 @@ describe("$structuralDeleteTarget", () => {
     let empty: ParaNode;
     const { editor } = await baseTestEnvironment(() => {
       empty = $createParaNode("s");
-      $getRoot().append($createChapterNode("1"), empty, $createChapterNode("2"));
+      $getRoot().append($createImmutableChapterNode("1"), empty, $createImmutableChapterNode("2"));
     });
     updateSelection(editor, empty!, 0);
     editor.getEditorState().read(() => {
