@@ -158,6 +158,11 @@ function markerFontDeclaration(
   return entry.fontName ? fontFamilyDeclaration(entry.fontName, projectDefaultFont) : undefined;
 }
 
+/** Whether `value` is a finite number above zero — the only kind of font size worth emitting. */
+function isPositiveSize(value: number | undefined): value is number {
+  return hasValue(value) && Number.isFinite(value) && value > 0;
+}
+
 function markerDeclarations(
   marker: string,
   entry: MarkerStyleInfo,
@@ -183,7 +188,7 @@ function markerDeclarations(
   // An explicit fontSize 0 stays un-emitted BY DESIGN (PT9 `FontSize > 0`): `font-size: 0%`
   // would blank the marker's text, and unlike the length fields there is no meaningful
   // "override to zero" reading of it.
-  if (hasValue(entry.fontSize) && entry.fontSize > 0)
+  if (isPositiveSize(entry.fontSize))
     decls.push(`font-size: ${Math.floor((entry.fontSize * 100) / 12)}%`);
   if (hasValue(entry.firstLineIndent))
     decls.push(`text-indent: ${formatLength(entry.firstLineIndent * 20 * zoom)}vw`);
@@ -239,7 +244,7 @@ const STATIC_CHAPTER_FONT_PERCENTS = { c: 150, ca: 133, cp: 150 } as const;
 /** Percent-of-base font size the sheet's per-marker rule emits for `entry`, or `fallback` when
  * it emits none — the same `fontSize * 100 / 12` mapping {@link markerDeclarations} uses. */
 function fontSizePercent(entry: MarkerStyleInfo | undefined, fallback: number): number {
-  return entry && hasValue(entry.fontSize) && entry.fontSize > 0
+  return entry && isPositiveSize(entry.fontSize)
     ? Math.floor((entry.fontSize * 100) / 12)
     : fallback;
 }
@@ -263,7 +268,7 @@ function chapterNestedRunRules(styleInfo: StyleInfo, scope: string): string[] {
   // either the divisor (`\c`) or the dividend (`\ca`/`\cp`) away from what the static rules assume.
   const sized = (["c", "ca", "cp"] as const).filter((marker) => {
     const entry = styleInfo.markers[marker];
-    return entry && hasValue(entry.fontSize) && entry.fontSize > 0;
+    return entry && isPositiveSize(entry.fontSize);
   });
   if (sized.length === 0) return [];
   const chapterPercent = fontSizePercent(styleInfo.markers.c, STATIC_CHAPTER_FONT_PERCENTS.c);
@@ -287,7 +292,7 @@ function baseRule(styleInfo: StyleInfo, zoom: number, scope: string): string | u
   if (styleInfo.defaultFont) baseDecls.push(fontFamilyDeclaration(styleInfo.defaultFont));
   // Like the per-marker fontSize: a 0 default would blank the whole editor, so only positive
   // sizes emit.
-  if (hasValue(styleInfo.defaultFontSize) && styleInfo.defaultFontSize > 0)
+  if (isPositiveSize(styleInfo.defaultFontSize))
     baseDecls.push(`font-size: ${formatLength(styleInfo.defaultFontSize * zoom)}pt`);
   return baseDecls.length > 0 ? `${scope} { ${baseDecls.join("; ")}; }` : undefined;
 }

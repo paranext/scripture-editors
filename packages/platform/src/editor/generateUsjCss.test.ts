@@ -495,6 +495,40 @@ describe("generateUsjFontCss", () => {
     expect(generateUsjFontCss({ markers: {} })).toBe("");
   });
 
+  it("emits only the size when there is no default font", () => {
+    expect(generateUsjFontCss({ defaultFontSize: 14, markers: {} })).toBe(
+      `${SCOPE} { font-size: 14pt; }`,
+    );
+  });
+
+  it.each([0, -1, NaN, Infinity])("omits a default size of %s", (size) => {
+    expect(generateUsjFontCss({ defaultFontSize: size, markers: {} })).toBe("");
+    expect(
+      generateUsjFontCss({ defaultFont: "Ezra SIL", defaultFontSize: size, markers: {} }),
+    ).toBe(`${SCOPE} { font-family: "Ezra SIL", ${FALLBACK}; }`);
+  });
+
+  it.each([0, -1, NaN, Infinity])("omits a marker size of %s from generateUsjCss", (size) => {
+    const css = generateUsjCss({
+      markers: { s1: { marker: "s1", styleType: "paragraph", bold: true, fontSize: size } },
+    });
+    expect(css).toBe(`${SCOPE} .usfm_s1 { font-weight: bold; }`);
+    expect(css).not.toContain("font-size");
+    expect(css).not.toContain("Infinity");
+  });
+
+  it("escapes a backslash and a quote in font names in both generators", () => {
+    const styles: StyleInfo = {
+      defaultFont: 'A\\B"C',
+      markers: fontMarker("nd", 'D\\E"F'),
+    };
+    const family = `"D\\\\E\\"F", "A\\\\B\\"C", ${FALLBACK}`;
+    for (const css of [generateUsjFontCss(styles), generateUsjCss(styles)]) {
+      expect(css).toContain(`${SCOPE} { font-family: "A\\\\B\\"C", ${FALLBACK}; }`);
+      expect(css).toContain(`${SCOPE} .usfm_nd { font-family: ${family}; }`);
+    }
+  });
+
   it("escapes a marker name so it cannot terminate the rule early", () => {
     const css = generateUsjFontCss({ markers: fontMarker("x{}", "Noto") });
     expect(css).toContain(".usfm_x\\{\\}");

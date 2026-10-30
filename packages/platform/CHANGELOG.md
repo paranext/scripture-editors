@@ -53,7 +53,8 @@ refused. The public surface grew substantially; nothing was removed.
   inside a marker glyph (`glyph: { index, offset }`: the glyph's order among those at that offset,
   and how far into its text) - a run's `\ft`, `\ft*` or `\+nd`, an unmatched marker, or `\cat` /
   `\cat*`.
-- `generateUsjCss` — builds a project stylesheet from `StyleInfo`.
+- `generateUsjCss` — builds a project stylesheet from `StyleInfo`. A default or marker font size
+  that is zero, negative or not finite is left out, as is the case in `generateUsjFontCss`.
 - `getMarkerMenuItems` / `getEnterMenuItems` / `filterAndRankItems` — the marker-menu item source and
   ranking a host needs to build its own marker palette.
 - `defaultStyleInfo` and the `StyleInfo` / `MarkerStyleInfo` / `StyleType` types.
