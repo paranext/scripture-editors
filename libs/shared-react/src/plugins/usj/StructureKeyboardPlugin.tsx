@@ -2,12 +2,12 @@ import {
   $deletePara,
   $getParaAncestor,
   $isArmedSelection,
+  $isCaretBesideChapterGlyph,
   $isUnmergeableParaStart,
   $moveCaretPastGutterGlyph,
   $narrowSelectionPastGutterGlyph,
   $paraDeleteEffect,
   $paraDeleteIntent,
-  $placeCaretAfterParaChild,
   $placeCaretAtEnd,
   $rangeSnapshot,
   $sanitizeNodesForProtectedStructure,
@@ -49,12 +49,11 @@ import {
   RangeSelection,
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { $isSomeVerseNode, VERSE_SELECTED_CLASS_NAME } from "../../nodes/usj";
+import { $isSomeVerseNode } from "../../nodes/usj";
 import {
   $getSelectableParaMarker,
   $getSelectedParaMarkerPara,
   $isBookNode,
-  $isParaLikeNode,
   $isSomeParaNode,
   $recordClipboardSpans,
   $selectParaMarker,
@@ -109,13 +108,15 @@ function $restorerFor(selection: RangeSelection): () => void {
  * paragraph outright when it is empty. A Backspace arm selects that marker; a Delete arm leaves
  * the caret where it is.
  *
+ * A chapter is never a two-step target: in the views that hide markers it is an atomic glyph the
+ * caret cannot sit on, so any delete beside one that has no paragraph to act on is refused.
+ *
  * The armed state is published to the DOM (rather than rendered here) so the host app owns the
  * user-facing hint: the root element carries the `verse-delete-armed` class plus
  * `data-verse-delete-intent` (`deleteBackward` | `deleteForward`) and `data-verse-delete-kind`
- * (`verse` | `chapter` | `selection`, or for a paragraph what the second press does:
- * `joinPreviousPara` | `joinNextPara` | `removeEmptyPara`). An armed verse marker or chapter number
- * carries the `verse-selected` class, and an armed paragraph's gutter marker
- * {@link PARA_MERGE_ARMED_CLASS_NAME}. The host can observe these to render a localized tooltip
+ * (`verse` | `selection`, or for a paragraph what the second press does: `joinPreviousPara` |
+ * `joinNextPara` | `removeEmptyPara`). An armed verse marker carries the `verse-selected` class,
+ * and an armed paragraph's gutter marker {@link PARA_MERGE_ARMED_CLASS_NAME}. The host can observe these to render a localized tooltip
  * (see paranext-core's TwoStepDeleteTooltipOverlay).
  *
  * @param structureProtectionMode - `"off"` (e.g. the Power interface mode): the plugin registers
@@ -180,17 +181,6 @@ export function StructureKeyboardPlugin({
             else if (next && $isTextNode(next)) next.select(0, 0);
             else parent?.selectStart();
           }
-        } else if (armed.kind === "chapter") {
-          if (node) {
-            // The caret goes back where the arming press found it: the content start of the
-            // block after the chapter (Backspace) or the end of the block before it (Delete).
-            const prev = node.getPreviousSibling();
-            const next = node.getNextSibling();
-            node.remove();
-            if (intent === "deleteBackward" && $isParaLikeNode(next))
-              $placeCaretAfterParaChild(next, null);
-            else if ($isParaLikeNode(prev)) $placeCaretAfterParaChild(prev, prev.getLastChild());
-          }
         } else if (armed.kind === "selection") {
           // Deletes the whole range, verse included, through the command every selection delete
           // reaches, so the guards on one judge this one too (the question before hidden content
@@ -214,7 +204,7 @@ export function StructureKeyboardPlugin({
       if (!selection) return false;
       const target = $structuralDeleteTarget(selection, intent);
       if (target) {
-        if (target.kind === "verse" || target.kind === "chapter") {
+        if (target.kind === "verse") {
           const ns = $createNodeSelection();
           ns.add(target.node.getKey());
           $setSelection(ns);
@@ -282,6 +272,12 @@ export function StructureKeyboardPlugin({
       // with text after a chapter, say): refused, as the same key is under "protected". Let
       // through, the native delete would remove that block.
       if (intent === "deleteBackward" && $isUnmergeableParaStart(selection)) {
+        event?.preventDefault();
+        return true;
+      }
+      // The same at a block's end with a chapter glyph after it: nothing here may be deleted, and
+      // the native delete would remove the chapter.
+      if (intent === "deleteForward" && $isCaretBesideChapterGlyph(selection, intent)) {
         event?.preventDefault();
         return true;
       }
@@ -400,11 +396,16 @@ export function StructureKeyboardPlugin({
     const $guardExtendingDelete =
       (granularity: "word" | "lineboundary") =>
       (isBackward: boolean): boolean => {
-        if (structureProtectionMode !== "protected" || !editor.isEditable()) return false;
-        if ($selectionReachesIntoOpaqueBlock()) return false;
+        if (!editor.isEditable()) return false;
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
         const intent = isBackward ? "deleteBackward" : "deleteForward";
+        // Under "guarded", a word or line delete with no keydown (one with a keydown never gets
+        // here: `$handleKeyDown` claims it) goes native, except that a chapter glyph beside the
+        // caret is no more deletable than it is by a character delete.
+        if (structureProtectionMode === "guarded")
+          return $isCaretBesideChapterGlyph(selection, intent);
+        if ($selectionReachesIntoOpaqueBlock()) return false;
         const restore = $restorerFor(selection);
 
         if (selection.isCollapsed()) {
@@ -494,11 +495,6 @@ export function StructureKeyboardPlugin({
   useEffect(() => {
     const root = editor.getRootElement();
     if (!root) return;
-    // A chapter glyph has no selection rendering of its own (unlike a verse's decorator), so its
-    // armed class is set here.
-    const armedChapter =
-      armed?.kind === "chapter" ? (editor.getElementByKey(armed.key) ?? undefined) : undefined;
-    armedChapter?.classList.add(VERSE_SELECTED_CLASS_NAME);
     root.classList.toggle("verse-delete-armed", !!armed);
     if (armed) {
       root.setAttribute("data-verse-delete-intent", armed.intent);
@@ -517,7 +513,6 @@ export function StructureKeyboardPlugin({
     armedElement?.classList.add(PARA_MERGE_ARMED_CLASS_NAME);
     if (armedKey !== armed?.key && armedElement) publishMarkerTextBounds(armedElement);
     return () => {
-      armedChapter?.classList.remove(VERSE_SELECTED_CLASS_NAME);
       root.classList.remove("verse-delete-armed");
       root.removeAttribute("data-verse-delete-intent");
       root.removeAttribute("data-verse-delete-kind");

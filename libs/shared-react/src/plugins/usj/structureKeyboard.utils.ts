@@ -22,6 +22,7 @@ import {
   $getSelectedParaMarkerPara,
   $isCaretHost,
   $isGutterMarkerNode,
+  $isImmutableChapterNode,
   $isMarkerNode,
   $isMarkerTrailingSeparator,
   $isParaLikeNode,
@@ -30,7 +31,6 @@ import {
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
   $placeCaretAtBoundary,
-  ImmutableChapterNode,
   ParaLikeNode,
   ParaNode,
   SomeParaNode,
@@ -54,7 +54,6 @@ export type DeleteIntent = Extract<EditIntent, "deleteBackward" | "deleteForward
 /** What a structural delete keystroke would act on. */
 export type DeleteTarget =
   | { kind: "verse"; node: SomeVerseNode }
-  | { kind: "chapter"; node: ImmutableChapterNode }
   | { kind: "para"; node: SomeParaNode };
 
 /** A snapshot of one RangeSelection endpoint, used to detect whether a latched range still holds. */
@@ -101,9 +100,9 @@ export type ParaDeleteEffect = "joinPreviousPara" | "joinNextPara" | "removeEmpt
 
 /** A pending two-step delete: the armed target's kind + the intent that armed it. */
 export interface ArmedDelete {
-  kind: "verse" | "chapter" | "para" | "selection";
+  kind: "verse" | "para" | "selection";
   intent: DeleteIntent;
-  /** verse/chapter/para: the target node's key. selection: the first verse marker key in the range. */
+  /** verse/para: the target node's key. selection: the first verse marker key in the range. */
   key: NodeKey;
   /** para only: what the second press will do. */
   paraEffect?: ParaDeleteEffect;
@@ -518,10 +517,36 @@ export function $isUnmergeableParaStart(selection: BaseSelection): boolean {
   return !$isSomeParaNode(para) || !$canDeletePara(para);
 }
 
+/**
+ * True when a collapsed caret sits at a block's edge with an atomic chapter glyph right past it, in
+ * the views that hide markers: at the block's content start for a Backspace, at its end for a
+ * Delete. A guarded delete from there may act on a paragraph ({@link $structuralDeleteTarget}), but
+ * never on the chapter, which left to the native delete it would remove. Standard view's chapter
+ * line is editable marker text, not a glyph, so this never answers true there. A caret in front of a
+ * line's gutter glyph is judged from just past it, where a forward delete would run from.
+ *
+ * Read-only: safe in any read or update.
+ */
+export function $isCaretBesideChapterGlyph(
+  selection: BaseSelection,
+  intent: DeleteIntent,
+): boolean {
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  if (intent === "deleteBackward") {
+    if (!$caretAtParaStart(selection)) return false;
+    const para = $getParaAncestor(selection.anchor.getNode());
+    return $isImmutableChapterNode(para?.getPreviousSibling());
+  }
+  const from = selection.clone();
+  $moveCaretPastGutterGlyph(from);
+  if (!$caretAtParaEnd(from)) return false;
+  return $isImmutableChapterNode($getParaAncestor(from.anchor.getNode())?.getNextSibling());
+}
+
 /** True when the live selection still encodes the armed target. */
 export function $isArmedSelection(selection: BaseSelection | null, armed: ArmedDelete): boolean {
   if (!selection) return false;
-  if (armed.kind === "verse" || armed.kind === "chapter") {
+  if (armed.kind === "verse") {
     return $isNodeSelection(selection) && selection.has(armed.key);
   }
   if (armed.kind === "selection") {

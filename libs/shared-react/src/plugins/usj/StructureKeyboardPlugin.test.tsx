@@ -1332,7 +1332,7 @@ describe("StructureKeyboardPlugin — Delete in an empty paragraph", () => {
       $getRoot().append(
         $createParaNode("p").append($createTextNode("first")),
         empty.append($createGutterMarkerNode("\\s ")),
-        $createChapterNode("2"),
+        $createImmutableChapterNode("2"),
         $createParaNode("p").append($createTextNode("second")),
       );
     });
@@ -1449,20 +1449,6 @@ describe("StructureKeyboardPlugin — armed DOM signals for the host hint", () =
     const root = editor.getRootElement();
     expect(root?.getAttribute("data-verse-delete-intent")).toBe("deleteForward");
     expect(root?.getAttribute("data-verse-delete-kind")).toBe("selection");
-  });
-
-  it("Backspace-armed chapter marks intent=deleteBackward, kind=chapter", async () => {
-    let t1: TextNode;
-    const { editor } = await guardedEnvironment(() => {
-      t1 = $createTextNode("text");
-      $getRoot().append($createImmutableChapterNode("1"), $createParaNode("p").append(t1));
-    });
-    updateSelection(editor, t1!, 0); // caret at the start of the paragraph after the chapter
-
-    await pressKey(editor, "Backspace", 0); // arm the chapter marker
-    const root = editor.getRootElement();
-    expect(root?.getAttribute("data-verse-delete-intent")).toBe("deleteBackward");
-    expect(root?.getAttribute("data-verse-delete-kind")).toBe("chapter");
   });
 
   it("Backspace-armed paragraph merge marks kind=joinPreviousPara on the merging paragraph", async () => {
