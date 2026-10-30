@@ -58,6 +58,7 @@ import {
   $opaqueBlockAncestor,
   $selectionReachesIntoOpaqueBlock,
   $shouldBlockSelectionReplacement,
+  MARKER_TEXT_HTML_ATTRIBUTE,
 } from "shared-react";
 import {
   isCopyFromOutsideEditor,
@@ -710,8 +711,7 @@ function $insertPastedTextIntoAttributeContext(
  * the private `application/x-lexical-editor` flavor Lexical writes on copy is not one of them, so
  * the `DataTransfer` `pasteSelection` (`clipboard.utils.ts`) rebuilds from `navigator.clipboard.
  * read()` can never contain it. Standard view's Ctrl+V and context-menu Paste read the clipboard
- * that way (the host's native paste, `EditorOptions.requestNativePaste`, is only for the
- * hidden-marker views), so they — even a same-editor paste of the editor's own copy — ride
+ * that way, so they — even a same-editor paste of the editor's own copy — ride
  * `text/html`/`text/plain` like any external source. Only a paste the browser runs itself, such
  * as a host menu's own Paste, can carry the node copy. A BLANKET
  * NBSP→`~` mapping would corrupt a same-editor paste of its own copy: every display-NBSP (the
@@ -1199,14 +1199,19 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
  * `&`, `<` and `>` are escaped, `&` first so an escape's own ampersand is not escaped twice. USFM
  * needs nothing else escaped here: the bytes live in a text node, where quotes and backslashes are
  * literal.
+ *
+ * The first block carries `MARKER_TEXT_HTML_ATTRIBUTE`, which tells a hidden-marker view reading the
+ * clipboard that this is text with its markers showing, so its marker tokens are not words
+ * (`withoutMarkerTokens`). It changes none of the bytes.
  */
 export function usfmToClipboardHtml(usfm: string): string {
   return usfm
     .split("\n")
     .map((line) => line.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"))
-    .map((line) =>
-      line ? `<p><span style="white-space: pre-wrap;">${line}</span></p>` : "<p></p>",
-    )
+    .map((line, index) => {
+      const open = index === 0 ? `<p ${MARKER_TEXT_HTML_ATTRIBUTE}>` : "<p>";
+      return `${open}${line ? `<span style="white-space: pre-wrap;">${line}</span>` : ""}</p>`;
+    })
     .join("");
 }
 

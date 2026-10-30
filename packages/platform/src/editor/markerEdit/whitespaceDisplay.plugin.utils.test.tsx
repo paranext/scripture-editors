@@ -71,7 +71,7 @@ import {
   ParaNode,
   textTypeState,
 } from "shared";
-import { StructureKeyboardPlugin } from "shared-react";
+import { MARKER_TEXT_HTML_ATTRIBUTE, StructureKeyboardPlugin } from "shared-react";
 
 /**
  * Null-event leg: ClipboardPlugin/ContextMenuPlugin/EditorRef dispatch COPY_COMMAND/
@@ -970,13 +970,13 @@ describe("text/html flavor — the same USFM bytes as text/plain", () => {
   describe("usfmToClipboardHtml mechanics", () => {
     it("wraps one line in a pre-wrap span inside a block, so a re-import sees a paragraph of text", () => {
       expect(usfmToClipboardHtml("\\p one")).toBe(
-        '<p><span style="white-space: pre-wrap;">\\p one</span></p>',
+        `<p ${MARKER_TEXT_HTML_ATTRIBUTE}><span style="white-space: pre-wrap;">\\p one</span></p>`,
       );
     });
 
     it("emits one block per line, an empty line as a bare block", () => {
       expect(usfmToClipboardHtml("a\n\nb")).toBe(
-        '<p><span style="white-space: pre-wrap;">a</span></p><p></p>' +
+        `<p ${MARKER_TEXT_HTML_ATTRIBUTE}><span style="white-space: pre-wrap;">a</span></p><p></p>` +
           '<p><span style="white-space: pre-wrap;">b</span></p>',
       );
     });

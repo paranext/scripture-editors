@@ -1,10 +1,17 @@
 import {
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+  htmlWithNodeCopy,
   LEXICAL_CLIPBOARD_TYPE,
+  MARKER_TEXT_HTML_ATTRIBUTE,
   MARKER_VIEW_CLIPBOARD_NAMESPACE,
+  NODE_COPY_HTML_ATTRIBUTE,
+  nodeCopyIn,
+  pasteSelection,
   removeMarkerTokens,
   withoutMarkerTokens,
+  withoutNodeCopy,
 } from "./clipboard.utils";
+import { createEditor, PASTE_COMMAND, SerializedLexicalNode } from "lexical";
 
 describe("removeMarkerTokens", () => {
   it.each([
@@ -144,5 +151,206 @@ describe("withoutMarkerTokens", () => {
     );
 
     expect(stripped?.getData("text/plain")).toBe(" ");
+  });
+});
+
+describe("the node copy in a copy's html", () => {
+  const transfer = (flavors: { [type: string]: string }) => ({
+    getData: (type: string) => flavors[type] ?? "",
+  });
+  const node = (text: string) =>
+    ({ type: "text", version: 1, text }) as unknown as SerializedLexicalNode;
+  const copyOf = (nodes: SerializedLexicalNode[], namespace = HIDDEN_VIEW_CLIPBOARD_NAMESPACE) =>
+    JSON.stringify({ namespace, nodes });
+
+  it.each([
+    ["a double quote", 'say "hi"'],
+    ["an apostrophe", "it's"],
+    ["angle brackets", "a <b> c"],
+    ["an ampersand and what looks like an entity", "a & b &amp; &quot;"],
+    ["a backslash", "c:\\pics \\nd"],
+    [
+      "Hebrew, with its points",
+      "\u05D1\u05B0\u05BC\u05E8\u05B5\u05D0\u05E9\u05C1\u05B4\u05D9\u05EA",
+    ],
+    ["a no-break space", "a\u00A0b"],
+    ["a line break and a tab", "a\nb\tc"],
+    ["markup that closes the attribute", '"></span><script>alert(1)</script>'],
+  ])("carries %s exactly", (_name, text) => {
+    const nodes = [node(text)];
+
+    const html = htmlWithNodeCopy("<span>shown</span>", copyOf(nodes));
+
+    expect(nodeCopyIn(transfer({ "text/html": html }), HIDDEN_VIEW_CLIPBOARD_NAMESPACE)).toEqual(
+      nodes,
+    );
+  });
+
+  it("leaves what the html shows as it was", () => {
+    const html = htmlWithNodeCopy("<p>one</p><p>two</p>", copyOf([node("x")]));
+
+    const { body } = new DOMParser().parseFromString(html, "text/html");
+
+    expect(body.textContent).toBe("onetwo");
+    expect(body.querySelectorAll("p")).toHaveLength(2);
+    // An inline wrapper: Lexical's html import makes a block wrapper's inline children a paragraph.
+    expect(body.firstElementChild?.tagName).toBe("SPAN");
+  });
+
+  it("is passed over for a node copy flavor, which any native paste carries", () => {
+    const html = htmlWithNodeCopy("<span>shown</span>", copyOf([node("from the html")]));
+
+    const data = transfer({
+      "text/html": html,
+      [LEXICAL_CLIPBOARD_TYPE]: copyOf([node("from the flavor")]),
+    });
+
+    expect(nodeCopyIn(data, HIDDEN_VIEW_CLIPBOARD_NAMESPACE)).toEqual([node("from the flavor")]);
+  });
+
+  it("answers for its own namespace only", () => {
+    const html = htmlWithNodeCopy("<span>shown</span>", copyOf([node("x")]));
+
+    expect(nodeCopyIn(transfer({ "text/html": html }), "another namespace")).toBeUndefined();
+  });
+
+  it.each([
+    ["JSON that does not parse", `<span ${NODE_COPY_HTML_ATTRIBUTE}="{not json">x</span>`],
+    ["an empty value", `<span ${NODE_COPY_HTML_ATTRIBUTE}="">x</span>`],
+    [
+      "JSON with no nodes",
+      `<span ${NODE_COPY_HTML_ATTRIBUTE}="{&quot;namespace&quot;:1}">x</span>`,
+    ],
+    ["JSON that is not an object", `<span ${NODE_COPY_HTML_ATTRIBUTE}="null">x</span>`],
+    ["the attribute's name as text alone", `<span>${NODE_COPY_HTML_ATTRIBUTE}="[]"</span>`],
+  ])("finds no node copy in %s", (_name, html) => {
+    expect(
+      nodeCopyIn(transfer({ "text/html": html }), HIDDEN_VIEW_CLIPBOARD_NAMESPACE),
+    ).toBeUndefined();
+  });
+
+  it("does not parse html that does not name the attribute", () => {
+    const parse = vi.spyOn(DOMParser.prototype, "parseFromString");
+    try {
+      const data = transfer({ "text/html": "<p>an ordinary paste</p>", "text/plain": "ordinary" });
+
+      expect(nodeCopyIn(data, HIDDEN_VIEW_CLIPBOARD_NAMESPACE)).toBeUndefined();
+      expect(withoutNodeCopy(data as DataTransfer)).toBe(data);
+      expect(withoutMarkerTokens(data as DataTransfer)).toBe(data);
+      expect(parse).not.toHaveBeenCalled();
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  it("is gone from the transfer `withoutNodeCopy` returns, so its html goes in as html", () => {
+    const html = htmlWithNodeCopy("<span>shown</span>", copyOf([node("x")]));
+    const data = transfer({ "text/html": html, "text/plain": "shown" }) as DataTransfer;
+
+    const without = withoutNodeCopy(data);
+
+    expect(nodeCopyIn(without, HIDDEN_VIEW_CLIPBOARD_NAMESPACE)).toBeUndefined();
+    expect(without.getData("text/html")).not.toContain(NODE_COPY_HTML_ATTRIBUTE);
+    expect(without.getData("text/html")).toContain("<span>shown</span>");
+    expect(without.getData("text/plain")).toBe("shown");
+  });
+
+  it("leaves html that showed nothing empty, so a paste takes the plain text", () => {
+    const html = htmlWithNodeCopy("", copyOf([node("x")]));
+    const data = transfer({ "text/html": html, "text/plain": "shown" }) as DataTransfer;
+
+    expect(withoutNodeCopy(data).getData("text/html")).toBe("");
+  });
+
+  describe("through the clipboard read a Ctrl+V starts with", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("reaches the paste whole: only a tab outside its JSON becomes a space", async () => {
+      const nodes = [node('a\tb \\nd "q" \u05D0')];
+      const html = htmlWithNodeCopy("<span>a\tb</span>", copyOf(nodes));
+      const flavors: { [type: string]: string } = { "text/html": html, "text/plain": "a\tb" };
+      vi.stubGlobal("navigator", {
+        permissions: { query: () => Promise.resolve({ state: "granted" }) },
+        clipboard: {
+          read: () =>
+            Promise.resolve([
+              {
+                types: Object.keys(flavors),
+                getType: (type: string) => Promise.resolve(new Blob([flavors[type]])),
+              },
+            ]),
+        },
+      });
+      // jsdom has neither of these: all the read does with them is hand the flavors to the command.
+      vi.stubGlobal(
+        "DataTransfer",
+        class {
+          data = new Map<string, string>();
+          setData(type: string, value: string) {
+            this.data.set(type, value);
+          }
+          getData(type: string) {
+            return this.data.get(type) ?? "";
+          }
+        },
+      );
+      const editor = createEditor({
+        onError: (error) => {
+          throw error;
+        },
+      });
+      const pasted = new Promise<DataTransfer>((resolve) => {
+        const dispatch = vi.spyOn(editor, "dispatchCommand");
+        dispatch.mockImplementation((command, payload) => {
+          if (command === PASTE_COMMAND)
+            resolve((payload as ClipboardEvent).clipboardData as DataTransfer);
+          return true;
+        });
+      });
+      vi.stubGlobal(
+        "ClipboardEvent",
+        class {
+          clipboardData: DataTransfer;
+          constructor(_type: string, init: { clipboardData: DataTransfer }) {
+            this.clipboardData = init.clipboardData;
+          }
+        },
+      );
+
+      pasteSelection(editor);
+      const data = await pasted;
+
+      expect(nodeCopyIn(data, HIDDEN_VIEW_CLIPBOARD_NAMESPACE)).toEqual(nodes);
+      expect(data.getData("text/plain")).toBe("a b");
+    });
+  });
+});
+
+describe("html marked as a marker view's text", () => {
+  const data = (html: string, plain: string) =>
+    ({
+      getData: (type: string) => (type === "text/html" ? html : type === "text/plain" ? plain : ""),
+    }) as DataTransfer;
+
+  it("loses its marker tokens with no node copy on the transfer", () => {
+    const usfmHtml = `<p ${MARKER_TEXT_HTML_ATTRIBUTE}><span>1 \\ft TR</span></p>`;
+
+    const result = withoutMarkerTokens(data(usfmHtml, "1 \\ft TR"));
+
+    expect(result?.getData("text/plain")).toBe("1 TR");
+    expect(result?.getData("text/html")).toContain("1 TR");
+    expect(result?.getData("text/html")).not.toContain("\\ft");
+  });
+
+  it("holding nothing but marker tokens has nothing to insert", () => {
+    const usfmHtml = `<p ${MARKER_TEXT_HTML_ATTRIBUTE}><span>\\ft </span></p>`;
+
+    expect(withoutMarkerTokens(data(usfmHtml, "\\ft "))).toBeUndefined();
+  });
+
+  it("is not recognized from the mark's name written as text", () => {
+    const transfer = data(`<p>${MARKER_TEXT_HTML_ATTRIBUTE} \\ft x</p>`, "\\ft x");
+
+    expect(withoutMarkerTokens(transfer)).toBe(transfer);
   });
 });

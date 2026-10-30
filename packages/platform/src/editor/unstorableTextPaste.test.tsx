@@ -421,11 +421,11 @@ describe.each<StructureProtectionMode>(["off", "guarded", "protected"])(
       }
     });
 
-    it("keeps html with no node copy as it was, with the notice", async () => {
+    it("keeps html with no node copy and no mark as it was, with the notice", async () => {
       const { mounted, onRemoved } = await mount("paragraph-structure", mode);
       try {
         await paste(mounted, {
-          "text/html": usfmToClipboardHtml("\\v 9 x "),
+          "text/html": '<p><span style="white-space: pre-wrap;">\\v 9 x </span></p>',
           "text/plain": "\\v 9 x ",
         });
 

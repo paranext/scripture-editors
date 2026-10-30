@@ -334,6 +334,41 @@ export function removeMarkerGlyphElements(root: ParentNode): boolean {
 export const LEXICAL_CLIPBOARD_TYPE = "application/x-lexical-editor";
 
 /**
+ * The html attribute a hidden-marker view's copy holds its node copy in ({@link htmlWithNodeCopy}):
+ * `navigator.clipboard.read()`, which Ctrl+V and every Paste command start with, returns no custom
+ * flavor, but it returns html with its `data-*` attributes.
+ */
+export const NODE_COPY_HTML_ATTRIBUTE = "data-platform-editor-node-copy";
+
+/**
+ * The html attribute that says `text/html` is text with its markers showing, as a copy from a view
+ * that shows them writes it (`usfmToClipboardHtml`): what an async clipboard read keeps of
+ * {@link MARKER_VIEW_CLIPBOARD_NAMESPACE}, the node copy's tag, which it does not return.
+ */
+export const MARKER_TEXT_HTML_ATTRIBUTE = "data-platform-editor-marker-text";
+
+/**
+ * `html` inside an inline element holding `nodeCopy` in {@link NODE_COPY_HTML_ATTRIBUTE}; what it
+ * shows does not change. Inline, because Lexical's html import makes a paragraph of a block
+ * element's inline children, so another program's copy of this html would paste differently.
+ *
+ * The attribute holds all of the node copy, a hidden construct's text included, for any program
+ * that reads the html to see. A browser's own paste into an editable element drops it, so a copy
+ * that went through another editor no longer carries it.
+ *
+ * @param html - The html the copy shows.
+ * @param nodeCopy - The node copy, as written to {@link LEXICAL_CLIPBOARD_TYPE}.
+ */
+export function htmlWithNodeCopy(html: string, nodeCopy: string): string {
+  const value = nodeCopy
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+  return `<span ${NODE_COPY_HTML_ATTRIBUTE}="${value}">${html}</span>`;
+}
+
+/**
  * The namespace a hidden-marker view (`markerMode: "hidden"`) tags its node copy
  * ({@link LEXICAL_CLIPBOARD_TYPE}) with. Every editor shares one Lexical namespace, so Lexical's
  * own paste would rebuild a copy from any view in any other; a view family reads a node copy only
@@ -344,8 +379,9 @@ export const HIDDEN_VIEW_CLIPBOARD_NAMESPACE = "platformEditor/hidden-markers";
 /**
  * The namespace a view that shows markers leaves on its node copy ({@link LEXICAL_CLIPBOARD_TYPE}):
  * the Lexical namespace of every platform editor, which only a hidden-marker view changes
- * ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}). That is how a hidden-marker view can tell a `\` that
- * spells a marker from one anyone else wrote: the text flavors of a paste carrying it are USFM, from
+ * ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}). That is one way a hidden-marker view can tell a `\` that
+ * spells a marker from one anyone else wrote ({@link MARKER_TEXT_HTML_ATTRIBUTE} is the other, for a
+ * paste an async clipboard read delivers): the text flavors of a paste carrying it are USFM, from
  * Standard view's own copy, or text with its markers showing, from Lexical's own copy in the views
  * with no copy of their own (a Markers-view range `MarkersViewCopyPlugin` declines is one). The html
  * of Lexical's copy, which goes in ahead of the plain text, loses its marker glyphs as well.
@@ -388,9 +424,20 @@ function bodyWithoutMarkerTokens(html: string): HTMLElement {
   return body;
 }
 
+/** Whether `html` is marked as text with its markers showing ({@link MARKER_TEXT_HTML_ATTRIBUTE}). */
+function isMarkedAsMarkerText(html: string): boolean {
+  return (
+    html.includes(MARKER_TEXT_HTML_ATTRIBUTE) &&
+    new DOMParser()
+      .parseFromString(html, "text/html")
+      .querySelector(`[${MARKER_TEXT_HTML_ATTRIBUTE}]`) !== null
+  );
+}
+
 /**
- * `data` as a hidden-marker view inserts it: when it carries a node copy tagged
- * {@link MARKER_VIEW_CLIPBOARD_NAMESPACE}, without the marker tokens in its html and plain text
+ * `data` as a hidden-marker view inserts it: when it comes from a view that shows markers — it
+ * carries a node copy tagged {@link MARKER_VIEW_CLIPBOARD_NAMESPACE}, or html marked
+ * {@link MARKER_TEXT_HTML_ATTRIBUTE} — without the marker tokens in its html and plain text
  * ({@link removeMarkerTokens}), so a marker's name does not go in as a word of Scripture. Any other
  * `data`, whose `\` could be anything, comes back as it is.
  *
@@ -399,7 +446,11 @@ function bodyWithoutMarkerTokens(html: string): HTMLElement {
  *   and line breaks, so there is nothing to insert.
  */
 export function withoutMarkerTokens(data: DataTransfer): DataTransfer | undefined {
-  if (!nodeCopyIn(data, MARKER_VIEW_CLIPBOARD_NAMESPACE)) return data;
+  if (
+    !nodeCopyIn(data, MARKER_VIEW_CLIPBOARD_NAMESPACE) &&
+    !isMarkedAsMarkerText(data.getData("text/html"))
+  )
+    return data;
   const plain = removeMarkerTokens(data.getData("text/plain"));
   const htmlBody = bodyWithoutMarkerTokens(data.getData("text/html"));
   const text = plain || (htmlBody.textContent ?? "");
@@ -417,8 +468,11 @@ export function withoutMarkerTokens(data: DataTransfer): DataTransfer | undefine
 }
 
 /**
- * The serialized nodes of the node copy ({@link LEXICAL_CLIPBOARD_TYPE}) in `data`, when it is
- * tagged `namespace`; otherwise `undefined`.
+ * The serialized nodes of the node copy in `data`, when it is tagged `namespace`; otherwise
+ * `undefined`. A paste the browser runs itself carries the node copy as a flavor
+ * ({@link LEXICAL_CLIPBOARD_TYPE}), and one an async clipboard read delivers carries it in its html
+ * ({@link NODE_COPY_HTML_ATTRIBUTE}); html that does not name that attribute is not parsed. Read it
+ * before sanitizing the html, whose attribute is not a sanitizer's to keep.
  *
  * @param data - The pasted transfer; only `getData` is read.
  * @param namespace - The namespace the copy must be tagged with.
@@ -432,18 +486,37 @@ export function nodeCopyIn(
 }
 
 /**
- * `data` without its node copy ({@link LEXICAL_CLIPBOARD_TYPE}), whatever it holds, so Lexical's
- * own paste takes the html or plain text instead; `data` itself when it carries none.
+ * `data` without its node copy, flavor or html attribute ({@link nodeCopyIn}), whatever it holds, so
+ * a paste takes the html or plain text instead; `data` itself when it carries none.
  *
  * @param data - The pasted transfer; the result reads only `getData` from it.
  */
 export function withoutNodeCopy(data: DataTransfer): DataTransfer {
-  if (!data.getData(LEXICAL_CLIPBOARD_TYPE)) return data;
+  const html = data.getData("text/html");
+  const htmlHoldsCopy = html.includes(NODE_COPY_HTML_ATTRIBUTE);
+  if (!htmlHoldsCopy && !data.getData(LEXICAL_CLIPBOARD_TYPE)) return data;
+  const htmlWithoutCopy = htmlHoldsCopy ? htmlWithoutNodeCopy(html) : html;
   // Lexical reads only `getData` from a transfer it inserts, and a real `DataTransfer` cannot be
   // constructed everywhere this runs.
   return {
-    getData: (type: string) => (type === LEXICAL_CLIPBOARD_TYPE ? "" : data.getData(type)),
+    getData: (type: string) => {
+      if (type === LEXICAL_CLIPBOARD_TYPE) return "";
+      return type === "text/html" ? htmlWithoutCopy : data.getData(type);
+    },
   } as Pick<DataTransfer, "getData"> as DataTransfer;
+}
+
+/**
+ * `html` as it was before {@link htmlWithNodeCopy} wrapped it: each element holding
+ * {@link NODE_COPY_HTML_ATTRIBUTE} replaced by its children. So html that showed nothing is empty
+ * again, and a paste takes the plain text, as it would have.
+ */
+function htmlWithoutNodeCopy(html: string): string {
+  const dom = new DOMParser().parseFromString(html, "text/html");
+  dom
+    .querySelectorAll(`[${NODE_COPY_HTML_ATTRIBUTE}]`)
+    .forEach((carrier) => carrier.replaceWith(...carrier.childNodes));
+  return dom.body.hasChildNodes() ? dom.documentElement.outerHTML : "";
 }
 
 /**
@@ -473,12 +546,33 @@ export function $nodesFromNodeCopy(
   }
 }
 
-/** The node copy in `data` as Lexical writes it, or `undefined` when there is none or it is
+/** The node copy in `data`, from its flavor or its html, or `undefined` when there is none or it is
  * unreadable. */
 function parsedNodeCopy(
   data: Pick<DataTransfer, "getData">,
 ): { namespace: unknown; nodes: SerializedLexicalNode[] } | undefined {
-  const json = data.getData(LEXICAL_CLIPBOARD_TYPE);
+  return (
+    nodeCopyFromJson(data.getData(LEXICAL_CLIPBOARD_TYPE)) ??
+    nodeCopyFromJson(nodeCopyJsonInHtml(data.getData("text/html")))
+  );
+}
+
+/** What `html` holds in {@link NODE_COPY_HTML_ATTRIBUTE}. An inert parse: it runs nothing `html`
+ * holds and loads nothing it points at. */
+function nodeCopyJsonInHtml(html: string): string | undefined {
+  if (!html.includes(NODE_COPY_HTML_ATTRIBUTE)) return undefined;
+  return (
+    new DOMParser()
+      .parseFromString(html, "text/html")
+      .querySelector(`[${NODE_COPY_HTML_ATTRIBUTE}]`)
+      ?.getAttribute(NODE_COPY_HTML_ATTRIBUTE) ?? undefined
+  );
+}
+
+/** A node copy as Lexical writes it, from its JSON, or `undefined` when it does not read as one. */
+function nodeCopyFromJson(
+  json: string | undefined,
+): { namespace: unknown; nodes: SerializedLexicalNode[] } | undefined {
   if (!json) return undefined;
   try {
     const payload: unknown = JSON.parse(json);

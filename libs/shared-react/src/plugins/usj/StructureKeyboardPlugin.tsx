@@ -64,6 +64,7 @@ import {
   nodeCopyIn,
   removeMarkerGlyphElements,
   withoutMarkerTokens,
+  withoutNodeCopy,
 } from "./clipboard.utils";
 import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
@@ -132,10 +133,11 @@ function $restorerFor(selection: RangeSelection): () => void {
  *   text the view cannot store, with `$filterUnstorablePastedNodes`). Called inside the update.
  *   When it leaves nothing to insert (see `$insertsNothing`), nothing is inserted.
  * @param nodeCopyNamespace - Under `"protected"`, a paste whose node copy
- *   (`application/x-lexical-editor`) is tagged with this namespace is sanitized and inserted from
- *   that copy rather than from its html, so attributes, notes and figures arrive whole (e.g.
- *   `HIDDEN_VIEW_CLIPBOARD_NAMESPACE` in a hidden-marker view). Any other paste takes its html, and
- *   so does one whose node copy makes no nodes (see `$nodesFromNodeCopy`).
+ *   (`application/x-lexical-editor`, or an attribute of its html: see `nodeCopyIn`) is tagged with
+ *   this namespace is sanitized and inserted from that copy rather than from its html, so
+ *   attributes, notes and figures arrive whole (e.g. `HIDDEN_VIEW_CLIPBOARD_NAMESPACE` in a
+ *   hidden-marker view). Any other paste takes its html, and so does one whose node copy makes no
+ *   nodes (see `$nodesFromNodeCopy`).
  * @param removesMarkerTokens - Under `"protected"`, whether html from a view that shows markers
  *   goes in without its marker tokens (see `withoutMarkerTokens`), as a view that hides markers
  *   needs. A paste or drop of nothing else changes nothing. Defaults to `false`.
@@ -386,7 +388,11 @@ export function StructureKeyboardPlugin({
         event.preventDefault();
         return true;
       }
-      return $sanitizeAndInsert(stripped?.getData("text/html"), event, source);
+      return $sanitizeAndInsert(
+        stripped ? withoutNodeCopy(stripped).getData("text/html") : undefined,
+        event,
+        source,
+      );
     };
 
     const $handlePaste = (event: ClipboardEvent): boolean => {

@@ -36,8 +36,8 @@ export function $isLeftOutOfHiddenViewCopy(node: LexicalNode): boolean {
 }
 
 /**
- * The `application/x-lexical-editor` flavor a hidden-marker view's copy of `selection` writes: the
- * selected nodes as Lexical serializes them, tagged {@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE} so that
+ * The node copy a hidden-marker view's copy of `selection` writes, to the
+ * `application/x-lexical-editor` flavor and to an attribute of its html: the selected nodes as Lexical serializes them, tagged {@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE} so that
  * only a hidden-marker view reads them back (`UnstorableTextPlugin`, and `StructureKeyboardPlugin`
  * under protected structure). A paste of it reproduces the copy exactly: attributes, notes and
  * figures included.

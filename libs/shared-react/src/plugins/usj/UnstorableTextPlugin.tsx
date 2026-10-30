@@ -145,11 +145,12 @@ function joinLines(text: string): string {
  * per paste, drop or refused keystroke through `onRemoved`. A paste or drop left with nothing to
  * insert changes nothing.
  *
- * Reads a node copy (`application/x-lexical-editor`) only from a hidden-marker view, which tags it
+ * Reads a node copy (`application/x-lexical-editor`, or an attribute of the html: see
+ * {@link nodeCopyIn}) only from a hidden-marker view, which tags it
  * {@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}: pasted, it goes in exactly as copied, attributes, notes
  * and figures included. A node copy from any other view, such as Standard view, whose node shapes
- * differ, is passed over for its html or plain text. Such a copy from a view that shows markers
- * also tells this plugin that those are USFM, so their marker tokens go first
+ * differ, is passed over for its html or plain text. A copy from a view that shows markers, known by
+ * that node copy or by a mark on its html, is USFM, so its marker tokens go first
  * ({@link withoutMarkerTokens}), unreported: they are markup, not text the user was asked to type. A
  * `\` in any other paste could be anything, so it goes alone, and is reported.
  *
@@ -323,9 +324,9 @@ export function UnstorableTextPlugin({
      *   it;
      * - a transfer with any other node copy — another view's, such as Standard view's (tagged with
      *   the editor's own namespace), or one that makes no nodes ({@link $nodesFromNodeCopy}) — by
-     *   its html or plain text, so another view's node shapes are never rebuilt here, without its
-     *   marker tokens if it is a marker view's ({@link withoutMarkerTokens}), and changing nothing
-     *   if nothing else is left;
+     *   its html or plain text, so another view's node shapes are never rebuilt here;
+     * - a marker view's copy, known by its node copy or its html's mark, without its marker tokens
+     *   ({@link withoutMarkerTokens}), changing nothing if nothing else is left;
      * - plain text or html that the filter or the glyph strip changes.
      */
     const $insertTransfer = (
