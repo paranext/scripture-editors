@@ -191,6 +191,7 @@ import {
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   isBlockVerseLayout,
   LoadStatePlugin,
+  MARKER_VIEW_CLIPBOARD_NAMESPACE,
   NoteCallerHighlightHandle,
   NoteCallerHighlightPlugin,
   NoteEnterGuardPlugin,
@@ -762,7 +763,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
 
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
-      namespace: "platformEditor",
+      namespace: MARKER_VIEW_CLIPBOARD_NAMESPACE,
       theme: { ...editorTheme, showCharMarkerTitles: viewOptions.showCharMarkerTitles },
       editable: !effectiveIsReadonly,
       editorState: undefined,
@@ -2238,7 +2239,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <ParaNodePlugin />
           {/* Only the hidden-marker views filter what the sanitizer inserts: Standard view stores a
               pasted `\` as the marker it spells. And only they read their own node copy, which
-              Standard view's node shapes do not match. */}
+              Standard view's node shapes do not match. Standard view stores a pasted marker too,
+              so only they take marker tokens out of a marker view's copy. */}
           <StructureKeyboardPlugin
             structureProtectionMode={structureProtectionMode}
             $filterPastedNodes={
@@ -2247,6 +2249,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             nodeCopyNamespace={
               viewOptions?.markerMode === "hidden" ? HIDDEN_VIEW_CLIPBOARD_NAMESPACE : undefined
             }
+            removesMarkerTokens={viewOptions?.markerMode === "hidden"}
             logger={stableLogger}
           />
           <TextDirectionPlugin textDirection={textDirection} />
