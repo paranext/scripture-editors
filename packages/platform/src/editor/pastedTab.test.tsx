@@ -1,7 +1,8 @@
 /**
- * A pasted tab is saved as a space in every view. USJ has no tab, and Lexical turns a tab in pasted
- * plain text, or in html whose whitespace is preformatted, into a tab node, which nothing saves:
- * left alone, `word1⇥word2` would save as `word1word2`.
+ * A tab that a paste brings in as a tab node is saved as a space in every view. USJ has no tab node,
+ * and Lexical turns a tab in pasted plain text, or in html whose whitespace is preformatted, into
+ * one, which nothing saves: left alone, `word1⇥word2` would save as `word1word2`. Standard view's
+ * text carrier, which a paste the browser runs itself uses, keeps a pasted tab as a character.
  */
 import { MountedEditor, editorView, enabledViews, mountInView } from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
