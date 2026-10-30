@@ -22,6 +22,7 @@ import {
   $getSelectedParaMarkerPara,
   $isCaretHost,
   $isGutterMarkerNode,
+  $isMarkerNode,
   $isMarkerTrailingSeparator,
   $isParaLikeNode,
   $isParaNode,
@@ -613,14 +614,19 @@ export function $canMergeIntoPrevious(para: SomeParaNode): boolean {
 
 /**
  * True when `para` can be removed outright rather than merged: it is empty, so removing it loses
- * nothing, and it has a paragraph after it to take the caret. {@link $structuralDeleteTarget},
+ * nothing, and it has a paragraph after it to take the caret. Never in Standard view, where the
+ * marker is editable text and deleting it is a marker edit. {@link $structuralDeleteTarget},
  * which picks what to arm, and {@link $deletePara}, which carries it out, both judge removal by
  * this, so they cannot disagree.
  *
  * Read-only: safe in any read or update.
  */
 function $canRemoveEmptyPara(para: SomeParaNode): boolean {
-  return $isParaEmpty(para) && $isParaLikeNode(para.getNextSibling());
+  return (
+    !$isMarkerNode(para.getFirstChild()) &&
+    $isParaEmpty(para) &&
+    $isParaLikeNode(para.getNextSibling())
+  );
 }
 
 /**
@@ -639,7 +645,7 @@ function $canRemoveEmptyParaAfterChapter(para: SomeParaNode): boolean {
  * True when `para` is an empty paragraph alone in its chapter: a chapter right before it, and the
  * next chapter or the end of the book right after. Deleting its marker leaves a blank line with no
  * marker in its place ({@link $deletePara}), where the user picks a marker. A line already without
- * one has no marker left to delete.
+ * one has no marker left to delete. Never in Standard view, where the marker is editable text.
  *
  * Read-only: safe in any read or update.
  */
@@ -647,6 +653,7 @@ function $canBlankEmptyParaAloneInChapter(para: SomeParaNode): boolean {
   const next = para.getNextSibling();
   return (
     $isParaNode(para) &&
+    !$isMarkerNode(para.getFirstChild()) &&
     $isParaEmpty(para) &&
     $isSomeChapterNode(para.getPreviousSibling()) &&
     (!next || $isSomeChapterNode(next))

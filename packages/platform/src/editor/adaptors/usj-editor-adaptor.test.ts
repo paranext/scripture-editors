@@ -68,6 +68,7 @@ import {
   isSerializedImmutableTableNode,
   isSerializedImmutableTableRowNode,
   isSerializedImmutableTypedTextNode,
+  isSerializedImpliedParaNode,
   isSerializedMarkerNode,
   isSerializedMilestoneNode,
   isSerializedNoteNode,
@@ -2067,5 +2068,39 @@ describe("editable marker-prefix separators are one shape", () => {
       ["row", NBSP, "token", { textType: MARKER_TRAILING_SPACE_TEXT_TYPE }],
       ["cell", NBSP, "token", { textType: MARKER_TRAILING_SPACE_TEXT_TYPE }],
     ]);
+  });
+});
+
+describe("blank line after a chapter with no line after it", () => {
+  const chapter = (number: string) => ({ type: "chapter", marker: "c", number }) as MarkerObject;
+  const para = { type: "para", marker: "p", content: ["text"] } as MarkerObject;
+
+  /** The serialized node types of the root's children for `content` under `viewOptions`. */
+  function rootTypes(content: MarkerObject[], viewOptions: ViewOptions | undefined): string[] {
+    initialize(undefined, undefined);
+    reset();
+    const state = serializeEditorState({ ...EMPTY_USJ, content }, viewOptions);
+    return state.root.children.map((node) =>
+      isSerializedImpliedParaNode(node) && node.children.length === 0 ? "blank" : node.type,
+    );
+  }
+
+  it("follows a chapter before the next chapter or the end of the book, in a view that hides markers", () => {
+    const viewOptions = getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE);
+
+    expect(rootTypes([chapter("1"), chapter("2"), para, chapter("3")], viewOptions)).toEqual([
+      "immutable-chapter",
+      "blank",
+      "immutable-chapter",
+      "para",
+      "immutable-chapter",
+      "blank",
+    ]);
+  });
+
+  it("is left out in Standard view, where the chapter's marker text holds the caret", () => {
+    expect(
+      rootTypes([chapter("1"), chapter("2"), para], getViewOptions(STANDARD_VIEW_MODE)),
+    ).toEqual(["chapter", "chapter", "para"]);
   });
 });

@@ -71,6 +71,19 @@ const headingBetweenParasUsj: Usj = {
 /** {@link usj} with an empty `\s` as the only paragraph after `\c 1`. */
 const headingAloneUsj: Usj = { ...usj, content: [...usj.content.slice(0, 2), emptyHeading] };
 
+/** {@link usj} cut off after `\c 1`, so the chapter has no line after it. */
+const bareChapterUsj: Usj = { ...usj, content: usj.content.slice(0, 2) };
+
+/** {@link usj} with a `\c 1` that has no line after it, before its own `\c 2`. */
+const bareChapterBeforeAnotherUsj: Usj = {
+  ...usj,
+  content: [
+    ...bareChapterUsj.content,
+    { type: "chapter", marker: "c", number: "2" },
+    usj.content[2],
+  ],
+};
+
 /** {@link usj} with a second paragraph that has no verse and starts with a space. */
 const leadingSpaceUsj: Usj = {
   ...usj,
@@ -280,6 +293,51 @@ describe("deleting an empty paragraph in Simple mode", () => {
     await pressKeyThroughDom(lexical, "x");
 
     expect(caretParaIndex(lexical)).toBe(2);
+  });
+});
+
+// Without a line after the chapter, a click below its number puts the caret before the chapter.
+describe("a chapter with no line after it in Simple mode", () => {
+  it("loads with a blank line after it, which saves as nothing", async () => {
+    const { ref, lexical } = await mountSimple(bareChapterUsj);
+
+    const isLastLineBlank = lexical.getEditorState().read(() => {
+      const last = $getRoot().getLastChild();
+      return $isImpliedParaNode(last) && last.isEmpty();
+    });
+    expect(isLastLineBlank).toBe(true);
+    expect(ref.current?.getUsj()).toEqual(bareChapterUsj);
+  });
+
+  it("loads the same delta as deleting its only paragraph leaves", async () => {
+    const { lexical: deleted } = await mountSimple(headingAloneUsj);
+    await placeCaretAtParaStart(deleted, 0);
+    await pressKeyThroughDom(deleted, "Backspace");
+    await pressKeyThroughDom(deleted, "Backspace");
+
+    const { lexical: reloaded } = await mountSimple(bareChapterUsj);
+
+    expect(getEditorDelta(reloaded.getEditorState())).toEqual(
+      getEditorDelta(deleted.getEditorState()),
+    );
+  });
+
+  it("keeps an annotation in the next chapter on the text the host names", async () => {
+    const { ref } = await mountSimple(bareChapterBeforeAnotherUsj);
+    const text = "first verse text";
+
+    await act(async () => {
+      ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[3].content[1]", offset: 0 },
+          end: { jsonPath: "$.content[3].content[1]", offset: text.length },
+        },
+        "highlight",
+        "id-1",
+      );
+    });
+
+    expect(document.querySelector("mark")?.textContent).toBe(text);
   });
 });
 
