@@ -263,6 +263,19 @@ export function ContextMenuPlugin({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [menuState.isOpen, closeMenu]);
 
+  // Close menu when the window loses focus. A click in another iframe or application never
+  // produces a `pointerdown` in this document, so the window's own `blur` is the only signal that
+  // the user has moved on, the way a native menu dismisses itself. An element's `blur` does not
+  // bubble, so focus moving between elements inside this document does not reach this listener.
+  useEffect(() => {
+    if (!menuState.isOpen) return;
+    const handleWindowBlur = () => {
+      closeMenu();
+    };
+    globalThis.addEventListener("blur", handleWindowBlur);
+    return () => globalThis.removeEventListener("blur", handleWindowBlur);
+  }, [menuState.isOpen, closeMenu]);
+
   // Keyboard navigation and close on Escape
   useEffect(() => {
     if (!menuState.isOpen) return;
