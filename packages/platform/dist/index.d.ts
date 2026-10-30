@@ -282,27 +282,6 @@ export declare interface EditorOptions {
    * some of what they pasted, dropped or typed is missing. Not called in Standard or Markers view.
    */
   onUnstorableTextRemoved?: UnstorableTextRemovedHandler;
-  /**
-   * Asks the host to run the platform's native paste into the focused frame. When set, in a
-   * hidden-marker view (`view.markerMode` is `"hidden"`) Ctrl/Cmd+V, the context menu's Paste and
-   * {@link EditorRef.paste} use it, so the paste carries every clipboard format, including the
-   * view's own node copy (an async clipboard read sees only plain text and HTML), which it pastes
-   * losslessly. Paste as plain text never uses it, and neither does any other view: Standard view
-   * pastes the USFM text its copy writes, which an async clipboard read delivers too.
-   *
-   * The editor puts focus back on its root first and calls this from a microtask once that has
-   * settled, never from inside an editor update; it must not touch the editor synchronously. If
-   * focus has not come back to the editor shortly after, the editor reads the clipboard itself
-   * instead of calling this. Focus that moves away after this is called is out of the editor's
-   * reach, so a host UI that returns focus elsewhere on close (a menu refocusing its trigger)
-   * should call {@link EditorRef.paste} only once focus is back in the editor, or keep the close
-   * from moving focus.
-   *
-   * Resolve `true` only after the native paste ran. Resolve `false`, or reject, only if no paste
-   * ran: the editor then falls back to reading the clipboard asynchronously. Unset, every paste
-   * reads the clipboard asynchronously.
-   */
-  requestNativePaste?: () => Promise<boolean>;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */
   hasExternalUI?: boolean;
   /** Is the editor enabled for spell checking. */
@@ -451,11 +430,6 @@ export declare interface EditorRef {
   copy(): void;
   /**
    * Paste text at the current cursor position.
-   *
-   * With {@link EditorOptions.requestNativePaste} set, in a hidden-marker view (`view.markerMode`
-   * is `"hidden"`), it puts focus back on the editor's root and completes asynchronously through
-   * the host's native paste, waiting up to 500 ms for focus to come back first; otherwise, and
-   * when the host does not paste, it reads the clipboard asynchronously.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
    */
