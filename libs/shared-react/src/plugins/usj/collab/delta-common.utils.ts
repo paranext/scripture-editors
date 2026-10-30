@@ -18,8 +18,8 @@ import { Op } from "quill-delta";
 import {
   $getLogicalParent,
   $isAttributeRunNode,
+  $isCaretHost,
   $isCharNode,
-  $isCursorPlaceholderOnlyText,
   $isDescendantOf,
   $isImmutableUnmatchedNode,
   $isMilestoneNode,
@@ -660,7 +660,7 @@ export function $getNodeOTContribution(node: LexicalNode, coordinates: OTCoordin
     const nodeText = node.getTextContent();
     if (
       coordinates === "delta-doc" &&
-      // A bare cursor host (EmptyVerseCaretGuardPlugin) is a transient, collab-invisible node:
+      // A bare caret host (transientCaretHost.utils.ts) is a transient, collab-invisible node:
       // its insertion is never emitted, so it contributes nothing to DOC-DELTA positions or the
       // local doc would drift one position ahead of every peer while a host rests. In `"apply"`
       // coordinates it MUST count, per the rule in the doc comment above: none of
@@ -668,7 +668,7 @@ export function $getNodeOTContribution(node: LexicalNode, coordinates: OTCoordin
       // and adds raw `getTextContentSize()`), so excluding it here left a replace-embed retain
       // one short whenever a host rested before the target — a footnote-popover save then
       // deleted the unit BEFORE the note instead of the note itself.
-      ($isCursorPlaceholderOnlyText(node) ||
+      ($isCaretHost(node) ||
         $isOwnParaPrefixGlyph(node) ||
         $getState(node, textTypeState) === "marker-trailing-space" ||
         // An attribute value keyed by its own state, not by ancestry: a CHAR span's run is a direct
