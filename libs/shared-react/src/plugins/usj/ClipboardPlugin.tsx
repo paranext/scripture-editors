@@ -13,7 +13,8 @@ import { useEffect, useRef } from "react";
 
 /**
  * Takes the editor's copy, cut and paste shortcuts (Ctrl/Cmd+C, X, V and Shift+V), guards
- * copies of nothing, and turns every pasted tab into a space ({@link registerTabsAsSpaces}).
+ * copies of nothing, and turns every tab node a paste makes into a space
+ * ({@link registerTabsAsSpaces}).
  *
  * @param requestNativePaste - When set, Ctrl/Cmd+V asks the host to run its native paste, which
  *   carries every clipboard format; resolving `false` falls back to reading the clipboard. Without
