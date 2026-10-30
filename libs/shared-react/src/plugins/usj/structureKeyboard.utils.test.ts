@@ -57,6 +57,7 @@ import {
   $isMarkerNode,
   $isMarkerTrailingSeparator,
   $isSomeParaNode,
+  ImpliedParaNode,
   NBSP,
   ParaNode,
 } from "shared";
@@ -475,6 +476,98 @@ describe("$structuralDeleteTarget", () => {
     updateSelection(editor, t1!, 0);
     editor.getEditorState().read(() => {
       expect($structuralDeleteTarget($getSelection()!, "deleteBackward")).toBeUndefined();
+    });
+  });
+
+  it("returns an empty para after a chapter, when a paragraph follows it", async () => {
+    let empty: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      empty = $createParaNode("s");
+      $getRoot().append(
+        $createImmutableChapterNode("1"),
+        empty,
+        $createParaNode("p").append($createTextNode("first")),
+      );
+    });
+    updateSelection(editor, empty!, 0);
+    editor.getEditorState().read(() => {
+      expect($structuralDeleteTarget($getSelection()!, "deleteBackward")?.node.getKey()).toBe(
+        empty.getKey(),
+      );
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(false);
+    });
+  });
+
+  it.each(["deleteBackward", "deleteForward"] as const)(
+    "%s returns an empty para alone in its chapter",
+    async (intent) => {
+      let empty: ParaNode;
+      const { editor } = await baseTestEnvironment(() => {
+        empty = $createParaNode("s");
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          empty,
+          $createImmutableChapterNode("2"),
+        );
+      });
+      updateSelection(editor, empty!, 0);
+      editor.getEditorState().read(() => {
+        expect($structuralDeleteTarget($getSelection()!, intent)?.node.getKey()).toBe(
+          empty.getKey(),
+        );
+        expect($isUnmergeableParaStart($getSelection()!)).toBe(false);
+      });
+    },
+  );
+
+  it("returns undefined for a blank line with no marker alone in its chapter", async () => {
+    let blank: ImpliedParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      blank = $createImpliedParaNode();
+      $getRoot().append($createImmutableChapterNode("1"), blank, $createImmutableChapterNode("2"));
+    });
+    updateSelection(editor, blank!, 0);
+    editor.getEditorState().read(() => {
+      expect($structuralDeleteTarget($getSelection()!, "deleteBackward")).toBeUndefined();
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(true);
+    });
+  });
+
+  it("deleteBackward at the start of a para after an empty para → the EMPTY para", async () => {
+    let empty: ParaNode;
+    let t2: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      empty = $createParaNode("s");
+      t2 = $createTextNode("second");
+      $getRoot().append(
+        $createParaNode("p").append($createTextNode("first")),
+        empty,
+        $createParaNode("q1").append(t2),
+      );
+    });
+    updateSelection(editor, t2!, 0);
+    editor.getEditorState().read(() => {
+      expect($structuralDeleteTarget($getSelection()!, "deleteBackward")?.node.getKey()).toBe(
+        empty!.getKey(),
+      );
+    });
+  });
+
+  it("deleteForward in an empty para with a next para → the empty para itself", async () => {
+    let empty: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      empty = $createParaNode("s");
+      $getRoot().append(
+        $createParaNode("p").append($createTextNode("first")),
+        empty,
+        $createParaNode("q1").append($createTextNode("second")),
+      );
+    });
+    updateSelection(editor, empty!, 0);
+    editor.getEditorState().read(() => {
+      expect($structuralDeleteTarget($getSelection()!, "deleteForward")?.node.getKey()).toBe(
+        empty.getKey(),
+      );
     });
   });
 
