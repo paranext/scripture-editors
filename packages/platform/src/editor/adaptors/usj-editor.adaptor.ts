@@ -239,6 +239,8 @@ export function serializeEditorState(
       children = insertImpliedParasRecurse(recurseNodes(usj.content));
       // After implied paragraphs exist, so the grouping only ever sees paragraph containers.
       if (isBlockVerseLayout(_viewOptions)) children = groupVersesIntoBlocks(children, _logger);
+      if (_viewOptions.markerMode !== "editable")
+        children = insertBlankLinesAfterBareChapters(children);
     } else children = [emptyImpliedParaNode];
   } else {
     children = [emptyImpliedParaNode];
@@ -1302,6 +1304,27 @@ function insertImpliedParasRecurse(nodes: SerializedLexicalNode[]): SerializedLe
     return [createImpliedPara(nodes)];
   }
   return nodes;
+}
+
+/**
+ * Gives each chapter with no line after it (the next chapter or the end of the book comes right
+ * after) an empty implied paragraph to hold the caret. Without one, a click below the chapter number
+ * lands the caret before the chapter, so typed text goes in front of `\c`. Deleting a chapter's only
+ * paragraph leaves the same blank line, and an empty implied paragraph saves as nothing, so the
+ * document is unchanged.
+ *
+ * Only for views where markers are not editable text. When they are, as in Standard view, the
+ * chapter's `\c N` text holds the caret itself.
+ */
+function insertBlankLinesAfterBareChapters(
+  nodes: SerializedLexicalNode[],
+): SerializedLexicalNode[] {
+  return nodes.flatMap((node, index) => {
+    const next = nodes[index + 1];
+    return isSomeSerializedChapterNode(node) && (!next || isSomeSerializedChapterNode(next))
+      ? [node, createImpliedPara([])]
+      : [node];
+  });
 }
 
 const usjEditorAdaptor: UsjEditorAdaptor = {

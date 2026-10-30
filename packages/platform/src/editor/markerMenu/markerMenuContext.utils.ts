@@ -40,6 +40,7 @@ import {
   $isSomeChapterNode,
   $isSynthesizedMarkerNode,
   ParaNode,
+  SomeParaNode,
 } from "shared";
 import { $getParaMarkerSelectionLocationNode } from "shared-react";
 
@@ -127,14 +128,17 @@ function $getFirstLeaf(node: LexicalNode): LexicalNode {
  * it — the menu boundary is the deliberately narrower {@link $isAtParagraphMarkerPrefix}
  * (after-the-separator caret offers characters), and the two probes are split so changing the
  * menu boundary could not silently change how a pick applies.
+ *
+ * A line with no marker has no prefix, so its content starts at its first leaf, or at the line
+ * itself when it is blank.
  */
 export function $isAtParagraphContentStart(
-  para: ParaNode,
+  para: SomeParaNode,
   anchorNode: LexicalNode,
   offset: number,
 ): boolean {
   const firstChild = para.getFirstChild();
-  if (!firstChild) return false;
+  if (!firstChild) return anchorNode.is(para) && offset === 0;
 
   let contentStart: LexicalNode | null = firstChild;
   if ($isSynthesizedMarkerNode(firstChild)) {
