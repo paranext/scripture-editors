@@ -545,4 +545,16 @@ describe("generateUsjFontCss", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("[generateUsjFontCss]"));
     warn.mockRestore();
   });
+
+  it("accepts a selector with an attribute value and :not(), as Platform.Bible's footnote rows use", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const footnoteRows = "[data-footnotes-pane] .formatted-font > li:not([data-state='editing'])";
+    const css = generateUsjFontCss(
+      { defaultFont: "Noto", defaultFontSize: 12, markers: {} },
+      { containerSelector: footnoteRows },
+    );
+    expect(css).toBe(`${footnoteRows} { font-family: "Noto", ${FALLBACK}; font-size: 12pt; }`);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
 });
