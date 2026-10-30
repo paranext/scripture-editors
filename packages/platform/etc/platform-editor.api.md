@@ -253,6 +253,9 @@ export function filterAndRankItems<T extends Item>(options: (Omit<FilterAndRankI
 export function generateUsjCss(styleInfo: StyleInfo, options?: UsjCssOptions): string;
 
 // @public
+export function generateUsjFontCss(styleInfo: StyleInfo, options?: Pick<UsjCssOptions, "zoom" | "containerSelector">): string;
+
+// @public
 export const GENERATOR_NOTE_CALLER = "+";
 
 // @public

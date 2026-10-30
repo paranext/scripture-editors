@@ -10,7 +10,8 @@
 import { MarkerStyleInfo, StyleInfo } from "shared";
 
 /**
- * Options controlling {@link generateUsjCss}'s output.
+ * Options controlling {@link generateUsjCss}'s output. {@link generateUsjFontCss} takes `zoom` and
+ * `containerSelector` from these.
  *
  * @public
  */
@@ -133,14 +134,33 @@ const DEFAULT_CONTAINER_SELECTOR = ".editor-input.usfm";
  */
 const SAFE_SELECTOR_REGEX = /^[\w.#[\]="':()>+~*,\s-]+$/;
 
-/** The container selector to emit: the caller's, or the default when the caller's is unsafe. */
-function safeContainerSelector(containerSelector: string): string {
+/**
+ * The container selector to emit: the caller's, or the default when the caller's is unsafe.
+ * `generator` names the exported function in the warning.
+ */
+function safeContainerSelector(containerSelector: string, generator: string): string {
   if (SAFE_SELECTOR_REGEX.test(containerSelector)) return containerSelector;
   // eslint-disable-next-line no-console -- no logger seam in this pure function; loud-fail per project convention.
   console.warn(
-    `[generateUsjCss] Ignoring unsafe containerSelector "${containerSelector}"; using "${DEFAULT_CONTAINER_SELECTOR}".`,
+    `[${generator}] Ignoring unsafe containerSelector "${containerSelector}"; using "${DEFAULT_CONTAINER_SELECTOR}".`,
   );
   return DEFAULT_CONTAINER_SELECTOR;
+}
+
+/**
+ * A marker's `font-family` declaration, or `undefined` when the marker names no font. Shared by
+ * {@link generateUsjCss} and {@link generateUsjFontCss} so their marker fonts cannot drift.
+ */
+function markerFontDeclaration(
+  entry: MarkerStyleInfo,
+  projectDefaultFont: string | undefined,
+): string | undefined {
+  return entry.fontName ? fontFamilyDeclaration(entry.fontName, projectDefaultFont) : undefined;
+}
+
+/** Whether `value` is a finite number above zero — the only kind of font size worth emitting. */
+function isPositiveSize(value: number | undefined): value is number {
+  return hasValue(value) && Number.isFinite(value) && value > 0;
 }
 
 function markerDeclarations(
@@ -151,7 +171,8 @@ function markerDeclarations(
   projectDefaultFont: string | undefined,
 ): string[] {
   const decls: string[] = [];
-  if (entry.fontName) decls.push(fontFamilyDeclaration(entry.fontName, projectDefaultFont));
+  const fontDecl = markerFontDeclaration(entry, projectDefaultFont);
+  if (fontDecl) decls.push(fontDecl);
   if (entry.bold) decls.push("font-weight: bold");
   if (entry.italic) decls.push("font-style: italic");
   if (entry.color) {
@@ -167,7 +188,7 @@ function markerDeclarations(
   // An explicit fontSize 0 stays un-emitted BY DESIGN (PT9 `FontSize > 0`): `font-size: 0%`
   // would blank the marker's text, and unlike the length fields there is no meaningful
   // "override to zero" reading of it.
-  if (hasValue(entry.fontSize) && entry.fontSize > 0)
+  if (isPositiveSize(entry.fontSize))
     decls.push(`font-size: ${Math.floor((entry.fontSize * 100) / 12)}%`);
   if (hasValue(entry.firstLineIndent))
     decls.push(`text-indent: ${formatLength(entry.firstLineIndent * 20 * zoom)}vw`);
@@ -223,7 +244,7 @@ const STATIC_CHAPTER_FONT_PERCENTS = { c: 150, ca: 133, cp: 150 } as const;
 /** Percent-of-base font size the sheet's per-marker rule emits for `entry`, or `fallback` when
  * it emits none — the same `fontSize * 100 / 12` mapping {@link markerDeclarations} uses. */
 function fontSizePercent(entry: MarkerStyleInfo | undefined, fallback: number): number {
-  return entry && hasValue(entry.fontSize) && entry.fontSize > 0
+  return entry && isPositiveSize(entry.fontSize)
     ? Math.floor((entry.fontSize * 100) / 12)
     : fallback;
 }
@@ -247,7 +268,7 @@ function chapterNestedRunRules(styleInfo: StyleInfo, scope: string): string[] {
   // either the divisor (`\c`) or the dividend (`\ca`/`\cp`) away from what the static rules assume.
   const sized = (["c", "ca", "cp"] as const).filter((marker) => {
     const entry = styleInfo.markers[marker];
-    return entry && hasValue(entry.fontSize) && entry.fontSize > 0;
+    return entry && isPositiveSize(entry.fontSize);
   });
   if (sized.length === 0) return [];
   const chapterPercent = fontSizePercent(styleInfo.markers.c, STATIC_CHAPTER_FONT_PERCENTS.c);
@@ -259,6 +280,26 @@ function chapterNestedRunRules(styleInfo: StyleInfo, scope: string): string[] {
     const nestedPercent = formatLength((percent * 100) / chapterPercent);
     return `${scope} .usfm_c .usfm_${marker}.usfm_${marker} { font-size: ${nestedPercent}%; }`;
   });
+}
+
+/**
+ * The base rule for the project default font and size, or `undefined` when the sheet sets neither.
+ * This and {@link markerRule} are shared by {@link generateUsjCss} and {@link generateUsjFontCss} so
+ * the two cannot drift.
+ */
+function baseRule(styleInfo: StyleInfo, zoom: number, scope: string): string | undefined {
+  const baseDecls: string[] = [];
+  if (styleInfo.defaultFont) baseDecls.push(fontFamilyDeclaration(styleInfo.defaultFont));
+  // Like the per-marker fontSize: a 0 default would blank the whole editor, so only positive
+  // sizes emit.
+  if (isPositiveSize(styleInfo.defaultFontSize))
+    baseDecls.push(`font-size: ${formatLength(styleInfo.defaultFontSize * zoom)}pt`);
+  return baseDecls.length > 0 ? `${scope} { ${baseDecls.join("; ")}; }` : undefined;
+}
+
+/** The rule for one marker's declarations, the marker name escaped as a class name. */
+function markerRule(scope: string, marker: string, decls: string[]): string {
+  return `${scope} .usfm_${escapeCssIdentifier(marker)} { ${decls.join("; ")}; }`;
 }
 
 /**
@@ -276,20 +317,41 @@ function chapterNestedRunRules(styleInfo: StyleInfo, scope: string): string[] {
  */
 export function generateUsjCss(styleInfo: StyleInfo, options: UsjCssOptions = {}): string {
   const { zoom = 1, rtl = false, containerSelector = DEFAULT_CONTAINER_SELECTOR } = options;
-  const scope = safeContainerSelector(containerSelector);
+  const scope = safeContainerSelector(containerSelector, "generateUsjCss");
   const rules: string[] = [];
-  const baseDecls: string[] = [];
-  if (styleInfo.defaultFont) baseDecls.push(fontFamilyDeclaration(styleInfo.defaultFont));
-  // Like the per-marker fontSize: a 0 default would blank the whole editor, so only positive
-  // sizes emit.
-  if (hasValue(styleInfo.defaultFontSize) && styleInfo.defaultFontSize > 0)
-    baseDecls.push(`font-size: ${formatLength(styleInfo.defaultFontSize * zoom)}pt`);
-  if (baseDecls.length > 0) rules.push(`${scope} { ${baseDecls.join("; ")}; }`);
+  const base = baseRule(styleInfo, zoom, scope);
+  if (base) rules.push(base);
   for (const [marker, entry] of Object.entries(styleInfo.markers)) {
     const decls = markerDeclarations(marker, entry, zoom, rtl, styleInfo.defaultFont);
-    if (decls.length > 0)
-      rules.push(`${scope} .usfm_${escapeCssIdentifier(marker)} { ${decls.join("; ")}; }`);
+    if (decls.length > 0) rules.push(markerRule(scope, marker, decls));
   }
   rules.push(...chapterNestedRunRules(styleInfo, scope));
+  return rules.join("\n");
+}
+
+/**
+ * Generate only the font part of {@link generateUsjCss}'s output: the base rule for the project
+ * default font family and size, and a `font-family` rule for each marker that names a font (the
+ * marker's font, then the project default font, then the Scripture fallback chain). Weight, colour,
+ * size, margins, alignment and every other marker declaration are left out, as are the
+ * chapter-nested `\ca`/`\cp` rules, so a view that keeps its own marker layout can take the
+ * project's fonts without the project's layout. There is no `rtl` option: none of these
+ * declarations depend on text direction.
+ *
+ * @public
+ */
+export function generateUsjFontCss(
+  styleInfo: StyleInfo,
+  options: Pick<UsjCssOptions, "zoom" | "containerSelector"> = {},
+): string {
+  const { zoom = 1, containerSelector = DEFAULT_CONTAINER_SELECTOR } = options;
+  const scope = safeContainerSelector(containerSelector, "generateUsjFontCss");
+  const rules: string[] = [];
+  const base = baseRule(styleInfo, zoom, scope);
+  if (base) rules.push(base);
+  for (const [marker, entry] of Object.entries(styleInfo.markers)) {
+    const fontDecl = markerFontDeclaration(entry, styleInfo.defaultFont);
+    if (fontDecl) rules.push(markerRule(scope, marker, [fontDecl]));
+  }
   return rules.join("\n");
 }

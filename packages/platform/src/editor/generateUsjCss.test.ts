@@ -1,4 +1,4 @@
-import { generateUsjCss } from "./generateUsjCss";
+import { generateUsjCss, generateUsjFontCss } from "./generateUsjCss";
 import { StyleInfo } from "shared";
 import { describe, expect, it, vi } from "vitest";
 
@@ -414,5 +414,147 @@ describe("generateUsjCss chapter-nested attribute runs", () => {
     expect(
       generateUsjCss({ markers: chapterMarker("c", 18) }, { containerSelector: ".x" }),
     ).toContain(".x .usfm_c .usfm_ca.usfm_ca");
+  });
+});
+
+describe("generateUsjFontCss", () => {
+  const FALLBACK = "var(--usj-font-fallback, serif)";
+  const SCOPE = ".editor-input.usfm";
+  const fontMarker = (marker: string, fontName: string) => ({
+    [marker]: { marker, styleType: "character" as const, fontName },
+  });
+
+  it("equals generateUsjCss for a font-only StyleInfo", () => {
+    const fontOnly: StyleInfo = {
+      defaultFont: "Ezra SIL",
+      defaultFontSize: 14,
+      markers: { ...fontMarker("nd", "Noto"), ...fontMarker("x.y", "Ezra SIL") },
+    };
+    expect(generateUsjFontCss(fontOnly)).toBe(generateUsjCss(fontOnly));
+  });
+
+  it("emits the same base rule as generateUsjCss, honouring zoom and containerSelector", () => {
+    const base: StyleInfo = { defaultFont: "Ezra SIL", defaultFontSize: 12.5, markers: {} };
+    const options = { zoom: 2, containerSelector: ".x" };
+    expect(generateUsjFontCss(base, options)).toBe(generateUsjCss(base, options));
+    expect(generateUsjFontCss(base, options)).toBe(
+      `.x { font-family: "Ezra SIL", ${FALLBACK}; font-size: 25pt; }`,
+    );
+  });
+
+  it("follows a marker font with the project default font, then the fallback", () => {
+    expect(
+      generateUsjFontCss({ defaultFont: "Ezra SIL", markers: fontMarker("nd", "Noto") }),
+    ).toContain(`${SCOPE} .usfm_nd { font-family: "Noto", "Ezra SIL", ${FALLBACK}; }`);
+  });
+
+  it("does not repeat the default font after a marker font equal to it", () => {
+    expect(
+      generateUsjFontCss({ defaultFont: "Ezra SIL", markers: fontMarker("nd", "Ezra SIL") }),
+    ).toContain(`${SCOPE} .usfm_nd { font-family: "Ezra SIL", ${FALLBACK}; }`);
+  });
+
+  it("emits only the font family for a marker that also sets other presentation", () => {
+    const css = generateUsjFontCss({
+      markers: {
+        p: {
+          marker: "p",
+          styleType: "paragraph",
+          fontName: "X",
+          bold: true,
+          color: "#003380",
+          fontSize: 14,
+          leftMargin: 1,
+          spaceBefore: 4,
+        },
+      },
+    });
+    expect(css).toBe(`${SCOPE} .usfm_p { font-family: "X", ${FALLBACK}; }`);
+  });
+
+  it("emits no rule for a marker without a font name", () => {
+    expect(
+      generateUsjFontCss({
+        markers: { bd: { marker: "bd", styleType: "character", bold: true } },
+      }),
+    ).toBe("");
+  });
+
+  it("adds no chapter-nested rules when \\c, \\ca or \\cp carry a size", () => {
+    const css = generateUsjFontCss({
+      markers: {
+        c: { marker: "c", styleType: "character", fontSize: 18 },
+        ca: { marker: "ca", styleType: "character", fontSize: 16 },
+        cp: { marker: "cp", styleType: "character", fontSize: 18 },
+      },
+    });
+    expect(css).toBe("");
+  });
+
+  it("returns an empty string for an empty StyleInfo", () => {
+    expect(generateUsjFontCss({ markers: {} })).toBe("");
+  });
+
+  it("emits only the size when there is no default font", () => {
+    expect(generateUsjFontCss({ defaultFontSize: 14, markers: {} })).toBe(
+      `${SCOPE} { font-size: 14pt; }`,
+    );
+  });
+
+  it.each([0, -1, NaN, Infinity])("omits a default size of %s", (size) => {
+    expect(generateUsjFontCss({ defaultFontSize: size, markers: {} })).toBe("");
+    expect(
+      generateUsjFontCss({ defaultFont: "Ezra SIL", defaultFontSize: size, markers: {} }),
+    ).toBe(`${SCOPE} { font-family: "Ezra SIL", ${FALLBACK}; }`);
+  });
+
+  it.each([0, -1, NaN, Infinity])("omits a marker size of %s from generateUsjCss", (size) => {
+    const css = generateUsjCss({
+      markers: { s1: { marker: "s1", styleType: "paragraph", bold: true, fontSize: size } },
+    });
+    expect(css).toBe(`${SCOPE} .usfm_s1 { font-weight: bold; }`);
+    expect(css).not.toContain("font-size");
+    expect(css).not.toContain("Infinity");
+  });
+
+  it("escapes a backslash and a quote in font names in both generators", () => {
+    const styles: StyleInfo = {
+      defaultFont: 'A\\B"C',
+      markers: fontMarker("nd", 'D\\E"F'),
+    };
+    const family = `"D\\\\E\\"F", "A\\\\B\\"C", ${FALLBACK}`;
+    for (const css of [generateUsjFontCss(styles), generateUsjCss(styles)]) {
+      expect(css).toContain(`${SCOPE} { font-family: "A\\\\B\\"C", ${FALLBACK}; }`);
+      expect(css).toContain(`${SCOPE} .usfm_nd { font-family: ${family}; }`);
+    }
+  });
+
+  it("escapes a marker name so it cannot terminate the rule early", () => {
+    const css = generateUsjFontCss({ markers: fontMarker("x{}", "Noto") });
+    expect(css).toContain(".usfm_x\\{\\}");
+    expect(css).not.toContain(".usfm_x{} {");
+  });
+
+  it("warns under its own name and falls back to the default scope for an unsafe containerSelector", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const css = generateUsjFontCss(
+      { markers: fontMarker("nd", "Noto") },
+      { containerSelector: ".x { } body" },
+    );
+    expect(css).toBe(`${SCOPE} .usfm_nd { font-family: "Noto", ${FALLBACK}; }`);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("[generateUsjFontCss]"));
+    warn.mockRestore();
+  });
+
+  it("accepts a selector with an attribute value and :not(), as Platform.Bible's footnote rows use", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const footnoteRows = "[data-footnotes-pane] .formatted-font > li:not([data-state='editing'])";
+    const css = generateUsjFontCss(
+      { defaultFont: "Noto", defaultFontSize: 12, markers: {} },
+      { containerSelector: footnoteRows },
+    );
+    expect(css).toBe(`${footnoteRows} { font-family: "Noto", ${FALLBACK}; font-size: 12pt; }`);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
