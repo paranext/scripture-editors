@@ -10,6 +10,7 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  $setCompositionKey,
   COMMAND_PRIORITY_HIGH,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   DELETE_CHARACTER_COMMAND,
@@ -19,7 +20,7 @@ import {
   RangeSelection,
   TextNode,
 } from "lexical";
-import { $isNoteNode, NoteNode } from "shared";
+import { $isNoteNode, NBSP, NoteNode, ZWSP } from "shared";
 import { useEffect } from "react";
 
 /**
@@ -35,6 +36,11 @@ import { useEffect } from "react";
  *
  * Only in the views whose markers are hidden: there a span is its content alone, with no glyph of
  * its own that the range could take. The marker-edit engine owns Standard view's range edits.
+ *
+ * A composition (an input method or a dead key) over such a range starts with Lexical inserting a
+ * placeholder over the range, which is handled here like any typed text. The rest of the composition
+ * replaces the placeholder in the text the range started in. Nothing goes earlier than Lexical's own
+ * start of a composition would take it.
  */
 export function InlineRangeEditPlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -45,13 +51,16 @@ export function InlineRangeEditPlugin(): null {
           CONTROLLED_TEXT_INSERTION_COMMAND,
           (payload) => {
             const text = typeof payload === "string" ? payload : payload.data;
-            return typeof text === "string" && $replaceInlineRange(text);
+            if (typeof text !== "string") return false;
+            if ($getEditor().isComposing())
+              return COMPOSITION_PLACEHOLDERS.includes(text) && $replaceInlineRange(text, true);
+            return $replaceInlineRange(text);
           },
           COMMAND_PRIORITY_HIGH,
         ),
         editor.registerCommand(
           DELETE_CHARACTER_COMMAND,
-          () => $replaceInlineRange(""),
+          () => !$getEditor().isComposing() && $replaceInlineRange(""),
           COMMAND_PRIORITY_HIGH,
         ),
       ),
@@ -59,6 +68,13 @@ export function InlineRangeEditPlugin(): null {
   );
   return null;
 }
+
+/**
+ * What Lexical inserts over a range when a composition starts, its private `COMPOSITION_START_CHAR`:
+ * a zero-width space, or a no-break space in the browsers that need one. A composing insertion of
+ * anything else is the composition itself, which stays with Lexical.
+ */
+const COMPOSITION_PLACEHOLDERS = [ZWSP, NBSP];
 
 /** A text and an offset in it: one end of the range. */
 interface Edge {
@@ -126,16 +142,23 @@ function $removeIfEmptyInline(element: ElementNode | null): void {
   }
 }
 
-/** Replace the selected range with `text`, when it is one {@link $inlineRangeEdges} takes. */
-function $replaceInlineRange(text: string): boolean {
+/**
+ * Replace the selected range with `text`, when it is one {@link $inlineRangeEdges} takes.
+ *
+ * @param text - What goes in place of the range.
+ * @param isCompositionPlaceholder - Whether `text` is the placeholder a composition starts with.
+ *   Lexical has already put the composition on the range's anchor, which may be in another text, so
+ *   it moves to the text holding the placeholder here: `TextNode.select` moves it only while the
+ *   selection is still on that anchor, which removing the range can change. The selection covers
+ *   the placeholder, as Lexical's own insertion leaves it, for the composed text to replace.
+ */
+function $replaceInlineRange(text: string, isCompositionPlaceholder = false): boolean {
   const selection = $getSelection();
-  // Not covered: a composition (an input method or a dead key) started over such a range. Lexical
-  // sets the composition key before it dispatches that insertion, so the range takes Lexical's own
-  // path. Clearing the range first could leave the composition key on a text it no longer selects.
-  if (!$isRangeSelection(selection) || $getEditor().isComposing()) return false;
+  if (!$isRangeSelection(selection)) return false;
   const edges = $inlineRangeEdges(selection);
   if (!edges) return false;
   const [start, end] = edges;
+  if (isCompositionPlaceholder) $setCompositionKey(start.node.getKey());
   // A deletion of both edge texts whole leaves no text to hold the caret, so Lexical's own path,
   // which deletes such a range correctly, places it. Typed text holds it in the start text.
   if (text === "" && start.offset === 0 && end.offset === end.node.getTextContentSize())
@@ -155,7 +178,8 @@ function $replaceInlineRange(text: string): boolean {
     start.node.getTextContentSize() - start.offset,
     text,
   );
-  if (startNode.getTextContentSize() > 0)
+  if (isCompositionPlaceholder) startNode.select(start.offset, start.offset + text.length);
+  else if (startNode.getTextContentSize() > 0)
     startNode.select(start.offset + text.length, start.offset + text.length);
   else {
     endNode.select(0, 0);

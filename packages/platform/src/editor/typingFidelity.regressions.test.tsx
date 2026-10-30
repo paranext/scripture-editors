@@ -22,6 +22,8 @@ import {
   $isElementNode,
   $isRangeSelection,
   $setSelection,
+  COMPOSITION_END_COMMAND,
+  COMPOSITION_START_COMMAND,
   UNDO_COMMAND,
 } from "lexical";
 import { NBSP } from "shared";
@@ -544,6 +546,123 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
         type: "para",
         marker: "p",
         content: ["a ", { type: "char", marker: "nd", content: ["x three"] }, " b"],
+      });
+    });
+  });
+});
+
+/**
+ * An input method's composition over the selection, as a browser delivers one: Lexical takes the
+ * start, the composed text replaces what the selection then covers in the DOM, and the end reads it
+ * back.
+ */
+async function compose(mounted: MountedEditor, composed: string): Promise<void> {
+  await act(async () => {
+    mounted.lexical.dispatchCommand(
+      COMPOSITION_START_COMMAND,
+      new CompositionEvent("compositionstart"),
+    );
+  });
+  const [key, before, after] = mounted.lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) throw new Error("no range selection while composing");
+    const [from, to] = selection.isBackward()
+      ? [selection.focus, selection.anchor]
+      : [selection.anchor, selection.focus];
+    const text = from.getNode().getTextContent();
+    return [from.key, text.slice(0, from.offset), text.slice(to.offset)];
+  });
+  expect(mounted.lexical._compositionKey).toBe(key);
+  const dom = mounted.lexical.getElementByKey(key)?.firstChild;
+  if (!dom) throw new Error("no DOM text for the composing node");
+  dom.nodeValue = `${before}${composed}${after}`;
+  window.getSelection()?.collapse(dom, before.length + composed.length);
+  await act(async () => {
+    mounted.lexical.dispatchCommand(
+      COMPOSITION_END_COMMAND,
+      new CompositionEvent("compositionend", { data: composed }),
+    );
+  });
+}
+
+forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
+  describe("an input method's composition over a range", () => {
+    const composedOverSpanEdge = {
+      type: "para",
+      marker: "p",
+      content: [
+        "a ",
+        {
+          type: "char",
+          marker: "nd",
+          content: ["one ", { type: "char", marker: "wj", content: ["twx"] }, "three"],
+        },
+        " b",
+      ],
+    };
+
+    it("from inside a nested span takes only the selected text", async () => {
+      const mounted = await mountInView(NESTED_SPAN, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: NESTED_TWO, offset: 2 },
+          end: { jsonPath: "$.content[2].content[1].content[2]", offset: 1 },
+        });
+      });
+
+      await compose(mounted, "x");
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual(composedOverSpanEdge);
+    });
+
+    it("selected backward takes the same text as forward", async () => {
+      const mounted = await mountInView(NESTED_SPAN, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: NESTED_TWO, offset: 2 },
+          end: { jsonPath: "$.content[2].content[1].content[2]", offset: 1 },
+        });
+      });
+      await reverseSelection(mounted);
+
+      await compose(mounted, "x");
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual(composedOverSpanEdge);
+    });
+
+    it("across a collapsed note keeps the composed text and the text after the range", async () => {
+      const mounted = await mountInView(oneParaUsj(["a", NOTE, " b"]), view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+          end: { jsonPath: "$.content[2].content[2]", offset: 1 },
+        });
+      });
+
+      await compose(mounted, "x");
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: ["axb"],
+      });
+    });
+
+    it("within one text replaces only the selected text", async () => {
+      const mounted = await mountInView(oneParaUsj(["one two"]), view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+          end: { jsonPath: "$.content[2].content[0]", offset: 5 },
+        });
+      });
+
+      await compose(mounted, "x");
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: ["oxwo"],
       });
     });
   });

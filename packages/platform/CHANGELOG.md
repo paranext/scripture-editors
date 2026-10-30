@@ -296,6 +296,9 @@ refused. The public surface grew substantially; nothing was removed.
   it the way it reads any pasted U+00A0, with the caret inside the value too, so with the option off
   it comes back as `~`, as Paratext 9 pastes one. The bytes an unwrapped span leaves behind are body text, and spell a no-break space
   as body text does.
+- An input method or dead key composing over a selection that crosses a char span's edge or a
+  collapsed note, in a view that hides markers, now takes only the selected text, as typing does:
+  the text after the selection stays where it was instead of landing in the span or the note.
 - Pressing Enter just before a space that a no-break, ideographic or zero-width no-break space
   follows no longer removes that character along with the space; Paratext 9 keeps it after a marker.
 - Placing the caret in an empty verse no longer moves the next verse number onto a new line, and the
