@@ -14,15 +14,19 @@ describe("removeMarkerTokens", () => {
     ["a nested marker and its closer", "\\+nd Lord\\+nd*", "Lord"],
     ["a numbered marker", "\\q1 line", "line"],
     ["a milestone name and its bare closer", "a\\qt-s\\*b", "ab"],
-    ["the nameless marker", "\\ text", "text"],
     ["a bare backslash", "a\\", "a"],
-    ["two backslashes in a row", "a\\\\ b", "ab"],
+    ["a backslash in an attribute value, as a marker", 'src="c:\\pics\\a.jpg"', 'src="c:.jpg"'],
     ["markers on each line, keeping the line breaks", "\\p one\n\\q1 two", "one\ntwo"],
   ])("removes %s", (_name, text, expected) => {
     expect(removeMarkerTokens(text)).toBe(expected);
   });
 
   it.each([
+    ["the space after a bare backslash", "a\\ b", "a b"],
+    ["the space after the nameless marker", "\\ text", " text"],
+    ["the space after two backslashes in a row", "a\\\\ b", "a b"],
+    ["the space after a nameless nested marker", "\\+ x", " x"],
+    ["the space after a bare closer", "\\* x", " x"],
     ["a verse number", "\\v 9 x", "9 x"],
     ["a note's caller", "\\f + \\fr 1:1 \\ft note\\f*", "+ 1:1 note"],
     ["an attribute list", '\\w word|lemma="x"\\w*', 'word|lemma="x"'],
@@ -118,6 +122,17 @@ describe("withoutMarkerTokens", () => {
     });
 
     expect(withoutMarkerTokens(data)).toBeUndefined();
+  });
+
+  it("does not take the space after a bare backslash for nothing left", () => {
+    const stripped = withoutMarkerTokens(
+      transfer({
+        [LEXICAL_CLIPBOARD_TYPE]: nodeCopy(MARKER_VIEW_CLIPBOARD_NAMESPACE),
+        "text/plain": "\\ ",
+      }),
+    );
+
+    expect(stripped?.getData("text/plain")).toBe(" ");
   });
 
   it("keeps a space a marker's separator leaves behind", () => {
