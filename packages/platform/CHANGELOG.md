@@ -223,6 +223,14 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- In views that hide markers, an empty paragraph right after a chapter can now be deleted with
+  Backspace or Delete. When it is the only paragraph in its chapter, it leaves a blank line with no
+  marker, where a marker can be picked with the `\` menu or `formatPara`. A blank line left empty
+  saves as nothing, and a chapter with no line after it now loads with the same blank line, so a
+  click below the chapter number no longer puts the caret before the chapter. Deleting an empty
+  paragraph next to another paragraph, by Delete inside it or by Backspace from the start of the
+  paragraph after it, now removes the empty one instead of moving the other paragraph's text under
+  its marker. None of this applies in Standard view, where markers are editable text.
 - A text node holding only zero-width spaces that the author typed (a line-break opportunity in
   Thai, Khmer and Lao), which an annotation or other split leaves in a node of its own, is now kept
   by `getUsj()`, sent in delta ops, and counted in annotation and OT positions. It used to be taken

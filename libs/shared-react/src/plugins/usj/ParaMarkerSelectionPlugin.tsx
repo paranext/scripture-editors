@@ -6,9 +6,10 @@ import {
 } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 import {
-  $canMergeIntoPrevious,
+  $canDeletePara,
+  $deletePara,
+  $getEmptyParaBefore,
   $getGutterParaWithCaretAtStart,
-  $mergeParaIntoPrevious,
   $placeCaretAfterParaChild,
 } from "./structureKeyboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -100,10 +101,14 @@ const TARGETED_INPUT_TYPES = new Set([
  *   spellcheck replacement, a drop) acts there instead.
  * - Removing the marker (Backspace/Delete, by key, command or input event, or a Backspace from the
  *   start of the text of a paragraph with no leading verse) merges its paragraph into the one
- *   before (`$mergeParaIntoPrevious`) — a no-op with nothing before it, and refused under
+ *   before, or removes it when it is empty and right after a chapter (`$deletePara`), leaving a
+ *   blank line with no marker when it is the only one in its chapter — a no-op with nothing else
+ *   before it. A Backspace from the start of the text whose paragraph has an
+ *   empty one before it removes that empty one instead, so this paragraph's text never lands
+ *   under the empty one's marker. Refused under
  *   `"protected"`, as `StructureKeyboardPlugin` refuses the same merge from a caret. Under
  *   `"guarded"`, it is `StructureKeyboardPlugin`'s two-step delete, as from a caret: the first
- *   press arms the merge and keeps the marker selected, the second merges.
+ *   press arms the delete and keeps the marker selected, the second performs it.
  * - Pointer and clipboard: a click elsewhere, or a cut, copy or paste after the browser's selection
  *   moved elsewhere, uses that selection; otherwise paste lands at the content start and cut, copy
  *   and drag-start are refused (the glyph is not content). A drop lands at its drop point, and is
@@ -154,18 +159,20 @@ export function ParaMarkerSelectionPlugin({
     const $getActivePara = (): ParaNode | undefined =>
       editor.isEditable() ? $getSelectedParaMarkerPara($getSelection()) : undefined;
 
-    // Removing the marker merges its paragraph into the previous one — the paragraph is the
-    // operand, never the glyph. Refused under "protected", as `StructureKeyboardPlugin` refuses
-    // the same merge from a caret, and a no-op with no paragraph before it. Callers claim the key
-    // either way: let through, rich-text would delete the selected glyph itself.
+    // Removing the marker merges its paragraph into the previous one, or removes it when it is
+    // empty and right after a chapter (blanking it when it is the only one in its chapter) — the
+    // paragraph is the operand, never the glyph. Refused
+    // under "protected", as `StructureKeyboardPlugin` refuses the same merge from a caret, and a
+    // no-op with no paragraph before it. Callers claim the key either way: let through, rich-text
+    // would delete the selected glyph itself.
     const $removeMarker = (para: SomeParaNode) => {
-      if (structureProtectionModeRef.current !== "protected") $mergeParaIntoPrevious(para);
+      if (structureProtectionModeRef.current !== "protected") $deletePara(para);
     };
 
-    // Under "guarded", a merge that would happen is left to `StructureKeyboardPlugin`'s two-step
-    // delete, which arms it on the first press and performs it on the second.
+    // Under "guarded", a merge or removal that would happen is left to `StructureKeyboardPlugin`'s
+    // two-step delete, which arms it on the first press and performs it on the second.
     const $deferToTwoStepDelete = (para: SomeParaNode) =>
-      structureProtectionModeRef.current === "guarded" && $canMergeIntoPrevious(para);
+      structureProtectionModeRef.current === "guarded" && $canDeletePara(para);
 
     /**
      * Adopts the browser's selection when it has moved off the glyph — a right-click on other text,
@@ -276,8 +283,9 @@ export function ParaMarkerSelectionPlugin({
     // Ctrl+H / Ctrl+D, or a programmatic dispatch) removes a selected marker. With no structure
     // protection, so does a backward delete from the start of the text of a paragraph with no
     // leading verse (a `\q2` line, say), which would otherwise delete the gutter glyph before the
-    // caret. Under "guarded" and "protected" that caret gets `StructureKeyboardPlugin`'s answer —
-    // arm, or refuse — the one a Backspace keydown there gets.
+    // caret — or, when the paragraph before is empty, it removes that empty one instead. Under
+    // "guarded" and "protected" that caret gets `StructureKeyboardPlugin`'s answer — arm, or
+    // refuse — the one a Backspace keydown there gets.
     const $handleDeleteCharacter = (isBackward: boolean): boolean => {
       if (!editor.isEditable()) return false;
       const markerPara = $getActivePara();
@@ -289,7 +297,10 @@ export function ParaMarkerSelectionPlugin({
       if (!isBackward || structureProtectionModeRef.current !== "off") return false;
       const para = $getGutterParaWithCaretAtStart($getSelection());
       if (!para) return false;
-      $mergeParaIntoPrevious(para);
+      // An empty paragraph before goes itself, rather than taking this one's text under its marker.
+      const emptyBefore = $getEmptyParaBefore(para);
+      if (emptyBefore) $deletePara(emptyBefore, "deleteForward");
+      else $deletePara(para);
       return true;
     };
 
