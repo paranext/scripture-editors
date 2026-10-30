@@ -16,6 +16,7 @@ import {
   DeleteDirection,
   HiddenRun,
 } from "./hiddenContentDelete.utils";
+import { withoutMarkerTokens } from "./clipboard.utils";
 import { hasCommandCharacter } from "./CommandMenuPlugin";
 import { $confineRangeToProtectedNote } from "./NoteShellCaretGuardPlugin";
 import { $selectionReachesIntoOpaqueBlock, isEditingKey } from "./OpaqueBlockGuardPlugin";
@@ -673,7 +674,9 @@ function preventAndClaim(event: Event | null): true {
  * plain text alone that is nothing but text the view cannot store (`\` and `//`), which
  * `UnstorableTextPlugin` removes, inserting nothing, after this plugin has run: judged, as it judges
  * it, against the document characters `around` the selection, so a lone `/` that would touch a `/`
- * there counts. A node copy or html goes in as nodes, so it is asked about.
+ * there counts; or a marker view's copy of nothing but marker tokens ({@link withoutMarkerTokens}),
+ * which that plugin and protected structure's sanitizer claim, changing nothing. Any other node copy
+ * or html goes in as nodes, so it is asked about.
  */
 function pasteInsertsNothing(
   event: PasteCommandType,
@@ -683,6 +686,7 @@ function pasteInsertsNothing(
   const data = event.clipboardData;
   if (!data) return false;
   if (Array.from(data.types).every((type) => type === "Files")) return true;
+  if (!withoutMarkerTokens(data)) return true;
   if (data.getData("text/html") || data.getData("application/x-lexical-editor")) return false;
   const text = data.getData("text/plain");
   return text !== "" && removeUnstorableText(text, around.before, around.after).text === "";
