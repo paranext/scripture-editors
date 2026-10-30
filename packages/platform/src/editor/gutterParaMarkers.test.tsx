@@ -13,7 +13,13 @@ import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
 import { act, render } from "@testing-library/react";
 import { $getRoot, $getSelection, $isRangeSelection, LexicalEditor } from "lexical";
 import { createRef, RefObject } from "react";
-import { $isGutterMarkerNode, $isParaNode, $selectParaMarker, NBSP } from "shared";
+import {
+  $isGutterMarkerNode,
+  $isImpliedParaNode,
+  $isParaNode,
+  $selectParaMarker,
+  NBSP,
+} from "shared";
 import { getEditorDelta, getViewOptions, PARAGRAPH_STRUCTURE_VIEW_MODE } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
@@ -237,7 +243,7 @@ describe("deleting an empty paragraph in Simple mode", () => {
     expect(ref.current?.getUsj()).toEqual(before);
   });
 
-  it("keeps an empty paragraph that is the only one in its chapter", async () => {
+  it("leaves a blank line in place of an empty paragraph alone in its chapter, and one undo restores it", async () => {
     const { ref, lexical } = await mountSimple(headingAloneUsj);
     const before = ref.current?.getUsj();
     await placeCaretAtParaStart(lexical, 0);
@@ -245,6 +251,22 @@ describe("deleting an empty paragraph in Simple mode", () => {
     await pressKeyThroughDom(lexical, "Backspace");
     await pressKeyThroughDom(lexical, "Backspace");
 
+    expect(ref.current?.getUsj()).toEqual({ ...usj, content: usj.content.slice(0, 2) });
+    expect(isCaretInBlankLine(lexical)).toBe(true);
+    await act(async () => ref.current?.undo());
+    expect(ref.current?.getUsj()).toEqual(before);
+  });
+
+  it("gives that blank line the marker the host's paragraph-style dropdown picks", async () => {
+    const { ref, lexical } = await mountSimple(headingAloneUsj);
+    const before = ref.current?.getUsj();
+    await placeCaretAtParaStart(lexical, 0);
+    await pressKeyThroughDom(lexical, "Backspace");
+    await pressKeyThroughDom(lexical, "Backspace");
+
+    const rows = await retag(ref, lexical, "s");
+
+    expect(rows).toEqual([gutterRow("s")]);
     expect(ref.current?.getUsj()).toEqual(before);
   });
 
@@ -330,6 +352,17 @@ function caretParaIndex(lexical: LexicalEditor): number | undefined {
       .getChildren()
       .filter($isParaNode)
       .findIndex((para) => para.is(focus) || para.isParentOf(focus));
+  });
+}
+
+/** True when the caret is in a line with no marker. */
+function isCaretInBlankLine(lexical: LexicalEditor): boolean {
+  return lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    return (
+      $isRangeSelection(selection) &&
+      $isImpliedParaNode(selection.focus.getNode().getTopLevelElement())
+    );
   });
 }
 

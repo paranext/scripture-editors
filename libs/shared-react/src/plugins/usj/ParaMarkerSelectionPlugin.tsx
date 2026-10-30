@@ -101,8 +101,9 @@ const TARGETED_INPUT_TYPES = new Set([
  *   spellcheck replacement, a drop) acts there instead.
  * - Removing the marker (Backspace/Delete, by key, command or input event, or a Backspace from the
  *   start of the text of a paragraph with no leading verse) merges its paragraph into the one
- *   before, or removes it when it is empty and right after a chapter (`$deletePara`) — a no-op
- *   with nothing else before it. A Backspace from the start of the text whose paragraph has an
+ *   before, or removes it when it is empty and right after a chapter (`$deletePara`), leaving a
+ *   blank line with no marker when it is the only one in its chapter — a no-op with nothing else
+ *   before it. A Backspace from the start of the text whose paragraph has an
  *   empty one before it removes that empty one instead, so this paragraph's text never lands
  *   under the empty one's marker. Refused under
  *   `"protected"`, as `StructureKeyboardPlugin` refuses the same merge from a caret. Under
@@ -159,7 +160,8 @@ export function ParaMarkerSelectionPlugin({
       editor.isEditable() ? $getSelectedParaMarkerPara($getSelection()) : undefined;
 
     // Removing the marker merges its paragraph into the previous one, or removes it when it is
-    // empty and right after a chapter — the paragraph is the operand, never the glyph. Refused
+    // empty and right after a chapter (blanking it when it is the only one in its chapter) — the
+    // paragraph is the operand, never the glyph. Refused
     // under "protected", as `StructureKeyboardPlugin` refuses the same merge from a caret, and a
     // no-op with no paragraph before it. Callers claim the key either way: let through, rich-text
     // would delete the selected glyph itself.

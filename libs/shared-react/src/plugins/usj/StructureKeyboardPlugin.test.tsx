@@ -42,6 +42,7 @@ import {
   $createMarkerTrailingSeparator,
   $createParaNode,
   $isBookNode,
+  $isImpliedParaNode,
   $isParaNode,
   BookNode,
   createEmptyHistoryState,
@@ -1029,16 +1030,30 @@ describe("StructureKeyboardPlugin — per-edit undo/redo for a run of verse dele
   });
 });
 
-/** Each top-level block's marker (`c` for a chapter) and text. */
+/** Each top-level block's marker (`c` for a chapter, none for a line with no marker) and text. */
 function blocksOf(editor: LexicalEditor) {
   return editor.getEditorState().read(() =>
     $getRoot()
       .getChildren()
       .map((block) => ({
-        marker: $isParaNode(block) ? block.getMarker() : "c",
+        marker: $isParaNode(block)
+          ? block.getMarker()
+          : $isImpliedParaNode(block)
+            ? undefined
+            : "c",
         text: block.getTextContent(),
       })),
   );
+}
+
+/** Asserts the caret is collapsed in a line with no marker. */
+function expectCaretInBlankLine(editor: LexicalEditor) {
+  editor.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+    expect(selection.isCollapsed()).toBe(true);
+    expect($isImpliedParaNode(selection.focus.getNode().getTopLevelElementOrThrow())).toBe(true);
+  });
 }
 
 /** Asserts the caret is collapsed somewhere in `para`. */
@@ -1113,27 +1128,61 @@ describe("StructureKeyboardPlugin — an empty paragraph after a chapter", () =>
     expectCaretIn(editor, next!);
   });
 
-  it.each([
-    ["the next chapter", () => [$createImmutableChapterNode("2")]],
-    ["the end of the book", () => []],
-  ])("is refused, not armed, when %s follows it", async (_label, $following) => {
-    let empty: ParaNode;
-    const { editor } = await guardedEnvironment(() => {
-      empty = $createParaNode("s");
-      $getRoot().append(
-        $createImmutableChapterNode("1"),
-        empty.append($createGutterMarkerNode("\\s ")),
-        ...$following(),
-      );
+  // Alone in its chapter, it leaves a blank line with no marker, where the user picks one.
+  describe.each([
+    ["the next chapter", () => [$createImmutableChapterNode("2")], [{ marker: "c", text: "" }]],
+    ["the end of the book", () => [], []],
+  ])("when %s follows it", (_label, $following, following) => {
+    it.each(["Backspace", "Delete"])(
+      "%s twice leaves a blank line with no marker and the caret in it",
+      async (key) => {
+        let empty: ParaNode;
+        const { editor } = await guardedEnvironment(() => {
+          empty = $createParaNode("s");
+          $getRoot().append(
+            $createImmutableChapterNode("1"),
+            empty.append($createGutterMarkerNode("\\s ")),
+            ...$following(),
+          );
+        });
+        updateSelection(editor, empty!, 1);
+
+        await pressKey(editor, key, 0);
+        expect(editor.getRootElement()?.getAttribute("data-verse-delete-kind")).toBe(
+          "removeEmptyPara",
+        );
+        await pressKey(editor, key, 0);
+
+        expect(blocksOf(editor)).toEqual([
+          { marker: "c", text: "" },
+          { marker: undefined, text: "" },
+          ...following,
+        ]);
+        expectCaretInBlankLine(editor);
+      },
+    );
+
+    it("Backspace in the blank line it leaves is refused, not armed", async () => {
+      let empty: ParaNode;
+      const { editor } = await guardedEnvironment(() => {
+        empty = $createParaNode("s");
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          empty.append($createGutterMarkerNode("\\s ")),
+          ...$following(),
+        );
+      });
+      updateSelection(editor, empty!, 1);
+      await pressKey(editor, "Backspace", 0);
+      await pressKey(editor, "Backspace", 0);
+      const before = JSON.stringify(editor.getEditorState().toJSON());
+
+      await pressKey(editor, "Backspace", 0);
+      await pressKey(editor, "Backspace", 0);
+
+      expect(JSON.stringify(editor.getEditorState().toJSON())).toBe(before);
+      expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
     });
-    updateSelection(editor, empty!, 1);
-    const before = JSON.stringify(editor.getEditorState().toJSON());
-
-    await pressKey(editor, "Backspace", 0);
-    await pressKey(editor, "Backspace", 0);
-
-    expect(JSON.stringify(editor.getEditorState().toJSON())).toBe(before);
-    expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
   });
 
   it("is refused under protected structure", async () => {

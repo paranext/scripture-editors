@@ -60,6 +60,7 @@ import {
   $createUnknownNode,
   $getSelectedParaMarker,
   $isGutterMarkerNode,
+  $isImpliedParaNode,
   $isParaNode,
   $selectParaMarker,
   createEmptyHistoryState,
@@ -865,6 +866,41 @@ describe("ParaMarkerSelectionPlugin — the selected marker of an empty paragrap
     expect(paragraphsOf(editor)).toEqual(removed);
     expectCaretInNextPara(editor);
   });
+
+  it.each([
+    ["guarded", 2],
+    ["off", 1],
+  ] as const)(
+    'under "%s", alone in its chapter, leaves a blank line with no marker and the caret in it',
+    async (structureProtectionMode, presses) => {
+      let empty: ParaNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          empty = $createParaNode("s");
+          $getRoot().append(
+            $createImmutableChapterNode("1"),
+            empty.append($createGutterGlyphNode("s")),
+            $createImmutableChapterNode("2"),
+          );
+        },
+        <>
+          <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
+          <ParaMarkerSelectionPlugin structureProtectionMode={structureProtectionMode} />
+        </>,
+      );
+      await selectMarkerOf(editor, empty!);
+
+      for (let i = 0; i < presses; i++) await pressKey(editor, "Backspace");
+
+      editor.getEditorState().read(() => {
+        const [, blank] = $getRoot().getChildren();
+        expect($isImpliedParaNode(blank) && blank.getTextContent()).toBe("");
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        expect(selection.focus.getNode().getTopLevelElementOrThrow().is(blank)).toBe(true);
+      });
+    },
+  );
 });
 
 describe("ParaMarkerSelectionPlugin — Delete on the selected marker of an empty paragraph", () => {

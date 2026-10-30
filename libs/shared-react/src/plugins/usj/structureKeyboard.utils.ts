@@ -18,6 +18,7 @@ import {
 } from "lexical";
 import {
   $caretHostAtBoundary,
+  $createImpliedParaNode,
   $getSelectableParaMarker,
   $getSelectedParaMarkerPara,
   $isGutterMarkerNode,
@@ -453,8 +454,8 @@ export function $shouldRefuseExtendedDelete(extent: RangeSelection): boolean {
  * Backward: the adjacent verse, else an empty paragraph right before the current one
  * ({@link $getEmptyParaBefore}), else the current paragraph (when {@link $canDeletePara} allows it).
  * Forward: the adjacent verse, else the current paragraph when it is empty with a paragraph after
- * it, else the NEXT paragraph (when a next block exists) — the block whose marker the merge
- * removes.
+ * it or alone in its chapter, else the NEXT paragraph (when a next block exists) — the block whose
+ * marker the merge removes.
  * A selected gutter marker (either direction): its paragraph, when {@link $canDeletePara} allows
  * it.
  */
@@ -483,11 +484,15 @@ export function $structuralDeleteTarget(
   if (intent === "deleteForward") {
     const verse = $adjacentVerseMarker(selection, "forward");
     if (verse) return { kind: "verse", node: verse };
-    if ($caretAtParaEnd(selection) && $hasNeighborBlock(selection, "forward")) {
+    if ($caretAtParaEnd(selection)) {
       const para = $getParaAncestor(selection.anchor.getNode());
       // An empty paragraph goes itself, rather than taking the next one's text under its marker.
-      if ($isSomeParaNode(para) && $canRemoveEmptyPara(para)) return { kind: "para", node: para };
-      const next = para?.getNextSibling();
+      if (
+        $isSomeParaNode(para) &&
+        ($canRemoveEmptyPara(para) || $canBlankEmptyParaAloneInChapter(para))
+      )
+        return { kind: "para", node: para };
+      const next = $hasNeighborBlock(selection, "forward") ? para?.getNextSibling() : undefined;
       if ($isSomeParaNode(next)) return { kind: "para", node: next };
     }
     return undefined;
@@ -620,8 +625,9 @@ function $canRemoveEmptyPara(para: SomeParaNode): boolean {
 
 /**
  * True when `para` is removable ({@link $canRemoveEmptyPara}) and sits right after a chapter. It
- * has nothing before it to merge into, but removing it loses nothing. Alone in its chapter it
- * stays, so the chapter keeps a line to type in.
+ * has nothing before it to merge into, but removing it loses nothing. Alone in its chapter it is
+ * blanked instead ({@link $canBlankEmptyParaAloneInChapter}), so the chapter keeps a line to type
+ * in.
  *
  * Read-only: safe in any read or update.
  */
@@ -630,14 +636,37 @@ function $canRemoveEmptyParaAfterChapter(para: SomeParaNode): boolean {
 }
 
 /**
+ * True when `para` is an empty paragraph alone in its chapter: a chapter right before it, and the
+ * next chapter or the end of the book right after. Deleting its marker leaves a blank line with no
+ * marker in its place ({@link $deletePara}), where the user picks a marker. A line already without
+ * one has no marker left to delete.
+ *
+ * Read-only: safe in any read or update.
+ */
+function $canBlankEmptyParaAloneInChapter(para: SomeParaNode): boolean {
+  const next = para.getNextSibling();
+  return (
+    $isParaNode(para) &&
+    $isParaEmpty(para) &&
+    $isSomeChapterNode(para.getPreviousSibling()) &&
+    (!next || $isSomeChapterNode(next))
+  );
+}
+
+/**
  * True when a paragraph delete can act on `para`: merging it into the block before it
- * ({@link $canMergeIntoPrevious}), or removing it when it is an empty paragraph right after a
- * chapter ({@link $canRemoveEmptyParaAfterChapter}).
+ * ({@link $canMergeIntoPrevious}), or, when it is an empty paragraph right after a chapter,
+ * removing it ({@link $canRemoveEmptyParaAfterChapter}) or blanking it
+ * ({@link $canBlankEmptyParaAloneInChapter}).
  *
  * Read-only: safe in any read or update.
  */
 export function $canDeletePara(para: SomeParaNode): boolean {
-  return $canMergeIntoPrevious(para) || $canRemoveEmptyParaAfterChapter(para);
+  return (
+    $canMergeIntoPrevious(para) ||
+    $canRemoveEmptyParaAfterChapter(para) ||
+    $canBlankEmptyParaAloneInChapter(para)
+  );
 }
 
 /**
@@ -652,9 +681,10 @@ export function $getEmptyParaBefore(para: SomeParaNode): SomeParaNode | undefine
 }
 
 /**
- * Performs a paragraph delete on `para`. An empty paragraph is removed outright, and the caret goes
- * to the start of the paragraph after it, when a Delete removes it or there is nothing before it to
- * merge into (a chapter). Otherwise `para` merges into the block before it
+ * Performs a paragraph delete on `para`. An empty paragraph alone in its chapter becomes a blank
+ * line with no marker, with the caret in it. Any other empty paragraph is removed outright, and the
+ * caret goes to the start of the paragraph after it, when a Delete removes it or there is nothing
+ * before it to merge into (a chapter). Otherwise `para` merges into the block before it
  * ({@link $mergeParaIntoPrevious}), a no-op when that cannot be done.
  *
  * Mutating: call inside `editor.update()` (dispatched from StructureKeyboardPlugin.tsx and
@@ -664,6 +694,13 @@ export function $getEmptyParaBefore(para: SomeParaNode): SomeParaNode | undefine
  * @param intent - The key that removes it. Defaults to a Backspace.
  */
 export function $deletePara(para: SomeParaNode, intent: DeleteIntent = "deleteBackward"): void {
+  if ($canBlankEmptyParaAloneInChapter(para)) {
+    // Its children are only its marker's glyphs, so none come along.
+    const blank = $createImpliedParaNode();
+    para.replace(blank);
+    blank.select(0, 0);
+    return;
+  }
   if ($canRemoveEmptyPara(para) && (intent === "deleteForward" || !$canMergeIntoPrevious(para))) {
     const next = para.getNextSibling();
     para.remove();
