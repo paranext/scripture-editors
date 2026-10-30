@@ -7,6 +7,7 @@ import {
   HiddenContentDeleteHandler,
   HiddenContentDeleteRequest,
 } from "./hidden-content-delete.model";
+import { MARKER_VIEW_CLIPBOARD_NAMESPACE } from "./clipboard.utils";
 import { CommandMenuPlugin } from "./CommandMenuPlugin";
 import { HiddenContentDeleteGuardPlugin } from "./HiddenContentDeleteGuardPlugin";
 import { baseTestEnvironment, pressKey, sutUpdate, updateSelection } from "./react-test.utils";
@@ -217,6 +218,27 @@ function clipboardEvent(type: "paste" | "cut", text = "") {
     types: text ? ["text/plain"] : [],
     files: [],
     getData: (format: string) => (format === "text/plain" ? text : ""),
+    setData: vi.fn(),
+  };
+  Object.defineProperty(event, "clipboardData", { value: clipboardData });
+  return event;
+}
+
+/** A paste of a copy of `usfm` as a view that shows markers writes it. */
+function markerViewCopyEvent(usfm: string) {
+  const event = new ClipboardEvent("paste", { cancelable: true });
+  const flavors: { [type: string]: string } = {
+    "application/x-lexical-editor": JSON.stringify({
+      namespace: MARKER_VIEW_CLIPBOARD_NAMESPACE,
+      nodes: [],
+    }),
+    "text/html": `<p>${usfm}</p>`,
+    "text/plain": usfm,
+  };
+  const clipboardData = {
+    types: Object.keys(flavors),
+    files: [],
+    getData: (format: string) => flavors[format] ?? "",
     setData: vi.fn(),
   };
   Object.defineProperty(event, "clipboardData", { value: clipboardData });
@@ -1659,6 +1681,33 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       await settle();
 
       expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("does not ask about a marker view's copy of nothing but marker tokens", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(PASTE_COMMAND, markerViewCopyEvent("\\ft "));
+      });
+      await settle();
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("asks about a marker view's copy that keeps some text once its marker tokens go", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(PASTE_COMMAND, markerViewCopyEvent("\\ft x"));
+      });
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
     });
 
     it("asks about a paste that keeps some of its text once unstorable text is removed", async () => {
