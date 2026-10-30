@@ -371,8 +371,9 @@ export function $addTrailingSpace(node: LexicalNode | null | undefined) {
 }
 
 /**
- * Removes any leading space from a TextNode. A selection point in that text moves back with
- * it, so a caret at its end is not left past the end of the shortened text.
+ * Removes any leading space from a TextNode, up to a no-break, ideographic or zero-width no-break
+ * space, which are text Paratext 9 keeps after a marker. A selection point in that text moves back
+ * with it, so a caret at its end is not left past the end of the shortened text.
  *
  * Mutating: call inside `editor.update()` or a node transform.
  * @param node - Text node to remove leading space from.
@@ -383,7 +384,7 @@ export function $removeLeadingSpace(node: LexicalNode | null | undefined) {
   const text = node.getTextContent();
   if (!text.startsWith(" ")) return;
 
-  const trimmed = text.trimStart();
+  const trimmed = text.replace(/^[^\S\u00A0\u3000\uFEFF]+/, "");
   const removed = text.length - trimmed.length;
   node.setTextContent(trimmed);
   const selection = $getSelection();
