@@ -24,7 +24,6 @@ import {
   $structuralDeleteTarget,
   keyDownToIntent,
 } from "./structureKeyboard.utils";
-import { $createCaretHostNode } from "./transientCaretHost";
 import {
   $createNodeSelection,
   $createRangeSelection,
@@ -39,6 +38,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $createCaretHostNode,
   $createChapterNode,
   $createCharNode,
   $createGutterMarkerNode,

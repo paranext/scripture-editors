@@ -29,6 +29,7 @@ import { $dfs } from "@lexical/utils";
 import {
   $createAttributeRunNode,
   $createBookNode,
+  $createCaretHostNode,
   $createCharNode,
   $createImmutableChapterNode,
   $createImmutableTypedTextNode,
@@ -38,7 +39,6 @@ import {
   $createNoteNode,
   $createParaNode,
   $createUnknownNode,
-  $createCursorPlaceholderNode,
   $createVerseNode,
   $isNoteNode,
   charIdState,
@@ -49,6 +49,7 @@ import {
   NBSP,
   segmentState,
   textTypeState,
+  ZWSP,
 } from "shared";
 
 describe("getEditorDelta", () => {
@@ -1543,15 +1544,15 @@ describe("getEditorDelta", () => {
       expect(delta.ops).toEqual(opsGen1v1Editable);
     });
 
-    // EmptyVerseCaretGuardPlugin's transient caret host (a bare zero-width space) is never sent to
+    // A caret guard's transient host (a bare zero-width space marked as a host) is never sent to
     // peers, so it must be invisible to the delta/OT stream — otherwise typing into an emptied verse
-    // would emit ops that reference a character the backend never received (PT-4308).
-    it("is transparent to the delta: a bare cursor host emits no op", async () => {
+    // would emit ops that reference a character the backend never received.
+    it("is transparent to the delta: a bare caret host emits no op", async () => {
       const { editor } = await testEnvironment(() => {
         $getRoot().append(
           $createParaNode("p").append(
             $createImmutableVerseNode("1"),
-            $createCursorPlaceholderNode(), // caret host in the now-empty verse 1
+            $createCaretHostNode(), // caret host in the now-empty verse 1
             $createImmutableVerseNode("2"),
             $createTextNode("text"),
           ),
@@ -1570,8 +1571,8 @@ describe("getEditorDelta", () => {
     });
 
     // The same exclusion covers TrailingNoteCaretGuardPlugin's host, which sits after a note in an
-    // ordinary paragraph rather than inside a verse: the rule is keyed on the node's own bare
-    // placeholder text, not on what surrounds it. Asserted against the ops for the identical tree
+    // ordinary paragraph rather than inside a verse: the rule is keyed on the node's own host mark,
+    // not on what surrounds it. Asserted against the ops for the identical tree
     // with no host, so this stays correct without restating the note embed's shape.
     it("is transparent to the delta: a caret host past a trailing note emits no op", async () => {
       const $buildNote = () =>
@@ -1585,7 +1586,7 @@ describe("getEditorDelta", () => {
           $createParaNode("p").append(
             $createTextNode("before "),
             $buildNote(),
-            $createCursorPlaceholderNode(), // caret host past the trailing note
+            $createCaretHostNode(), // caret host past the trailing note
           ),
         );
       });
@@ -1594,6 +1595,31 @@ describe("getEditorDelta", () => {
       });
 
       expect(withHost).toEqual(withoutHost);
+    });
+
+    // An unmarked zero-width-space-only run is authored content (a Thai/Khmer/Lao line-break
+    // opportunity) that sits in a node of its own wherever the text around it is split, so it must
+    // reach peers.
+    it("sends an authored zero-width-space-only run to peers", async () => {
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createImmutableVerseNode("1"),
+            $createTextNode("alpha").setFormat("bold"),
+            $createTextNode(ZWSP),
+            $createImmutableVerseNode("2"),
+          ),
+        );
+      });
+
+      const delta = getEditorDelta(editor.getEditorState());
+
+      expect(delta.ops).toEqual([
+        { insert: { verse: { style: "v", number: "1" } } },
+        { insert: `alpha${ZWSP}` },
+        { insert: { verse: { style: "v", number: "2" } } },
+        { insert: LF, attributes: { para: { style: "p" } } },
+      ]);
     });
 
     it("should roundtrip the editor state in standard view (editable markers, collapsed notes)", async () => {

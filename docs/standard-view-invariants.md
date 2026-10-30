@@ -33,7 +33,17 @@ Corollaries:
 - **No silent no-ops.** A keystroke either changes the document or is visibly refused. Accepting a
   keystroke and discarding it later is the failure this rule exists to prevent.
 
-The one ratified exception is space-run collapse — see §4.
+Two exceptions are ratified:
+
+- **Space-run collapse** — see §4.
+- **The transient caret host.** A caret guard drops a zero-width-space text node where the caret
+  could not otherwise rest visibly (an emptied verse, past a paragraph's trailing note). The caret
+  sits in its byte, but that byte is not document text: tier-2 re-tokenization leaves the host out
+  of the bytes it rebuilds from, and a point in it is anchored at the boundary it stands at. Never
+  put the host's byte back into the re-tokenized bytes. It would come back as an unmarked zero-width
+  space, which is authored text (a line-break opportunity in Thai, Khmer and Lao), and be saved. A
+  host is recognized only by its mark (`libs/shared/src/nodes/usj/transientCaretHost.utils.ts`),
+  never by its content.
 
 ### II. One position language
 
