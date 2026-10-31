@@ -21,6 +21,7 @@ import {
   $createRangeSelection,
   $getRoot,
   $isElementNode,
+  $isTextNode,
   $setSelection,
   DELETE_CHARACTER_COMMAND,
   DELETE_LINE_COMMAND,
@@ -107,6 +108,21 @@ async function placeCaretInBlock(m: MountedEditor, index: number, offset?: numbe
   });
 }
 
+/** Collapses the caret at `offset` in the text of the root's child `index`, as a click puts it. */
+async function placeCaretInText(m: MountedEditor, index: number, offset: number) {
+  await act(async () => {
+    m.lexical.update(() => {
+      const block = $getRoot().getChildAtIndex(index);
+      if (!$isElementNode(block)) throw new Error(`no block at ${index}`);
+      const text = block.getLastChild();
+      if (!$isTextNode(text)) throw new Error(`block ${index} does not end in text`);
+      text.select(offset, offset);
+      m.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+    await Promise.resolve();
+  });
+}
+
 function leadingGlyphCount(block: ElementNode): number {
   const children = block.getChildren();
   let count = 0;
@@ -179,6 +195,75 @@ describe("guarded: a chapter beside the caret is never deleted", () => {
           },
         );
       }
+
+      describe("the text beside a chapter stays editable", () => {
+        const usj = usjOf([
+          { type: "chapter", marker: "c", number: "1" },
+          { type: "para", marker: "p", content: ["one"] },
+          { type: "chapter", marker: "c", number: "2" },
+          { type: "para", marker: "p", content: ["two"] },
+        ]);
+        /** `usj` with the paragraph before \\c 2 reading `first`, and the one after it `second`. */
+        function withTexts(first: string, second: string): Usj {
+          return usjOf([
+            { type: "chapter", marker: "c", number: "1" },
+            { type: "para", marker: "p", content: [first] },
+            { type: "chapter", marker: "c", number: "2" },
+            { type: "para", marker: "p", content: [second] },
+          ]);
+        }
+        const BEFORE_CHAPTER = 2;
+        const AFTER_CHAPTER = 4;
+
+        it.each<[string, number, number, Key, Usj]>([
+          [
+            "Backspace at the end of a chapter",
+            BEFORE_CHAPTER,
+            3,
+            "Backspace",
+            withTexts("on", "two"),
+          ],
+          [
+            "Delete before a chapter's last letter",
+            BEFORE_CHAPTER,
+            2,
+            "Delete",
+            withTexts("on", "two"),
+          ],
+          ["Delete at the start of a chapter", AFTER_CHAPTER, 0, "Delete", withTexts("one", "wo")],
+          [
+            "Backspace after a chapter's first letter",
+            AFTER_CHAPTER,
+            1,
+            "Backspace",
+            withTexts("one", "wo"),
+          ],
+        ])("%s deletes the letter", async (_, block, offset, key, expected) => {
+          const m = await mountInView(usj, editorView(view), {
+            structureProtectionMode: "guarded",
+          });
+          await placeCaretInText(m, block, offset);
+
+          await press(m, key);
+
+          expect(m.ref.current?.getUsj()).toEqual(expected);
+          m.unmount();
+        });
+
+        it.each<[string, number, number, Key]>([
+          ["Delete at the end of a chapter", BEFORE_CHAPTER, 3, "Delete"],
+          ["Backspace at the start of a chapter", AFTER_CHAPTER, 0, "Backspace"],
+        ])("%s, with the caret in the text, is refused", async (_, block, offset, key) => {
+          const m = await mountInView(usj, editorView(view), {
+            structureProtectionMode: "guarded",
+          });
+          await placeCaretInText(m, block, offset);
+
+          expect(await pressClaimed(m, key)).toBe(true);
+          expect(m.ref.current?.getUsj()).toEqual(usj);
+          m.unmount();
+        });
+      });
 
       it("Delete in an empty paragraph right before \\c 2 is refused", async () => {
         const usj = usjOf([
