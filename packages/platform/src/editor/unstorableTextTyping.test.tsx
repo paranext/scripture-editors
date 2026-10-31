@@ -293,6 +293,22 @@ describe.each(["paragraph-structure", "formatted"])("typing into %s view", (view
     expect(onRemoved).toHaveBeenCalledTimes(1);
     expect(onRemoved).toHaveBeenCalledWith({ source: "typing", removed: ["\\"] });
   });
+
+  it("puts in a yank (macOS Ctrl+Y) without its `\\`, saying so once", async () => {
+    const { mounted, onRemoved } = await mount(viewName, "ab", 1);
+
+    // Lexical's `beforeinput` handler hands on `insertFromYank` as it does a replacement.
+    await act(async () => {
+      mounted.lexical.dispatchCommand(
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        new InputEvent("beforeinput", { inputType: "insertFromYank", data: "x\\y" }),
+      );
+    });
+
+    expect(savedParas(mounted)).toEqual(["axyb"]);
+    expect(onRemoved).toHaveBeenCalledTimes(1);
+    expect(onRemoved).toHaveBeenCalledWith({ source: "typing", removed: ["\\"] });
+  });
 });
 
 describe("typing into Standard view", () => {
