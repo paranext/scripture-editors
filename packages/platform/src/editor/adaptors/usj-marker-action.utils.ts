@@ -364,8 +364,8 @@ export function getUsjMarkerAction(
         ) {
           // A selection reaching into a span of the same marker, and past it, extends that span
           // over the selection. Paratext 9 mangles the line here (in some cases it replaces the
-          // selection with a closing marker), so this deliberately does not follow it (TJ,
-          // 2026-10-27). Standard view, where the selection holds the span's glyphs, keeps its wrap.
+          // selection with a closing marker), so this deliberately does not follow it. Standard
+          // view, where the selection holds the span's glyphs, keeps its wrap.
           $extendCharacterMarkerAtSelection(selection, marker, undefined, viewOptions);
         } else if (
           $isCharNode(nodeToInsert) &&
