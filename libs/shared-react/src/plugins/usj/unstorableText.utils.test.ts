@@ -21,6 +21,7 @@ import {
   $createImmutableTypedTextNode,
   $createImmutableUnmatchedNode,
   $createParaNode,
+  $createTypedMarkNode,
   $createUnknownNode,
 } from "shared";
 
@@ -164,6 +165,36 @@ describe("$removeUnstorableTextFromNodes", () => {
   });
 });
 
+describe("$removeUnstorableTextFromNodes — annotation marks", () => {
+  it("reads text across a mark as one string", async () => {
+    const { editor } = await baseTestEnvironment();
+    let texts: string[] = [];
+    let removed: UnstorableCharacter[] = [];
+    await sutUpdate(editor, () => {
+      const nodes = [$createTextNode("a/"), $createTypedMarkNode().append($createTextNode("/b"))];
+      removed = $removeUnstorableTextFromNodes(nodes);
+      texts = nodes.map(textOf);
+    });
+
+    expect(removed).toEqual(["//"]);
+    expect(texts).toEqual(["a", "b"]);
+  });
+
+  it("judges a mark's text at the insertion edge against the document", async () => {
+    const { editor } = await baseTestEnvironment();
+    let text = "";
+    let removed: UnstorableCharacter[] = [];
+    await sutUpdate(editor, () => {
+      const mark = $createTypedMarkNode().append($createTextNode("/b"));
+      removed = $removeUnstorableTextFromNodes([mark], "/");
+      text = mark.getTextContent();
+    });
+
+    expect(removed).toEqual(["//"]);
+    expect(text).toBe("b");
+  });
+});
+
 describe("$removeUnstorableTextFromNodes — listed children", () => {
   it("removes an emptied node from the list even when it is still a paragraph's child", async () => {
     const { editor } = await baseTestEnvironment();
@@ -242,6 +273,35 @@ describe("$textAroundSelection", () => {
 
     expect(around.after).toBe("/");
     expect(around.before).toBe("/");
+  });
+
+  it("reads across an annotation mark's edge, from outside it and from inside it", async () => {
+    let before: TextNode;
+    let marked: TextNode;
+    let after: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      before = $createTextNode("a/");
+      marked = $createTextNode("xyz");
+      after = $createTextNode("/b");
+      $getRoot().append(
+        $createParaNode("p").append(before, $createTypedMarkNode().append(marked), after),
+      );
+    });
+    const readAround = () =>
+      editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        return $textAroundSelection(selection);
+      });
+
+    updateSelection(editor, marked!, 0);
+    expect(readAround().before).toBe("/");
+    updateSelection(editor, marked!, 3);
+    expect(readAround().after).toBe("/");
+    updateSelection(editor, before!, 2);
+    expect(readAround().after).toBe("x");
+    updateSelection(editor, after!, 0);
+    expect(readAround().before).toBe("z");
   });
 
   it("does not read an unmatched marker's glyph as text", async () => {

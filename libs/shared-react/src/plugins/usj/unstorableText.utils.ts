@@ -7,7 +7,7 @@ import {
   RangeSelection,
   TextNode,
 } from "lexical";
-import { $isUnknownNode } from "shared";
+import { $isTypedMarkNode, $isUnknownNode } from "shared";
 
 /** Which of a text's characters stay, and what the rest were. */
 interface UnstorableTextMask {
@@ -97,23 +97,39 @@ function $isStoredText(node: LexicalNode | null | undefined): node is TextNode {
  * The first (or last) leaf of `nodes` that inserting them puts right at the insertion point.
  * Inserting merges a leading (or trailing) paragraph's content into the paragraph there, so the
  * walk goes down through blocks; never into an inline element, whose text its markers keep apart
- * from the document's.
+ * from the document's. An annotation mark is walked through: it saves as nothing, so its text does
+ * touch the document's.
  */
 function $leafAtInsertionEdge(
   nodes: LexicalNode[],
   edge: "first" | "last",
 ): LexicalNode | undefined {
   let node = edge === "first" ? nodes[0] : nodes.at(-1);
-  while ($isElementNode(node) && !node.isInline() && !$isUnknownNode(node))
+  while (
+    $isElementNode(node) &&
+    (!node.isInline() || $isTypedMarkNode(node)) &&
+    !$isUnknownNode(node)
+  )
     node = (edge === "first" ? node.getFirstChild() : node.getLastChild()) ?? undefined;
   return node;
 }
 
-/** Each run of adjacent stored-text nodes among `siblings` and their descendants, in order. */
+/** `nodes` with each annotation mark replaced by its children, however deeply marks nest. */
+function $withoutMarks(nodes: LexicalNode[]): LexicalNode[] {
+  return nodes.flatMap((node) =>
+    $isTypedMarkNode(node) ? $withoutMarks(node.getChildren()) : node,
+  );
+}
+
+/**
+ * Each run of adjacent stored-text nodes among `siblings` and their descendants, in order. An
+ * annotation mark does not break a run: it saves as nothing, so the text either side of its edge
+ * ends up adjacent.
+ */
 function $storedTextRuns(siblings: LexicalNode[]): TextNode[][] {
   const runs: TextNode[][] = [];
   let run: TextNode[] = [];
-  for (const node of siblings) {
+  for (const node of $withoutMarks(siblings)) {
     if ($isStoredText(node)) {
       run.push(node);
       continue;
@@ -197,6 +213,24 @@ export function $insertsNothing(nodes: LexicalNode[]): boolean {
   return nodes.every($holdsNoLeaf);
 }
 
+/**
+ * The node next to `node` on `side`, reading through annotation marks, which save as nothing: out
+ * of one `node` is at the edge of, and into one beside it.
+ */
+function $neighbourThroughMarks(node: LexicalNode, side: "before" | "after"): LexicalNode | null {
+  let current = node;
+  let neighbour = side === "before" ? current.getPreviousSibling() : current.getNextSibling();
+  while (!neighbour) {
+    const parent = current.getParent();
+    if (!$isTypedMarkNode(parent)) return null;
+    current = parent;
+    neighbour = side === "before" ? current.getPreviousSibling() : current.getNextSibling();
+  }
+  while ($isTypedMarkNode(neighbour))
+    neighbour = side === "before" ? neighbour.getLastChild() : neighbour.getFirstChild();
+  return neighbour;
+}
+
 /** The stored-text character next to `point` on `side`, or `""` where there is none. */
 function $characterBeside(point: PointType, side: "before" | "after"): string {
   if (point.type !== "text") return "";
@@ -205,7 +239,7 @@ function $characterBeside(point: PointType, side: "before" | "after"): string {
   const text = node.getTextContent();
   if (side === "before" && point.offset > 0) return text[point.offset - 1];
   if (side === "after" && point.offset < text.length) return text[point.offset];
-  const sibling = side === "before" ? node.getPreviousSibling() : node.getNextSibling();
+  const sibling = $neighbourThroughMarks(node, side);
   if (!$isStoredText(sibling)) return "";
   const siblingText = sibling.getTextContent();
   return (side === "before" ? siblingText.at(-1) : siblingText[0]) ?? "";
