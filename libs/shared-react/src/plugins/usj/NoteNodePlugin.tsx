@@ -124,6 +124,14 @@ function useNoteNode(
   logger: LoggerBasic | undefined,
   noteCallerOnClick: NoteCallerOnClick | undefined,
 ) {
+  // A ref, so a host handing a new handler does not re-register every note handler below (which
+  // would flip same-priority ties) and re-run the caller transform over every note: a caller keeps
+  // the handler it was built with until something else changes it.
+  const noteCallerOnClickRef = useRef(noteCallerOnClick);
+  useEffect(() => {
+    noteCallerOnClickRef.current = noteCallerOnClick;
+  }, [noteCallerOnClick]);
+
   useEffect(() => {
     if (!editor.hasNodes([CharNode, NoteNode, ImmutableNoteCallerNode])) {
       throw new Error(
@@ -144,7 +152,7 @@ function useNoteNode(
 
       // Ensure a separator after the caller, and that a click on it reaches the host.
       editor.registerNodeTransform(ImmutableNoteCallerNode, (node) =>
-        $noteCallerNodeTransform(node, noteCallerOnClick),
+        $noteCallerNodeTransform(node, noteCallerOnClickRef.current),
       ),
 
       // Re-generate all note callers when a note is removed.
@@ -174,7 +182,7 @@ function useNoteNode(
         },
       ),
     );
-  }, [editor, expandedNoteKeyRef, logger, viewOptions, noteCallerOnClick]);
+  }, [editor, expandedNoteKeyRef, logger, viewOptions]);
 }
 
 /**
