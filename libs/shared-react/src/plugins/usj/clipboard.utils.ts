@@ -63,7 +63,7 @@ export function registerEmptyCopyGuard(editor: LexicalEditor): () => void {
 }
 
 /** Whether `node` is plain prose: a plain text node with no format and no engine role. */
-function $isPlainProse(node: LexicalNode): node is TextNode {
+export function $isPlainProse(node: LexicalNode): node is TextNode {
   return (
     $isTextNode(node) &&
     node.getType() === TextNode.getType() &&
@@ -82,7 +82,9 @@ function $isPlainProse(node: LexicalNode): node is TextNode {
  * lands between two halves of the span, and text pasted inside a note lands in the paragraph after
  * it. When every pasted node is plain prose and the paste starts in ordinary text, the paste means
  * exactly what typing that text would, so it is inserted as text at the caret, inside the caret's
- * span. Anything else (a char span, a verse, a note, a paragraph) is left to Lexical.
+ * span. Anything else (a char span, a verse, a note, a paragraph) is left to Lexical. In the views
+ * that hide markers, a range over more than one text is `InlineRangeEditPlugin`'s and never gets
+ * here.
  */
 export function registerInlineProsePaste(editor: LexicalEditor): () => void {
   return editor.registerCommand(

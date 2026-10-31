@@ -12,15 +12,20 @@ import {
   $isTextNode,
   $setCompositionKey,
   COMMAND_PRIORITY_HIGH,
+  COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   DELETE_CHARACTER_COMMAND,
   ElementNode,
   LexicalNode,
+  PASTE_COMMAND,
+  PasteCommandType,
   PointType,
   RangeSelection,
+  SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   TextNode,
 } from "lexical";
 import { $isNoteNode, NBSP, NoteNode, ZWSP } from "shared";
+import { $isPlainProse } from "shared-react";
 import { useEffect } from "react";
 
 /**
@@ -41,6 +46,13 @@ import { useEffect } from "react";
  * placeholder over the range, which is handled here like any typed text. The rest of the composition
  * replaces the placeholder in the text the range started in. Nothing goes earlier than Lexical's own
  * start of a composition would take it.
+ *
+ * A paste over such a range goes the same way. Prose that arrives as nodes replaces the range as
+ * typed text does. Plain text, which Lexical inserts with that same `insertText`, has the range
+ * removed first and is then Lexical's to insert at the caret, as it holds line breaks and tabs that
+ * typed text does not. Any other payload is inserted with `insertNodes`, which does not have this
+ * problem. Plain text waits at `COMMAND_PRIORITY_LOW`, behind every handler that can refuse the paste,
+ * so a refused paste has removed nothing.
  */
 export function InlineRangeEditPlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -53,7 +65,10 @@ export function InlineRangeEditPlugin(): null {
             const text = typeof payload === "string" ? payload : payload.data;
             if (typeof text !== "string") return false;
             if ($getEditor().isComposing())
-              return COMPOSITION_PLACEHOLDERS.includes(text) && $replaceInlineRange(text, true);
+              return (
+                COMPOSITION_PLACEHOLDERS.includes(text) &&
+                $replaceInlineRange(text, "compositionPlaceholder")
+              );
             return $replaceInlineRange(text);
           },
           COMMAND_PRIORITY_HIGH,
@@ -62,6 +77,22 @@ export function InlineRangeEditPlugin(): null {
           DELETE_CHARACTER_COMMAND,
           () => !$getEditor().isComposing() && $replaceInlineRange(""),
           COMMAND_PRIORITY_HIGH,
+        ),
+        editor.registerCommand(
+          SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+          ({ nodes }) =>
+            nodes.length > 0 &&
+            nodes.every($isPlainProse) &&
+            $replaceInlineRange(nodes.map((node) => node.getTextContent()).join("")),
+          COMMAND_PRIORITY_HIGH,
+        ),
+        editor.registerCommand(
+          PASTE_COMMAND,
+          (event) => {
+            if (isPlainTextPaste(event)) $replaceInlineRange("", "caretForPaste");
+            return false;
+          },
+          COMMAND_PRIORITY_LOW,
         ),
       ),
     [editor],
@@ -75,6 +106,32 @@ export function InlineRangeEditPlugin(): null {
  * anything else is the composition itself, which stays with Lexical.
  */
 const COMPOSITION_PLACEHOLDERS = [ZWSP, NBSP];
+
+/**
+ * Whether Lexical will insert this paste as plain text: it holds text, and neither of the flavors
+ * Lexical prefers. It treats html identical to the plain text as plain text.
+ */
+function isPlainTextPaste(event: PasteCommandType): boolean {
+  const data = "clipboardData" in event ? event.clipboardData : undefined;
+  if (!data || data.getData("application/x-lexical-editor")) return false;
+  const text = data.getData("text/plain");
+  const html = data.getData("text/html");
+  return !!text && (!html || html === text);
+}
+
+/**
+ * What {@link $replaceInlineRange} is replacing the range for:
+ *
+ * - `edit`: `text` is the whole of the edit.
+ * - `compositionPlaceholder`: `text` is the placeholder a composition starts with. Lexical has already
+ *   put the composition on the range's anchor, which may be in another text, so it moves to the text
+ *   holding the placeholder here: `TextNode.select` moves it only while the selection is still on
+ *   that anchor, which removing the range can change. The selection covers the placeholder, as
+ *   Lexical's own insertion leaves it, for the composed text to replace.
+ * - `caretForPaste`: a paste is about to be inserted at the caret, in the same update, so the caret
+ *   stays in the start text even if nothing is left of it.
+ */
+type InlineRangeReplacement = "edit" | "compositionPlaceholder" | "caretForPaste";
 
 /** A text and an offset in it: one end of the range. */
 interface Edge {
@@ -146,22 +203,23 @@ function $removeIfEmptyInline(element: ElementNode | null): void {
  * Replace the selected range with `text`, when it is one {@link $inlineRangeEdges} takes.
  *
  * @param text - What goes in place of the range.
- * @param isCompositionPlaceholder - Whether `text` is the placeholder a composition starts with.
- *   Lexical has already put the composition on the range's anchor, which may be in another text, so
- *   it moves to the text holding the placeholder here: `TextNode.select` moves it only while the
- *   selection is still on that anchor, which removing the range can change. The selection covers
- *   the placeholder, as Lexical's own insertion leaves it, for the composed text to replace.
+ * @param purpose - What the replacement is for.
  */
-function $replaceInlineRange(text: string, isCompositionPlaceholder = false): boolean {
+function $replaceInlineRange(text: string, purpose: InlineRangeReplacement = "edit"): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
   const edges = $inlineRangeEdges(selection);
   if (!edges) return false;
   const [start, end] = edges;
-  if (isCompositionPlaceholder) $setCompositionKey(start.node.getKey());
+  if (purpose === "compositionPlaceholder") $setCompositionKey(start.node.getKey());
   // A deletion of both edge texts whole leaves no text to hold the caret, so Lexical's own path,
   // which deletes such a range correctly, places it. Typed text holds it in the start text.
-  if (text === "" && start.offset === 0 && end.offset === end.node.getTextContentSize())
+  if (
+    text === "" &&
+    purpose === "edit" &&
+    start.offset === 0 &&
+    end.offset === end.node.getTextContentSize()
+  )
     return false;
   const emptied = new Set<ElementNode | null>([start.node.getParent(), end.node.getParent()]);
   // The leaves wholly inside the range; an element whose content all is goes with its content.
@@ -178,8 +236,9 @@ function $replaceInlineRange(text: string, isCompositionPlaceholder = false): bo
     start.node.getTextContentSize() - start.offset,
     text,
   );
-  if (isCompositionPlaceholder) startNode.select(start.offset, start.offset + text.length);
-  else if (startNode.getTextContentSize() > 0)
+  if (purpose === "compositionPlaceholder")
+    startNode.select(start.offset, start.offset + text.length);
+  else if (purpose === "caretForPaste" || startNode.getTextContentSize() > 0)
     startNode.select(start.offset + text.length, start.offset + text.length);
   else {
     endNode.select(0, 0);

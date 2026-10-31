@@ -146,6 +146,9 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Changed
 
+- **A paste over a range across a char span's edge replaces only the selected text**, in the views
+  that hide markers, as typing over one already did. It used to pull the text after the range into
+  the span, and with nested spans put it ahead of the text it followed.
 - **Invisible characters are typed, pasted and copied as in Paratext 9, in every view.** A
   zero-width no-break space (U+FEFF) the user types, pastes or drops is dropped, whatever
   `ViewOptions.allowInvisibleCharacters` says, since Paratext 9 removes every one when it saves;
