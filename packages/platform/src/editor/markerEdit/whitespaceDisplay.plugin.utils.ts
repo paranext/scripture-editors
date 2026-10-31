@@ -167,6 +167,9 @@ export function registerTypedTextRewrite(
   // Standard-view spelling of a stored no-break space is a control character).
   let isInsertingRewritten = false;
   const insertRewritten = (text: string) => {
+    // Nothing is left of what was typed. Inserting nothing would delete a selection the typing was
+    // never going to replace.
+    if (!text) return;
     isInsertingRewritten = true;
     try {
       editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);

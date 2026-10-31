@@ -85,6 +85,16 @@ async function placeCaret(lexical: LexicalEditor, text: string, offsetInText: nu
   );
 }
 
+async function selectInText(lexical: LexicalEditor, text: string, from: number, to: number) {
+  await act(async () =>
+    lexical.update(() => {
+      const node = $textNodeContaining(text);
+      const offset = node.getTextContent().indexOf(text);
+      node.select(offset + from, offset + to);
+    }),
+  );
+}
+
 async function typeText(lexical: LexicalEditor, text: string) {
   for (const character of text)
     await act(async () => {
@@ -475,6 +485,18 @@ describe.each(ENTRY_VIEWS)("%s view: invisible characters entered as in Paratext
       expect(inserted.saved()).toEqual(["axb"]);
     },
   );
+
+  it("leaves a selection in place when only a zero-width no-break space is typed over it", async () => {
+    const pressed = await mountText(name, "abc", false);
+    await selectInText(pressed.mounted.lexical, "abc", 0, 2);
+    expect(await press(pressed.mounted, ZWNBSP, ZWNBSP)).toEqual([]);
+    expect(pressed.saved()).toEqual(["abc"]);
+
+    const inserted = await mountText(name, "abc", false);
+    await selectInText(inserted.mounted.lexical, "abc", 0, 2);
+    await typeText(inserted.mounted.lexical, ZWNBSP);
+    expect(inserted.saved()).toEqual(["abc"]);
+  });
 
   it.each([false, true])(
     "drops a zero-width no-break space pasted or dropped (allowInvisibleCharacters %s)",
