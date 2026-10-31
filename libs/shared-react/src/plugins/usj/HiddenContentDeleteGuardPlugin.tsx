@@ -16,7 +16,7 @@ import {
   DeleteDirection,
   HiddenRun,
 } from "./hiddenContentDelete.utils";
-import { withoutMarkerTokens } from "./clipboard.utils";
+import { LEXICAL_CLIPBOARD_TYPE, withoutMarkerTokens } from "./clipboard.utils";
 import { hasCommandCharacter } from "./CommandMenuPlugin";
 import { $confineRangeToProtectedNote } from "./NoteShellCaretGuardPlugin";
 import { $selectionReachesIntoOpaqueBlock, isEditingKey } from "./OpaqueBlockGuardPlugin";
@@ -675,7 +675,7 @@ function pasteInsertsNothing(event: PasteCommandType): boolean {
   if (!data) return false;
   if (Array.from(data.types).every((type) => type === "Files")) return true;
   if (!withoutMarkerTokens(data)) return true;
-  if (data.getData("text/html") || data.getData("application/x-lexical-editor")) return false;
+  if (data.getData("text/html") || data.getData(LEXICAL_CLIPBOARD_TYPE)) return false;
   const text = data.getData("text/plain");
   return text !== "" && removeUnstorableText(text).text === "";
 }

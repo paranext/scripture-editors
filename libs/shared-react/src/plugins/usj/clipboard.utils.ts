@@ -73,7 +73,8 @@ export function registerEmptyCopyGuard(editor: LexicalEditor): () => void {
  * as a tab node, and USJ has nothing to save one as, so `word1⇥word2` would save as `word1word2`.
  * A transform covers every way a tab node gets in — the browser's own paste, which reaches the
  * editor without the clipboard read that cleans it, a drop, and pasted html — wherever it lands.
- * A caret on the tab stays where it was, on the space.
+ * A caret on the tab stays where it was, on the space. A tab inside a text node is not a tab node,
+ * so it stays: Standard view's own paste, which inserts text, can store one that way.
  */
 export function registerTabsAsSpaces(editor: LexicalEditor): () => void {
   return editor.registerNodeTransform(TabNode, (tab) => {
@@ -285,9 +286,10 @@ const MARKER_TOKEN_REGEX = new RegExp(
 );
 
 /**
- * `usfm` without its marker tokens, and nothing else gone: a verse's number, a note's caller and an
- * attribute list are text here, so they stay. A `\` inside an attribute value counts as a marker
- * like any other (`src="c:\pics\a.jpg"` leaves `src="c:.jpg"`): this does not parse USFM.
+ * `usfm` without its marker tokens, and nothing else gone: a verse's or chapter's number, a note's
+ * caller, an `\id` line's code and title and an attribute list are text here, so they stay. A `\`
+ * inside an attribute value counts as a marker like any other (`src="c:\pics\a.jpg"` leaves
+ * `src="c:.jpg"`): this does not parse USFM.
  *
  * @param usfm - USFM text, known to be USFM: every `\` in it is taken for a marker.
  */
@@ -341,14 +343,16 @@ export function withoutMarkerTokens(data: DataTransfer): DataTransfer | undefine
   const text = plain || (htmlBody.textContent ?? "");
   if (!text.replace(/[\r\n]/g, "")) return undefined;
   const html = data.getData("text/html") && htmlBody.ownerDocument.documentElement.outerHTML;
-  // Lexical reads only `getData` from a transfer it inserts, and a real `DataTransfer` cannot be
-  // constructed everywhere this runs.
+  return transferWith(data, { "text/plain": plain, "text/html": html });
+}
+
+/**
+ * A transfer reading as `data` but for the types in `overrides`. Lexical reads only `getData` from a
+ * transfer it inserts, and a real `DataTransfer` cannot be constructed everywhere this runs.
+ */
+function transferWith(data: DataTransfer, overrides: { [type: string]: string }): DataTransfer {
   return {
-    getData: (type: string) => {
-      if (type === "text/plain") return plain;
-      if (type === "text/html") return html;
-      return data.getData(type);
-    },
+    getData: (type: string) => overrides[type] ?? data.getData(type),
   } as Pick<DataTransfer, "getData"> as DataTransfer;
 }
 
@@ -380,15 +384,10 @@ export function withoutNodeCopy(data: DataTransfer): DataTransfer {
   const html = data.getData("text/html");
   const htmlHoldsCopy = html.includes(NODE_COPY_HTML_ATTRIBUTE);
   if (!htmlHoldsCopy && !data.getData(LEXICAL_CLIPBOARD_TYPE)) return data;
-  const htmlWithoutCopy = htmlHoldsCopy ? htmlWithoutNodeCopy(html) : html;
-  // Lexical reads only `getData` from a transfer it inserts, and a real `DataTransfer` cannot be
-  // constructed everywhere this runs.
-  return {
-    getData: (type: string) => {
-      if (type === LEXICAL_CLIPBOARD_TYPE) return "";
-      return type === "text/html" ? htmlWithoutCopy : data.getData(type);
-    },
-  } as Pick<DataTransfer, "getData"> as DataTransfer;
+  return transferWith(data, {
+    [LEXICAL_CLIPBOARD_TYPE]: "",
+    "text/html": htmlHoldsCopy ? htmlWithoutNodeCopy(html) : html,
+  });
 }
 
 /**
