@@ -200,6 +200,28 @@ describe.each(PROTECTIONS)("a hidden-marker view's copy and Ctrl+V, structure %s
     }
   });
 
+  it("keeps a plain word pasted inside a char span in that span", async () => {
+    const { mounted } = await mount("paragraph-structure", mode);
+    try {
+      await select(mounted, "first ", 0, "first ", 5);
+      const store = await copy(mounted);
+      await select(mounted, "word", 2, "word", 2);
+
+      await paste(mounted, ctrlV(store));
+
+      expect(paragraph(mounted).content).toEqual([
+        { type: "verse", marker: "v", number: "1" },
+        "first ",
+        { ...WORD, content: ["wofirstrd"] },
+        " then ",
+        NOTE,
+        " last",
+      ]);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
   it("falls back to the html when the attribute's JSON does not parse", async () => {
     const { mounted } = await mount("paragraph-structure", mode);
     try {
