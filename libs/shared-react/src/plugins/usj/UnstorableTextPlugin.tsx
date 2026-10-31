@@ -169,11 +169,11 @@ function joinLines(text: string): string {
  * (`KEY_DOWN_COMMAND`; a shortcut chord such as Ctrl+/ is let through), so the browser never
  * inputs it. Typed text that arrives without a `keydown` — a virtual keyboard, autocorrect or a
  * spelling replacement — is filtered on its way in, whichever route carries it:
- * `CONTROLLED_TEXT_INSERTION_COMMAND` (a string, or an `insertReplacementText` event), or a
- * `beforeinput` `insertText` the browser would apply to the DOM itself, which is claimed in the
- * capture phase ahead of Lexical's own listener and inserted through the command. Text that loses
- * a character still puts in the rest, and is reported once. Text being composed by an input method
- * is not filtered, so a `\` or `//` an IME commits goes in.
+ * `CONTROLLED_TEXT_INSERTION_COMMAND` (a string, or an `insertReplacementText` or `insertFromYank`
+ * event), or a `beforeinput` `insertText` the browser would apply to the DOM itself, which is
+ * claimed in the capture phase ahead of Lexical's own listener and inserted through the command.
+ * Text that loses a character still puts in the rest, and is reported once. Text being composed by
+ * an input method is not filtered, so a `\` or `//` an IME commits goes in.
  *
  * Under `"protected"` structure a plain-text paste or drop goes into the paragraph at the caret,
  * its lines joined by one space each, as protected structure's html route joins paragraphs:
@@ -244,7 +244,10 @@ export function UnstorableTextPlugin({
     const onBeforeInput = (event: InputEvent) => {
       if (event.inputType !== "insertText" || !editor.isEditable() || editor.isComposing()) return;
       const text = event.data ?? event.dataTransfer?.getData("text/plain");
-      if (!text || editor.read(() => $filterTypedText(text)).removed.length === 0) return;
+      // The test comes first because `editor.read` commits pending updates, which ordinary typing
+      // should not pay for on every keystroke.
+      if (!text || !/[\\/]/.test(text)) return;
+      if (editor.read(() => $filterTypedText(text)).removed.length === 0) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
@@ -382,7 +385,8 @@ export function UnstorableTextPlugin({
           const text =
             typeof payload === "string"
               ? payload
-              : payload.inputType === "insertReplacementText"
+              : payload.inputType === "insertReplacementText" ||
+                  payload.inputType === "insertFromYank"
                 ? (payload.data ?? payload.dataTransfer?.getData("text/plain"))
                 : undefined;
           return !!text && $insertTypedText(text);
