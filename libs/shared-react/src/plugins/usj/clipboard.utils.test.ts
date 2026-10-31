@@ -24,6 +24,8 @@ describe("removeMarkerTokens", () => {
     ["a bare backslash", "a\\", "a"],
     ["a backslash in an attribute value, as a marker", 'src="c:\\pics\\a.jpg"', 'src="c:.jpg"'],
     ["markers on each line, keeping the line breaks", "\\p one\n\\q1 two", "one\ntwo"],
+    ["a chapter marker, keeping its number", "\\c 3", "3"],
+    ["a book marker, keeping its code and title", "\\id GEN Title", "GEN Title"],
   ])("removes %s", (_name, text, expected) => {
     expect(removeMarkerTokens(text)).toBe(expected);
   });
