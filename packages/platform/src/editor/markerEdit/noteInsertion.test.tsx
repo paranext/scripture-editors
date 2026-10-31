@@ -6,6 +6,7 @@ import {
   testEnvironmentExpanded,
   viewOptions,
 } from "./markerEdit.test-helpers";
+import { describeInView } from "../editorViews.test-helpers";
 import editorUsjAdaptor, {
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
@@ -141,55 +142,58 @@ describe("note insertion in standard view (MarkerEditPlugin active)", () => {
  * exists. The now-active standard-view whitespace transform and the char/note deletion transforms
  * must leave the caller text and char spans intact.
  */
-describe("note insertion survives standard view with EXPANDED notes (MarkerEditPlugin active)", () => {
-  async function insertExpandedNoteAfterSeedText(marker: string) {
-    const { editor } = await testEnvironmentExpanded(() => {
-      $appendVersePara();
-    });
-    await act(async () => {
-      editor.update(() => {
-        const para = $getRoot().getChildren()[0];
-        if (!$isElementNode(para)) throw new Error("seed paragraph not found");
-        const textNode = para
+describeInView("standard+expandedNotes")(
+  "note insertion survives standard view with EXPANDED notes (MarkerEditPlugin active)",
+  () => {
+    async function insertExpandedNoteAfterSeedText(marker: string) {
+      const { editor } = await testEnvironmentExpanded(() => {
+        $appendVersePara();
+      });
+      await act(async () => {
+        editor.update(() => {
+          const para = $getRoot().getChildren()[0];
+          if (!$isElementNode(para)) throw new Error("seed paragraph not found");
+          const textNode = para
+            .getChildren()
+            .find((node) => $isTextNode(node) && node.getTextContent().includes("beginning"));
+          if (!$isTextNode(textNode)) throw new Error("seed text node not found");
+          textNode.select(3, 3); // collapsed caret inside the verse text
+          $insertNote(
+            marker,
+            undefined,
+            undefined,
+            { book: "RUT", chapterNum: 1, verseNum: 1 },
+            expandedViewOptions,
+            {},
+            undefined,
+          );
+        });
+      });
+      return editor;
+    }
+
+    it("builds an inline-expanded footnote with editable caller text, no caller widget, and surviving char spans", async () => {
+      const editor = await insertExpandedNoteAfterSeedText("f");
+
+      editor.getEditorState().read(() => {
+        const note = findOnlyNote($getRoot()) as NoteNode;
+        // Expanded and edited inline — the collapsed-only caller widget must be absent.
+        expect(note.getIsCollapsed()).toBe(false);
+        expect(note.getChildren().some($isImmutableNoteCallerNode)).toBe(false);
+        // The editable caller text is present and was neither forced to NBSP nor ejected.
+        const noteTexts = note
           .getChildren()
-          .find((node) => $isTextNode(node) && node.getTextContent().includes("beginning"));
-        if (!$isTextNode(textNode)) throw new Error("seed text node not found");
-        textNode.select(3, 3); // collapsed caret inside the verse text
-        $insertNote(
-          marker,
-          undefined,
-          undefined,
-          { book: "RUT", chapterNum: 1, verseNum: 1 },
-          expandedViewOptions,
-          {},
-          undefined,
-        );
+          .filter($isTextNode)
+          .map((t) => t.getTextContent());
+        expect(noteTexts).toContain(getEditableCallerText("+"));
+        // Char spans survived (not unwrapped back to plain text by $charNodeDeletionTransform).
+        const charNodes = note.getChildren().filter($isCharNode);
+        expect(charNodes.map((c) => c.getMarker())).toEqual(["fr", "ft"]);
+        expect(note.getTextContent()).toContain("1:1");
       });
     });
-    return editor;
-  }
-
-  it("builds an inline-expanded footnote with editable caller text, no caller widget, and surviving char spans", async () => {
-    const editor = await insertExpandedNoteAfterSeedText("f");
-
-    editor.getEditorState().read(() => {
-      const note = findOnlyNote($getRoot()) as NoteNode;
-      // Expanded and edited inline — the collapsed-only caller widget must be absent.
-      expect(note.getIsCollapsed()).toBe(false);
-      expect(note.getChildren().some($isImmutableNoteCallerNode)).toBe(false);
-      // The editable caller text is present and was neither forced to NBSP nor ejected.
-      const noteTexts = note
-        .getChildren()
-        .filter($isTextNode)
-        .map((t) => t.getTextContent());
-      expect(noteTexts).toContain(getEditableCallerText("+"));
-      // Char spans survived (not unwrapped back to plain text by $charNodeDeletionTransform).
-      const charNodes = note.getChildren().filter($isCharNode);
-      expect(charNodes.map((c) => c.getMarker())).toEqual(["fr", "ft"]);
-      expect(note.getTextContent()).toContain("1:1");
-    });
-  });
-});
+  },
+);
 
 /**
  * Regression: inserting a note with the caret at the END of a closed char span's content — the

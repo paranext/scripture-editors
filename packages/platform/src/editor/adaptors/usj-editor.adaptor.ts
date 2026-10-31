@@ -4,7 +4,6 @@ import {
   MarkerContent,
   MarkerObject,
   USJ_TYPE,
-  USJ_VERSION,
   Usj,
 } from "@eten-tech-foundation/scripture-utilities";
 import {
@@ -18,6 +17,8 @@ import {
   TextNode,
 } from "lexical";
 import {
+  authoredNbspState,
+  ATTRIBUTE_NBSP_SPELLING,
   ATTRIBUTE_RUN_VERSION,
   AttributeRunKind,
   AttributeRunNode,
@@ -74,6 +75,7 @@ import {
   MilestoneNode,
   MS_MARKER_OBJECT_PROPS,
   NBSP,
+  nbspValueToDisplay,
   NOTE_MARKER_OBJECT_PROPS,
   NOTE_VERSION,
   NoteNode,
@@ -146,13 +148,17 @@ import {
   ViewOptions,
   getDefaultViewOptions,
   getVerseNodeClass,
+  getNbspSpelling,
   hasStandardViewWhitespace,
   isBlockVerseLayout,
   isCollapsedNoteMode,
   isSomeSerializedVerseNode,
   showParaMarkerPrefix,
 } from "shared-react";
-import { usjTextToDisplay } from "../markerEdit/whitespaceDisplay.utils";
+import {
+  usjTextToDisplay,
+  usjWithoutControlCharacters,
+} from "../markerEdit/whitespaceDisplay.utils";
 
 interface UsjEditorAdaptor extends EditorAdaptor {
   initialize: typeof initialize;
@@ -216,7 +222,8 @@ export function reset(callerCountValue = 0) {
  *
  * Invariant: `deserializeSerializedEditorState` (editor-usj.adaptor.ts) must invert this EXACTLY
  * — usj → serialize → deserialize is the identity in every supported view configuration — which
- * is the round-trip guarantee the corpus suites pin (adaptors/corpus/).
+ * is the round-trip guarantee the corpus suites pin (adaptors/corpus/). `usj.version` is not
+ * part of the tree: the reverse adaptor is handed the version to stamp, so any version loads.
  *
  * Reads module state set by {@link initialize}/{@link reset}; call those first on a fresh load.
  */
@@ -230,13 +237,12 @@ export function serializeEditorState(
   if (usj) {
     if (usj.type !== USJ_TYPE)
       _logger?.warn(`This USJ type '${usj.type}' didn't match the expected type '${USJ_TYPE}'.`);
-    if (usj.version !== USJ_VERSION)
-      _logger?.warn(
-        `This USJ version '${usj.version}' didn't match the expected version '${USJ_VERSION}'.`,
-      );
 
     if (usj.content.length > 0) {
-      children = insertImpliedParasRecurse(recurseNodes(usj.content));
+      // Standard view re-reads what it shows as text, and holds a stored no-break space as U+001A
+      // where `~` is an ordinary character, so no other control character may come in as one.
+      const content = isStandardView() ? usjWithoutControlCharacters(usj).content : usj.content;
+      children = insertImpliedParasRecurse(recurseNodes(content));
       // After implied paragraphs exist, so the grouping only ever sees paragraph containers.
       if (isBlockVerseLayout(_viewOptions)) children = groupVersesIntoBlocks(children, _logger);
       if (_viewOptions.markerMode !== "editable")
@@ -288,6 +294,23 @@ function setLogger(logger: LoggerBasic | undefined) {
  */
 function isStandardView(): boolean {
   return hasStandardViewWhitespace(_viewOptions);
+}
+
+/**
+ * What an attribute value's no-break space displays as: `ATTRIBUTE_NBSP_SPELLING` in Standard view,
+ * where an on-screen U+00A0 is display spacing and a value's `~` is an ordinary character under
+ * either `allowInvisibleCharacters` setting, and U+00A0 itself elsewhere. The display-run syncs,
+ * which redraw these runs from node state, give the same answer
+ * (`$getAttributeNbspDisplaySpelling`).
+ */
+function attributeNbspSpelling(): string | undefined {
+  return isStandardView() ? ATTRIBUTE_NBSP_SPELLING : undefined;
+}
+
+/** What a no-break space in body text displays as: the project's spelling (`getNbspSpelling`) in
+ * Standard view, and U+00A0 itself elsewhere. */
+function bodyNbspSpelling(): string | undefined {
+  return isStandardView() ? getNbspSpelling(_viewOptions) : undefined;
 }
 
 function createBook(
@@ -454,6 +477,14 @@ function createChar(
     const [firstChild] = childNodes;
     if (isSerializedTextNode(firstChild)) firstChild.text = NBSP + firstChild.text;
     else if (firstChild) childNodes.unshift(createText(NBSP));
+  } else {
+    // Without a separator, an author's `~` left alone in the span is a lone NBSP in the empty
+    // span's placeholder slot, so every text of the span holding one says it is the author's: the
+    // mark stays with the text through the edits that strand its `~` (deleting the rest of it, or
+    // the span content before it).
+    for (const child of childNodes)
+      if (isSerializedTextNode(child) && child.text.includes(NBSP))
+        child[NODE_STATE_KEY] = { ...child[NODE_STATE_KEY], [authoredNbspState.key]: true };
   }
   if (childNodes.length === 0) childNodes.push(createText(EMPTY_CHAR_PLACEHOLDER_TEXT));
   // A char span nested inside another char span carries the `+` prefix in its editable glyphs
@@ -549,9 +580,8 @@ function createPara(
         !isSerializedMarkerNode(node) && !(isSerializedTextNode(node) && node.text === NBSP),
     );
     // A spaces-only first string stays plain: rewriting a lone " " would leave a node that IS
-    // exactly one NBSP, byte-identical to the engine's untagged structural spacers, which the
-    // reverse adaptor drops — deleting the authored space from the file on save. (Only the
-    // lone-" " string can produce that shape — a longer run is already all-NBSP from the display
+    // exactly one NBSP, the shape of the engine's untagged display nodes. (Only the lone-" "
+    // string can produce that shape — a longer run is already all-NBSP from the display
     // mapping — but any spaces-only string gains nothing from the rewrite, so skip them all.)
     if (isSerializedTextNode(firstContent) && !/^ +$/.test(firstContent.text))
       firstContent.text = firstContent.text.replace(/^ +/, (lead) => NBSP.repeat(lead.length));
@@ -840,6 +870,8 @@ function createUnknown(
       tag,
       marker,
       unknownAttributes,
+      bodyNbspSpelling(),
+      attributeNbspSpelling(),
     );
     if (opening) children.push(createImmutableTypedText("marker", opening));
     if (attributes) children.push(createImmutableTypedText("attribute", attributes));
@@ -1002,7 +1034,11 @@ function addCharAttributes(
   nodes: SerializedLexicalNode[],
 ) {
   if (_viewOptions?.markerMode !== "editable" || !unknownAttributes) return;
-  const text = canonicalAttributeText(unknownAttributes, defaultMarkerAttribute(marker));
+  const text = canonicalAttributeText(
+    unknownAttributes,
+    defaultMarkerAttribute(marker),
+    attributeNbspSpelling(),
+  );
   if (text) nodes.push(createText(text, "attribute"));
 }
 
@@ -1026,7 +1062,11 @@ function addAttributes(markerObject: MarkerObject, nodes: SerializedLexicalNode[
     unknownAttributes,
     milestoneAttributeOrder(markerObject),
   );
-  const text = canonicalAttributeText(attributes, milestoneDefaultAttribute(marker ?? ""));
+  const text = canonicalAttributeText(
+    attributes,
+    milestoneDefaultAttribute(marker ?? ""),
+    attributeNbspSpelling(),
+  );
   if (!text) return;
 
   const attributesText = NBSP + text;
@@ -1088,7 +1128,7 @@ function addVerseAttributeRun(
   nodes.push(
     createAttributeRun(marker, [
       createMarker(marker, "opening"),
-      createText(NBSP + value, "attribute"),
+      createText(NBSP + nbspValueToDisplay(value, attributeNbspSpelling()), "attribute"),
       createMarker(marker, "closing"),
     ]),
   );
@@ -1110,7 +1150,7 @@ function addNoteCategoryRun(category: string | undefined, nodes: SerializedLexic
   nodes.push(
     createAttributeRun("cat", [
       createMarker("cat", "opening"),
-      createText(NBSP + category, "attribute"),
+      createText(NBSP + nbspValueToDisplay(category, attributeNbspSpelling()), "attribute"),
       createMarker("cat", "closing"),
     ]),
   );
@@ -1130,7 +1170,7 @@ function addChapterAttributeRuns(
     nodes.push(
       createAttributeRun("ca", [
         createMarker("ca", "opening"),
-        createText(NBSP + altnumber, "attribute"),
+        createText(NBSP + nbspValueToDisplay(altnumber, attributeNbspSpelling()), "attribute"),
         createMarker("ca", "closing"),
       ]),
     );
@@ -1138,7 +1178,7 @@ function addChapterAttributeRuns(
     nodes.push(
       createAttributeRun("cp", [
         createMarker("cp", "opening"),
-        createText(NBSP + pubnumber, "attribute"),
+        createText(NBSP + nbspValueToDisplay(pubnumber, attributeNbspSpelling()), "attribute"),
       ]),
     );
 }
@@ -1219,7 +1259,13 @@ function recurseNodes(
   markers?.forEach((markerContent) => {
     if (typeof markerContent === "string") {
       if (markerContent)
-        nodes.push(createText(isStandardView() ? usjTextToDisplay(markerContent) : markerContent));
+        nodes.push(
+          createText(
+            isStandardView()
+              ? usjTextToDisplay(markerContent, getNbspSpelling(_viewOptions))
+              : markerContent,
+          ),
+        );
     } else if (!markerContent.type) {
       _logger?.error(`Marker type is missing!`);
     } else {

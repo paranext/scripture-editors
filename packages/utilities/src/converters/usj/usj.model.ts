@@ -97,8 +97,12 @@ export interface MarkerObject {
 export interface Usj {
   /** The USJ spec type */
   type: typeof USJ_TYPE;
-  /** The USJ spec version */
-  version: typeof USJ_VERSION;
+  /**
+   * The USJ spec version of this document, e.g. `"3.0"` or `"3.1"` — the same numbering as USX
+   * and USFM. A document converted from USX keeps the version that USX declared.
+   * `USJ_VERSION` is the newest version this package targets, not the only one allowed.
+   */
+  version: string;
   /** The JSON representation of scripture contents from USFM/USX */
   content: MarkerContent[];
 }

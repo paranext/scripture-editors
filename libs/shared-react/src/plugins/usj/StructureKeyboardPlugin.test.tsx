@@ -1332,7 +1332,7 @@ describe("StructureKeyboardPlugin — Delete in an empty paragraph", () => {
       $getRoot().append(
         $createParaNode("p").append($createTextNode("first")),
         empty.append($createGutterMarkerNode("\\s ")),
-        $createChapterNode("2"),
+        $createImmutableChapterNode("2"),
         $createParaNode("p").append($createTextNode("second")),
       );
     });

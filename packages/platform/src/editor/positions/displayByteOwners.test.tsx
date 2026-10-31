@@ -3,8 +3,9 @@
  * glyph that follows an element (`\f*` after a note's last `\ft`, `\wj*` after a nested `\+nd*`),
  * the `|` that opens a char span's attribute run, and a collapsed note's caller decorator.
  */
+import { editorView, isViewEnabled, paneRowScaffold } from "../editorViews.test-helpers";
 import { serializedState } from "../markerEdit/markerEdit.test-helpers";
-import { Usj } from "@eten-tech-foundation/scripture-utilities";
+import { ContentJsonPath, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import {
   $getRoot,
   $getState,
@@ -127,37 +128,69 @@ const $noteCloser = () => $closingGlyphOf($isNoteNode);
 const $wjCloser = () => $closingGlyphOf((node) => $isCharNode(node) && node.getMarker() === "wj");
 const $ndCloser = () => $closingGlyphOf((node) => $isCharNode(node) && node.getMarker() === "nd");
 
-describe.each([
-  { name: "collapsed", options: standard },
-  { name: "expanded", options: standardExpanded },
-])("a note's `\\f*` after its last char span (Standard view, $name)", ({ options }) => {
-  it("names the note's closing marker, not the char span before it", () => {
-    const editor = load(glyphUsj, options);
-    const locations = editor
-      .getEditorState()
-      .read(() => [0, 1, 2].map((offset) => $getLocationFromNode($noteCloser(), offset, options)));
-    expect(locations).toEqual(
-      [0, 1, 2].map((offset) => ({
-        jsonPath: notePath,
-        closingMarkerOffset: offset,
-      })),
-    );
+/** {@link glyphUsj}'s note, alone in the scaffold the footnotes pane's row editor edits it in. */
+const paneRowGlyphUsj = paneRowScaffold(
+  (glyphUsj.content[2] as MarkerObject).content?.[2] as MarkerObject,
+);
+
+/** A view a note's closing glyph is shown in, with the document it holds and the note's path. */
+interface CloserView {
+  name: string;
+  options: ViewOptions;
+  usj: Usj;
+  notePath: ContentJsonPath;
+}
+
+const closerViews: CloserView[] = [
+  { name: "Standard view, collapsed", options: standard, usj: glyphUsj, notePath },
+  {
+    name: "footnotes pane row",
+    options: editorView("footnotes-pane-row"),
+    usj: paneRowGlyphUsj,
+    notePath: "$.content[0].content[0]",
+  },
+];
+if (isViewEnabled("standard+expandedNotes"))
+  closerViews.push({
+    name: "Standard view, expanded",
+    options: standardExpanded,
+    usj: glyphUsj,
+    notePath,
   });
 
-  it("resolves the note's closing marker to `\\f*` at the same offset", () => {
-    const editor = load(glyphUsj, options);
-    const landsInCloser = editor.getEditorState().read(() =>
-      [0, 1, 2].map((offset) => {
-        const [node, nodeOffset] = $getNodeFromLocation(
-          { jsonPath: notePath, closingMarkerOffset: offset },
-          options,
+describe.each(closerViews)(
+  "a note's `\\f*` after its last char span ($name)",
+  ({ options, usj, notePath }) => {
+    it("names the note's closing marker, not the char span before it", () => {
+      const editor = load(usj, options);
+      const locations = editor
+        .getEditorState()
+        .read(() =>
+          [0, 1, 2].map((offset) => $getLocationFromNode($noteCloser(), offset, options)),
         );
-        return !!node?.is($noteCloser()) && nodeOffset === offset;
-      }),
-    );
-    expect(landsInCloser).toEqual([true, true, true]);
-  });
-});
+      expect(locations).toEqual(
+        [0, 1, 2].map((offset) => ({
+          jsonPath: notePath,
+          closingMarkerOffset: offset,
+        })),
+      );
+    });
+
+    it("resolves the note's closing marker to `\\f*` at the same offset", () => {
+      const editor = load(usj, options);
+      const landsInCloser = editor.getEditorState().read(() =>
+        [0, 1, 2].map((offset) => {
+          const [node, nodeOffset] = $getNodeFromLocation(
+            { jsonPath: notePath, closingMarkerOffset: offset },
+            options,
+          );
+          return !!node?.is($noteCloser()) && nodeOffset === offset;
+        }),
+      );
+      expect(landsInCloser).toEqual([true, true, true]);
+    });
+  },
+);
 
 describe("a `\\wj*` after a nested `\\+nd*` (Standard view)", () => {
   it("names the wj span's closing marker and round-trips to `\\wj*`", () => {

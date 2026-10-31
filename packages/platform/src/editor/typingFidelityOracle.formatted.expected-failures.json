@@ -1,0 +1,8 @@
+{
+  "testUSFM-1SA-1.usj": {
+    "Backspace at letter|edge span-end: ignored": "Backspace with the caret at the paragraph's end, after the span its last text is in (an element caret), removes nothing here, while the same key with the caret in the span's text works. No content is changed. Typing-fidelity finding T-16. TODO(PT-4924)."
+  },
+  "web-matthew-5-section-header.usj": {
+    "Enter at edge|letter span-start: Undo does not restore the document": "Enter in front of a char span at a paragraph's start dirties only the span's unchanged text, which Lexical's history folds into the previous undo step (its single-unchanged-leaf merge rule); the ParaNodePlugin mark that keeps the break its own step does not reach this shape in this chapter. Typing-fidelity finding T-12. TODO(PT-4924)."
+  }
+}

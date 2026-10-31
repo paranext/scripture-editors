@@ -33,6 +33,7 @@ import {
   usfmFragmentToUsjContent,
 } from "shared";
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { enabledViews } from "../editorViews.test-helpers";
 import { twoParaUsj } from "../positions/positions.test-helpers";
 
 const viewOptions = requireStandardViewOptions();
@@ -317,7 +318,7 @@ describe("a departure settle leaves the caret where the user put it", () => {
   });
 });
 
-describe.each(["standard", "unformatted"])(
+describe.each(enabledViews(["standard", "unformatted"]))(
   "text typed at the end of a milestone's closer (%s view)",
   (view) => {
     it("follows the milestone at once, so the document holds it while the caret is there", async () => {

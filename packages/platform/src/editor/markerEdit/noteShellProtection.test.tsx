@@ -17,6 +17,7 @@
  * that asserts only the mode therefore says nothing about whether the shell is protected — so
  * each case here puts a caret somewhere in the shell, types, and checks the note.
  */
+import { enabledViews } from "../editorViews.test-helpers";
 import {
   $noteContentText,
   findOnlyNote,
@@ -78,6 +79,16 @@ if (typeof Range.prototype.getBoundingClientRect !== "function")
 
 const expandedEditable: ViewOptions = { ...viewOptions, noteMode: "expanded" };
 const protectedShell: ViewOptions = { ...expandedEditable, isNoteShellEditable: false };
+
+/**
+ * The views that show a note's shell as editable text: Standard view, for the unclosed note
+ * {@link mount} loads by default, and Standard with notes expanded (library-only). The footnotes
+ * pane's row editor protects the shell.
+ */
+const editableShellViews: [string, ViewOptions][] = enabledViews([
+  "standard",
+  "standard+expandedNotes",
+] as const).map((name) => [name, name === "standard" ? viewOptions : expandedEditable]);
 
 /** `serializedState` from the shared helpers always uses the default view options; these cases
  * differ ONLY in the view options, so the state has to be built with the one under test. */
@@ -254,14 +265,17 @@ describe("expanded note shell", () => {
     });
   });
 
-  it("stays editable by default, for a view whose only way to edit a note is as text", async () => {
-    // The main editor's Markers view expands notes precisely so the marker and caller can be
-    // typed. Defaulting to atomic would take that away.
-    const { editor } = await mount(expandedEditable);
-    editor.getEditorState().read(() => {
-      expect($shellModes()).toEqual({ opener: "normal", caller: "normal" });
-    });
-  });
+  it.each(editableShellViews)(
+    "stays editable by default, for a view whose only way to edit a note is as text (%s)",
+    async (_name, view) => {
+      // The main editor's Markers view expands notes precisely so the marker and caller can be
+      // typed. Defaulting to atomic would take that away.
+      const { editor } = await mount(view);
+      editor.getEditorState().read(() => {
+        expect($shellModes()).toEqual({ opener: "normal", caller: "normal" });
+      });
+    },
+  );
 
   describe("under a keystroke", () => {
     it.each([
@@ -798,27 +812,30 @@ describe("expanded note shell", () => {
     expect(note).toMatchObject({ marker: "f", caller: "+" });
   });
 
-  it("unwraps an editable note whose opener is deleted, whatever its content's text modes", async () => {
-    const { editor } = await mount(expandedEditable);
-    // Only the note's own shell says whether the host governs it: an atomic text in the content
-    // does not make an editable shell a protected one.
-    await act(async () => {
-      editor.update(() => {
-        const note = findOnlyNote($getRoot());
-        const caller = requireDefined($noteEditableCallerNode(note), "caller");
-        caller.insertAfter($createTextNode("x").setMode("token"));
-        $opener(note).remove();
+  it.each(editableShellViews)(
+    "unwraps an editable note whose opener is deleted, whatever its content's text modes (%s)",
+    async (_name, view) => {
+      const { editor } = await mount(view);
+      // Only the note's own shell says whether the host governs it: an atomic text in the content
+      // does not make an editable shell a protected one.
+      await act(async () => {
+        editor.update(() => {
+          const note = findOnlyNote($getRoot());
+          const caller = requireDefined($noteEditableCallerNode(note), "caller");
+          caller.insertAfter($createTextNode("x").setMode("token"));
+          $opener(note).remove();
+        });
       });
-    });
 
-    editor.getEditorState().read(() => {
-      expect(
-        $getRoot()
-          .getAllTextNodes()
-          .some((node) => $isNoteNode(node.getParent())),
-      ).toBe(false);
-    });
-  });
+      editor.getEditorState().read(() => {
+        expect(
+          $getRoot()
+            .getAllTextNodes()
+            .some((node) => $isNoteNode(node.getParent())),
+        ).toBe(false);
+      });
+    },
+  );
 
   // The correction only moves the caret, and Lexical keeps a selection-only commit's tags pending:
   // its cursor-change tag would ride onto the keystroke that follows, which the host's change
@@ -850,24 +867,27 @@ describe("expanded note shell", () => {
     for (const tags of contentCommitTags) expect(tags).not.toContain(CURSOR_CHANGE_TAG);
   });
 
-  it("leaves an editable shell alone, caret and keystroke both", async () => {
-    const { editor } = await mount(expandedEditable);
+  it.each(editableShellViews)(
+    "leaves an editable shell alone, caret and keystroke both (%s)",
+    async (_name, view) => {
+      const { editor } = await mount(view);
 
-    await placeCaretInShell(
-      editor,
-      (note) => requireDefined($noteEditableCallerNode(note), "caller"),
-      1,
-    );
-    await typeText(editor, "X");
+      await placeCaretInShell(
+        editor,
+        (note) => requireDefined($noteEditableCallerNode(note), "caller"),
+        1,
+      );
+      await typeText(editor, "X");
 
-    editor.getEditorState().read(() => {
-      // The Markers view edits the caller as text on purpose, and the engine folds what was typed
-      // onto the note's own caller. The guard must be a no-op there, so that still happens.
-      const note = findOnlyNote($getRoot());
-      expect(note.getCaller()).toBe("X+");
-      expect($noteEditableCallerNode(note)?.getTextContent()).toBe(getEditableCallerText("X+"));
-    });
-  });
+      editor.getEditorState().read(() => {
+        // The Markers view edits the caller as text on purpose, and the engine folds what was typed
+        // onto the note's own caller. The guard must be a no-op there, so that still happens.
+        const note = findOnlyNote($getRoot());
+        expect(note.getCaller()).toBe("X+");
+        expect($noteEditableCallerNode(note)?.getTextContent()).toBe(getEditableCallerText("X+"));
+      });
+    },
+  );
 });
 
 // ParatextData reads `\\f \\ft …` as a note with an empty caller, and the shell keeps its two

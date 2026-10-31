@@ -361,7 +361,9 @@ export declare interface EditorProps<TLogger extends LoggerBasic> {
    * - `ops` — **Live**: refers to the editor's current tree as displayed, including marker text
    *   the user is still typing that has not settled yet; the change's delta ops in the live
    *   document's delta coordinates, absent when the change moved no delta (a marker glyph or
-   *   attribute text edited, or its undo).
+   *   attribute text edited, or its undo). In Standard view with
+   *   `ViewOptions.allowInvisibleCharacters` on, a stored no-break space is U+00A0 in them and a
+   *   space the view shows as an NBSP (in a run) is a space, as in every op the editor gives out.
    * - `insertedNodeKey` — **Live**: refers to the editor's current tree as displayed; the editor
    *   key of a node the change inserted into it.
    */
@@ -582,6 +584,11 @@ export declare interface EditorRef {
    * listener such as `onUsjChange`), the apply commits once that update finishes, so it is not yet
    * reflected when this call returns; its `onUsjChange` comes when it commits, with these ops and
    * `source`.
+   *
+   * In Standard view, a C0 control character other than tab, line feed and carriage return in an
+   * inserted text goes in as a space, and with `ViewOptions.allowInvisibleCharacters` on a U+00A0
+   * that is not a marker's separator goes in as a stored no-break space — the same text the
+   * editor's own ops give out.
    *
    * @throws Will throw an error if the editor uses the block verse layout and `source` is
    *   `"local"`.
@@ -2158,6 +2165,31 @@ export declare interface Thread {
 }
 
 /**
+ * Respells the no-break spaces in text a host takes from the editor's display — a DOM selection or
+ * an element's `textContent`, for a copy or a search — the way the project's USFM spells them.
+ * Standard view shows a stored no-break space in body text as `~` while
+ * `ViewOptions.allowInvisibleCharacters` is off, which is already the USFM spelling, so that is left
+ * as it is. With it on, and in an attribute value under either setting, the editor holds a no-break
+ * space as an internal stand-in it draws as a blank the width of a space; each one becomes U+00A0
+ * here, and `~` stays an ordinary character. Other display characters (the no-break spaces a space
+ * run or a marker separator shows as) are left as they are.
+ *
+ * Expected to be removed once Standard view holds a stored no-break space as itself (PT-4931):
+ * display text will then already carry the project's spelling.
+ *
+ * @param displayText - Text read from the editor's display.
+ * @param viewOptions - The editor's view options.
+ * @returns The text with the project's spelling of a no-break space.
+ * @experimental This member is unstable and may change shape or disappear without notice.
+ *
+ * @public
+ */
+export declare function toUsfmNbspSpelling(
+  displayText: string,
+  viewOptions: ViewOptions | undefined,
+): string;
+
+/**
  * In-progress input an in-editor command surface has declared to the editor. `kind` names the shape
  * of the claim so more can be added without widening the method; `run` is the exact byte sequence
  * the surface expects to find immediately before the caret.
@@ -2445,6 +2477,61 @@ export declare interface ViewOptions {
    * when they mount the editor rather than toggling a live one.
    */
   verseLayout?: VerseLayout;
+  /**
+   * Whether the project stores invisible characters literally: Paratext's per-project
+   * `AllowInvisibleChars` setting ("Allow whitespace and invisible characters" in Paratext 9's
+   * project properties), which Platform.Bible exposes as the project setting
+   * `platformScripture.allowInvisibleCharacters`. A host passes that setting of the project whose
+   * text the editor holds, whatever view it shows. It describes the project's text rather than the
+   * view, so it never changes the mode {@link getViewMode} reports.
+   *
+   * Off (`undefined` or `false`, Paratext's default): the project's USFM spells a no-break space
+   * as `~`, so the USJ the editor is given holds U+00A0 and never `~`. Standard view shows each
+   * U+00A0 as `~`, saves a `~` the user types or pastes as U+00A0, and saves a U+00A0 typed as a
+   * character as a space — the author's no-break space is typed as `~`, as in Paratext 9.
+   *
+   * On: `~` is an ordinary character and the project stores U+00A0 as itself, so the USJ can hold
+   * both and they mean different things. Standard view keeps `~` as `~` and shows each U+00A0 as a
+   * blank the width of a space, as a no-break space looks, and saves each as itself. A U+00A0 typed
+   * or pasted is kept as one, and a copy writes `~` and U+00A0 as themselves. The Markers view's
+   * copy and the Unformatted view's marker settle spell them the same way. Space runs still collapse
+   * on save. ParatextData still drops a U+00A0 right after a marker or next to a space when it
+   * saves, in both products.
+   *
+   * Inside the editor Standard view holds each such U+00A0 as an internal stand-in (U+001A,
+   * `NBSP_STAND_IN` in shared), since its engine reads an on-screen U+00A0 as display spacing; the
+   * `PlatformEditorNbspStandIn` font face draws it as the blank (a host stylesheet that sets its own
+   * Scripture `font-family` names that family first). The stand-in never leaves the editor:
+   * `getUsj`, `onUsjChange` and its delta ops, the note-op getters, the clipboard and drag data,
+   * annotation callbacks and note-caller previews all give U+00A0. Delta ops coming in
+   * (`applyUpdate`, `replaceEmbedUpdate`) take a U+00A0 that is not a marker's separator as a stored
+   * no-break space; going out, an NBSP the view shows for a space in a run is that space. Text read
+   * from the editor's DOM still holds the stand-in; `toUsfmNbspSpelling` turns it back. No project
+   * text can hold U+001A — Paratext's reader turns U+0001-U+0008 and U+000E-U+001F into spaces — and
+   * Standard view turns every C0 control character other than tab, line feed and carriage return
+   * that comes in (a load, a paste, a drop, typing, applied ops) into a space, in either setting,
+   * so the stand-in is never mistaken for one. That includes U+000B and U+000C, which Paratext's
+   * reader keeps; they become spaces on purpose, since JavaScript reads them as whitespace.
+   *
+   * An attribute value (a char span's `|lemma`, a milestone's `who`, a note's `\cat`, a verse's
+   * `\va`/`\vp`, …) is the same either way: Paratext reads `~` as a no-break space only in body
+   * text, so a value's `~` is always an ordinary character and is kept as `~`, and Standard view
+   * holds a value's U+00A0 as the stand-in above and shows it as the blank. A copy writes a value's
+   * U+00A0 as U+00A0 under either setting.
+   *
+   * Views that hide markers (formatted, paragraph-structure, block verse) show the stored
+   * characters as they are either way, so they behave the same with this on or off.
+   *
+   * Passing the wrong value for the project corrupts text saved from Standard view: off for a
+   * project that has it on turns every `~` into U+00A0; on for a project that has it off saves a
+   * typed `~` as `~`, which that project reads back as a no-break space.
+   *
+   * Pass the right value before the first document loads (`defaultUsj` or the first `setUsj`). A
+   * later change reloads the view from the editor's own export of the document, not the host's,
+   * and a distinction the wrong value has already lost (a stored `~` and a stored no-break space
+   * read as the same character) cannot be recovered from it.
+   */
+  allowInvisibleCharacters?: boolean;
 }
 
 export {};

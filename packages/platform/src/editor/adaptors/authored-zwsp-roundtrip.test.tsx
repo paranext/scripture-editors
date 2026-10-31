@@ -5,12 +5,18 @@
  * same as a caret guard's transient host. These rows pin that save tells the two apart by the
  * host's identity, so the authored one round-trips unchanged.
  */
-import { mountViewEditor, requireViewOptions } from "../settledGetUsj.test-helpers";
+import {
+  editorView,
+  enabledViews,
+  forEachView,
+  mountInView,
+  NamedView,
+} from "../editorViews.test-helpers";
 import { contentPath, twoParaUsj } from "../positions/positions.test-helpers";
 import { act } from "@testing-library/react";
 import { $dfs } from "@lexical/utils";
 import { $isTypedMarkNode, ZWSP } from "shared";
-import { FORMATTED_VIEW_MODE, STANDARD_VIEW_MODE } from "shared-react";
+import { describe, expect, it } from "vitest";
 
 const verseText = `alpha${ZWSP}beta `;
 const usj = twoParaUsj([
@@ -20,11 +26,15 @@ const usj = twoParaUsj([
   "beta",
 ]);
 
+const VIEWS: readonly NamedView<string>[] = enabledViews(["formatted", "standard"]).map((name) => ({
+  name,
+  view: editorView(name),
+}));
+
 describe("an authored zero-width space split into a run of its own", () => {
-  it.each([FORMATTED_VIEW_MODE, STANDARD_VIEW_MODE])(
-    "round-trips through save unchanged in %s view",
-    async (mode) => {
-      const mounted = await mountViewEditor(usj, requireViewOptions(mode));
+  forEachView(VIEWS, ({ view }) => {
+    it("round-trips through save unchanged", async () => {
+      const mounted = await mountInView(usj, view);
       const offset = verseText.indexOf(ZWSP);
       await act(async () => {
         mounted.ref.current?.setAnnotation(
@@ -48,6 +58,6 @@ describe("an authored zero-width space split into a run of its own", () => {
       expect(annotated).toEqual([ZWSP]);
 
       expect(mounted.ref.current?.getUsj()).toEqual(usj);
-    },
-  );
+    });
+  });
 });

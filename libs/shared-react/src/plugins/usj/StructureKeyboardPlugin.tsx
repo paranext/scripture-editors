@@ -2,6 +2,7 @@ import {
   $deletePara,
   $getParaAncestor,
   $isArmedSelection,
+  $isCaretBesideChapterGlyph,
   $isUnmergeableParaStart,
   $moveCaretPastGutterGlyph,
   $narrowSelectionPastGutterGlyph,
@@ -54,6 +55,7 @@ import {
   $getSelectedParaMarkerPara,
   $isBookNode,
   $isSomeParaNode,
+  $recordClipboardSpans,
   $selectParaMarker,
   MARKER_TEXT_TYPE,
 } from "shared";
@@ -87,12 +89,12 @@ function $restorerFor(selection: RangeSelection): () => void {
 }
 
 /**
- * Governs structural keystrokes (Backspace/Delete/Enter/typing) at verse- and paragraph-marker
- * boundaries. In `"protected"` mode, blocks them and sanitizes paste/drop payloads so structural
- * markers (paragraph breaks, verse markers, chapter markers) cannot be inserted — text, inline
- * character formatting, and notes are kept. In `"guarded"` mode, makes deletion a deliberate
- * two-step gesture instead: first press selects the marker/section, second press deletes it.
- * In `"off"` mode, no handlers are registered and editing is fully native.
+ * Governs structural keystrokes (Backspace/Delete/Enter/typing) at verse-, chapter- and
+ * paragraph-marker boundaries. In `"protected"` mode, blocks them and sanitizes paste/drop payloads
+ * so structural markers (paragraph breaks, verse markers, chapter markers) cannot be inserted —
+ * text, inline character formatting, and notes are kept. In `"guarded"` mode, makes deletion a
+ * deliberate two-step gesture instead: first press selects the marker/section, second press deletes
+ * it. In `"off"` mode, no handlers are registered and editing is fully native.
  * Registers a KEY_DOWN handler at COMMAND_PRIORITY_HIGH, mirroring ArrowNavigationPlugin, and
  * the CUT refusal at COMMAND_PRIORITY_CRITICAL so it outranks the handlers that perform a cut.
  * Under `"protected"`, it also performs word and line deletes itself (DELETE_WORD_COMMAND /
@@ -106,13 +108,16 @@ function $restorerFor(selection: RangeSelection): () => void {
  * paragraph outright when it is empty. A Backspace arm selects that marker; a Delete arm leaves
  * the caret where it is.
  *
+ * A chapter is never a two-step target: in the views that hide markers it is an atomic glyph the
+ * caret cannot sit on, so any delete beside one that has no paragraph to act on is refused.
+ *
  * The armed state is published to the DOM (rather than rendered here) so the host app owns the
  * user-facing hint: the root element carries the `verse-delete-armed` class plus
  * `data-verse-delete-intent` (`deleteBackward` | `deleteForward`) and `data-verse-delete-kind`
  * (`verse` | `selection`, or for a paragraph what the second press does: `joinPreviousPara` |
  * `joinNextPara` | `removeEmptyPara`). An armed verse marker carries the `verse-selected` class,
- * and an armed paragraph's gutter marker {@link PARA_MERGE_ARMED_CLASS_NAME}. The host can observe
- * these to render a localized tooltip (see paranext-core's TwoStepDeleteTooltipOverlay).
+ * and an armed paragraph's gutter marker {@link PARA_MERGE_ARMED_CLASS_NAME}. The host can observe these to render a localized tooltip
+ * (see paranext-core's TwoStepDeleteTooltipOverlay).
  *
  * @param structureProtectionMode - `"off"` (e.g. the Power interface mode): the plugin registers
  *   no handlers and editing is fully native — no blocking, no two-step delete, no armed state.
@@ -270,6 +275,12 @@ export function StructureKeyboardPlugin({
         event?.preventDefault();
         return true;
       }
+      // The same at a block's end with a chapter glyph after it: nothing here may be deleted, and
+      // the native delete would remove the chapter.
+      if (intent === "deleteForward" && $isCaretBesideChapterGlyph(selection, intent)) {
+        event?.preventDefault();
+        return true;
+      }
       return false;
     };
 
@@ -305,7 +316,12 @@ export function StructureKeyboardPlugin({
       const sanitized = $sanitizeNodesForProtectedStructure($generateNodesFromDOM(editor, dom));
       // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
       const selection = $getSelection();
-      if ($isRangeSelection(selection)) selection.insertNodes(sanitized);
+      if ($isRangeSelection(selection)) {
+        // Inserted directly rather than through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, so
+        // record the spans the way that command's listener in `CharNodePlugin` does.
+        $recordClipboardSpans(sanitized);
+        selection.insertNodes(sanitized);
+      }
       event.preventDefault();
       return true;
     };
@@ -380,11 +396,16 @@ export function StructureKeyboardPlugin({
     const $guardExtendingDelete =
       (granularity: "word" | "lineboundary") =>
       (isBackward: boolean): boolean => {
-        if (structureProtectionMode !== "protected" || !editor.isEditable()) return false;
-        if ($selectionReachesIntoOpaqueBlock()) return false;
+        if (!editor.isEditable()) return false;
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
         const intent = isBackward ? "deleteBackward" : "deleteForward";
+        // Under "guarded", a word or line delete with no keydown (one with a keydown never gets
+        // here: `$handleKeyDown` claims it) goes native, except that a chapter glyph beside the
+        // caret is no more deletable than it is by a character delete.
+        if (structureProtectionMode === "guarded")
+          return $isCaretBesideChapterGlyph(selection, intent);
+        if ($selectionReachesIntoOpaqueBlock()) return false;
         const restore = $restorerFor(selection);
 
         if (selection.isCollapsed()) {

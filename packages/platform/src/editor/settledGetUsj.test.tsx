@@ -4,6 +4,7 @@
  * the caret sits inside it. Without side effects means the editor still shows the pending edit
  * afterwards — reading the document must never settle it under the user.
  */
+import { isViewEnabled } from "./editorViews.test-helpers";
 import { contentPath } from "./positions/positions.test-helpers";
 import {
   expectTier2FixedPoint,
@@ -1010,8 +1011,13 @@ const pendingShapes: PendingShape[] = [
   },
 ];
 
+/** {@link pendingShapes} less the expanded-note ones while this run leaves that view out. */
+const enabledPendingShapes = pendingShapes.filter(
+  ({ expandedNotes }) => !expandedNotes || isViewEnabled("standard+expandedNotes"),
+);
+
 describe("settled getUsj — virtual settle equals the real settle", () => {
-  it.each(pendingShapes)("$name", async ({ usj, $edit, expandedNotes }) => {
+  it.each(enabledPendingShapes)("$name", async ({ usj, $edit, expandedNotes }) => {
     const { ref, lexical } = await (
       expandedNotes ? mountExpandedNoteEditor : mountStandardViewEditor
     )(usj);
@@ -1067,7 +1073,7 @@ describe("settled getUsj — virtual settle equals the real settle", () => {
 });
 
 describe("settled getUsj — output is always a Tier-2 fixed point", () => {
-  it.each(pendingShapes)("$name", async ({ usj, $edit, expandedNotes }) => {
+  it.each(enabledPendingShapes)("$name", async ({ usj, $edit, expandedNotes }) => {
     const { ref, lexical } = await (
       expandedNotes ? mountExpandedNoteEditor : mountStandardViewEditor
     )(usj);

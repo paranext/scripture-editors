@@ -1,6 +1,5 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
-import { deepEqual } from "fast-equals";
 import {
   $getEditor,
   $getNodeByKey,
@@ -9,24 +8,33 @@ import {
   $isDecoratorNode,
   $isRangeSelection,
   $isTextNode,
+  $setState,
+  COMMAND_PRIORITY_CRITICAL,
   LexicalEditor,
   NodeKey,
+  SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   TextNode,
 } from "lexical";
 import { useEffect } from "react";
 import {
-  $hasSameCharAttributes,
+  $arrivedTogetherFromClipboard,
+  $hasAllSameCharAttributes,
   $isCharNode,
   $isMarkerNode,
+  $isNewlyMarkedSpan,
   $isSeparatorPrefixHostText,
+  $recordClipboardSpans,
   $syncDisplayRun,
   $syncNestedGlyphs,
   $syncOpenerSeparators,
+  $wereSplitFromOneSpan,
+  authoredNbspState,
   charIdState,
   CharNode,
   displayRunDescriptor,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   NBSP,
+  textTypeState,
 } from "shared";
 
 /** Combine adjacent CharNodes with the same attributes. */
@@ -58,7 +66,18 @@ function useCharNode(editor: LexicalEditor) {
       editor.registerNodeTransform(CharNode, (node) =>
         $syncDisplayRun(displayRunDescriptor("char"), node),
       ),
-      editor.registerNodeTransform(TextNode, $charTextNodeTransform),
+      // Spans a paste or drop brings in stay the spans the copied content held: never claims the
+      // insertion, only notes which spans it inserts before whichever handler inserts them.
+      editor.registerCommand(
+        SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+        ({ nodes }) => {
+          $recordClipboardSpans(nodes);
+          return false;
+        },
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerNodeTransform(TextNode, $dropFilledCharPlaceholder),
+      editor.registerNodeTransform(TextNode, $keepRemainingNbsp),
     );
   }, [editor]);
 }
@@ -75,11 +94,12 @@ function useCharNode(editor: LexicalEditor) {
  * each side genuinely differs from the other. That is a live editor freeze, reachable from any
  * edit that leaves two same-attribute spans adjacent (deleting the `*` from a `\va*` closer
  * re-tokenizes into exactly that shape). Where the glyphs are absent there are no bytes to
- * contradict, so the merge stays: adjacent same-attribute runs really are equivalent there, and
- * that is the case delta-apply and structure surgery rely on.
+ * contradict, so the merge stays for a span an update creates — the case delta-apply and structure
+ * surgery rely on — while two spans the document already held apart, or that one paste brought in,
+ * stay apart there too (see `$areHeldApart`).
  *
  * The MIXED pairing — a glyph-less span beside a glyph-bearing one — must still merge, because
- * the marker-apply paths rely on it: `$wrapRunInCharNode` (usj-marker-action.utils.ts) wraps the
+ * span extension relies on it: `$wrapRunInCharNode` (usj-marker-action.utils.ts) wraps the
  * uncovered run in a deliberately glyph-less span and counts on this transform to reunite it with
  * the glyph-bearing neighbor whose identity it copied. But a plain child move would land the
  * content OUTSIDE the neighbor's glyph pair (`[\nd, "Lord", \nd*, " God"]` — bytes that
@@ -137,7 +157,8 @@ function $mergeIntoPrecedingGlyphSpan(node: CharNode, target: CharNode): void {
 }
 
 /**
- * Combine adjacent CharNodes with the same attributes.
+ * Combine adjacent CharNodes with the same attributes, unless they are spans held apart
+ * ({@link $areHeldApart}).
  * @param node - CharNode thats needs updating.
  * @param editor - LexicalEditor instance.
  */
@@ -164,8 +185,8 @@ function $charNodeTransform(node: CharNode): void {
   const nextNode = node.getNextSibling();
   if (
     $isCharNode(nextNode) &&
-    $hasSameCharAttributes({ style, cid }, nextNode) &&
-    deepEqual(unknownAttributes, nextNode.getUnknownAttributes())
+    $hasAllSameCharAttributes({ style, cid }, unknownAttributes, nextNode) &&
+    !$areHeldApart(node, nextNode)
   ) {
     // Combine with next CharNode since it has the same attributes. A glyph-bearing partner
     // survives the merge (its glyphs are the displayed bytes) and takes the content inside its
@@ -174,25 +195,167 @@ function $charNodeTransform(node: CharNode): void {
     if ($rendersOwnGlyphs(nextNode)) {
       if ($mergeIntoFollowingGlyphSpan(node, nextNode)) return;
     } else {
-      node.append(...nextNode.getChildren());
-      nextNode.remove();
+      $combineGlyphlessSpans(node, nextNode);
     }
   }
 
   const prevNode = node.getPreviousSibling();
   if (
     $isCharNode(prevNode) &&
-    $hasSameCharAttributes({ style, cid }, prevNode) &&
-    deepEqual(unknownAttributes, prevNode.getUnknownAttributes())
+    $hasAllSameCharAttributes({ style, cid }, unknownAttributes, prevNode) &&
+    !$areHeldApart(prevNode, node)
   ) {
     // Combine with previous CharNode since it has the same attributes.
     if ($rendersOwnGlyphs(prevNode)) {
       $mergeIntoPrecedingGlyphSpan(node, prevNode);
     } else {
-      prevNode.append(...node.getChildren());
-      node.remove();
+      $combineGlyphlessSpans(prevNode, node);
     }
   }
+}
+
+/**
+ * Whether `preceding` and `following`, two alike spans side by side, are two spans to keep: spans
+ * the document already held apart ({@link $wereAlikeSpansBeforeUpdate}), spans one paste or drop
+ * brought in together ({@link $arrivedTogetherFromClipboard}) — the copied content held them apart,
+ * as Standard view's paste, which keeps every span's glyphs, keeps them — or a span a marker apply
+ * just made beside one the document held ({@link $wasMarkedBesideExistingSpan}). A pasted span still
+ * combines with an alike span the document held, so a piece of a span pasted inside or at the end of
+ * a span of the same marker extends that span.
+ */
+function $areHeldApart(preceding: CharNode, following: CharNode): boolean {
+  return (
+    $arrivedTogetherFromClipboard(preceding, following) ||
+    $wasMarkedBesideExistingSpan(preceding, following) ||
+    $wasMarkedBesideExistingSpan(following, preceding) ||
+    $wereAlikeSpansBeforeUpdate(preceding, following)
+  );
+}
+
+/**
+ * Whether `marked` is a span a marker apply created in this update ({@link $isNewlyMarkedSpan}) and
+ * `other` is a span the document already held. Marking text right after `\nd Lord\nd*` makes a
+ * second span, `\nd Lord\nd*\nd God\nd*`, as Paratext 9 and Standard view do: the user made a new
+ * span, not a longer one. The pieces one apply creates still combine with each other, and so does a
+ * span a split made in that update (it was not in the document). Extending an existing span is a
+ * different request (`extendCharacterMarker`), which records nothing and so still combines.
+ */
+function $wasMarkedBesideExistingSpan(marked: CharNode, other: CharNode): boolean {
+  if (!$isNewlyMarkedSpan(marked) || $isNewlyMarkedSpan(other)) return false;
+  const otherKey = other.getKey();
+  return $getEditor()
+    .getEditorState()
+    .read(() => $isCharNode($getNodeByKey(otherKey)));
+}
+
+/**
+ * Whether `preceding` and `following` were both in the editor's last committed state as spans with
+ * the same marker and attributes — two spans the document already held apart, which an edit has
+ * only left side by side (the text between them deleted, or the paragraphs they end and start
+ * joined). Those stay two spans: for a word-level marker such as `\w` (each span one word, its
+ * `lemma` that word's) combining them changes the text's word segmentation, and Standard view,
+ * whose spans each keep their own glyphs, keeps them apart too. Spans an update creates — the run
+ * `extendCharacterMarker` covers, a split's continuation, remote content — still combine with an
+ * alike neighbor (except a span a marker apply made, see {@link $wasMarkedBesideExistingSpan}), as does a span whose marker or attributes an update changed to match its neighbor's.
+ * So do two pieces of one span that a split cut apart ({@link $wereSplitFromOneSpan}): joining the
+ * paragraphs back (Enter, then Backspace) restores the one span the document held.
+ */
+function $wereAlikeSpansBeforeUpdate(preceding: CharNode, following: CharNode): boolean {
+  if ($wereSplitFromOneSpan(preceding, following)) return false;
+  return $getEditor()
+    .getEditorState()
+    .read(() => {
+      const previousPreceding = $getNodeByKey(preceding.getKey());
+      const previousFollowing = $getNodeByKey(following.getKey());
+      if (!$isCharNode(previousPreceding) || !$isCharNode(previousFollowing)) return false;
+      return $hasAllSameCharAttributes(
+        { style: previousPreceding.getMarker(), cid: $getState(previousPreceding, charIdState) },
+        previousPreceding.getUnknownAttributes(),
+        previousFollowing,
+      );
+    });
+}
+
+/**
+ * Combine glyph-less `following` into `preceding`, the same-attribute glyph-less span right before
+ * it. An empty span's placeholder ({@link $emptySpanPlaceholder}) only gives the caret a place to
+ * rest, so it is never carried into content: wherever it landed — after a nested span, or merged into the text
+ * before it — it would read as content and be saved as an NBSP nobody wrote. The empty side gives
+ * up its children instead (read-only glyphs included), and a caret on its placeholder moves to the
+ * seam between the two spans' content.
+ */
+function $combineGlyphlessSpans(preceding: CharNode, following: CharNode): void {
+  if ($emptySpanPlaceholder(following)) {
+    $moveSelectionOutOf(following, () => $contentEdgePoint(preceding, "end"));
+    following.remove();
+    return;
+  }
+  const children = following.getChildren();
+  let keep = preceding.getChildrenSize();
+  if ($emptySpanPlaceholder(preceding)) {
+    $moveSelectionOutOf(preceding, () => $contentEdgePoint(following, "start"));
+    keep = 0;
+  }
+  // One splice, not a clear and an append: a span emptied on the way is removed with its children.
+  preceding.splice(keep, preceding.getChildrenSize() - keep, children);
+  following.remove();
+}
+
+/**
+ * The placeholder text of `span` when that is all the span holds besides read-only glyphs: an
+ * untagged plain text that is exactly the placeholder byte and that the author did not write
+ * ({@link authoredNbspState}). `undefined` for a span holding anything else.
+ */
+function $emptySpanPlaceholder(span: CharNode): TextNode | undefined {
+  const content = span.getChildren().filter((child) => !$isDecoratorNode(child));
+  const [only] = content;
+  return content.length === 1 &&
+    $isTextNode(only) &&
+    only.getType() === TextNode.getType() &&
+    only.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT &&
+    $getState(only, textTypeState) === undefined &&
+    !$getState(only, authoredNbspState)
+    ? only
+    : undefined;
+}
+
+/** A selection point's target: a text offset, or a child index in an element. */
+interface PointTarget {
+  key: NodeKey;
+  offset: number;
+  type: "text" | "element";
+}
+
+/**
+ * Where `span`'s content starts or ends: an offset in its first or last content text, or the child
+ * index beside a content element, read-only glyphs skipped.
+ */
+function $contentEdgePoint(span: CharNode, edge: "start" | "end"): PointTarget {
+  const children = span.getChildren();
+  const content = children.filter((child) => !$isDecoratorNode(child));
+  const child = edge === "start" ? content[0] : content.at(-1);
+  if ($isTextNode(child))
+    return {
+      key: child.getKey(),
+      offset: edge === "start" ? 0 : child.getTextContentSize(),
+      type: "text",
+    };
+  if (!child) return { key: span.getKey(), offset: 0, type: "element" };
+  const index = child.getIndexWithinParent();
+  return { key: span.getKey(), offset: edge === "start" ? index : index + 1, type: "element" };
+}
+
+/** Moves each range-selection point inside `node` to `$target()`, leaving any other point be. */
+function $moveSelectionOutOf(node: CharNode, $target: () => PointTarget): void {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return;
+  const points = [selection.anchor, selection.focus].filter((point) => {
+    const pointNode = $getNodeByKey(point.key);
+    return pointNode !== null && (pointNode.is(node) || node.isParentOf(pointNode));
+  });
+  if (points.length === 0) return;
+  const { key, offset, type } = $target();
+  points.forEach((point) => point.set(key, offset, type));
 }
 
 /** Placeholder texts this update already dropped a byte from. Lexical re-runs a transform on a node
@@ -215,9 +378,13 @@ const placeholderDroppedThisUpdate = new WeakSet<TextNode>();
  * that span's leading NBSP is the author's, or, in the editable views, the opener's separator. The
  * editable views are otherwise left alone: there the placeholder is the opener's separator, which
  * the editor→USJ conversion strips.
+ *
+ * Mutating: a `TextNode` transform, registered here and also called from `NoteNodePlugin`'s text
+ * transform; call it only inside `editor.update()`, since it compares the node with the last
+ * committed state to tell what the update changed.
  * @param node - TextNode that might hold a placeholder.
  */
-function $charTextNodeTransform(node: TextNode): void {
+export function $dropFilledCharPlaceholder(node: TextNode): void {
   const parent = node.getParent();
   if (!$isCharNode(parent) || $rendersOwnGlyphs(parent)) return;
   if (placeholderDroppedThisUpdate.has(node)) return;
@@ -240,6 +407,28 @@ function $charTextNodeTransform(node: TextNode): void {
   if (placeholderKey !== node.getKey()) return;
   const index = $placeholderIndex(node, text);
   if (index !== undefined) $dropPlaceholderByte(node, index);
+}
+
+/**
+ * Marks a lone no-break space that an edit left as a glyph-less span's text as the author's own `~`.
+ *
+ * Where a span renders no glyphs, its lone NBSP is also the placeholder an EMPTY span holds
+ * ({@link $emptySpanPlaceholder}), and the editor→USJ conversion drops that one. A text node that
+ * held more than that in the last committed state is not an empty span's placeholder: the edit
+ * removed text around the author's NBSP (a cut or delete ending just before `trail~`'s `~`), so
+ * the NBSP is content and is tagged as such, the way the USJ→editor adaptor tags one it loads.
+ * A loaded NBSP is already tagged; this is what catches one the user typed or pasted into existing
+ * text ({@link authoredNbspState} lists every place the tag is set).
+ * @param node - TextNode that might be such a remainder.
+ */
+function $keepRemainingNbsp(node: TextNode): void {
+  if (node.getTextContent() !== EMPTY_CHAR_PLACEHOLDER_TEXT) return;
+  const parent = node.getParent();
+  if (!$isCharNode(parent) || $rendersOwnGlyphs(parent)) return;
+  if (node.getType() !== TextNode.getType() || node.getMode() !== "normal") return;
+  if ($getState(node, textTypeState) !== undefined || $getState(node, authoredNbspState)) return;
+  if (!$heldContentBeforeUpdate(node.getKey())) return;
+  $setState(node, authoredNbspState, true);
 }
 
 /**
@@ -283,7 +472,9 @@ function $isCaretAtStartOf(node: TextNode): boolean {
 }
 
 /** Removes the byte at `index` from `node`. A selection point in `node` keeps its user byte; any
- * other selection is left exactly where it is. */
+ * other selection is left exactly where it is. A no-break space left in `node` is the user's (a `~`
+ * typed into the empty span), so it is marked theirs ({@link authoredNbspState}): alone, it would
+ * otherwise read as the placeholder again and be saved as nothing. */
 function $dropPlaceholderByte(node: TextNode, index: number): void {
   const selection = $getSelection();
   const points = $isRangeSelection(selection)
@@ -295,6 +486,7 @@ function $dropPlaceholderByte(node: TextNode, index: number): void {
   const text = node.getTextContent();
   const writable = node.setTextContent(text.slice(0, index) + text.slice(index + 1));
   placeholderDroppedThisUpdate.add(writable);
+  if (writable.getTextContent().includes(NBSP)) $setState(writable, authoredNbspState, true);
   points.forEach((point, i) => {
     const offset = offsets[i];
     point.set(writable.getKey(), offset > index ? offset - 1 : offset, "text");
@@ -317,7 +509,7 @@ function $heldContentBeforeUpdate(key: NodeKey): boolean {
 /**
  * The key of the placeholder text the char span `key` held in the editor's last committed state,
  * when that text was all it held besides read-only glyphs; `null` when the span held anything else,
- * and `undefined` when the span did not exist there.
+ * and `undefined` when the span did not exist there ({@link $emptySpanPlaceholder}).
  */
 function $placeholderKeyBeforeUpdate(key: NodeKey): NodeKey | null | undefined {
   return $getEditor()
@@ -325,12 +517,6 @@ function $placeholderKeyBeforeUpdate(key: NodeKey): NodeKey | null | undefined {
     .read(() => {
       const previous = $getNodeByKey(key);
       if (!$isCharNode(previous)) return undefined;
-      const content = previous.getChildren().filter((child) => !$isDecoratorNode(child));
-      const [only] = content;
-      return content.length === 1 &&
-        $isTextNode(only) &&
-        only.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT
-        ? only.getKey()
-        : null;
+      return $emptySpanPlaceholder(previous)?.getKey() ?? null;
     });
 }

@@ -105,6 +105,33 @@ refused. The public surface grew substantially; nothing was removed.
     arming step, so one press merges.
   - Cut, copy and drag are refused, since the marker is not content, unless the browser's selection
     has moved to other text (a right-click, say), which they then use.
+- `ViewOptions.allowInvisibleCharacters`: a host passes the project's Paratext
+  `AllowInvisibleChars` setting (Platform.Bible's `platformScripture.allowInvisibleCharacters`).
+  Such a project stores a no-break space as U+00A0 itself and `~` as an ordinary character, so
+  with the option on Standard view keeps `~` as `~`, shows a stored U+00A0 as a blank the width of
+  a space (as a no-break space looks), and saves both as themselves — loaded, typed, pasted,
+  dropped, copied, and through a marker settle. A U+00A0 typed or pasted is kept as one. The
+  Markers view's copy and the Unformatted view's marker settle follow the same spelling. In views
+  that hide markers the option decides only how a no-break space is typed and copied (see
+  Changed), and it does not affect `getViewMode`. Off (the default) is unchanged: `~` is a
+  no-break space. Standard view holds such a U+00A0 as an internal stand-in (U+001A), which
+  never leaves the editor: `getUsj`, `onUsjChange` and its ops, `getNoteOps`, `getOpsAfterNote`,
+  `takeOpsAfterNote`, the clipboard and drag data, annotation callbacks and note-caller previews
+  all give U+00A0, and ops given to `applyUpdate`/`replaceEmbedUpdate` may carry U+00A0 for a
+  no-break space. With the option on, the ops Standard view hands out carry a space, not U+00A0,
+  where the view shows a space of a run as an NBSP.
+- `toUsfmNbspSpelling(displayText, viewOptions)`: for a host that reads text from the editor's
+  display (a DOM selection, an element's `textContent`) to copy or search it — turns the editor's
+  internal stand-in for a stored no-break space back into U+00A0 (in body text when
+  `ViewOptions.allowInvisibleCharacters` is on, and in an attribute value either way), and leaves a
+  `~` as it is (the project's spelling of one in body text when the option is off). Experimental: expected to be removed once Standard view
+  holds a stored no-break space as itself.
+- The font family `PlatformEditorNbspStandIn` draws that stand-in as a blank. The editor adds its
+  face (`unicode-range: U+1A`) to its document itself; a host stylesheet that sets its own
+  Scripture `font-family` must name `PlatformEditorNbspStandIn` FIRST, since a browser draws a
+  control character as a box unless the first family has a glyph for it. `generateUsjCss` already
+  puts it first in every family it emits, and the `.usfm.formatted-font` rule in `usj-nodes.css`
+  leads with it.
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
 - `EditorProps.onParaMarkerMenuRequest` — fired on unmodified Enter or Alt+↓ while a paragraph marker is
   selected, so the host can open its paragraph dropdown.
@@ -119,13 +146,44 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Changed
 
+- **A paste over a range across a char span's edge replaces only the selected text**, in the views
+  that hide markers, as typing over one already did. It used to pull the text after the range into
+  the span, and with nested spans put it ahead of the text it followed.
+- **Invisible characters are typed, pasted and copied as in Paratext 9, in every view.** A
+  zero-width no-break space (U+FEFF) the user types, pastes or drops is dropped, whatever
+  `ViewOptions.allowInvisibleCharacters` says, since Paratext 9 removes every one when it saves;
+  one the document already holds is kept. With the option off, a no-break space (U+00A0) typed as a
+  character goes in as a space outside Standard view too (the author's no-break space is typed as
+  `~`), and a view that hides markers copies a stored no-break space as `~` in its plain text; its
+  html and internal flavors keep U+00A0, which its own paste reads back as the no-break space. A
+  pasted U+00A0 is still a no-break space, and with the option on a typed or copied one is still
+  itself.
+- **Delta ops carry a milestone under `ms`**, the key `OTEmbedTypes` declares and
+  `isInsertEmbedOpOfType("ms", op)` finds (`{ insert: { ms: { style: "qt-s", sid: "q1" } } }`);
+  they carried it under `milestone`. `applyUpdate` and `replaceEmbedUpdate` still accept
+  `milestone`, so ops from earlier builds keep their milestones.
+- **Standard view turns incoming control characters into spaces.** Every C0 control character but
+  tab, line feed and carriage return in a loaded document (text and attribute values), a paste, a
+  drop, typed text or applied delta ops becomes a space, so none can be saved as the stand-in for a
+  no-break space. Paratext's reader makes the same of all of them but vertical tab (U+000B) and
+  form feed (U+000C), which become spaces here on purpose, since JavaScript reads them as
+  whitespace.
+- **A drop into Standard view goes in as a paste of the same data does** (`\c`/`\id` stripped,
+  no-break spaces resolved positionally, lines replayed), instead of through Lexical's own
+  insertion, and a drag out of Standard view carries the same USFM text and html a copy writes.
+- **`generateUsjCss` names `PlatformEditorNbspStandIn` first in every `font-family` it emits.**
+- **The editor hands back every document at the USJ `version` it was given.** `getUsj()`,
+  `onUsjChange` and every settled read report the `version` of `defaultUsj` or of the latest
+  `setUsj` document (`USJ_VERSION` when it has none), instead of always `USJ_VERSION`, so a host
+  that writes the USJ back with `usjToUsxString` gets the version its source served. A `setUsj`
+  whose document differs only in `version` reloads, as any other differing document does. Loading
+  a document whose version is not `USJ_VERSION` no longer logs a warning.
 - **A book with no chapters can start chapter 1 from the `\` menu.** In chapter 1 with no chapter
   yet, the menu offers `\c`; picking it, or `EditorRef.insertMarker("c")`, inserts `\c 1` after the
   book's front matter (the `\id` line, running header, table of contents, titles and introduction)
   and before the first paragraph that needs a chapter, such as a `\s1` or a `\p`, whatever the
   caret position. `\c` stays out of the Enter menu, and out of the `\` menu in every other chapter,
   which already has its marker. `insertMarker("c")` used to do nothing in the `\id` line.
-
 - **Paragraphs the editor creates in the paragraph-structure view get their gutter marker.** An
   Enter split or a multi-line paste used to create a paragraph with no marker glyph, which the
   marker-prefix guard then reset to `\p`; the new paragraph now keeps its marker (an Enter in a `\li2`
@@ -137,6 +195,13 @@ refused. The public surface grew substantially; nothing was removed.
   the paragraph-structure view, as removing its selected marker does. It used to delete the line's
   gutter glyph and reset its marker to `\p`. `"guarded"` asks for a second press, and
   `"protected"` refuses it.
+- **`"guarded"` refuses a keyboard delete of a chapter marker**, in the views that hide markers:
+  Delete at the end of the block before `\c N` used to remove the chapter on one press, and now
+  leaves the document as it was. So do Backspace at the start of a paragraph after a chapter that
+  has nothing to merge into, Delete in the blank line between two chapters, and a word or line
+  delete from those carets. An empty paragraph beside a chapter can still go where it could: see
+  below. `"protected"` already refused these, and `"off"` and Standard view, where the chapter line
+  is editable text, are unchanged. `data-verse-delete-kind` is never `chapter`.
 - **`EditorRef.copy()` and `EditorRef.cut()` with nothing selected now leave the clipboard alone.**
   Previously either one, called at a collapsed caret or with no selection, still wrote to the system
   clipboard — it put a lone `#` there, because `@lexical/clipboard` synthesizes a copy event by
@@ -223,6 +288,26 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- Ctrl+V and Ctrl+Shift+V no longer paste into a read-only editor (`isReadonly`, e.g. a preview or a
+  resource text). `ClipboardPlugin` listens for its shortcuts on the editor root itself, outside
+  Lexical's read-only gate, so the clipboard was inserted and reported through `onUsjChange`. A
+  read-only editor still copies on Ctrl+C; Ctrl+X no longer dispatches a cut there.
+- In Standard view, a no-break space in an attribute value (a char span's `|lemma`, a milestone's
+  `who`, a figure's `src`, a note's `\cat`, a verse's `\va`/`\vp`, a chapter's `\ca`/`\cp`) shows
+  as a blank the width of a space, whatever `ViewOptions.allowInvisibleCharacters` says, and stays
+  a no-break space through a settle of its paragraph and an edit to the value; it was saved as a
+  plain space. A `~` in an attribute value stays a `~` under either setting, as Paratext 9 keeps
+  it: Paratext reads `~` as a no-break space only in body text. With the option off, a settle of
+  the value's paragraph saved the author's `~` as U+00A0. Unformatted view's settle keeps both too.
+  A copy writes an attribute value's no-break space as U+00A0 under either setting; a paste reads
+  it the way it reads any pasted U+00A0, with the caret inside the value too, so with the option off
+  it comes back as `~`, as Paratext 9 pastes one. The bytes an unwrapped span leaves behind are body text, and spell a no-break space
+  as body text does.
+- An input method or dead key composing over a selection that crosses a char span's edge or a
+  collapsed note, in a view that hides markers, now takes only the selected text, as typing does:
+  the text after the selection stays where it was instead of landing in the span or the note.
+- Pressing Enter just before a space that a no-break, ideographic or zero-width no-break space
+  follows no longer removes that character along with the space; Paratext 9 keeps it after a marker.
 - In views that hide markers, an empty paragraph right after a chapter can now be deleted with
   Backspace or Delete. When it is the only paragraph in its chapter, it leaves a blank line with no
   marker, where a marker can be picked with the `\` menu or `formatPara`. A blank line left empty
@@ -312,6 +397,15 @@ refused. The public surface grew substantially; nothing was removed.
   caret move and never reach `onUsjChange`.
 - In the paragraph-structure view, a guarded two-step paragraph merge no longer leaves the merged
   paragraph's gutter marker in the middle of the paragraph it joined.
+- In the paragraph-structure view, Undo after a guarded two-step delete removes an empty paragraph
+  (an empty `\b`) brings the paragraph back. It used to fold the removal into the undo step before
+  it, so Undo either did nothing or also took back the edit before.
+- Redo works after an Undo leaves the caret beside an empty verse or a trailing note. The invisible
+  caret host the editor gives such a caret no longer becomes an undo step of its own, which cleared
+  the redo history.
+- In the paragraph-structure view, Enter at a word break (`In| the`) no longer leaves the break's
+  space at the start of the new paragraph: `getUsj()` reports `the`, as the other views do, where it
+  reported ` the`.
 
 - In Standard view, the USJ positions the editor reports and accepts (selections, annotations)
   after a milestone, a verse's `\va`/`\vp`, or a chapter's `\ca` were one content item too far:
@@ -378,3 +472,73 @@ refused. The public surface grew substantially; nothing was removed.
   loses it. Text continuing a closed run lands inside the run, ahead of its closing glyph.
 - The note-shell and trailing-note caret guards release their cursor-change tag after a
   correction, so the keystroke right after it reaches `onUsjChange`.
+- Enter inside an expanded note does nothing in a view whose `markerMode` is not `"editable"`. It
+  split the paragraph holding the note and left the caret outside it, so what was typed next was
+  lost on save.
+- Standard view saves no space typed right after a char span's opener (`\nd  things\nd*` saves as
+  `\nd things\nd*`), and a span holding only spaces saves empty, as Paratext 9 saves both. The
+  screen keeps the typed spaces; a no-break space (`~`) after the opener stays.
+- A nameless character marker (`\f + \ft \ b\f*`, which ParatextData reads as `<char style="">`)
+  keeps `marker: ""` in `getUsj()` instead of losing its marker, so the USX written from it is the
+  USX loaded.
+- In the views without a span separator (those that hide markers, and the read-only Markers view),
+  an author's no-break space left alone in a char span, after the rest of `\nd ~x\nd*` is deleted
+  or typed into an empty span, is saved instead of being dropped as the empty span's placeholder,
+  and a note's `\ft ~x` keeps its `~`.
+- In the views that hide markers, typing over or deleting a range that crosses a char span's edge
+  or a collapsed note takes only the selected text: the text after the span stays outside it, and
+  a range starting just before a collapsed note no longer loses the typed text and the rest of the
+  range into the note.
+- In the views that hide markers, joining a paragraph into an empty `\b` before it (Backspace at
+  the paragraph's start, Delete in the blank line, or typing over a range across the break) keeps
+  the paragraph, with its own marker, and drops the blank line, as Paratext 9 does. It kept `\b`
+  on the joined text, and in the formatted view could delete that text.
+- Undo takes back an Enter typed in front of a char span or a note in the formatted view, instead
+  of folding it into the step before.
+- Delete just before a collapsed note in the views that hide markers removes the note and keeps
+  the text around it, instead of throwing and discarding the edit.
+- Two alike char spans (same marker and attributes) that a deletion leaves side by side stay two
+  spans in the views that hide markers, as in Standard view and Paratext 9. Deleting the space
+  between `\w one|x\w*` and `\w two|x\w*`, or joining the paragraphs they end and start, made them
+  one word. A span that Enter cut in two is still one span again when Backspace joins the
+  paragraphs back.
+- Plain text pasted inside a char span or a note stays inside it. Lexical's own paste split the
+  span around the text, or put the text after the note.
+- Marking the text right after a char span with the span's own marker makes a second span in the
+  views that hide markers, as in Standard view and Paratext 9: `\nd` on "God" after `\nd Lord\nd*`
+  saved `\nd LordGod\nd*`. A selection that reaches into part of such a span and past it extends
+  the span over the selection instead of nesting a copy inside it (Paratext 9 mangles the line
+  there).
+- Applying a character marker to a selection that starts or ends inside a char span, or holds a
+  whole span from the text around it, no longer freezes the editor. A span the selection holds
+  whole moves into the new span (`\wj \+nd Lord\+nd* \wj*`), including one selected from its
+  opening glyph to its closing glyph in Standard view, which lost the span (`\wj Lord\wj**`).
+- Standard view refuses to apply a character marker across a marker border — a selection whose two
+  ends sit in different spans, so it holds part of a span's glyphs, or with an end inside a closing
+  marker — and logs a warning instead of changing anything. It nested a copy of the span, left an empty span, an unmatched closer or the
+  glyph's bytes as text, or lost the span. Marking text beside a span, inside one, or a whole span
+  from the text around it still works, and so does applying a footnote or cross-reference content
+  marker across a nested span, which closes and reopens the spans it crosses.
+- Standard view refuses to apply a character marker to a selection lying inside one marker glyph,
+  which holds none of the text, and logs a warning. The glyph's bytes became the new span's text,
+  and for a footnote content marker (`\fq` over part of `\ft`) the edit looped until Lexical
+  aborted it.
+- Applying a character marker to a selection holding a whole note (`\wj` over a verse with a
+  footnote in it) moves the note into the new span, its content untouched. It marked the note's
+  content instead, and in Standard view replaced the note's `\ft`.
+- Marking a whole span together with the text after it keeps the space between them; it moved to
+  before the new span, and in Standard view was lost. A selection that starts with a space leaves
+  the space outside the new span, where Standard view keeps it; it was dropped from the file there,
+  joining the words either side.
+- In the unformatted view, a note's `\ft ~\ft*` or `\fk ~\+wj x\+wj*\fk*` keeps its `~` in
+  `getNoteOps` and `getEditorDelta`, and through the footnote popover's save and the footnotes
+  pane's round trip, which lost it.
+- Delta-doc positions after a char span whose whole text is an author's no-break space
+  (`\nd ~\nd*`) count that `~`, as the ops stream does; in the views without a separator after the
+  opener they were one short, so a keystroke after such a span went out with a retain one too
+  small.
+- In the views that hide markers, removing or replacing a character marker over a whole span
+  selected up to the start of the text after it — where a double-click or drag over the span ends
+  — acts on the whole span. Lexical records that end as a child index on the span, which was read
+  as a text offset, so `removeCharacterMarker()` over `\add God\add*` left `G\add od\add*`, and removing `\nd`
+  from a span holding a nested one changed nothing.

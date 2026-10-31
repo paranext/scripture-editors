@@ -4,6 +4,7 @@ import { $createWholeNote } from "../../../nodes/usj/note.utils";
 import { UsjNodeOptions } from "../../../nodes/usj/usj-node-options.model";
 import { showParaMarkerPrefix, ViewOptions } from "../../../views/view-options.utils";
 import {
+  $getApplyLength,
   $isEmbedNode,
   $isOTTextNode,
   DeltaOp,
@@ -58,6 +59,7 @@ import {
   $createParaNode,
   $createUnknownNode,
   $createVerseNode,
+  $hasAllSameCharAttributes,
   $hasSameCharAttributes,
   $isBookNode,
   $isCharNode,
@@ -71,6 +73,7 @@ import {
   $isSomeChapterNode,
   $isSomeParaNode,
   $isUnknownNode,
+  authoredNbspState,
   BOOK_MARKER,
   BookNode,
   charIdState,
@@ -976,7 +979,7 @@ function $handleCharText(
   if (Array.isArray(charAttr)) {
     if (parentCharNode) {
       const first = charAttr[0];
-      if (first && $hasSameCharAttributes(first, parentCharNode)) {
+      if (first && $isSameSpanAs(first, parentCharNode)) {
         // Only nest the remaining char attributes
         charAttr = charAttr.slice(1);
         // If only one left, treat as single
@@ -989,18 +992,39 @@ function $handleCharText(
     }
   } else if (parentCharNode) {
     // Single char attribute - check if it matches parent
-    if (!$hasSameCharAttributes(charAttr, parentCharNode)) {
+    if (!$isSameSpanAs(charAttr, parentCharNode)) {
       // Parent doesn't match, don't use it
       parentCharNode = undefined;
     }
   }
   const segment = typeof attributes.segment === "string" ? attributes.segment : undefined;
   const existingNodes = parentCharNode ? [parentCharNode] : undefined;
-  const charNodes = $createNestedChars(charAttr, viewOptions, textNode, segment, existingNodes);
+  // In editable marker mode a span carries its glyphs, and the separator after its opener, as
+  // text: a fresh span gets the separator as it does on a load, and the ops that follow are
+  // counted past everything the insert added.
+  const isEditable = viewOptions.markerMode === "editable";
+  const charNodes = $createNestedChars(
+    charAttr,
+    viewOptions,
+    textNode,
+    segment,
+    existingNodes,
+    false,
+    isEditable,
+  );
+  $markAppliedNbsp(textNode, textToInsert, viewOptions);
 
   // If charNodes is empty, it means we merged into existingNodes - no insertion needed
   if (charNodes.length === 0) {
-    return textToInsert.length; // Successfully merged into existing CharNode
+    if (!isEditable) return textToInsert.length;
+    // The text, with any nested span the merge built around it.
+    let added: LexicalNode = textNode;
+    let parent = added.getParent();
+    while ($isCharNode(parent) && parent !== parentCharNode) {
+      added = parent;
+      parent = added.getParent();
+    }
+    return $getApplyLength(added);
   }
 
   const charNode = charNodes.find($isCharNode);
@@ -1037,6 +1061,7 @@ function $handleCharText(
   }
 
   if (allInserted) {
+    if (isEditable) return charNodes.reduce((total, node) => total + $getApplyLength(node), 0);
     return textToInsert.length; // CharNode itself has no OT length, just its text content
   } else {
     logger?.error(
@@ -1088,8 +1113,11 @@ function $insertRichText(
           const parent = currentNode.getParent();
           if ($isCharNode(parent) && !hasCharAttributes(attributes)) {
             // Plain text (no char attributes) should not be inserted inside CharNodes
-            // Instead, insert after the CharNode at the parent level
-            parent.insertAfter(newTextNode);
+            // Instead, insert after the CharNode at the parent level: after the outermost one, so
+            // text that follows a nested span's end leaves the span that holds it too.
+            let outermost: CharNode = parent;
+            for (let up = parent.getParent(); $isCharNode(up); up = up.getParent()) outermost = up;
+            outermost.insertAfter(newTextNode);
           } else {
             // Normal case: insert after this TextNode
             currentNode.insertAfter(newTextNode);
@@ -1529,6 +1557,18 @@ function $insertNodeAtCharacterOffset(
   return wasInserted;
 }
 
+/**
+ * Whether `op` inserts a milestone under the `milestone` key rather than the OT model's `ms`.
+ * Older builds of this library's op producer (`$getMilestoneOp` in editor-delta.adaptor.ts)
+ * emitted that key, so ops a peer running one of them sends, or ops a host stored, still apply
+ * their milestones rather than dropping them.
+ */
+function isLegacyMilestoneEmbedOp(
+  op: DeltaOp,
+): op is DeltaOp & { insert: { milestone: OTMilestoneEmbed | null } } {
+  return op.insert != null && typeof op.insert === "object" && "milestone" in op.insert;
+}
+
 function $insertEmbedAtCurrentIndex(
   targetIndex: number,
   op: DeltaOp,
@@ -1545,6 +1585,8 @@ function $insertEmbedAtCurrentIndex(
     newNodeToInsert = $createVerse(op.insert.verse, viewOptions);
   } else if (isInsertEmbedOpOfType("ms", op)) {
     newNodeToInsert = $createMilestone(op.insert.ms);
+  } else if (isLegacyMilestoneEmbedOp(op)) {
+    newNodeToInsert = $createMilestone(op.insert.milestone);
   } else if (isInsertEmbedOpOfType("note", op)) {
     newNodeToInsert = $createNote(op, viewOptions, nodeOptions);
   } else if (isInsertEmbedOpOfType("unknown", op)) {
@@ -1862,15 +1904,17 @@ function $createNote(
       // whether this op starts a fresh span (separator) or merges into the preceding span's tail
       // (mid-span content — an NBSP there is fabricated `~` in the file). Empty content stays
       // empty so it inserts the empty-char placeholder instead.
+      const textNode = $createTextNode(childOp.insert);
       const charNodes = $createNestedChars(
         childOp.attributes.char,
         viewOptions,
-        $createTextNode(childOp.insert),
+        textNode,
         undefined,
         mergeableNodesForContentOp(childOp.attributes.char, contentNodes),
         false,
         viewOptions.markerMode === "editable",
       );
+      $markAppliedNbsp(textNode, childOp.insert, viewOptions);
       contentNodes.push(...charNodes);
     } else {
       contentNodes.push($createTextNode(childOp.insert));
@@ -1938,6 +1982,7 @@ function $createInlineNodesFromOps(
           undefined,
           mergeableNodesForContentOp(childOp.attributes.char, nodes),
         );
+        $markAppliedNbsp(textNode, childOp.insert, viewOptions);
         nodes.push(...charNodes);
       } else {
         nodes.push($createTextNode(childOp.insert));
@@ -1987,6 +2032,25 @@ function $createImmutableUnmatched(
 }
 
 /**
+ * Marks `textNode`, which holds an insert op's text and now sits in a char span, as the author's
+ * no-break space when that text has one ({@link authoredNbspState}), as the USJ→editor adaptor
+ * marks every text of a span it loads. The op producer leaves an empty span's placeholder out of
+ * its ops (an empty span travels as an empty insert), so a U+00A0 an op carries is always content.
+ * Unmarked, a span whose whole text is that U+00A0 reads as an empty span's placeholder in the
+ * marker modes without a separator after the opener, and saves as nothing. Editable marker mode
+ * keeps its separator in front of the content, so a lone NBSP there is never the placeholder and
+ * nothing is marked, as on a load.
+ * @param textNode - The text created from the op.
+ * @param opText - The op's own text, before an empty span's placeholder stood in for it.
+ * @param viewOptions - View options of the editor.
+ */
+function $markAppliedNbsp(textNode: TextNode, opText: string, viewOptions: ViewOptions): void {
+  if (viewOptions.markerMode === "editable" || !opText.includes(NBSP)) return;
+  if (!$isCharNode(textNode.getParent())) return;
+  $setState(textNode, authoredNbspState, true);
+}
+
+/**
  * The already-materialized sibling nodes a CONTENT op (a note's or unknown embed's contents)
  * may merge into when it continues the previous op's char span — or `undefined` when the op
  * must start its own span. `\fp` (footnote-paragraph) spans never merge by style alone: `\fp`
@@ -2008,7 +2072,7 @@ function mergeableNodesForContentOp(
 
 // Helper to create nested CharNodes from OTCharAttribute (array or single)
 // Returns an array of nodes: [opening marker?, CharNode, closing marker?]
-// If existingNodes is provided, will merge with the last CharNode if style/cid match
+// If existingNodes is provided, will merge with the last CharNode if all its attributes match
 /**
  * Defensively normalize an OT char style to a CLEAN marker. Nesting is conveyed by the char
  * ARRAY's position (outermost-first), never by a `+` in the style — the `+` belongs only to the
@@ -2018,6 +2082,16 @@ function mergeableNodesForContentOp(
  */
 function cleanCharStyle<T extends OTCharItem>(item: T): T {
   return item.style.startsWith("+") ? { ...item, style: item.style.slice(1) } : item;
+}
+
+/**
+ * Whether the char op item `attr` continues `span` rather than starting a span of its own: the
+ * same marker and cid, and every other attribute the same too. Two adjacent `\w` words' ops differ
+ * only in their `lemma`, so a match on marker and cid alone would build both words as one span and
+ * lose the second word's lemma.
+ */
+function $isSameSpanAs(attr: OTCharItem, span: CharNode): boolean {
+  return $hasAllSameCharAttributes(attr, getUnknownAttributes(attr, OT_CHAR_PROPS), span);
 }
 
 function $createNestedChars(
@@ -2036,18 +2110,21 @@ function $createNestedChars(
   // the text starts a new span or appends into an existing span's tail — an NBSP prepended to a
   // tail-append is fabricated content (`~` in the file), not a separator.
   addEditableSeparator = false,
+  // True when a caller up the merge recursion already turned an empty text innerNode into the
+  // empty-char placeholder.
+  isInnerPlaceholder = false,
 ): LexicalNode[] {
-  if ($isTextNode(innerNode) && innerNode.getTextContentSize() === 0) {
+  const isPlaceholder =
+    isInnerPlaceholder || ($isTextNode(innerNode) && innerNode.getTextContentSize() === 0);
+  if (isPlaceholder && $isTextNode(innerNode) && innerNode.getTextContentSize() === 0) {
     innerNode.setTextContent(EMPTY_CHAR_PLACEHOLDER_TEXT);
   }
   // Prepend the structural separator to a text innerNode about to become a fresh span's first
-  // content (never to the empty-char placeholder, which stands alone).
+  // content (never to the empty-char placeholder, which stands alone). Known by where it came
+  // from, not by its bytes: an op's own U+00A0 is the author's `~` and takes the separator like any
+  // other first content, or the separator strip on save would take the `~` with it.
   const $prependEditableSeparator = (): void => {
-    if (
-      addEditableSeparator &&
-      $isTextNode(innerNode) &&
-      innerNode.getTextContent() !== EMPTY_CHAR_PLACEHOLDER_TEXT
-    )
+    if (addEditableSeparator && $isTextNode(innerNode) && !isPlaceholder)
       innerNode.setTextContent(NBSP + innerNode.getTextContent());
   };
   if (Array.isArray(charAttr)) {
@@ -2057,7 +2134,7 @@ function $createNestedChars(
     // Check if we can merge with existing CharNode
     const outerAttr = cleanAttrs[0];
     const lastNode = existingNodes?.[existingNodes.length - 1];
-    if ($isCharNode(lastNode) && $hasSameCharAttributes(outerAttr, lastNode)) {
+    if ($isCharNode(lastNode) && $isSameSpanAs(outerAttr, lastNode)) {
       // Merge into existing CharNode by creating inner nodes only. The inner spans nest inside
       // that existing outer char, so their outermost gets the `+` too (nestedInParent = true).
       if (cleanAttrs.length > 1) {
@@ -2071,6 +2148,7 @@ function $createNestedChars(
           undefined,
           true,
           addEditableSeparator,
+          isPlaceholder,
         );
         $appendSpanContent(lastNode, innerCharNodes);
       } else {
@@ -2120,7 +2198,7 @@ function $createNestedChars(
     // Single char attribute
     // Check if we can merge with existing CharNode
     const lastNode = existingNodes?.[existingNodes.length - 1];
-    if ($isCharNode(lastNode) && $hasSameCharAttributes(cleanAttr, lastNode)) {
+    if ($isCharNode(lastNode) && $isSameSpanAs(cleanAttr, lastNode)) {
       // Tail-append into the existing span: mid-span content, NO separator.
       if (innerNode) $appendSpanContent(lastNode, [innerNode]);
       return []; // Return empty array since we merged into existing node

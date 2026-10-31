@@ -690,6 +690,7 @@ describe("where the `\\id` line's bytes end the line", () => {
     const { lineContent, followingBlocks } = tokenizedBookLine(
       { text: bytes, spans: [], sentinels: [] },
       bundledGetMarker,
+      "~",
     );
 
     expect(lineContent).toEqual(line);
@@ -700,6 +701,7 @@ describe("where the `\\id` line's bytes end the line", () => {
     const { lineContent, followingBlocks } = tokenizedBookLine(
       { text: "\\p*x", spans: [], sentinels: [] },
       bundledGetMarker,
+      "~",
     );
 
     expect(lineContent).toEqual([{ type: "unmatched", marker: "p*" }, "x"]);

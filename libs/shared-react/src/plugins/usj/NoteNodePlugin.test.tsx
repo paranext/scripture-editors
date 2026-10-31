@@ -19,6 +19,7 @@ import {
   TextNode,
   $isTextNode,
   $getNodeByKey,
+  $setState,
 } from "lexical";
 import {
   $createCharNode,
@@ -32,6 +33,7 @@ import {
   $isMarkerTrailingSeparator,
   $isNoteNode,
   $isParaNode,
+  authoredNbspState,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   GENERATOR_NOTE_CALLER,
   getEditableCallerText,
@@ -232,6 +234,34 @@ describe("NoteNodePlugin", () => {
         const textNode = ftChar.getFirstChild();
         if (!$isTextNode(textNode)) throw new Error("Expected a TextNode");
         expect(textNode.getTextContent()).toBe("Updated text");
+      });
+    });
+
+    it.each([
+      { name: "a leading no-break space", text: `${NBSP}x`, typed: `${NBSP}x` },
+      { name: "a lone no-break space typed after", text: NBSP, typed: `${NBSP}y` },
+    ])("keeps the author's $name in a span's text", async ({ text, typed }) => {
+      let ft!: TextNode;
+      const { editor } = await testEnvironment(undefined, undefined, () => {
+        ft = $createTextNode(text);
+        // The forward adaptor marks a `~` that is a span's whole content as the author's.
+        if (text === NBSP) $setState(ft, authoredNbspState, true);
+        $getRoot().append(
+          $createParaNode().append(
+            $createNoteNode("f", GENERATOR_NOTE_CALLER).append(
+              $createImmutableNoteCallerNode("a", ""),
+              $createCharNode("ft").append(ft),
+            ),
+          ),
+        );
+      });
+
+      await act(async () => {
+        editor.update(() => ft.setTextContent(typed));
+      });
+
+      editor.getEditorState().read(() => {
+        expect(ft.getLatest().getTextContent()).toBe(typed);
       });
     });
 

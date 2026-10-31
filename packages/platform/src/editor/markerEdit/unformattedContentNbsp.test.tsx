@@ -7,6 +7,7 @@
  * separators, the char span's leading prefix) still flatten to " " (see `contentFragmentText`,
  * tier2Rebuild.utils.ts).
  */
+import { describeInView } from "../editorViews.test-helpers";
 import editorUsjAdaptor, {
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
@@ -71,7 +72,7 @@ function $findFirstChar(root: LexicalNode, marker: string): CharNode | undefined
   return undefined;
 }
 
-describe("unformatted view: content NBSP across a settle", () => {
+describeInView("unformatted")("unformatted view: content NBSP across a settle", () => {
   it("preserves a body-text data NBSP when a typed literal settles in the same paragraph", async () => {
     const { editor } = await unformattedTestEnvironment(() => {
       $getRoot().append(
@@ -152,6 +153,41 @@ describe("unformatted view: content NBSP across a settle", () => {
     expect(usjText).toContain(`Lo${NBSP}rd`);
     expect(usjText).not.toContain(`${NBSP}Lo${NBSP}rd`);
     expect(usjText).toContain('"marker":"wj"');
+  });
+
+  it("preserves a `~` that is a whole content string, between two spans", async () => {
+    const $span = (marker: string, text: string) =>
+      $createCharNode(marker).append(
+        $createMarkerNode(marker),
+        $createTextNode(`${NBSP}${text}`),
+        $createMarkerNode(marker, "closing"),
+      );
+    const { editor } = await unformattedTestEnvironment(() => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $span("w", "a"),
+          $createTextNode(NBSP),
+          $span("w", "b"),
+          $createTextNode(" tail"),
+        ),
+      );
+    });
+    await act(async () =>
+      editor.update(() => {
+        const text = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === " tail");
+        text?.setTextContent(" tail \\wj glow\\wj* end");
+      }),
+    );
+    const para = usjOf(editor)?.content[0] as MarkerObject;
+    expect(para.content?.slice(0, 3)).toEqual([
+      { type: "char", marker: "w", content: ["a"] },
+      NBSP,
+      { type: "char", marker: "w", content: ["b"] },
+    ]);
+    expect(JSON.stringify(para.content)).toContain('"marker":"wj"');
   });
 
   it("read-only settle (getUsj while pending) and the live settle agree on the NBSP byte", async () => {

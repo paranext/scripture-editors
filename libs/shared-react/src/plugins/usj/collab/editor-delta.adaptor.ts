@@ -31,6 +31,7 @@ import {
   $isDisplayRunPiece,
   $isImmutableUnmatchedNode,
   $isImpliedParaNode,
+  $isLoneNbspContent,
   $isMarkerNode,
   $isMilestoneNode,
   $isNoteNode,
@@ -106,6 +107,17 @@ export function getEditorDelta(editorState: EditorState): Delta {
   return update;
 }
 
+/** Options for {@link $getParticularNodeOps}. */
+export interface NodeOpsOptions {
+  /**
+   * Leave the editable marker glyphs of char spans and their separators out of the ops everywhere,
+   * as a note's contents always do, so the ops carry content only: the shape every view applies
+   * the same way. Without it, a char span outside a note carries its glyphs as text, the shape of
+   * this editor's own delta document (`getEditorDelta`). Only editable marker mode has glyphs.
+   */
+  contentOnly?: boolean;
+}
+
 /**
  * Get the operational transform (OT) delta operations for a specific node or range of nodes.
  * Pass nothing to get all nodes.
@@ -113,9 +125,14 @@ export function getEditorDelta(editorState: EditorState): Delta {
  * @param startNode - The node to start the search, if omitted, it will start at the root node.
  * @param endNode - The node to end the search, if omitted, it will find all descendants of the
  *   startingNode.
+ * @param options - What the ops carry; see {@link NodeOpsOptions}.
  * @returns An array of DeltaOp objects representing the OT operations for the specified nodes.
  */
-export function $getParticularNodeOps(startNode?: LexicalNode, endNode?: LexicalNode) {
+export function $getParticularNodeOps(
+  startNode?: LexicalNode,
+  endNode?: LexicalNode,
+  { contentOnly = false }: NodeOpsOptions = {},
+) {
   const ops: DeltaOp[] = [];
   const dfsNodes = $dfs(startNode, endNode);
   const openParaLikeNodes: ParaLikeNode[] = [];
@@ -133,6 +150,7 @@ export function $getParticularNodeOps(startNode?: LexicalNode, endNode?: Lexical
         openCharNodes,
         openEmbeds,
         charContentProduced,
+        contentOnly,
       ),
     );
   }
@@ -147,6 +165,7 @@ export function $getParticularNodeOps(startNode?: LexicalNode, endNode?: Lexical
         openCharNodes,
         openEmbeds,
         charContentProduced,
+        contentOnly,
       ),
     );
   }
@@ -165,6 +184,7 @@ function $getNodeOps(
   openCharNodes: CharNode[],
   openEmbeds: OpenEmbedContext[],
   charContentProduced: Set<CharNode>,
+  contentOnly: boolean,
 ): DeltaOp[] {
   if (!currentNode) return [];
 
@@ -172,7 +192,7 @@ function $getNodeOps(
   const nextDfsNode = dfsNodes[currentIndex + 1];
   $handleBlockNodes(currentNode, ops, openParaLikeNodes);
 
-  $handleTextNodes(currentNode, ops, openCharNodes, openEmbeds, charContentProduced);
+  $handleTextNodes(currentNode, ops, openCharNodes, openEmbeds, charContentProduced, contentOnly);
 
   $handleCharNodes(
     currentNode,
@@ -224,6 +244,7 @@ function $handleTextNodes(
   openCharNodes: CharNode[],
   openEmbeds: OpenEmbedContext[],
   charContentProduced: Set<CharNode>,
+  contentOnly: boolean,
 ) {
   if (!$isTextNode(currentNode)) return;
   // An editable VerseNode's own `__text` is its marker glyph (`\v 1 `) — VerseNode extends
@@ -284,9 +305,11 @@ function $handleTextNodes(
   // match, it is the same asymmetry the ops stream honored before the earlier loose-glyph
   // exclusion was removed.
   const isInNote = $findFirstAncestorNoteNode(currentNode) !== undefined;
+  // Content-only ops (`NodeOpsOptions.contentOnly`) treat every char span as a note's contents do.
+  const omitsCharGlyphs = isInNote || contentOnly;
   if (
     $isMarkerNode(currentNode) &&
-    (isInNote ||
+    (omitsCharGlyphs ||
       $isOwnParaPrefixGlyph(currentNode) ||
       $hasAttributeRunAncestor(currentNode) ||
       $isDisplayRunPiece(currentNode))
@@ -320,8 +343,14 @@ function $handleTextNodes(
   // path is narrower still: only the span's OWN opener (its first child) qualifies, like the
   // reverse adaptor's `content[0]` strip, so the collab-flattened shape's nested opener keeps
   // emitting what peers already receive.
-  if (isInNote && !!parentCharNode && previousSibling === parentCharNode.getFirstChild()) {
-    text = text.slice($separatorPrefixLength(currentNode));
+  // A lone NBSP left once the separator is stripped is the author's `~`, not one of the layout's
+  // own lone-NBSP nodes, so `$isLoneNbspContent` (which reads the node's whole text) is asked only
+  // about text that kept every byte of its node.
+  let isSeparatorStripped = false;
+  if (omitsCharGlyphs && !!parentCharNode && previousSibling === parentCharNode.getFirstChild()) {
+    const separatorLength = $separatorPrefixLength(currentNode);
+    text = text.slice(separatorLength);
+    isSeparatorStripped = separatorLength > 0;
   }
 
   // Char-span attribute display runs (bare `|…`, no NBSP prefix — see usj-editor.adaptor's
@@ -340,10 +369,13 @@ function $handleTextNodes(
     text.startsWith(NODE_ATTRIBUTE_PREFIX) ||
     $getState(currentNode, textTypeState) === "attribute" ||
     $hasAttributeRunAncestor(currentNode);
+  // An author's `~` as a span's whole text has the placeholder's shape; `$isLoneNbspContent`
+  // tells the two apart, as it does for the editor→USJ conversion.
   const isPlaceholderText =
     !!parentCharNode &&
     text === EMPTY_CHAR_PLACEHOLDER_TEXT &&
-    parentCharNode.getChildrenSize() === 1;
+    parentCharNode.getChildrenSize() === 1 &&
+    !$isLoneNbspContent(currentNode);
 
   const activeEmbed = $getActiveEmbedContext(currentNode, openEmbeds);
   // An embed's `contents` ops are a SELF-CONTAINED SUB-DOCUMENT: they are materialized on the
@@ -364,7 +396,11 @@ function $handleTextNodes(
   const textOp = $getTextOp(currentNode, embedScopedCharNodes);
   textOp.insert = text;
   if (activeEmbed) {
-    if (!text || text === NBSP || isNodeAttributeText) return;
+    // A lone NBSP is a separator, spacer or placeholder of the note's layout unless it is a
+    // no-break space of the note's content (a `~` as a span's whole text, or between two spans) —
+    // the same rule the editor→USJ conversion keeps content by.
+    const isLayoutNbsp = text === NBSP && !isSeparatorStripped && !$isLoneNbspContent(currentNode);
+    if (!text || isLayoutNbsp || isNodeAttributeText) return;
     activeEmbed.contentsOps?.push(textOp);
   } else {
     // Attribute display text is presentation-only regardless of WHERE it rides — inside a char
@@ -528,7 +564,7 @@ function $getVerseOp(currentNode: SomeVerseNode): DeltaOp & { insert: { verse: O
 
 function $getMilestoneOp(
   currentNode: MilestoneNode,
-): DeltaOp & { insert: { milestone: OTMilestoneEmbed } } {
+): DeltaOp & { insert: { ms: OTMilestoneEmbed } } {
   const milestone: OTMilestoneEmbed = { style: currentNode.__marker };
   if (currentNode.__sid) {
     milestone.sid = currentNode.__sid;
@@ -540,7 +576,7 @@ function $getMilestoneOp(
     milestone.attributeOrder = currentNode.__attributeOrder;
   }
   $assignUnknownAttributes(milestone, currentNode);
-  return { insert: { milestone } };
+  return { insert: { ms: milestone } };
 }
 
 function $getImmutableUnmatchedOp(

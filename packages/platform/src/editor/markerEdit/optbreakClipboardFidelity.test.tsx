@@ -26,8 +26,8 @@
  *   that DOES carry such an NBSP is
  *   characterized (not "fixed" — unreachable via Standard view's own copy, reachable only via a
  *   genuinely foreign clipboard source) for completeness: the NBSP is genuine data from that
- *   foreign source, and settles to the correct display form for real data-NBSP (`~`), just one
- *   position off from where a marker-adjacent rule would have recognized it as a separator.
+ *   foreign source, and settles to the correct display form for real data-NBSP (`~`), as an NBSP
+ *   in front of any marker does.
  * - **H3** (the root cause, TWO independent gaps): the same-namespace `application/x-lexical-editor`
  *   fast path (see the clipboard semantics doc) reconstructs nodes via `@lexical/clipboard`'s
  *   JSON generator/parser, not DOM `importDOM`. That generator (`$appendNodesToJSON`, inside
@@ -308,12 +308,11 @@ describe("copy characterization: what the walker actually emits around an optbre
   });
 
   it("characterization only (not fixed — unreachable via this branch's own copy): a synthetic html-only foreign payload with an NBSP directly before `//` still settles to a real optbreak node, with the foreign source's own NBSP kept as data `~` rather than folded into a display space", async () => {
-    // normalizePastedNbsp's marker-token regex only matches `\`-shaped tokens
-    // (MARKER_ADJACENT_NBSP, whitespaceDisplay.plugin.utils.ts) — `//` has no backslash, so
-    // neither side recognizes an NBSP next to it, and the final blanket `.replaceAll(NBSP, "~")`
-    // converts
-    // it to a literal data tilde — the correct display form for genuine data-NBSP, just one
-    // position off from where a marker-adjacent rule would have folded it to a space instead. The
+    // normalizePastedNbsp reads an NBSP as a separator only right after a `\`-shaped opening
+    // marker (OPENING_MARKER_SEPARATOR_NBSP, whitespaceDisplay.plugin.utils.ts), so an NBSP in
+    // front of `//` is data, as it is in front of any marker, and the final blanket
+    // `.replaceAll(NBSP, "~")` converts it to a literal data tilde — the correct display form for
+    // genuine data-NBSP. The
     // optbreak TOKEN itself still tokenizes correctly on caret departure (the tokenizer's `//`
     // split, usfmFragmentToUsj.ts, is a plain string `.split("//")`, unaffected by an adjacent
     // `~`) — asserted below by settling and checking the resulting USJ, not just the pre-settle

@@ -26,6 +26,12 @@ import {
   usjWithUnknownItems,
   VERSE_PARA_INDEX,
 } from "../../../../utilities/src/converters/usj/converter-test.data";
+import {
+  editorView,
+  itInView,
+  paneRowScaffold,
+  rowsInEnabledViews,
+} from "../editorViews.test-helpers";
 import { serializeEditorState, reset, initialize } from "./usj-editor.adaptor";
 import {
   EMPTY_USJ,
@@ -383,28 +389,49 @@ describe("USJ Editor Adaptor", () => {
     expect(text.text).toBe("3~000 men");
   });
 
-  it("maps NBSP to tilde in editable+expanded standard view (noteMode expanded)", () => {
-    // Standard view with expanded notes is still standard-view text: the editable marker engine
-    // runs, so the same NBSP->tilde display mapping MUST run too. Before the gating fix,
-    // getViewMode returned undefined for editable+expanded, silently disabling this mapping while
-    // the marker engine kept producing NBSP separators -> NBSP/tilde corruption.
-    const usj = usxStringToUsj(
-      `<usx version="3.0"><book code="RUT" style="id" /><chapter number="1" style="c" /><para style="p"><verse number="1" style="v" />3${NBSP}000 men</para></usx>`,
-    );
+  it("maps NBSP to tilde in a note's text in the footnotes pane's row editor", () => {
+    // The row editor is Standard view with the note expanded: the editable marker engine runs
+    // there, so the NBSP->tilde display mapping has to run in the note's text too.
+    const note: MarkerObject = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [{ type: "char", marker: "ft", content: [`3${NBSP}000 men`] }],
+    };
     initialize(undefined, undefined);
     reset();
 
-    const standard = getViewOptions(STANDARD_VIEW_MODE);
-    if (!standard) throw new Error("standard view options not found");
-    const expandedStandard = { ...standard, noteMode: "expanded" as const };
-    const state = serializeEditorState(usj, expandedStandard);
+    const state = serializeEditorState(paneRowScaffold(note), editorView("footnotes-pane-row"));
 
-    const para = state.root.children[2] as SerializedParaNode;
-    const text = para.children.find(
-      (child) => isSerializedTextNode(child) && child.text.includes("000"),
-    ) as SerializedTextNode;
-    expect(text.text).toBe("3~000 men");
+    expect(JSON.stringify(state)).toContain("3~000 men");
+    expect(JSON.stringify(state)).not.toContain(`3${NBSP}000`);
   });
+
+  itInView("standard+expandedNotes")(
+    "maps NBSP to tilde in editable+expanded standard view (noteMode expanded)",
+    () => {
+      // Standard view with expanded notes is still standard-view text: the editable marker engine
+      // runs, so the same NBSP->tilde display mapping MUST run too. Before the gating fix,
+      // getViewMode returned undefined for editable+expanded, silently disabling this mapping while
+      // the marker engine kept producing NBSP separators -> NBSP/tilde corruption.
+      const usj = usxStringToUsj(
+        `<usx version="3.0"><book code="RUT" style="id" /><chapter number="1" style="c" /><para style="p"><verse number="1" style="v" />3${NBSP}000 men</para></usx>`,
+      );
+      initialize(undefined, undefined);
+      reset();
+
+      const standard = getViewOptions(STANDARD_VIEW_MODE);
+      if (!standard) throw new Error("standard view options not found");
+      const expandedStandard = { ...standard, noteMode: "expanded" as const };
+      const state = serializeEditorState(usj, expandedStandard);
+
+      const para = state.root.children[2] as SerializedParaNode;
+      const text = para.children.find(
+        (child) => isSerializedTextNode(child) && child.text.includes("000"),
+      ) as SerializedTextNode;
+      expect(text.text).toBe("3~000 men");
+    },
+  );
 
   it("maps NBSP to tilde in standard-view book id text", () => {
     // Book \id description text must be display-encoded like body text: the reverse adaptor
@@ -1707,13 +1734,21 @@ describe("note category display (\\cat run)", () => {
   }
 
   /** Serializes a one-paragraph USJ wrapping `noteObject` and returns the NOTE's children. */
-  function noteChildren(noteObject: MarkerObject, viewOptions?: ViewOptions) {
+  /** The serialized children of `noteObject` loaded after some text, or alone in its paragraph
+   * (`alone`) as the footnotes pane's row editor holds it. */
+  function noteChildren(noteObject: MarkerObject, viewOptions?: ViewOptions, alone = false) {
     initialize(undefined, undefined);
     reset();
     const state = serializeEditorState(
       {
         ...EMPTY_USJ,
-        content: [{ type: "para", marker: "p", content: ["Text ", noteObject] } as MarkerObject],
+        content: [
+          {
+            type: "para",
+            marker: "p",
+            content: alone ? [noteObject] : ["Text ", noteObject],
+          } as MarkerObject,
+        ],
       },
       viewOptions,
     );
@@ -1732,39 +1767,54 @@ describe("note category display (\\cat run)", () => {
     content: [{ type: "char", marker: "ft", content: ["A footnote."] }],
   } as MarkerObject;
 
-  it("wraps \\cat glyphs and the NBSP-prefixed value directly after the caller (editable expanded)", () => {
-    const children = noteChildren(noteWithCategory, {
-      ...standardViewOptions(),
-      noteMode: "expanded",
-    });
-    // [opening \f glyph][editable caller][cat run][content ft span][closing \f* glyph]
-    const callerIndex = children.findIndex(
-      (child) => isSerializedTextNode(child) && child.text === getEditableCallerText("+"),
-    );
-    expect(callerIndex).toBeGreaterThan(0);
-    const run = children[callerIndex + 1];
-    if (!isSerializedAttributeRunNode(run) || run.runKind !== "cat")
-      throw new Error("No cat attribute-run wrapper directly after the caller");
-    expect(run.children).toHaveLength(3);
-    const [opener, value, closer] = run.children;
-    if (!isSerializedMarkerNode(opener)) throw new Error("No \\cat opening marker found");
-    expect(opener.marker).toBe("cat");
-    expect(opener.markerSyntax).toBe("opening");
-    if (!isSerializedTextNode(value)) throw new Error("No \\cat value text node found");
-    expect(value.text).toBe(`${NBSP}People`);
-    expect(textTypeOf(value)).toBe("attribute");
-    if (!isSerializedMarkerNode(closer)) throw new Error("No \\cat closing marker found");
-    expect(closer.marker).toBe("cat");
-    expect(closer.markerSyntax).toBe("closing");
-  });
+  /** The views a note shows its `\\cat` run in: the footnotes pane's row editor, where the app
+   * shows it, and the text with notes expanded (library-only). */
+  const categoryRunViews = rowsInEnabledViews([
+    { view: "footnotes-pane-row", options: () => editorView("footnotes-pane-row"), alone: true },
+    {
+      view: "standard+expandedNotes",
+      options: (): ViewOptions => ({ ...standardViewOptions(), noteMode: "expanded" }),
+      alone: false,
+    },
+  ]);
 
-  it("builds no run when the note has no category", () => {
-    const children = noteChildren({ ...noteWithCategory, category: undefined } as MarkerObject, {
-      ...standardViewOptions(),
-      noteMode: "expanded",
-    });
-    expect(children.some((child) => isSerializedAttributeRunNode(child))).toBe(false);
-  });
+  it.each(categoryRunViews)(
+    "wraps \\cat glyphs and the NBSP-prefixed value directly after the caller ($view)",
+    ({ options, alone }) => {
+      const children = noteChildren(noteWithCategory, options(), alone);
+      // [opening \f glyph][editable caller][cat run][content ft span][closing \f* glyph]
+      const callerIndex = children.findIndex(
+        (child) => isSerializedTextNode(child) && child.text === getEditableCallerText("+"),
+      );
+      expect(callerIndex).toBeGreaterThan(0);
+      const run = children[callerIndex + 1];
+      if (!isSerializedAttributeRunNode(run) || run.runKind !== "cat")
+        throw new Error("No cat attribute-run wrapper directly after the caller");
+      expect(run.children).toHaveLength(3);
+      const [opener, value, closer] = run.children;
+      if (!isSerializedMarkerNode(opener)) throw new Error("No \\cat opening marker found");
+      expect(opener.marker).toBe("cat");
+      expect(opener.markerSyntax).toBe("opening");
+      if (!isSerializedTextNode(value)) throw new Error("No \\cat value text node found");
+      expect(value.text).toBe(`${NBSP}People`);
+      expect(textTypeOf(value)).toBe("attribute");
+      if (!isSerializedMarkerNode(closer)) throw new Error("No \\cat closing marker found");
+      expect(closer.marker).toBe("cat");
+      expect(closer.markerSyntax).toBe("closing");
+    },
+  );
+
+  it.each(categoryRunViews)(
+    "builds no run when the note has no category ($view)",
+    ({ options, alone }) => {
+      const children = noteChildren(
+        { ...noteWithCategory, category: undefined } as MarkerObject,
+        options(),
+        alone,
+      );
+      expect(children.some((child) => isSerializedAttributeRunNode(child))).toBe(false);
+    },
+  );
 
   it("builds no run in collapsed notes — the category is deliberately not shown there", () => {
     const children = noteChildren(noteWithCategory, getViewOptions(STANDARD_VIEW_MODE));

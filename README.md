@@ -213,6 +213,17 @@ To run all TS unit tests watching for file changes:
   nx watch --all -- nx test \$NX_PROJECT_NAME
   ```
 
+The platform editor's suites skip the views Platform.Bible does not offer (the registry's `library-only` views in `packages/platform/src/editor/editorViews.test-helpers.tsx`: editable formatted, unformatted, the Markers-view variants, Standard with expanded notes, and the footnote popover over any host but Standard), and neither the default run nor CI runs them. To include them, set `SE_TEST_LIBRARY_VIEWS=1`:
+
+```bash
+cd packages/platform
+pnpm test:library-views
+```
+
+Run them before a change that touches a library-only view, or code those views share with the app's views.
+
+Everything the app's views can reach is tested in an app view by default, so the library-only rows carry only what no app view reaches. A suite that only reads (loads, annotates or round-trips) runs Preview — formatted's options, mounted read-only as the app mounts them — rather than formatted.
+
 You can also use the [recommended VS Code extensions](/.vscode/extensions.json) to run tests there. This is particularly useful for running individual tests and debugging.
 
 ## API Extraction

@@ -31,6 +31,7 @@ import {
   reset as resetSerialize,
 } from "../adaptors/usj-editor.adaptor";
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
+import { EDITING_VIEWS, forEachView, itInView, mountInView } from "../editorViews.test-helpers";
 // Reaching inside only for tests (same pattern as markerEdit.test-helpers).
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import {
@@ -1084,55 +1085,58 @@ describe("user deletes a paragraph's entire visible representation", () => {
     expect(written.get("text/plain")).toContain("two"); // the cut content reached the clipboard
   });
 
-  it("removes the paragraph when Lexical's own cut removes it after an await (Unformatted view)", async () => {
-    // Unformatted view is editable-marker but not Standard view, so no engine CUT claim runs:
-    // Lexical's rich-text handler performs the cut, and it removes the range only after
-    // `await copyToClipboard(...)` — a later microtask than the CUT dispatch that armed. The arm
-    // must survive that await, so it cannot expire itself on a microtask the way the delete-key
-    // arms do.
-    //
-    // jsdom has no ClipboardEvent, and Lexical names the class to recognise a native event.
-    class ClipboardEventStub extends Event {
-      clipboardData = { setData: () => undefined, getData: () => "", types: [], files: [] };
-    }
-    vi.stubGlobal("ClipboardEvent", ClipboardEventStub);
-    try {
-      let second!: ParaNode;
-      initializeSerialize(undefined, undefined);
-      resetSerialize();
-      const { editor } = await baseTestEnvironment(
-        () => ({ second } = $appendTwoParas()),
-        <MarkerEditPlugin viewOptions={getViewOptions(UNFORMATTED_VIEW_MODE)} />,
-      );
-      await act(async () =>
-        editor.update(
-          () => {
-            const glyph = second.getFirstChild();
-            if (!$isMarkerNode(glyph)) throw new Error("expected the paragraph's marker glyph");
-            const last = requireDefined(second.getLastChild() ?? undefined, "paragraph content");
-            const selection = $createRangeSelection();
-            selection.anchor.set(glyph.getKey(), 0, "text");
-            selection.focus.set(last.getKey(), last.getTextContentSize(), "text");
-            $setSelection(selection);
-          },
-          { discrete: true },
-        ),
-      );
-      await act(async () =>
-        editor.dispatchCommand(
-          CUT_COMMAND,
-          new ClipboardEventStub("cut") as unknown as ClipboardEvent,
-        ),
-      );
+  itInView("unformatted")(
+    "removes the paragraph when Lexical's own cut removes it after an await (Unformatted view)",
+    async () => {
+      // Unformatted view is editable-marker but not Standard view, so no engine CUT claim runs:
+      // Lexical's rich-text handler performs the cut, and it removes the range only after
+      // `await copyToClipboard(...)` — a later microtask than the CUT dispatch that armed. The arm
+      // must survive that await, so it cannot expire itself on a microtask the way the delete-key
+      // arms do.
+      //
+      // jsdom has no ClipboardEvent, and Lexical names the class to recognise a native event.
+      class ClipboardEventStub extends Event {
+        clipboardData = { setData: () => undefined, getData: () => "", types: [], files: [] };
+      }
+      vi.stubGlobal("ClipboardEvent", ClipboardEventStub);
+      try {
+        let second!: ParaNode;
+        initializeSerialize(undefined, undefined);
+        resetSerialize();
+        const { editor } = await baseTestEnvironment(
+          () => ({ second } = $appendTwoParas()),
+          <MarkerEditPlugin viewOptions={getViewOptions(UNFORMATTED_VIEW_MODE)} />,
+        );
+        await act(async () =>
+          editor.update(
+            () => {
+              const glyph = second.getFirstChild();
+              if (!$isMarkerNode(glyph)) throw new Error("expected the paragraph's marker glyph");
+              const last = requireDefined(second.getLastChild() ?? undefined, "paragraph content");
+              const selection = $createRangeSelection();
+              selection.anchor.set(glyph.getKey(), 0, "text");
+              selection.focus.set(last.getKey(), last.getTextContentSize(), "text");
+              $setSelection(selection);
+            },
+            { discrete: true },
+          ),
+        );
+        await act(async () =>
+          editor.dispatchCommand(
+            CUT_COMMAND,
+            new ClipboardEventStub("cut") as unknown as ClipboardEvent,
+          ),
+        );
 
-      editor.getEditorState().read(() => {
-        expect(second.isAttached()).toBe(false);
-        expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(1);
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
+        editor.getEditorState().read(() => {
+          expect(second.isAttached()).toBe(false);
+          expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(1);
+        });
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 
   it("lands the caret at the JUNCTION when deleting only the visible prefix merges the para", async () => {
     // Select just the `\q1 ` prefix — glyph start through content start — and delete. The
@@ -1270,6 +1274,73 @@ describe("user deletes a paragraph's entire visible representation", () => {
           .getTextContent()
           .charAt(selection.anchor.offset - 1),
       ).toBe("x");
+    });
+  });
+});
+
+/** `\id`, `\c 1`, then a paragraph per entry of `texts`. */
+function parasUsj(texts: string[]): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      ...texts.map((text): MarkerObject => ({ type: "para", marker: "p", content: [text] })),
+    ],
+  };
+}
+
+/** Every paragraph's text in `usj`, in document order, empty paragraphs left out. */
+function savedParaTexts(usj: Usj | undefined): string[] {
+  return (usj?.content ?? []).flatMap((item) => {
+    if (typeof item !== "object" || item.type !== "para") return [];
+    const text = (item.content ?? []).filter((c) => typeof c === "string").join("");
+    return text ? [text] : [];
+  });
+}
+
+/** Presses Delete as a real DOM keydown on the editor root, as a user's gesture arrives. */
+async function pressDeleteKey(editor: LexicalEditor): Promise<void> {
+  const rootElement = editor.getRootElement();
+  if (!rootElement) throw new Error("editor root");
+  await act(async () => {
+    rootElement.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }),
+    );
+  });
+}
+
+// The real editor in each editing view, judged on the document it saves: whatever a view does
+// with the paragraph a deletion empties, the content the selection did not cover survives.
+forEachView(EDITING_VIEWS, ({ view }) => {
+  describe("deleting a paragraph's text, in the saved document", () => {
+    it("removes that text and keeps its neighbours' content", async () => {
+      const { ref, lexical } = await mountInView(parasUsj(["first", "middle", "last"]), view);
+      await act(async () => {
+        ref.current?.setSelection({
+          start: { jsonPath: "$.content[3].content[0]", offset: 0 },
+          end: { jsonPath: "$.content[3].content[0]", offset: "middle".length },
+        });
+      });
+
+      await pressDeleteKey(lexical);
+
+      expect(savedParaTexts(ref.current?.getUsj())).toEqual(["first", "last"]);
+    });
+
+    it("joins what is left on either side of a deletion across a paragraph boundary", async () => {
+      const { ref, lexical } = await mountInView(parasUsj(["first", "middle", "last"]), view);
+      await act(async () => {
+        ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[0]", offset: "fir".length },
+          end: { jsonPath: "$.content[3].content[0]", offset: "mid".length },
+        });
+      });
+
+      await pressDeleteKey(lexical);
+
+      expect(savedParaTexts(ref.current?.getUsj())).toEqual(["firdle", "last"]);
     });
   });
 });

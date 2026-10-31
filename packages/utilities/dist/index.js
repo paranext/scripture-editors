@@ -1,20 +1,20 @@
-import { DOMImplementation as b, DOMParser as g } from "@xmldom/xmldom";
-const m = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
-function v(e) {
-  if (m.has(e))
+import { DOMImplementation as g, DOMParser as v } from "@xmldom/xmldom";
+const M = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+function m(e) {
+  if (M.has(e))
     throw new Error(`The key "${e}" is not allowed to avoid prototype pollution.`);
 }
-const A = "$", O = ".content[";
+const p = "$", O = ".content[";
 function D(e) {
   const t = e.split(O);
-  if (t.shift() !== A)
-    throw new Error(`indexesFromJsonPath: jsonPath didn't start with '${A}'`);
+  if (t.shift() !== p)
+    throw new Error(`indexesFromJsonPath: jsonPath didn't start with '${p}'`);
   return t.map((r) => parseInt(r, 10));
 }
 function w(e) {
   return e.reduce(
     (t, n) => `${t}${O}${n}]`,
-    A
+    p
   );
 }
 function j(e) {
@@ -44,8 +44,8 @@ function K(e) {
 const d = "usx", T = "3.1", x = `<${d} version="${T}" />`;
 let u, c;
 function G(e) {
-  const t = new b().createDocument("", d);
-  return t.documentElement && (t.documentElement.setAttribute("version", T), k(e, t)), t.toString();
+  const t = new g().createDocument("", d);
+  return t.documentElement && (t.documentElement.setAttribute("version", e.version || T), k(e, t)), t.toString();
 }
 function k(e, t) {
   if (t.documentElement) {
@@ -61,8 +61,8 @@ function y(e, t, n, r) {
   if (typeof e == "string") o = n.createTextNode(e);
   else if (f = e.type.replace("table:", ""), o = n.createElement(f), R(o, e), e.content)
     for (const [s, l] of e.content.entries()) {
-      const p = s === e.content.length - 1;
-      y(l, o, n, p);
+      const A = s === e.content.length - 1;
+      y(l, o, n, A);
     }
   c && (f === "verse" || t.tagName === "para" && r) && (i = S(n, c), c = void 0), f === "verse" && typeof e != "string" && e.sid !== void 0 && (c = e.sid), u && (f === "chapter" || f === "para" && r) && (i = h(n, u), u = void 0), f === "chapter" && typeof e != "string" && e.sid !== void 0 && (u = e.sid);
   const a = t.nodeName === d && i?.tagName === "verse";
@@ -221,19 +221,19 @@ const B = [
   "XXG"
 ];
 function Y(e) {
-  const n = new g().parseFromString(e, "text/xml");
+  const n = new v().parseFromString(e, "text/xml");
   return H(n.documentElement);
 }
 function H(e) {
-  const [t] = e ? M(e) : [{ content: [] }];
-  return t.type = N, t.version = P, t;
+  const [t] = e ? b(e) : [{ content: [] }];
+  return t.type = N, t.version = e?.getAttribute("version") || P, t;
 }
-function M(e) {
+function b(e) {
   const t = {};
   let n = e.tagName, r, o, f = "append";
   if (["row", "cell"].includes(n) && (n = "table:" + n), e.attributes)
     for (const s of Array.from(e.attributes))
-      v(s.name), t[s.name] = s.value;
+      m(s.name), t[s.name] = s.value;
   t.style !== void 0 && (r = t.style, delete t.style), t.vid && delete t.vid, t.status && delete t.status;
   let i = { type: n };
   r !== void 0 && (i.marker = r), i = { ...i, ...t }, e.firstChild && e.firstChild.nodeType === e.firstChild.TEXT_NODE && e.firstChild.nodeValue && E(e.firstChild.nodeValue) && (o = e.firstChild.nodeValue);
@@ -242,8 +242,8 @@ function M(e) {
   for (const s of a) {
     if (s.tagName === void 0)
       continue;
-    const [l, p] = M(s);
-    switch (p) {
+    const [l, A] = b(s);
+    switch (A) {
       case "append":
         i.content.push(l);
         break;
@@ -270,7 +270,7 @@ export {
   d as USX_TYPE,
   T as USX_VERSION,
   B as VALID_BOOK_CODES,
-  v as assertSafeKey,
+  m as assertSafeKey,
   K as getUsjDocumentLocationTypeName,
   D as indexesFromUsjJsonPath,
   C as isUsjAttributeKeyLocation,

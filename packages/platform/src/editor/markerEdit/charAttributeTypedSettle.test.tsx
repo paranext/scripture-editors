@@ -18,6 +18,7 @@
 
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { enabledViews } from "../editorViews.test-helpers";
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { requireDefined, viewOptions } from "./markerEdit.test-helpers";
 import { initialize as initializeSerialize, reset } from "../adaptors/usj-editor.adaptor";
@@ -424,7 +425,7 @@ describe("typing a closing marker keeps the span's default attribute", () => {
   });
 });
 
-describe.each(["standard", "unformatted"])(
+describe.each(enabledViews(["standard", "unformatted"]))(
   "a byte typed in front of a span's separator (%s view)",
   (view) => {
     it("stays in front of the content, and the separator stays a separator", async () => {
@@ -483,17 +484,26 @@ describe.each(["standard", "unformatted"])(
   },
 );
 
-describe.each(["standard", "unformatted"])(
+describe.each(enabledViews(["standard", "unformatted"]))(
   "a byte typed at the boundary between an opening glyph and its separator (%s view)",
   (view) => {
     // The caret between `\w` and its separator can sit at the glyph's end or at the front of the
     // content text, and a selection listener moves the second onto the first before the next
     // keystroke. The two look the same on screen, so a byte typed at either saves the same file.
     // `|` and a space go behind the separator; `*` and `\` read with the marker in front of them.
+    // Standard view does not save the space (Paratext 9 skips whitespace after an opener);
+    // unformatted keeps whitespace as typed.
     const usj = twoParaUsj(["a ", { type: "char", marker: "w", content: ["grace"] }, " b"]);
     it.each([
       ["|", ["a ", { type: "char", marker: "w", lemma: "grace" }, " b"]],
-      [" ", ["a ", { type: "char", marker: "w", content: [" grace"] }, " b"]],
+      [
+        " ",
+        [
+          "a ",
+          { type: "char", marker: "w", content: [view === "standard" ? "grace" : " grace"] },
+          " b",
+        ],
+      ],
       [
         "*",
         [

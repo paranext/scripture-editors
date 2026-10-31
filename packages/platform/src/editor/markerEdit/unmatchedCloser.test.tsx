@@ -17,6 +17,7 @@ import { $dfs } from "@lexical/utils";
 import { act } from "@testing-library/react";
 import { $createTextNode, $getRoot, $isTextNode, $setState, CLICK_COMMAND } from "lexical";
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { enabledViews } from "../editorViews.test-helpers";
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import {
   $createCharNode,
@@ -226,7 +227,7 @@ describe("an unmatched closer is editable text", () => {
   });
 });
 
-describe.each(["standard", "unformatted"])(
+describe.each(enabledViews(["standard", "unformatted"]))(
   "an unmatched marker's bytes typed into (%s view)",
   (view) => {
     it("saves the marker the bytes spell, not the one the node was made from", async () => {

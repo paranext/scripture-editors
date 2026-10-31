@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { CARET_HOST_ATTRIBUTE } from "shared-react";
 import { describe, expect, it } from "vitest";
+import { NBSP_STAND_IN_FONT_FAMILY } from "./editor/markerEdit/nbspStandInFont";
 import { ACTIVE_EMPTY_CLASS, EMPTY_CLASS } from "./editor/ActiveTextPlugin";
 
 /**
@@ -79,9 +80,13 @@ describe("usj-nodes.css Scripture text font", () => {
       `--usj-font-fallback: "Charis SIL", "Times New Roman", "Liberation Serif", "DejaVu Serif", Georgia, serif;`,
     );
     // With the `serif` fallback the generated rules also carry: a bare `var()` whose property is
-    // invalid at computed-value time takes the whole declaration down with it.
-    expect(flatCss).toContain(
-      `.usfm.formatted-font { font-family: var(--usj-font-fallback, serif);`,
+    // invalid at computed-value time takes the whole declaration down with it. Led by the editor's
+    // no-break-space stand-in family: a browser draws U+001A as a visible box unless the FIRST
+    // family has a glyph for it.
+    expect(flatCss).toMatch(
+      new RegExp(
+        `\\.usfm\\.formatted-font \\{[^}]*font-family: "${NBSP_STAND_IN_FONT_FAMILY}", var\\(--usj-font-fallback, serif\\);`,
+      ),
     );
   });
 

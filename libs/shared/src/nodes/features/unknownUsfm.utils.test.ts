@@ -1,4 +1,5 @@
 import { unknownDisplayParts } from "./unknownUsfm.utils.js";
+import { NBSP, NBSP_STAND_IN } from "../usj/node-constants.js";
 import { describe, expect, it } from "vitest";
 
 interface Case {
@@ -229,5 +230,33 @@ const cases: Case[] = [
 describe("unknownDisplayParts", () => {
   it.each(cases)("$name", ({ tag, marker, unknownAttributes, expected }) => {
     expect(unknownDisplayParts(tag, marker, unknownAttributes)).toEqual(expected);
+  });
+});
+
+describe("unknownDisplayParts' no-break-space spellings", () => {
+  const S = NBSP_STAND_IN;
+
+  it("spells a peripheral line's no-break space as body text does, being body text", () => {
+    expect(
+      unknownDisplayParts("periph", undefined, { alt: `T${NBSP}P`, id: `a${NBSP}b` }, "~", S),
+    ).toEqual({
+      opening: "\\periph T~P",
+      attributes: '|id="a~b"',
+      closingAttributes: "",
+      closing: "",
+    });
+  });
+
+  it("spells every other attribute value's no-break space as the attribute spelling", () => {
+    const attributes = { file: `a${NBSP}b~c.jpg` };
+    expect(unknownDisplayParts("figure", "fig", attributes, "~", S).closingAttributes).toBe(
+      `|src="a${S}b~c.jpg"`,
+    );
+    expect(
+      unknownDisplayParts("sidebar", "esb", { category: `c${NBSP}d~e` }, "~", S).attributes,
+    ).toBe(` \\cat c${S}d~e\\cat*`);
+    expect(unknownDisplayParts("zzz", "zzz", { x: `y${NBSP}z~` }, "~", S).closingAttributes).toBe(
+      `|x="y${S}z~"`,
+    );
   });
 });

@@ -9,6 +9,7 @@
  * caret: moving the caret off the edited node would settle it.
  */
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { enabledViews } from "../editorViews.test-helpers";
 import { $pendGlyphEdit } from "../markerEdit/markerEdit.test-helpers";
 import {
   $caretPositions,
@@ -96,7 +97,7 @@ function expectBackInPlace(trip: ReturnType<typeof roundTrip>): void {
   if ((trip.to ?? 0) > (trip.from ?? 0)) expect(trip.again).toEqual(trip.reported);
 }
 
-const VIEWS = ["standard", "standard+expandedNotes", "unformatted"];
+const VIEWS = enabledViews(["standard", "standard+expandedNotes", "unformatted"]);
 
 describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (view) => {
   it("keeps a position in a milestone glyph the user is still typing in", async () => {
@@ -540,7 +541,7 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
   });
 });
 
-describe.each(["standard+expandedNotes", "unformatted"])(
+describe.each(enabledViews(["standard+expandedNotes", "unformatted"]))(
   "a note's caller waiting with bytes typed into it (%s view)",
   (view) => {
     // The caller's separator deleted and `x` typed: ` +x` waits as typed while the caret is there,

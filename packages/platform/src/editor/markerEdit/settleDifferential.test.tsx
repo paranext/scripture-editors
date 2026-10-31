@@ -63,6 +63,7 @@ import {
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
+import { isViewEnabled } from "../editorViews.test-helpers";
 
 // jsdom implements no layout, so `Range.prototype.getBoundingClientRect` is absent — same shim as
 // the other settle suites (a settle can place the caret and trip Lexical's post-commit
@@ -80,6 +81,13 @@ const VIEWS: { [key: string]: ViewOptions } = {
   standard: standardViewOptions,
   "standard-expanded": { ...standardViewOptions, noteMode: "expanded" },
   unformatted: unformattedViewOptions,
+};
+
+/** The registry view each {@link VIEWS} key is, which decides whether this run includes it. */
+const REGISTRY_NAMES: { [key in keyof typeof VIEWS]: string } = {
+  standard: "standard",
+  "standard-expanded": "standard+expandedNotes",
+  unformatted: "unformatted",
 };
 
 /** One differential shape: a starting document, a view, and an edit that must leave it pending. */
@@ -569,7 +577,9 @@ const differentialShapes: DifferentialShape[] = [
 const KNOWN_DIVERGENCES: { [shapeName: string]: string } = {};
 
 describe("differential settle — virtual mirror equals commit-then-read", () => {
-  for (const { name, view, usj, $edit, expectSettled } of differentialShapes) {
+  for (const { name, view, usj, $edit, expectSettled } of differentialShapes.filter(({ view }) =>
+    isViewEnabled(REGISTRY_NAMES[view]),
+  )) {
     const divergence = KNOWN_DIVERGENCES[name];
     const run = divergence ? it.skip : it;
     run(`${name} [${view}]${divergence ? ` (known divergence: ${divergence})` : ""}`, async () => {
@@ -660,7 +670,11 @@ describe("differential settle — a comment inside a typed footnote literal", ()
     return { mirror, live: usjOf(editor, viewOptions), editor };
   }
 
-  it.each(["standard", "standard-expanded"] as const)(
+  it.each(
+    (["standard", "standard-expanded"] as const).filter((view) =>
+      isViewEnabled(REGISTRY_NAMES[view]),
+    ),
+  )(
     "lands a comment on the literal's note content on the same content in the new note [%s]",
     async (view) => {
       const { mirror, live } = await settleBothWays(view, "note");
@@ -672,7 +686,11 @@ describe("differential settle — a comment inside a typed footnote literal", ()
     },
   );
 
-  it.each(["standard", "standard-expanded"] as const)(
+  it.each(
+    (["standard", "standard-expanded"] as const).filter((view) =>
+      isViewEnabled(REGISTRY_NAMES[view]),
+    ),
+  )(
     "carries a comment on the literal's caller onto the note's caller, never into its USJ [%s]",
     async (view) => {
       const { mirror, live, editor } = await settleBothWays(view, "+");

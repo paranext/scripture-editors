@@ -8,9 +8,16 @@ import {
   $getRoot,
   $setSelection,
   LexicalEditor,
+  PASTE_COMMAND,
   TextNode,
 } from "lexical";
-import { $createImmutableTypedTextNode, $createParaNode } from "shared";
+import {
+  $createCharNode,
+  $createImmutableTypedTextNode,
+  $createNoteNode,
+  $createParaNode,
+  ParaNode,
+} from "shared";
 
 /**
  * `document.execCommand("copy")` is how a clipboard write reaches the browser when there is no real
@@ -186,3 +193,92 @@ describe("ClipboardPlugin — paste keys are unaffected", () => {
     expect((await pressShortcut(editor, "v", true)).defaultPrevented).toBe(true);
   });
 });
+
+describe("ClipboardPlugin — text pasted inside a char span or note stays there", () => {
+  /** A paste event carrying `payload`, shaped the way `@lexical/rich-text`'s handler reads one. */
+  function pasteEventWith(payload: { [type: string]: string }): ClipboardEvent {
+    const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        types: Object.keys(payload),
+        files: [],
+        getData: (type: string) => payload[type] ?? "",
+      },
+    });
+    return event;
+  }
+
+  /** `Before ` + `\nd Lord\nd*` + ` after`, or that span inside a footnote. */
+  async function spanEnvironment(inNote: boolean): Promise<{
+    editor: LexicalEditor;
+    spanText: TextNode;
+  }> {
+    let spanText: TextNode | undefined;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        spanText = $createTextNode("Lord");
+        const span = $createCharNode("nd");
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createTextNode("Before "),
+            inNote
+              ? $createNoteNode("f", "+").append(span.append(spanText))
+              : span.append(spanText),
+            $createTextNode(" after"),
+          ),
+        );
+      },
+      <ClipboardPlugin />,
+    );
+    if (!spanText) throw new Error("expected the span's text node to exist");
+    return { editor, spanText };
+  }
+
+  /** A paste of the text `XY` in `flavor`. Ctrl+V delivers html: `navigator.clipboard.read()`
+   * exposes no private flavor. */
+  function payloadOf(
+    flavor: "internal" | "html",
+    editor: LexicalEditor,
+  ): { [type: string]: string } {
+    if (flavor === "html")
+      return { "text/html": '<span style="white-space: pre-wrap;">XY</span>', "text/plain": "XY" };
+    return {
+      "application/x-lexical-editor": JSON.stringify({
+        namespace: editor._config.namespace,
+        nodes: [serializedTextNode("XY")],
+      }),
+      "text/plain": "XY",
+    };
+  }
+
+  for (const inNote of [false, true])
+    for (const flavor of ["internal", "html"] as const)
+      it(`keeps ${flavor}-flavor text in the span it is pasted into${inNote ? ", inside a note" : ""}`, async () => {
+        const { editor, spanText } = await spanEnvironment(inNote);
+        await act(async () => editor.update(() => spanText.select(2, 2)));
+
+        await act(async () => {
+          editor.dispatchCommand(PASTE_COMMAND, pasteEventWith(payloadOf(flavor, editor)));
+        });
+
+        editor.getEditorState().read(() => {
+          const para = $getRoot().getFirstChildOrThrow<ParaNode>();
+          const texts = para.getAllTextNodes().map((node) => node.getTextContent());
+          expect(texts).toEqual(["Before ", "LoXYrd", " after"]);
+          expect(spanText.getLatest().getTextContent()).toBe("LoXYrd");
+        });
+      });
+});
+
+/** A serialized plain text node holding `text`. */
+function serializedTextNode(text: string) {
+  return {
+    detail: 0,
+    format: 0,
+    mode: "normal",
+    style: "",
+    text,
+    type: "text",
+    version: 1,
+  };
+}

@@ -276,9 +276,10 @@ export async function typeOver(
  * A paragraph carrying, in order, text, an optbreak, a note, and more text. The optbreak is what
  * makes the note's index within the paragraph differ between the two documents: a settle splices
  * an emptied husk out, so the note that is the paragraph's THIRD live content item is its SECOND
- * settled one.
+ * settled one. `unclosed` leaves the note without its closer, which Standard view shows expanded in
+ * the text.
  */
-export function huskBeforeNoteUsj(): Usj {
+export function huskBeforeNoteUsj({ unclosed = false }: { unclosed?: boolean } = {}): Usj {
   return twoParaUsj([
     "before ",
     { type: "optbreak" },
@@ -286,6 +287,7 @@ export function huskBeforeNoteUsj(): Usj {
       type: "note",
       marker: "f",
       caller: "+",
+      ...(unclosed && { closed: "false" }),
       // The reference span keeps the body text off the caller's own slot, so an edit to the body
       // cannot coalesce into the caller and cost the note its recognizable shape. The note's OWN
       // optbreak does for the note's content indexes what the paragraph's does for the

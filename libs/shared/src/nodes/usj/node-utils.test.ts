@@ -17,8 +17,10 @@ import {
   $getLogicalPointFromElementPoint,
   $getLogicalTextLocation,
   $getTextNodeAtLogicalOffset,
+  $isLoneNbspContent,
   $isSomeChapterNode,
   $setCharNodeMarker,
+  authoredNbspState,
   $shouldIgnoreNodeForContentIndexes,
   closingMarkerText,
   getEditableCallerText,
@@ -950,11 +952,9 @@ describe("Editor Node Utilities", () => {
       });
     });
 
-    it("skips standalone NBSP spacer text nodes between content items", () => {
-      // Visible/hidden modes insert NBSP spacer text nodes between element items (e.g. between
-      // char nodes in a note). The editor→USJ conversion drops them, so they are not USJ
-      // content. A spacer only survives as its own node next to elements — Lexical merges
-      // adjacent plain text nodes, so an NBSP beside other text is not a separate node.
+    it("counts a lone NBSP between content items as a text item of its own", () => {
+      // No engine display node sits between two spans in a paragraph, so a lone NBSP there is the
+      // author's `~`, which the editor→USJ conversion keeps as a content string.
       const { editor } = createBasicTestEnvironment(nodes, () => {
         $getRoot().append(
           $createParaNode().append(
@@ -968,9 +968,10 @@ describe("Editor Node Utilities", () => {
       editor.getEditorState().read(() => {
         const items = $getFirstParaItems();
 
-        expect(items).toHaveLength(2);
+        expect(items).toHaveLength(3);
         expect(items[0].type).toBe("element");
-        expect(items[1].type).toBe("element");
+        $expectTextItem(items[1], [{ text: NBSP, start: 0 }]);
+        expect(items[2].type).toBe("element");
       });
     });
 
@@ -1387,7 +1388,7 @@ describe("Editor Node Utilities", () => {
       });
     });
 
-    it("collapses a run after a char span's separator without counting the separator in it", () => {
+    it("drops the spaces after a char span's separator, as after a paragraph marker", () => {
       let singleSpace: TextNode;
       let run: TextNode;
       const { editor } = createBasicTestEnvironment(nodes, () => {
@@ -1413,23 +1414,25 @@ describe("Editor Node Utilities", () => {
         const [nd, wj] = singleSpace.getParentOrThrow().getParentOrThrow().getChildren();
         if (!$isCharNode(nd) || !$isCharNode(wj)) throw new Error("Expected two char spans");
 
-        // The separator and the content's own leading space are not a run: the separator goes
-        // before serialization collapses anything.
+        // The separator goes before serialization drops anything, and the spaces after it are
+        // dropped as the spaces after a paragraph marker are (Paratext 9 skips all whitespace
+        // after an opening marker), so the content starts at its first word.
         const [ndItem] = $getLogicalContentItems(nd, true);
         if (ndItem?.type !== "text") throw new Error("Expected a text item");
-        expect(ndItem.length).toBe(" LORD".length);
-        expect($getLogicalTextLocation(singleSpace, 2, true)?.offset).toBe(1);
+        expect(ndItem.length).toBe("LORD".length);
+        expect($getLogicalTextLocation(singleSpace, 2, true)?.offset).toBe(0);
+        expect($getLogicalTextLocation(singleSpace, 3, true)?.offset).toBe(1);
 
-        // Content that starts with a run keeps the run's first space after the separator.
+        // However many spaces follow the separator, none of them is content.
         const [wjItem] = $getLogicalContentItems(wj, true);
         if (wjItem?.type !== "text") throw new Error("Expected a text item");
-        expect(wjItem.length).toBe(" God".length);
+        expect(wjItem.length).toBe("God".length);
         expect(
           [0, 1, 2, 3, 4].map((offset) => $getLogicalTextLocation(run, offset, true)?.offset),
-        ).toEqual([0, 0, 1, 1, 2]);
-        expect([0, 1, 4].map((offset) => $getTextNodeAtLogicalOffset(wjItem, offset))).toEqual([
-          [run, 1],
+        ).toEqual([0, 0, 0, 0, 1]);
+        expect([0, 1, 3].map((offset) => $getTextNodeAtLogicalOffset(wjItem, offset))).toEqual([
           [run, 3],
+          [run, 4],
           [run, 6],
         ]);
       });
@@ -1599,6 +1602,128 @@ describe("Editor Node Utilities", () => {
         expect($getLogicalIndexOfChild(chapter, chapter.getFirstChildOrThrow(), false)).toBe(-1);
         expect($getLogicalIndexOfChild($getRoot(), chapter, false)).toBe(0);
         expect($getLogicalIndexOfChild($getRoot(), paraText.getParentOrThrow(), false)).toBe(1);
+      });
+    });
+  });
+
+  describe("$isLoneNbspContent", () => {
+    /** A text no neighbouring plain text merges into. */
+    const $unmergeable = (text: string) => $createTextNode(text).toggleFormat("bold");
+    const $authored = () => $setState($createTextNode(NBSP), authoredNbspState, true);
+    const $span = (marker: string, text: string) =>
+      $createCharNode(marker).append($createTextNode(text));
+    /** Each `$build` adds a paragraph holding `nbsp` (or its own NBSP text, which it returns). */
+    const cases: {
+      name: string;
+      isContent: boolean;
+      $build: (nbsp: TextNode) => unknown;
+    }[] = [
+      {
+        name: "a paragraph's whole content",
+        isContent: true,
+        $build: (nbsp) => $getRoot().append($createParaNode("p").append(nbsp)),
+      },
+      {
+        name: "between two spans",
+        isContent: true,
+        $build: (nbsp) =>
+          $getRoot().append($createParaNode("p").append($span("w", "a"), nbsp, $span("w", "b"))),
+      },
+      {
+        name: "after a paragraph's tagged separator",
+        isContent: true,
+        $build: (nbsp) => {
+          const separator = $unmergeable(NBSP);
+          $setState(separator, textTypeState, "marker-trailing-space");
+          $getRoot().append($createParaNode("p").append($createMarkerNode("p"), separator, nbsp));
+        },
+      },
+      {
+        name: "after a span inside a span",
+        isContent: true,
+        $build: (nbsp) =>
+          $getRoot().append(
+            $createParaNode("p").append($createCharNode("nd").append($span("w", "x"), nbsp)),
+          ),
+      },
+      {
+        name: "first in a span, marked as the author's",
+        isContent: true,
+        $build: () => {
+          const authored = $authored();
+          $getRoot().append($createParaNode("p").append($createCharNode("nd").append(authored)));
+          return authored;
+        },
+      },
+      {
+        name: "first in a span (the placeholder's slot)",
+        isContent: false,
+        $build: (nbsp) =>
+          $getRoot().append($createParaNode("p").append($createCharNode("nd").append(nbsp))),
+      },
+      {
+        name: "right after an editable glyph",
+        isContent: false,
+        $build: (nbsp) =>
+          $getRoot().append(
+            $createParaNode("p").append(
+              $createCharNode("nd").append($createMarkerNode("nd"), nbsp, $unmergeable("x")),
+            ),
+          ),
+      },
+      {
+        name: "right after a read-only glyph inside a span",
+        isContent: false,
+        $build: (nbsp) =>
+          $getRoot().append(
+            $createParaNode("p").append(
+              $createCharNode("nd").append(
+                $createImmutableTypedTextNode("marker", "\\nd "),
+                nbsp,
+                $createImmutableTypedTextNode("marker", "\\nd*"),
+              ),
+            ),
+          ),
+      },
+      {
+        name: "after a collapsed note's caller",
+        isContent: false,
+        $build: (nbsp) =>
+          $getRoot().append(
+            $createParaNode("p").append(
+              $createNoteNode("f", "+").append(new NoteCallerStubNode(), nbsp, $span("ft", "x")),
+            ),
+          ),
+      },
+      {
+        name: "inside an attribute display run",
+        isContent: false,
+        $build: (nbsp) =>
+          $getRoot().append(
+            $createParaNode("p").append(
+              $createAttributeRunNode("va").append(
+                $createMarkerNode("va"),
+                $unmergeable("x"),
+                nbsp,
+              ),
+            ),
+          ),
+      },
+    ];
+
+    it.each(cases)("$name: content is $isContent", ({ isContent, $build }) => {
+      let key = "";
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        const nbsp = $createTextNode(NBSP);
+        const built = $build(nbsp);
+        key = (built instanceof TextNode ? built : nbsp).getKey();
+      });
+
+      editor.getEditorState().read(() => {
+        const node = $getNodeByKey(key);
+        if (!(node instanceof TextNode)) throw new Error("expected the NBSP text");
+        expect($isLoneNbspContent(node)).toBe(isContent);
+        expect($shouldIgnoreNodeForContentIndexes(node)).toBe(!isContent);
       });
     });
   });

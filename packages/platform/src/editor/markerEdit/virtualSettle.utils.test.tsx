@@ -3,6 +3,7 @@
  * editor. Each case drives a real pending edit through the mounted engine, reads the settled USJ,
  * and then asserts the editor itself is unchanged — the two halves of the contract.
  */
+import { describeInView, editorView, mountInPaneRow } from "../editorViews.test-helpers";
 import {
   $appendMilestoneRun,
   $pendGlyphEdit,
@@ -13,9 +14,10 @@ import {
   viewOptions,
 } from "./markerEdit.test-helpers";
 import { Tier2Context } from "./tier2Rebuild.utils";
-import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $createTextNode, $getRoot, $isTextNode, $setState } from "lexical";
+import { $dfs } from "@lexical/utils";
+import { $createTextNode, $getRoot, $isTextNode, $setState, LexicalEditor } from "lexical";
 import {
   $createCaretHostNode,
   $createCharNode,
@@ -34,6 +36,7 @@ import {
   CURSOR_PLACEHOLDER_CHAR,
   getEditableCallerText,
   getMarker as bundledGetMarker,
+  getPendedDisplayOwners,
   NBSP,
   textTypeState,
 } from "shared";
@@ -438,7 +441,10 @@ describe("$settledUsj — paragraph scopes", () => {
   });
 });
 
-describe("$settledUsj — expanded note scopes", () => {
+// Library-only: hand-built notes under Standard view with notes expanded. The note-content rows run
+// again below in the footnotes pane's row editor, and the paragraph-and-note row in Standard view
+// over a note with no closer; content pending inside a collapsed note has no app view.
+describeInView("standard+expandedNotes")("$settledUsj — expanded note scopes", () => {
   it("settles a typed marker literal inside expanded note content", async () => {
     const { editor } = await testEnvironmentExpanded(() => {
       const note = $createNoteNode("f", "+");
@@ -844,5 +850,181 @@ describe("$settledUsj — expanded note scopes", () => {
     // ($rebuildNoteContent would also refuse this).
     const unsettled = unsettledUsjOf(editor);
     expect(settled?.content[0]).toEqual(unsettled?.content[0]);
+  });
+});
+
+describe("$settledUsj — note content in the footnotes pane's row editor", () => {
+  const paneRowContext: Tier2Context = {
+    viewOptions: editorView("footnotes-pane-row"),
+    getMarker: bundledGetMarker,
+  };
+
+  function note(content: MarkerContent[]): MarkerObject {
+    return { type: "note", marker: "f", caller: "+", content };
+  }
+
+  /** The settled document's one note. */
+  function settledNote(lexical: LexicalEditor): MarkerObject {
+    const para = settledUsjOf(lexical, paneRowContext)?.content[0];
+    const found = typeof para === "object" ? para.content?.[0] : undefined;
+    if (typeof found !== "object" || found.type !== "note") throw new Error("expected the note");
+    return found;
+  }
+
+  /** Whether `content` holds a `\\${marker}` char span or an item of `type`. */
+  function holds(content: MarkerContent[] | undefined, type: string, marker?: string): boolean {
+    return (
+      content?.some(
+        (entry) =>
+          typeof entry !== "string" &&
+          entry.type === type &&
+          (marker === undefined || entry.marker === marker),
+      ) ?? false
+    );
+  }
+
+  /** The note's one char span's opening glyph, pended as `text`. */
+  function $pendCharRename(text: string): void {
+    const char = $dfs()
+      .map(({ node }) => node)
+      .find($isCharNode);
+    const glyph = char?.getFirstChild();
+    if (!$isMarkerNode(glyph)) throw new Error("expected the char span's opening glyph");
+    $pendGlyphEdit(glyph, text);
+  }
+
+  async function edit(lexical: LexicalEditor, $edit: () => void): Promise<void> {
+    await act(async () => {
+      lexical.update($edit);
+      await Promise.resolve();
+    });
+  }
+
+  it("settles a typed marker literal inside the note's content", async () => {
+    const { lexical } = await mountInPaneRow(note(["note body"]));
+
+    // A caret right after the typed `\\nd` keeps the literal pending, as in the row above.
+    await edit(lexical, () => {
+      const body = $dfs()
+        .map(({ node }) => node)
+        .find((node) => $isTextNode(node) && node.getTextContent().includes("note body"));
+      if (!$isTextNode(body)) throw new Error("expected the note's text");
+      body.setTextContent("note \\nd body\\nd*");
+      body.select(8, 8);
+    });
+
+    const settled = settledNote(lexical);
+    expect(settled.caller).toBe("+");
+    expect(holds(settled.content, "char", "nd")).toBe(true);
+    lexical.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toContain("\\nd body\\nd*");
+    });
+  });
+
+  it("does not resurrect an emptied optbreak husk in the note's content when the note settles for an unrelated pend", async () => {
+    const { lexical } = await mountInPaneRow(
+      note([{ type: "optbreak" }, { type: "char", marker: "bd", content: ["bold text"] }]),
+    );
+
+    await edit(lexical, () => {
+      const optbreak = $dfs()
+        .map(({ node }) => node)
+        .find($isUnknownNode);
+      if (!optbreak) throw new Error("expected the optbreak");
+      optbreak.getChildren().forEach((child) => child.remove());
+      $pendCharRename("\\it");
+    });
+
+    const settled = settledNote(lexical);
+    expect(holds(settled.content, "char", "it")).toBe(true);
+    expect(holds(settled.content, "optbreak")).toBe(false);
+  });
+
+  it("settles a char-span rename that comes after a preserved node in the note's content", async () => {
+    const { lexical } = await mountInPaneRow(
+      note([
+        "text1 ",
+        { type: "optbreak" },
+        " text2 ",
+        { type: "char", marker: "bd", content: ["bold text"] },
+      ]),
+    );
+
+    await edit(lexical, () => $pendCharRename("\\it"));
+
+    expect(holds(settledNote(lexical).content, "char", "it")).toBe(true);
+  });
+
+  it("refuses a half-typed attribute run appended to a char span in the note's content as-is", async () => {
+    const { lexical } = await mountInPaneRow(
+      note([{ type: "char", marker: "nd", content: ["name"] }]),
+    );
+
+    await edit(lexical, () => {
+      const content = $dfs()
+        .map(({ node }) => node)
+        .find(
+          (node) =>
+            $isTextNode(node) && !$isMarkerNode(node) && node.getTextContent().includes("name"),
+        );
+      if (!$isTextNode(content)) throw new Error("expected the char span's content text");
+      content.setTextContent(`${content.getTextContent()}|stuf`);
+    });
+
+    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
+    expect(settledUsjOf(lexical, paneRowContext)?.content[0]).toEqual(
+      unsettledUsjOf(lexical)?.content[0],
+    );
+  });
+});
+
+// A note with no closer shows expanded in Standard view's text, so its content pends there; a
+// closed note's content shows only in the library-only expanded-notes view above.
+describe("$settledUsj — note scopes in Standard view", () => {
+  it("settles a pending paragraph edit and a pending edit in its unclosed note in one call", async () => {
+    const { editor } = await testEnvironment(() => {
+      const note = $createNoteNode("f", "+", false);
+      note.setUnknownAttributes({ closed: "false" });
+      const callerNode = $createTextNode(getEditableCallerText("+"));
+      $setState(callerNode, textTypeState, "note-caller-boundary");
+      const boldChar = $createCharNode("bd");
+      boldChar.append($createMarkerNode("bd"), $createTextNode(`${NBSP}bold text`));
+      note.append($createMarkerNode("f"), callerNode, boldChar);
+      $getRoot().append(
+        $createParaNode("p").append($createMarkerNode("p"), $createTextNode(NBSP), note),
+      );
+    });
+
+    await act(async () => {
+      editor.update(() => {
+        const para = $getRoot().getChildren().find($isParaNode);
+        const paraGlyph = para?.getFirstChild();
+        if (!$isMarkerNode(paraGlyph)) throw new Error("expected a ParaNode prefix glyph");
+        $pendGlyphEdit(paraGlyph, "\\q1");
+        const boldGlyph = para
+          ?.getChildren()
+          .find($isNoteNode)
+          ?.getChildren()
+          .find($isCharNode)
+          ?.getFirstChild();
+        if (!$isMarkerNode(boldGlyph)) throw new Error("expected the char span's opening glyph");
+        $pendGlyphEdit(boldGlyph, "\\it");
+      });
+      await Promise.resolve();
+    });
+
+    const settled = settledUsjOf(editor, context);
+    expect(markerAt(settled, 0)).toBe("q1");
+    const para = settled?.content[0];
+    const note =
+      typeof para === "object"
+        ? para.content?.find((entry) => typeof entry !== "string" && entry.type === "note")
+        : undefined;
+    if (typeof note !== "object") throw new Error("expected a note marker object");
+    expect(
+      note.content?.some(
+        (entry) => typeof entry !== "string" && entry.type === "char" && entry.marker === "it",
+      ),
+    ).toBe(true);
   });
 });

@@ -1,8 +1,15 @@
 import { $removeLeadingSpace, wasNodeCreated } from "../../nodes/usj/node-react.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getNodeByKey, LexicalEditor } from "lexical";
+import { $getNodeByKey, $isElementNode, LexicalEditor } from "lexical";
 import { useEffect } from "react";
-import { $isGutterMarkerNode, $isParaNode, getApplyingUpdateSource, ParaNode } from "shared";
+import {
+  $isGutterMarkerNode,
+  $isParaNode,
+  $isVisibleMarkerNode,
+  getApplyingUpdateSource,
+  ParaNode,
+} from "shared";
+import { $syncParaMarkerGlyph } from "./collab/delta-apply-update.utils";
 
 export function ParaNodePlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -25,31 +32,62 @@ function useParaNode(editor: LexicalEditor) {
 
 /**
  * Remove any leading space if the node was just created, e.g. by hitting the enter key in the
- * middle of a paragraph. Update ParaNode to not contain text if it is a 'b' marker (blank line).
- * However, if the 'b' ParaNode already contained text, it can be modified (backwards compatible
- * with PT9 & USFM v3.0).
+ * middle of a paragraph. Update ParaNode to not contain text if it is a 'b' marker (blank line):
+ * text typed into an empty one is removed. However, if the 'b' ParaNode already contained text, it
+ * can be modified (backwards compatible with PT9 & USFM v3.0). A join of an empty one with the
+ * paragraph after it keeps that paragraph: its marker replaces the blank line's.
  *
- * The leading space is looked for past a gutter marker glyph: in the gutter view another
- * ParaNode transform gives a new paragraph its glyph, and whether that transform runs before or
- * after this one depends on the order the plugins registered in. A paragraph an applied update
- * creates keeps its leading space: the apply reports its ops as given, so trimming here would leave
- * this document out of step with the one that sent them.
+ * The leading space is looked for past a gutter marker glyph, so the paragraph-structure view saves
+ * the break as the others do: in the gutter view another ParaNode transform gives a new paragraph
+ * its glyph, and whether that transform runs before or after this one depends on the order the
+ * plugins registered in. A paragraph an applied update creates keeps its leading space: the apply
+ * reports its ops as given, so trimming here would leave this document out of step with the one
+ * that sent them.
  * @param node - ParaNode thats needs updating.
  */
 function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
   if (!getApplyingUpdateSource(editor) && wasNodeCreated(editor, node.getKey())) {
     const first = node.getFirstChild();
     $removeLeadingSpace($isGutterMarkerNode(first) ? first.getNextSibling() : first);
+    // Lexical's history folds an update whose only dirty leaf is a text that kept its text into
+    // the previous undo step. A paragraph break in front of a char span or a note is such an
+    // update (only the text before the break is touched), so the new paragraph's first leaf is
+    // marked too, and Undo takes the break back on its own.
+    const firstLeaf = node.getFirstDescendant();
+    if (firstLeaf && !$isElementNode(firstLeaf)) firstLeaf.markDirty();
   }
 
   if (!$isParaNode(node) || node.getMarker() !== "b" || node.isEmpty()) return;
 
   const prevEditorState = editor.getEditorState();
-  const wasEmpty = prevEditorState.read(() => {
+  const { wasEmpty, wasBlank, nextKey, nextPara } = prevEditorState.read(() => {
     const prevNode = $getNodeByKey(node.getKey());
-    return $isParaNode(prevNode) && (prevNode?.isEmpty() ?? false);
+    const prevNext = prevNode?.getNextSibling();
+    return {
+      wasEmpty: $isParaNode(prevNode) && prevNode.isEmpty(),
+      // Empty but for a marker glyph the view shows in front of it (a gutter or visible marker).
+      wasBlank: $isParaNode(prevNode) && prevNode.getChildren().every($isVisibleMarkerNode),
+      nextKey: prevNext?.getKey(),
+      nextPara: $isParaNode(prevNext)
+        ? { marker: prevNext.getMarker(), unknownAttributes: prevNext.getUnknownAttributes() }
+        : undefined,
+    };
   });
-  if (!wasEmpty) return;
+  if (!wasBlank) return;
 
-  node.clear();
+  // A join with the paragraph after it (Delete at the blank line, Backspace at that paragraph's
+  // start, or a range across the break typed over) moves that paragraph's content in. Paratext 9
+  // keeps the joined paragraph and drops the blank line: its formatted view joins two paragraphs
+  // the way its HTML editor joins two blocks, keeping the second block.
+  const next = nextKey === undefined ? undefined : ($getNodeByKey(nextKey) ?? undefined);
+  if (nextKey !== undefined && (!next || !next.isAttached())) {
+    if (nextPara) {
+      $syncParaMarkerGlyph(node, nextPara.marker);
+      node.setUnknownAttributes(nextPara.unknownAttributes);
+    }
+    return;
+  }
+
+  // Only text typed into the blank line is refused.
+  if (wasEmpty) node.clear();
 }

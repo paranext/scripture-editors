@@ -6,6 +6,7 @@
  * settled one.
  */
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { LIBRARY_VIEWS_ENABLED } from "../editorViews.test-helpers";
 import { twoParaUsj } from "../positions/positions.test-helpers";
 import { $settledLocationFromLivePoint } from "../positions/settledPositions.utils";
 import { $prepareSettleScopes } from "../positions/settledScopes.utils";
@@ -72,7 +73,8 @@ function $paraMarkerGlyph(): TextNode {
   return first;
 }
 
-describe.each(["standard+expandedNotes", "unformatted"])(
+// Both views are library-only, so the suite runs only with the registry's library-only views.
+describe.skipIf(!LIBRARY_VIEWS_ENABLED).each(["standard+expandedNotes", "unformatted"])(
   "a paragraph marker retyped as a note marker in front of a note (%s view)",
   (view) => {
     it("the p deleted, then x typed: the screen shows what the file gets", async () => {

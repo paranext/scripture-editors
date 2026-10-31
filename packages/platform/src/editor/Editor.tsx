@@ -28,12 +28,15 @@ import { $getMarkerMenuContext } from "./markerMenu/markerMenuContext.utils";
 import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
 import { $insertFirstChapter } from "./markerEdit/firstChapter.utils";
 import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
+import { InlineRangeEditPlugin } from "./InlineRangeEditPlugin";
+import { InvisibleCharactersPlugin } from "./InvisibleCharactersPlugin";
 import {
   COMMIT_PENDING_MARKERS_COMMAND,
   MarkerEditPlugin,
   SET_MARKER_SETTLE_SUSPENDED_COMMAND,
 } from "./markerEdit/MarkerEditPlugin";
 import { MarkerValidationPlugin } from "./markerEdit/MarkerValidationPlugin";
+import { opsForHost, opsFromHost, toUsfmNbspSpelling } from "./markerEdit/whitespaceDisplay.utils";
 import { MarkersViewCopyPlugin } from "./MarkersViewCopyPlugin";
 import {
   $settledUsj,
@@ -58,6 +61,7 @@ import {
   ContentJsonPath,
   MarkerContent,
   Usj,
+  USJ_VERSION,
   usjJsonPathFromIndexes,
 } from "@eten-tech-foundation/scripture-utilities";
 import { InitialConfigType, LexicalComposer } from "@lexical/react/LexicalComposer";
@@ -139,6 +143,7 @@ import {
   $getNoteByKeyOrIndex,
   $getNoteIndex,
   $getOTPositionOfNode,
+  $getApplyLength,
   $getParticularNodeOps,
   $getRangeFromUsjSelection,
   $collapseParaMarkerSelection,
@@ -179,6 +184,7 @@ import {
   LoadStatePlugin,
   NoteCallerHighlightHandle,
   NoteCallerHighlightPlugin,
+  NoteEnterGuardPlugin,
   NoteNodePlugin,
   NoteShellCaretGuardPlugin,
   OnSelectionChangePlugin,
@@ -339,14 +345,18 @@ function $rememberExpandedNote(
   if (noteNode && !noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
 }
 
-/** The ops for whatever follows `noteNode` in its paragraph (see `EditorRef.getOpsAfterNote`). */
+/**
+ * The ops for whatever follows `noteNode` in its paragraph (see `EditorRef.getOpsAfterNote`).
+ * They carry content only, as a note's own contents do: the editor they are applied to may be in
+ * another view, so a char span must not bring this view's marker glyphs along as text.
+ */
 function $getOpsAfterNote(noteNode: NoteNode): DeltaOp[] {
   const following = noteNode.getNextSiblings();
   const first = following.at(0);
   const last = following.at(-1);
   if (!first || !last) return [];
   const end = $isElementNode(last) ? (last.getLastDescendant() ?? last) : last;
-  return $getParticularNodeOps(first, end);
+  return $getParticularNodeOps(first, end, { contentOnly: true });
 }
 
 /**
@@ -413,6 +423,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   const noteCallerHighlightRef = useRef<NoteCallerHighlightHandle | null>(null);
   const toolbarEndRef = useRef<HTMLDivElement>(null);
   const editedUsjRef = useRef(defaultUsj);
+  // The version of the document the editor was last handed (`defaultUsj`, then each `setUsj`).
+  // The tree carries no version, so every USJ the editor builds from it is stamped with this one:
+  // a document leaves at the version it arrived at.
+  const documentVersionRef = useRef(defaultUsj?.version || USJ_VERSION);
   // Set when a commit may have moved the tree without the change listener refreshing
   // `editedUsjRef` (see `handleCommit`); the next settled read re-serializes instead of trusting it.
   const isEditedUsjStaleRef = useRef(false);
@@ -527,7 +541,38 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     viewOptionsRef.current = resolvedViewOptions;
   }
   const viewOptions = viewOptionsRef.current;
-  const nodeOptions = useMemo(() => nodes ?? defaultNodeOptions, [nodes]);
+  const nodeOptions = useMemo(() => {
+    const options = nodes ?? defaultNodeOptions;
+    const { noteCallerOnClick } = options;
+    if (!noteCallerOnClick) return options;
+    // The note ops a caller click hands out are the editor's own, so they go out as every other op
+    // the editor gives a host does (`opsForHost`): with U+00A0, never the internal stand-in for a
+    // stored no-break space. Read through the ref so the options keep their identity.
+    return {
+      ...options,
+      noteCallerOnClick: (
+        event,
+        noteNodeKey,
+        isCollapsed,
+        getCaller,
+        setCaller,
+        getNoteOps,
+        getNoteIndex,
+      ) =>
+        noteCallerOnClick(
+          event,
+          noteNodeKey,
+          isCollapsed,
+          getCaller,
+          setCaller,
+          () => {
+            const ops = getNoteOps();
+            return ops && opsForHost(ops, viewOptionsRef.current);
+          },
+          getNoteIndex,
+        ),
+    } satisfies UsjNodeOptions;
+  }, [nodes]);
   const contextMenuOptions = useMemo(() => contextMenu, [contextMenu]);
   // The same `?? defaultStyleInfo` fallback the palette/validator consumers use (menuStyleInfo
   // below): with no host styleInfo, classifying from the smaller bundled markers table while the
@@ -714,7 +759,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
      */
     const refreshEditedUsjIfStale = () => {
       if (!isEditedUsjStaleRef.current) return;
-      const fresh = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions);
+      const fresh = editorUsjAdaptor.deserializeEditorState(
+        editor.getEditorState(),
+        viewOptions,
+        documentVersionRef.current,
+      );
       if (!fresh) return;
       editedUsjRef.current = fresh;
       isEditedUsjStaleRef.current = false;
@@ -752,6 +801,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         { viewOptions, getMarker: markerLookup, logger: stableLogger },
         transientInput,
         lastKnownCaret,
+        documentVersionRef.current,
       ),
     );
     if (settled) {
@@ -952,7 +1002,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         if (!holdsFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
         if (extraTag) $addUpdateTag(extraTag);
         try {
-          $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
+          $applyUpdate(opsFromHost(ops, viewOptions), viewOptions, nodeOptions, stableLogger);
         } catch (error) {
           // Lexical discards a throwing update but keeps its `onUpdate` for the next commit that
           // lands - the user's next edit - so end the signal here and make that callback a no-op,
@@ -981,7 +1031,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           unregisterTagRelease?.();
           if (!holdsFocus) clearStaleDomSelection(editor);
           const editorState = editor.getEditorState();
-          const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
+          const newUsj = editorUsjAdaptor.deserializeEditorState(
+            editorState,
+            viewOptions,
+            documentVersionRef.current,
+          );
           if (!newUsj) return;
           const isEdited = !deepEqual(editedUsjRef.current, newUsj);
           if (isEdited) editedUsjRef.current = newUsj;
@@ -1126,6 +1180,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         deepEqual(editedUsjRef.current, incomingUsj) || deepEqual(readSettledUsj(), incomingUsj);
       if (options?.force || !isAlreadyHeld) {
         editedUsjRef.current = incomingUsj;
+        documentVersionRef.current = incomingUsj.version || USJ_VERSION;
         // The loaded tree is the outgoing document until the reload commits, so neither a stale
         // flag nor a memoized read of that tree may overwrite or outrank the incoming document.
         isEditedUsjStaleRef.current = false;
@@ -1263,14 +1318,25 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         return;
       }
 
+      // The text each callback reports is the annotation's display text, so a stored no-break space
+      // is still the editor's internal stand-in there; the host is given U+00A0. Keep the
+      // `viewOptions` of this call, not the latest: a view-option change reloads the document and
+      // drops its annotations, so the text a removal then reports is spelled the old way.
+      const hostText = (text: string) => toUsfmNbspSpelling(text, viewOptions);
       annotationRef.current?.setAnnotation(
         live,
         externalTypedMarkType(type),
         id,
-        onClick,
-        onRemove,
-        onMouseEnter,
-        onMouseLeave,
+        onClick &&
+          ((event, markType, markId, text) => onClick(event, markType, markId, hostText(text))),
+        onRemove &&
+          ((markType, markId, cause, text) => onRemove(markType, markId, cause, hostText(text))),
+        onMouseEnter &&
+          ((event, markType, markId, text) =>
+            onMouseEnter(event, markType, markId, hostText(text))),
+        onMouseLeave &&
+          ((event, markType, markId, text) =>
+            onMouseLeave(event, markType, markId, hostText(text))),
       );
     },
     removeAnnotation(type, id) {
@@ -1725,7 +1791,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
             if (!noteNode) return undefined;
 
-            return $getParticularNodeOps(noteNode);
+            return opsForHost($getParticularNodeOps(noteNode), viewOptions);
           })
         : undefined;
     },
@@ -1734,7 +1800,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       return editor
         ? readLatest(editor, () => {
             const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
-            return noteNode ? $getOpsAfterNote(noteNode) : undefined;
+            return noteNode ? opsForHost($getOpsAfterNote(noteNode), viewOptions) : undefined;
           })
         : undefined;
     },
@@ -1745,18 +1811,19 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
             if (!noteNode) return undefined;
             const notePosition = $getOTPositionOfNode(noteNode, "apply");
-            return { ops: $getOpsAfterNote(noteNode), notePosition };
+            // Measured on the nodes rather than the ops: the ops leave out marker glyphs and
+            // display runs that the delete has to remove too.
+            const length = noteNode
+              .getNextSiblings()
+              .reduce((total, node) => total + $getApplyLength(node), 0);
+            return { ops: $getOpsAfterNote(noteNode), notePosition, length };
           })
         : undefined;
       if (!found) return undefined;
-      const { ops, notePosition } = found;
+      const { ops, notePosition, length } = found;
       if (ops.length === 0 || notePosition === undefined) return ops;
-      const length = ops.reduce(
-        (total, op) => total + (typeof op.insert === "string" ? op.insert.length : 1),
-        0,
-      );
       applyOps([{ retain: notePosition + 1 }, { delete: length }], "remote", HISTORY_MERGE_TAG);
-      return ops;
+      return opsForHost(ops, viewOptions);
     },
     getNoteIndex(noteKey) {
       const editor = editorRef.current;
@@ -1843,7 +1910,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       const inputs = commitInputsRef.current;
       const loaded =
         !inputs.isBlockVerse &&
-        editorUsjAdaptor.deserializeEditorState(editorState, inputs.viewOptions);
+        editorUsjAdaptor.deserializeEditorState(
+          editorState,
+          inputs.viewOptions,
+          documentVersionRef.current,
+        );
       if (loaded) editedUsjRef.current = loaded;
       lastNotifiedUsjRef.current = editedUsjRef.current;
       return;
@@ -1887,7 +1958,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     // into a new paragraph node, so the one dirty leaf reads the same, the delta is a lone retain
     // (or nothing, at the document's start), and only a fresh serialization shows the new marker.
     if (!isSkippedForOps) {
-      const treeUsj = editorUsjAdaptor.deserializeEditorState(editorState, inputs.viewOptions);
+      const treeUsj = editorUsjAdaptor.deserializeEditorState(
+        editorState,
+        inputs.viewOptions,
+        documentVersionRef.current,
+      );
       if (treeUsj) editedUsjRef.current = treeUsj;
     }
 
@@ -1914,7 +1989,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       opsNodeKey && !payload.prevEditorState.read(() => $getNodeByKey(opsNodeKey))
         ? opsNodeKey
         : undefined;
-    inputs.onUsjChange(settled, ops, "local", insertedNodeKey);
+    inputs.onUsjChange(settled, opsForHost(ops, inputs.viewOptions), "local", insertedNodeKey);
   }, []);
 
   const handleStateChange = useCallback(
@@ -1933,6 +2008,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       {/* First among the critical-priority key handlers, so each of them sees the caret the user
           can see. */}
       <KeyDownCaretSyncPlugin />
+      {/* Ahead of every plugin with a critical-priority paste or text-insertion handler, so none
+          of them takes in a U+FEFF this drops. */}
+      <InvisibleCharactersPlugin viewOptions={viewOptions} />
       <div className="editor-container">
         {hasExternalUI ? (
           <StateChangePlugin onStateChange={handleStateChange} />
@@ -2020,6 +2098,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <EmptyNoteCaretGuardPlugin />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
+          {/* Enter has no meaning inside a note outside Standard view (its `\fp` break is
+              MarkerEditPlugin's); left alone it splits the note's paragraph and strands the caret.
+              Out of alphabetical order on purpose: HiddenContentDeleteGuardPlugin and
+              NoteShellCaretGuardPlugin also take INSERT_PARAGRAPH and INSERT_LINE_BREAK at
+              CRITICAL, and handlers of one priority run in the order they were registered, so
+              mounting this first makes Enter in a note do nothing before either acts on it (the
+              hidden-content guard would otherwise ask the host about a removal that never
+              happens). */}
+          <NoteEnterGuardPlugin isEnabled={viewOptions?.markerMode !== "editable"} />
           <HiddenContentDeleteGuardPlugin
             isEnabled={viewOptions?.markerMode !== "editable"}
             structureProtectionMode={structureProtectionMode}
@@ -2027,6 +2114,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             onHiddenContentDelete={onHiddenContentDelete}
             logger={stableLogger}
           />
+          {viewOptions?.markerMode === "hidden" && <InlineRangeEditPlugin />}
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects
               depend on it, so a host handing over a fresh-but-equivalent logger object each
               render would re-register their command listeners at the END of Lexical's
