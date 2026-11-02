@@ -367,8 +367,11 @@ refused. The public surface grew substantially; nothing was removed.
   and every pasted note's `\cat`. No paste or drop there now inserts a book (`\id`) or chapter line,
   whether it comes from the node copy, html or, under `"protected"` structure, the sanitizer (which
   had put the book line's code and title into the paragraph); a cut, and a paste over a selection,
-  keep each book and chapter line the selection runs across and remove the rest. So Select All,
-  cut, then paste back restores the document exactly. Delete, Backspace and typing over such a
+  keep each book and chapter line the selection runs across and remove the rest. In chapter 1 a
+  copy's front matter (`\h`, `\mt1`, an introduction) goes in before the chapter line and its
+  Scripture text after it, and a paste with no front matter (plain text, another program's html)
+  goes after the chapter line. So Select All, cut, then paste back restores the document exactly,
+  front matter included, and a paste over Select All of its own copy changes nothing. Delete, Backspace and typing over such a
   selection are unchanged. Standard view is unchanged.
 - **A copy from the block-verse layout pastes as normal paragraphs.** The text grid's aligned column
   cuts a paragraph into one fragment per verse for its rows, and its node copy carried those
