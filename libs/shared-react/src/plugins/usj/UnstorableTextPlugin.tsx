@@ -1,4 +1,5 @@
 import {
+  $insertBeforeChapterLine,
   $removeBookAndChapterLines,
   $removeTextKeepingBookAndChapterLines,
   $selectionSpansBookOrChapterLine,
@@ -204,8 +205,12 @@ function joinLines(text: string): string {
  *
  * No paste or drop inserts a book (`\id`) or chapter line, from a node copy or from html
  * ({@link $removeBookAndChapterLines}): the chapter document has its own, and a copy of Select All
- * carries both. A paste over a selection that runs across one keeps it, and replaces the rest of the
- * selection ({@link $removeTextKeepingBookAndChapterLines}), whichever flavor it inserts.
+ * carries both. What such a copy held before its chapter line, chapter 1's front matter, goes in
+ * before the document's chapter line ({@link $insertBeforeChapterLine}), and the rest at the caret.
+ * A paste over a selection that runs across a book or chapter line keeps it, and replaces the rest
+ * of the selection ({@link $removeTextKeepingBookAndChapterLines}), whichever flavor it inserts;
+ * what has no front matter of its own (plain text, another program's html) goes after the chapter
+ * line.
  *
  * Typing a `\` is refused, and so is typing a `/` that would touch a `/` beside it (over a
  * selection, one outside it); a lone `/` goes in. A keystroke is refused at its `keydown`
@@ -557,7 +562,7 @@ export function UnstorableTextPlugin({
       register(
         SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
         ({ nodes, selection }) => {
-          const isLineRemoved = $removeBookAndChapterLines(nodes);
+          const { isRemoved: isLineRemoved, beforeChapter } = $removeBookAndChapterLines(nodes);
           const removed = $filterUnstorablePastedNodes(
             nodes,
             selection,
@@ -571,9 +576,16 @@ export function UnstorableTextPlugin({
             $insertsNothing(nodes)
           )
             return true;
+          if (!$isRangeSelection(selection)) return false;
           // Lexical goes on to insert over this same selection, which is collapsed by then.
-          if ($isRangeSelection(selection) && $selectionSpansBookOrChapterLine(selection))
+          if ($selectionSpansBookOrChapterLine(selection))
             $removeTextKeepingBookAndChapterLines(selection);
+          // A copy's front matter goes before the chapter line, and Lexical puts the rest in.
+          const frontMatter = beforeChapter.filter((node) => nodes.includes(node));
+          if ($insertBeforeChapterLine(frontMatter, selection)) {
+            frontMatter.forEach((node) => nodes.splice(nodes.indexOf(node), 1));
+            if (nodes.length === 0) return true;
+          }
           return false;
         },
         // Critical, so a handler that does insert the nodes cannot insert them unfiltered.

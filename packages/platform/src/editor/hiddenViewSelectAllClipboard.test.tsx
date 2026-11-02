@@ -1,7 +1,9 @@
 /**
  * Select All in a hidden-marker view takes in the book (`\id`) line and the chapter line, which USFM
  * allows once each per chapter document. A copy of it carries both, and a paste or cut must neither
- * add a second one nor remove the ones there.
+ * add a second one nor remove the ones there. Chapter 1 also shows the lines between them (`\h`,
+ * `\mt1`, an introduction), which a paste must keep before the chapter line and the Scripture text
+ * after it, so every case runs on a chapter with that front matter and on one without.
  *
  * Every paste here is what an async clipboard read delivers (Ctrl+V, the context menu's Paste):
  * html and plain text alone, the node copy riding an attribute of the html.
@@ -41,7 +43,17 @@ const SECOND = {
   content: [{ type: "verse", marker: "v", number: "2" }, "second line"],
 };
 
-const usj: Usj = { type: "USJ", version: "3.1", content: [BOOK, CHAPTER, FIRST, SECOND] };
+/** Chapter 1's lines between the book line and the chapter line. */
+const FRONT_MATTER: MarkerContent[] = [
+  { type: "para", marker: "h", content: ["Genesis"] },
+  { type: "para", marker: "mt1", content: ["The Book of Genesis"] },
+  { type: "para", marker: "ip", content: ["An introduction to the book."] },
+];
+
+const CHAPTERS: { name: string; front: MarkerContent[] }[] = [
+  { name: "a chapter with no front matter", front: [] },
+  { name: "chapter 1 with its front matter", front: FRONT_MATTER },
+];
 
 function clipboardEvent(store: Map<string, string>): ClipboardEvent {
   const event = new ClipboardEvent("copy", { bubbles: true, cancelable: true });
@@ -127,161 +139,178 @@ function content({ ref }: MountedEditor): MarkerContent[] {
 
 const UNLOCKED: StructureProtectionMode[] = ["off", "guarded"];
 
-describe.each(["paragraph-structure", "formatted"])("Select All in the %s view", (viewName) => {
-  describe.each(UNLOCKED)("structure %s", (mode) => {
-    let mounted: MountedEditor;
-    beforeEach(async () => {
-      mounted = await mountInView(usj, editorView(viewName), { structureProtectionMode: mode });
-    });
-    afterEach(() => mounted.unmount());
+describe.each(CHAPTERS)("Select All in $name", ({ front }) => {
+  const usj: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [BOOK, ...front, CHAPTER, FIRST, SECOND],
+  };
+  /** The index of the document's chapter line. */
+  const chapterAt = 1 + front.length;
 
-    it("copies a node copy, whose paste at the end adds no second book or chapter line", async () => {
-      await selectAll(mounted);
-      const store = await copyOrCut(mounted, COPY_COMMAND);
-      await caretAtEnd(mounted);
+  describe.each(["paragraph-structure", "formatted"])("in the %s view", (viewName) => {
+    describe.each(UNLOCKED)("structure %s", (mode) => {
+      let mounted: MountedEditor;
+      beforeEach(async () => {
+        mounted = await mountInView(usj, editorView(viewName), { structureProtectionMode: mode });
+      });
+      afterEach(() => mounted.unmount());
 
-      await ctrlV(mounted, store);
+      it("copies a node copy, whose paste at the end adds no second book or chapter line", async () => {
+        await selectAll(mounted);
+        const store = await copyOrCut(mounted, COPY_COMMAND);
+        await caretAtEnd(mounted);
 
-      // The first pasted paragraph joins the one at the caret, and the editor puts its own space
-      // before the verse that now follows text.
-      expect(content(mounted)).toEqual([
-        BOOK,
-        CHAPTER,
-        FIRST,
-        { ...SECOND, content: [SECOND.content[0], "second line ", ...FIRST.content] },
-        SECOND,
-      ]);
-    });
+        await ctrlV(mounted, store);
 
-    it("copies a node copy, in the flavor and in the html", async () => {
-      await selectAll(mounted);
+        // The copy's front matter goes before the chapter line, after the document's own; the first
+        // pasted Scripture paragraph joins the one at the caret, and the editor puts its own space
+        // before the verse that now follows text.
+        expect(content(mounted)).toEqual([
+          BOOK,
+          ...front,
+          ...front,
+          CHAPTER,
+          FIRST,
+          { ...SECOND, content: [SECOND.content[0], "second line ", ...FIRST.content] },
+          SECOND,
+        ]);
+      });
 
-      const store = await copyOrCut(mounted, COPY_COMMAND);
+      it("copies a node copy, in the flavor and in the html", async () => {
+        await selectAll(mounted);
 
-      expect(store.get("application/x-lexical-editor")).toContain("immutable-chapter");
-      expect(store.get("text/html")).toContain(NODE_COPY_HTML_ATTRIBUTE);
-    });
+        const store = await copyOrCut(mounted, COPY_COMMAND);
 
-    it("pastes the html alone at the end with no second book or chapter line", async () => {
-      await selectAll(mounted);
-      const store = await copyOrCut(mounted, COPY_COMMAND);
-      await caretAtEnd(mounted);
+        expect(store.get("application/x-lexical-editor")).toContain("immutable-chapter");
+        expect(store.get("text/html")).toContain(NODE_COPY_HTML_ATTRIBUTE);
+      });
 
-      await pasteFlavors(
-        mounted,
-        new Map([["text/html", withoutNodeCopyAttribute(store.get("text/html") ?? "")]]),
-      );
+      it("pastes the html alone at the end with no second book or chapter line", async () => {
+        await selectAll(mounted);
+        const store = await copyOrCut(mounted, COPY_COMMAND);
+        await caretAtEnd(mounted);
 
-      const after = content(mounted);
-      expect(after.slice(0, 3)).toEqual([BOOK, CHAPTER, FIRST]);
-      const lines = after.flatMap((item) =>
-        typeof item !== "string" && (item.type !== "para" || item.marker === "id") ? [item] : [],
-      );
-      expect(lines).toEqual([BOOK, CHAPTER]);
-      expect(JSON.stringify(after)).not.toMatch(/Genesis title.*Genesis title/);
-      expect(after).toHaveLength(5);
-    });
+        await pasteFlavors(
+          mounted,
+          new Map([["text/html", withoutNodeCopyAttribute(store.get("text/html") ?? "")]]),
+        );
 
-    it("pastes plain text over Select All after the book and chapter lines", async () => {
-      await selectAll(mounted);
+        const after = content(mounted);
+        expect(after.slice(0, chapterAt)).toEqual([BOOK, ...front]);
+        expect(after.slice(chapterAt + front.length, chapterAt + front.length + 2)).toEqual([
+          CHAPTER,
+          FIRST,
+        ]);
+        const lines = after.flatMap((item) =>
+          typeof item !== "string" && (item.type !== "para" || item.marker === "id") ? [item] : [],
+        );
+        expect(lines).toEqual([BOOK, CHAPTER]);
+        expect(JSON.stringify(after)).not.toMatch(/Genesis title.*Genesis title/);
+        expect(after).toHaveLength(5 + 2 * front.length);
+      });
 
-      await pasteFlavors(mounted, new Map([["text/plain", "replacement"]]));
+      it("pastes plain text over Select All in place of everything after the chapter line", async () => {
+        await selectAll(mounted);
 
-      expect(content(mounted)).toEqual([
-        BOOK,
-        CHAPTER,
-        { type: "para", marker: "p", content: ["replacement"] },
-      ]);
-    });
+        await pasteFlavors(mounted, new Map([["text/plain", "replacement"]]));
 
-    it("pastes over a selection of only the book and chapter lines at the next paragraph's start", async () => {
-      await act(async () =>
-        mounted.lexical.update(
-          () => {
-            const title = $getRoot()
-              .getAllTextNodes()
-              .find((node) => node.getTextContent().includes("Genesis title"));
-            if (!title) throw new Error("no book title text");
-            const selection = $createRangeSelection();
-            selection.anchor.set(title.getKey(), 0, "text");
-            selection.focus.set($getRoot().getKey(), 2, "element");
-            $setSelection(selection);
-          },
-          { discrete: true },
-        ),
-      );
+        expect(content(mounted)).toEqual([
+          BOOK,
+          CHAPTER,
+          { type: "para", marker: "p", content: ["replacement"] },
+        ]);
+      });
 
-      await pasteFlavors(mounted, new Map([["text/plain", "pasted "]]));
+      it("pastes over a selection from the book line to the chapter line at the next paragraph's start", async () => {
+        await act(async () =>
+          mounted.lexical.update(
+            () => {
+              const title = $getRoot()
+                .getAllTextNodes()
+                .find((node) => node.getTextContent().includes("Genesis title"));
+              if (!title) throw new Error("no book title text");
+              const selection = $createRangeSelection();
+              selection.anchor.set(title.getKey(), 0, "text");
+              selection.focus.set($getRoot().getKey(), chapterAt + 1, "element");
+              $setSelection(selection);
+            },
+            { discrete: true },
+          ),
+        );
 
-      expect(content(mounted)).toEqual([
-        BOOK,
-        CHAPTER,
-        { ...FIRST, content: [FIRST.content[0], "pasted first ", ...FIRST.content.slice(2)] },
-        SECOND,
-      ]);
-    });
+        await pasteFlavors(mounted, new Map([["text/plain", "pasted "]]));
 
-    it("pasted over the same Select All, leaves the document as it was", async () => {
-      await selectAll(mounted);
-      const store = await copyOrCut(mounted, COPY_COMMAND);
-      await selectAll(mounted);
+        expect(content(mounted)).toEqual([
+          BOOK,
+          CHAPTER,
+          { ...FIRST, content: [FIRST.content[0], "pasted first ", ...FIRST.content.slice(2)] },
+          SECOND,
+        ]);
+      });
 
-      await ctrlV(mounted, store);
+      it("pasted over the same Select All, leaves the document as it was", async () => {
+        await selectAll(mounted);
+        const store = await copyOrCut(mounted, COPY_COMMAND);
+        await selectAll(mounted);
 
-      expect(content(mounted)).toEqual(usj.content);
-    });
+        await ctrlV(mounted, store);
 
-    it("cut keeps the book and chapter lines, and its paste back restores the document", async () => {
-      await selectAll(mounted);
-      const store = await copyOrCut(mounted, CUT_COMMAND);
+        expect(content(mounted)).toEqual(usj.content);
+      });
 
-      expect(content(mounted).slice(0, 2)).toEqual([BOOK, CHAPTER]);
-      expect(JSON.stringify(content(mounted).slice(2))).not.toMatch(/first|second/);
+      it("cut keeps the book and chapter lines, and its paste back restores the document", async () => {
+        await selectAll(mounted);
+        const store = await copyOrCut(mounted, CUT_COMMAND);
 
-      await ctrlV(mounted, store);
+        expect(content(mounted).slice(0, 2)).toEqual([BOOK, CHAPTER]);
+        expect(JSON.stringify(content(mounted).slice(2))).not.toMatch(/first|second|Genesis/);
 
-      expect(content(mounted)).toEqual(usj.content);
-    });
-  });
+        await ctrlV(mounted, store);
 
-  describe("structure protected", () => {
-    let mounted: MountedEditor;
-    beforeEach(async () => {
-      mounted = await mountInView(usj, editorView(viewName), {
-        structureProtectionMode: "protected",
+        expect(content(mounted)).toEqual(usj.content);
       });
     });
-    afterEach(() => mounted.unmount());
 
-    it("refuses a paste over the selection", async () => {
-      await selectAll(mounted);
-      const store = await copyOrCut(mounted, COPY_COMMAND);
-      await selectAll(mounted);
+    describe("structure protected", () => {
+      let mounted: MountedEditor;
+      beforeEach(async () => {
+        mounted = await mountInView(usj, editorView(viewName), {
+          structureProtectionMode: "protected",
+        });
+      });
+      afterEach(() => mounted.unmount());
 
-      await ctrlV(mounted, store);
+      it("refuses a paste over the selection", async () => {
+        await selectAll(mounted);
+        const store = await copyOrCut(mounted, COPY_COMMAND);
+        await selectAll(mounted);
 
-      expect(content(mounted)).toEqual(usj.content);
-    });
+        await ctrlV(mounted, store);
 
-    it("refuses the cut", async () => {
-      await selectAll(mounted);
+        expect(content(mounted)).toEqual(usj.content);
+      });
 
-      await copyOrCut(mounted, CUT_COMMAND);
+      it("refuses the cut", async () => {
+        await selectAll(mounted);
 
-      expect(content(mounted)).toEqual(usj.content);
-    });
+        await copyOrCut(mounted, CUT_COMMAND);
 
-    it("pastes a copy at the end flattened, with no book or chapter line", async () => {
-      await selectAll(mounted);
-      const store = await copyOrCut(mounted, COPY_COMMAND);
-      await caretAtEnd(mounted);
+        expect(content(mounted)).toEqual(usj.content);
+      });
 
-      await ctrlV(mounted, store);
+      it("pastes a copy at the end flattened, with no book or chapter line", async () => {
+        await selectAll(mounted);
+        const store = await copyOrCut(mounted, COPY_COMMAND);
+        await caretAtEnd(mounted);
 
-      const after = content(mounted);
-      expect(after.slice(0, 3)).toEqual([BOOK, CHAPTER, FIRST]);
-      expect(after).toHaveLength(4);
-      expect(JSON.stringify(after)).not.toMatch(/Genesis title.*Genesis title/);
+        await ctrlV(mounted, store);
+
+        const after = content(mounted);
+        expect(after.slice(0, chapterAt + 2)).toEqual([BOOK, ...front, CHAPTER, FIRST]);
+        expect(after).toHaveLength(chapterAt + 3);
+        expect(JSON.stringify(after)).not.toMatch(/Genesis title.*Genesis title/);
+      });
     });
   });
 });
