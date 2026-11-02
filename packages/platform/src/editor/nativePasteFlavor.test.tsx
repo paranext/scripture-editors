@@ -5,10 +5,10 @@
  * plain text alone; a native paste event also carries the editor's node copy
  * (`application/x-lexical-editor`), which those views leave unread.
  *
- * The cases are PT-4872's 2, 4, 5 and 8, each of which failed only on that node copy: a throw, a
- * paste landing outside a note, and a screen that did not match the save. Each runs the same copy
- * and paste twice, in editors of their own, once pasting every flavor and once the html and plain
- * text, and compares the two.
+ * The cases are PT-4872's 2, 4, 5 and 8, each of which goes wrong only when that node copy is read:
+ * a throw, a paste landing outside a note, and a screen that does not match the save. Each runs the
+ * same copy and paste twice, in editors of their own, once pasting every flavor and once the html
+ * and plain text, and compares the two.
  */
 import { depart, $screenBytes } from "./markerEdit/pendingSettledOracle.test-helpers";
 import { copyEvent, pasteEvent } from "./markerEdit/markerEdit.test-helpers";
