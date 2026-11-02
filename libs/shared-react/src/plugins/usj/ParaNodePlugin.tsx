@@ -35,7 +35,9 @@ function useParaNode(editor: LexicalEditor) {
  * middle of a paragraph. Update ParaNode to not contain text if it is a 'b' marker (blank line):
  * text typed into an empty one is removed. However, if the 'b' ParaNode already contained text, it
  * can be modified (backwards compatible with PT9 & USFM v3.0). A join of an empty one with the
- * paragraph after it keeps that paragraph: its marker replaces the blank line's.
+ * paragraph after it keeps that paragraph: its marker replaces the blank line's. An applied update
+ * that removes that paragraph without moving any of its content into the blank line leaves the
+ * blank line's marker alone.
  *
  * The leading space is looked for past a gutter marker glyph, so the paragraph-structure view saves
  * the break as the others do: in the gutter view another ParaNode transform gives a new paragraph
@@ -81,7 +83,12 @@ function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
   // the way its HTML editor joins two blocks, keeping the second block.
   const next = nextKey === undefined ? undefined : ($getNodeByKey(nextKey) ?? undefined);
   if (nextKey !== undefined && (!next || !next.isAttached())) {
-    if (nextPara) {
+    // An applied update that removes the paragraph without bringing any content into this one
+    // is not a join: the blank line keeps its marker. Every other removal is the user's own edit
+    // (Backspace, Delete, or a range typed over), and a join of an empty paragraph moves nothing.
+    const holdsContent = node.getChildren().some((child) => !$isVisibleMarkerNode(child));
+    const isJoin = holdsContent || !getApplyingUpdateSource(editor);
+    if (isJoin && nextPara) {
       $syncParaMarkerGlyph(node, nextPara.marker);
       node.setUnknownAttributes(nextPara.unknownAttributes);
     }

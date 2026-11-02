@@ -1,6 +1,6 @@
 import { ParaNodePlugin } from "./ParaNodePlugin";
 import { baseTestEnvironment, pressEnterAtSelection, sutUpdate } from "./react-test.utils";
-import { $getRoot, $createTextNode, TextNode } from "lexical";
+import { $getRoot, $createTextNode, LexicalEditor, TextNode } from "lexical";
 import {
   $createGutterMarkerNode,
   $createImmutableChapterNode,
@@ -8,6 +8,7 @@ import {
   $isImmutableChapterNode,
   $isParaNode,
   markApplyingUpdate,
+  ParaNode,
 } from "shared";
 
 let firstVerseTextNode: TextNode;
@@ -99,6 +100,84 @@ describe("ParaNodePlugin", () => {
 
     editor.getEditorState().read(() => {
       expect($getRoot().getLastChild()?.getTextContent()).toBe(" text");
+    });
+  });
+
+  describe("a blank line followed by a paragraph that goes away", () => {
+    let blank: ParaNode;
+    let following: ParaNode;
+    let content: TextNode;
+
+    function $blankLineThenParagraphs() {
+      content = $createTextNode("more");
+      blank = $createParaNode("b");
+      following = $createParaNode("q1");
+      $getRoot().append(
+        $createImmutableChapterNode("1"),
+        blank.append($createGutterMarkerNode("\\b ")),
+        following.append($createGutterMarkerNode("\\q1 "), content),
+        $createParaNode("p").append($createTextNode("last")),
+      );
+    }
+
+    async function markers(editor: LexicalEditor): Promise<string[]> {
+      return editor.getEditorState().read(() =>
+        $getRoot()
+          .getChildren()
+          .filter($isParaNode)
+          .map((para) => para.getMarker()),
+      );
+    }
+
+    it("keeps the blank line when an applied update removes a paragraph with content", async () => {
+      const { editor } = await testEnvironment($blankLineThenParagraphs);
+
+      await sutUpdate(editor, () => {
+        markApplyingUpdate(editor, "remote");
+        following.remove();
+      });
+      markApplyingUpdate(editor, undefined);
+
+      expect(await markers(editor)).toEqual(["b", "p"]);
+    });
+
+    it("keeps the blank line when an applied update removes an empty paragraph", async () => {
+      const { editor } = await testEnvironment(() => {
+        $blankLineThenParagraphs();
+        content.remove();
+      });
+
+      await sutUpdate(editor, () => {
+        markApplyingUpdate(editor, "remote");
+        following.remove();
+      });
+      markApplyingUpdate(editor, undefined);
+
+      expect(await markers(editor)).toEqual(["b", "p"]);
+    });
+
+    it("takes the paragraph's marker when its content moves into the blank line", async () => {
+      const { editor } = await testEnvironment($blankLineThenParagraphs);
+
+      await sutUpdate(editor, () => {
+        blank.append(content);
+        following.remove();
+      });
+
+      expect(await markers(editor)).toEqual(["q1", "p"]);
+    });
+
+    it("takes the paragraph's marker when an empty paragraph is joined by an edit", async () => {
+      const { editor } = await testEnvironment(() => {
+        $blankLineThenParagraphs();
+        content.remove();
+      });
+
+      await sutUpdate(editor, () => {
+        following.remove();
+      });
+
+      expect(await markers(editor)).toEqual(["q1", "p"]);
     });
   });
 });
