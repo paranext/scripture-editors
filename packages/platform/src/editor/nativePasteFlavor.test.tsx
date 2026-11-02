@@ -130,8 +130,8 @@ async function paste(
 
 interface PasteCase {
   name: string;
-  /** The views it runs in: the paragraph-marker cases need a paragraph's marker on screen, which
-   * the footnotes pane's row editor does not show. */
+  /** The views it runs in: where PT-4872 found it, and the footnotes pane's row editor for the note
+   * cases. That editor shows no paragraph marker, which the paragraph-marker cases start in. */
   views: string[];
   usj: Usj;
   /** The copy (or cut) and where its paste goes: run in a fresh editor. */
@@ -174,7 +174,7 @@ const CASES: PasteCase[] = [
   },
   {
     name: "4: a footnote's content pasted over its own content marker's name",
-    views: ["standard", "footnotes-pane-row"],
+    views: ["standard+expandedNotes", "footnotes-pane-row"],
     usj: usjOf({
       type: "para",
       marker: "p",
@@ -192,7 +192,7 @@ const CASES: PasteCase[] = [
       await select(
         mounted,
         { text: "\\ft", offset: 0, exact: false },
-        { text: "note text", offset: 9, exact: false },
+        { text: "note text", offset: 10, exact: false },
       );
       const flavors = await copyOrCut(mounted, COPY_COMMAND);
       expect(flavors[LEXICAL_FLAVOR]).toBeTruthy();
@@ -255,7 +255,7 @@ async function outcome(
   }
 }
 
-describe.each(["standard", "footnotes-pane-row"])(
+describe.each(["standard", "standard+expandedNotes", "footnotes-pane-row"])(
   "a native paste in the %s view, against Ctrl+V",
   (viewName) => {
     it.each(CASES.filter(({ views }) => views.includes(viewName)))("$name", async (pasteCase) => {
