@@ -1,4 +1,9 @@
 import {
+  $removeBookAndChapterLines,
+  $removeTextKeepingBookAndChapterLines,
+  $selectionSpansBookOrChapterLine,
+} from "./bookAndChapterLines.utils";
+import {
   $nodesFromNodeCopy,
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   nodeCopyIn,
@@ -198,6 +203,11 @@ function joinLines(text: string): string {
  * parsed, as protected structure's sanitizer drops them: a glyph is presentation, and parsed back
  * it would be marker text. A node copy is not touched.
  *
+ * No paste or drop inserts a book (`\id`) or chapter line, from a node copy or from html
+ * ({@link $removeBookAndChapterLines}): the chapter document has its own, and a copy of Select All
+ * carries both. A paste over a selection that runs across one keeps it, and replaces the rest of the
+ * selection ({@link $removeTextKeepingBookAndChapterLines}), whichever flavor it inserts.
+ *
  * Typing a `\` is refused, and so is typing a `/` that would touch a `/` beside it (over a
  * selection, one outside it); a lone `/` goes in. A keystroke is refused at its `keydown`
  * (`KEY_DOWN_COMMAND`; a shortcut chord such as Ctrl+/ is let through), so the browser never
@@ -347,11 +357,13 @@ export function UnstorableTextPlugin({
       const text = data.getData("text/plain") || data.getData("text/uri-list");
       if (!text) return false;
       const joinsLines = structureProtectionModeRef.current === "protected" && /[\r\n]/.test(text);
+      const keepsLines = $selectionSpansBookOrChapterLine(selection);
       const { before, after } = $textAroundSelection(selection);
       const filtered = removeUnstorableText(joinsLines ? joinLines(text) : text, before, after);
-      if (filtered.removed.length === 0 && !joinsLines) return false;
+      if (filtered.removed.length === 0 && !joinsLines && !keepsLines) return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);
       if (filtered.text) {
+        if (keepsLines) $removeTextKeepingBookAndChapterLines(selection);
         // Lexical reads only `getData` from the transfer, and finds no flavor here but plain text,
         // so its own plain-text insertion runs on the filtered text; a real `DataTransfer` cannot
         // be constructed everywhere this runs.
@@ -546,6 +558,7 @@ export function UnstorableTextPlugin({
       register(
         SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
         ({ nodes, selection }) => {
+          const isLineRemoved = $removeBookAndChapterLines(nodes);
           const removed = $filterUnstorablePastedNodes(
             nodes,
             selection,
@@ -554,7 +567,15 @@ export function UnstorableTextPlugin({
             loggerRef.current,
           );
           // Claimed only when nothing is left: inserting nothing over a selection would delete it.
-          return (removed.length > 0 || isInsertingWithoutGlyphs) && $insertsNothing(nodes);
+          if (
+            (removed.length > 0 || isLineRemoved || isInsertingWithoutGlyphs) &&
+            $insertsNothing(nodes)
+          )
+            return true;
+          // Lexical goes on to insert over this same selection, which is collapsed by then.
+          if ($isRangeSelection(selection) && $selectionSpansBookOrChapterLine(selection))
+            $removeTextKeepingBookAndChapterLines(selection);
+          return false;
         },
         // Critical, so a handler that does insert the nodes cannot insert them unfiltered.
         COMMAND_PRIORITY_CRITICAL,

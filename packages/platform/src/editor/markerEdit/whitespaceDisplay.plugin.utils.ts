@@ -1441,6 +1441,9 @@ export function $handleCopyForStandardView(
  * `copyLimit` code units of the plain text are written, with nothing removed. While it is set, a
  * browser copy whose page selection runs outside the editor is declined, for the page guard.
  *
+ * `$removeRange` is how a cut removes the range, `RangeSelection.removeText` unless a view needs
+ * otherwise.
+ *
  * Mutating when `isCut`: call inside `editor.update()` — in practice, from a `COPY_COMMAND` or
  * `CUT_COMMAND` handler.
  */
@@ -1451,6 +1454,7 @@ export function $writeCopyPayload(
   data: LexicalClipboardData,
   isCut: boolean,
   copyLimit?: number,
+  $removeRange: (range: RangeSelection) => void = (range) => range.removeText(),
 ): boolean {
   const limit = normalizeCopyLimit(copyLimit);
   if (limit !== undefined && isCopyFromOutsideEditor(editor, event)) return false;
@@ -1473,7 +1477,7 @@ export function $writeCopyPayload(
     event,
     editor,
     data,
-    isCut && editor.isEditable() ? () => selection.removeText() : undefined,
+    isCut && editor.isEditable() ? () => $removeRange(selection) : undefined,
   );
 }
 

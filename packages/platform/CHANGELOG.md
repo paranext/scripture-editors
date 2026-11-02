@@ -339,8 +339,9 @@ refused. The public surface grew substantially; nothing was removed.
   copy from Standard view pasted into one of them, or one of theirs pasted into Standard view,
   goes in by its html or plain text instead of rebuilding the other view's node shapes. The node
   copy holds no gutter marker glyph, and is not written for a selection with either end inside a
-  construct the view hides (a figure, an optional break, any other unknown construct, or a table)
-  or one that touches a book or chapter line. Where it is written, the copy's `text/html` holds it
+  construct the view hides (a figure, an optional break, any other unknown construct, or a table).
+  A selection across a book or chapter line, Select All among them, carries that line, and no paste
+  in these views inserts one (see Fixed). Where it is written, the copy's `text/html` holds it
   too, in the attribute `data-platform-editor-node-copy` of a `<span>` around the html's own content,
   because reading the clipboard asynchronously returns no custom flavor. That attribute also shows
   a hidden construct's text to anything that reads the html's attributes. What the html shows is
@@ -351,6 +352,16 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- **Select All, then copy, cut or paste, keeps one book line and one chapter line in the views that
+  hide markers.** Under `"off"` and `"guarded"` structure a copy of Select All pasted at the end
+  added a second chapter and the book line's text, so every later save of the chapter failed; a
+  paste over Select All, or a cut and its paste back, lost the chapter line or the book line's text
+  and every pasted note's `\cat`. No paste or drop there now inserts a book (`\id`) or chapter line,
+  whether it comes from the node copy, html or, under `"protected"` structure, the sanitizer (which
+  had put the book line's code and title into the paragraph); a cut, and a paste over a selection,
+  keep each book and chapter line the selection runs across and remove the rest. So Select All,
+  cut, then paste back restores the document exactly. Delete, Backspace and typing over such a
+  selection are unchanged. Standard view is unchanged.
 - **A copy from the block-verse layout pastes as normal paragraphs.** The text grid's aligned column
   cuts a paragraph into one fragment per verse for its rows, and its node copy carried those
   fragments, so a Ctrl+V into paragraph-structure started a paragraph at each verse, moved the space
