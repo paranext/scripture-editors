@@ -2,6 +2,7 @@ export * from "./annotation";
 export * from "./collab";
 
 export * from "./ArrowNavigationPlugin";
+export * from "./bookAndChapterLines.utils";
 export * from "./CharNodePlugin";
 export * from "./clipboard.utils";
 export * from "./ClipboardPlugin";

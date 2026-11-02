@@ -465,7 +465,7 @@ describe("HiddenViewCopyPlugin", () => {
     }
   });
 
-  it("a copy across a chapter line writes no node copy", async () => {
+  it("a copy across a chapter line writes a node copy holding the chapter", async () => {
     const mounted = await mountInView(matthew, editorView("paragraph-structure"));
     try {
       await select(
@@ -475,8 +475,38 @@ describe("HiddenViewCopyPlugin", () => {
       );
       const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
       expect(store.get("text/plain")).toBeTruthy();
-      expect(store.has(LEXICAL_FLAVOR)).toBe(false);
-      expect(store.get("text/html")).not.toContain(NODE_COPY_HTML_ATTRIBUTE);
+      const { namespace, nodes } = nodeCopy(store);
+      expect(namespace).toBe(HIDDEN_VIEW_CLIPBOARD_NAMESPACE);
+      expect(nodes.map((node) => node.type)).toContain("immutable-chapter");
+      expect(store.get("text/html")).toContain(NODE_COPY_HTML_ATTRIBUTE);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it("a cut across a chapter line keeps the chapter line and removes the rest", async () => {
+    const mounted = await mountInView(matthew, editorView("paragraph-structure"));
+    try {
+      const chapters = () =>
+        mounted.ref.current
+          ?.getUsj()
+          ?.content.filter((item) => typeof item !== "string" && item.type === "chapter");
+      const before = chapters();
+      expect(before?.length).toBeGreaterThan(1);
+      await select(
+        mounted.lexical,
+        { text: "He named him Jesus.", offset: -2 },
+        { text: "Now when Jesus was born in Bethlehem", offset: 2 },
+      );
+
+      await dispatchClipboard(mounted.lexical, CUT_COMMAND);
+
+      expect(chapters()).toEqual(before);
+      const text = JSON.stringify(mounted.ref.current?.getUsj());
+      expect(text).toContain("He named him Jesu");
+      expect(text).not.toContain("He named him Jesus.");
+      expect(text).toContain("w when Jesus was born in Bethlehem");
+      expect(text).not.toContain("Now when Jesus was born in Bethlehem");
     } finally {
       mounted.unmount();
     }
