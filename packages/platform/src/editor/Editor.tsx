@@ -36,7 +36,12 @@ import {
   SET_MARKER_SETTLE_SUSPENDED_COMMAND,
 } from "./markerEdit/MarkerEditPlugin";
 import { MarkerValidationPlugin } from "./markerEdit/MarkerValidationPlugin";
-import { opsForHost, opsFromHost, toUsfmNbspSpelling } from "./markerEdit/whitespaceDisplay.utils";
+import {
+  opsForHost,
+  opsFromHost,
+  textBeforeFromDocumentOps,
+  toUsfmNbspSpelling,
+} from "./markerEdit/whitespaceDisplay.utils";
 import { MarkersViewCopyPlugin } from "./MarkersViewCopyPlugin";
 import {
   $settledUsj,
@@ -177,6 +182,7 @@ import {
   EmptyVerseCaretGuardPlugin,
   KeyDownCaretSyncPlugin,
   getDefaultViewOptions,
+  getEditorDelta,
   getInsertedNodeKey,
   getViewClassList,
   HiddenContentDeleteGuardPlugin,
@@ -1002,7 +1008,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         if (!holdsFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
         if (extraTag) $addUpdateTag(extraTag);
         try {
-          $applyUpdate(opsFromHost(ops, viewOptions), viewOptions, nodeOptions, stableLogger);
+          // The document the ops apply to (as this update sees it) is read only if an insert needs
+          // the text before it.
+          const textBefore = textBeforeFromDocumentOps(() => $getParticularNodeOps());
+          $applyUpdate(
+            opsFromHost(ops, viewOptions, textBefore),
+            viewOptions,
+            nodeOptions,
+            stableLogger,
+          );
         } catch (error) {
           // Lexical discards a throwing update but keeps its `onUpdate` for the next commit that
           // lands - the user's next edit - so end the signal here and make that callback a no-op,
@@ -1989,7 +2003,16 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       opsNodeKey && !payload.prevEditorState.read(() => $getNodeByKey(opsNodeKey))
         ? opsNodeKey
         : undefined;
-    inputs.onUsjChange(settled, opsForHost(ops, inputs.viewOptions), "local", insertedNodeKey);
+    inputs.onUsjChange(
+      settled,
+      opsForHost(
+        ops,
+        inputs.viewOptions,
+        textBeforeFromDocumentOps(() => getEditorDelta(editorState).ops),
+      ),
+      "local",
+      insertedNodeKey,
+    );
   }, []);
 
   const handleStateChange = useCallback(

@@ -3,6 +3,7 @@ import {
   displayTextToUsj,
   opsForHost,
   opsFromHost,
+  textBeforeFromDocumentOps,
   toUsfmNbspSpelling,
   usjTextToDisplay,
   usjWithoutControlCharacters,
@@ -191,5 +192,122 @@ describe("opsForHost and opsFromHost", () => {
       expect(opsForHost(ops, { ...formatted, allowInvisibleCharacters })).toBe(ops);
       expect(opsFromHost(ops, { ...formatted, allowInvisibleCharacters })).toBe(ops);
     }
+  });
+});
+
+describe("opsForHost and opsFromHost with the text before an insert", () => {
+  const on = {
+    markerMode: "editable",
+    hasSpacing: true,
+    isFormattedFont: true,
+    allowInvisibleCharacters: true,
+  } as const;
+  const before = (document: string) => (position: number) => document.slice(0, position);
+
+  describe("going out, in the document the ops produced", () => {
+    it("keeps the separator an insert after a retain starts with, after an opening glyph", () => {
+      const document = `In \\nd${NBSP}grace`;
+      expect(opsForHost([{ retain: 6 }, { insert: `${NBSP}grace` }], on, before(document))).toEqual(
+        [{ retain: 6 }, { insert: `${NBSP}grace` }],
+      );
+      expect(opsForHost([{ retain: 6 }, { insert: NBSP }], on, before(document))).toEqual([
+        { retain: 6 },
+        { insert: NBSP },
+      ]);
+    });
+
+    it("sends an NBSP after a closing glyph as a space", () => {
+      const document = `\\nd grace\\nd*${NBSP}of`;
+      expect(opsForHost([{ retain: 13 }, { insert: `${NBSP}of` }], on, before(document))).toEqual([
+        { retain: 13 },
+        { insert: " of" },
+      ]);
+    });
+
+    it("counts inserts and embeds, but not deletes, on the way to an insert", () => {
+      const document = `\\nd\ufffc\\nd${NBSP}b`;
+      const embed = { note: { style: "f", caller: "+", contents: { ops: [] } } };
+      expect(
+        opsForHost(
+          [{ retain: 3 }, { delete: 4 }, { insert: embed }, { retain: 3 }, { insert: `${NBSP}b` }],
+          on,
+          before(document),
+        ),
+      ).toEqual([
+        { retain: 3 },
+        { delete: 4 },
+        { insert: embed },
+        { retain: 3 },
+        { insert: `${NBSP}b` },
+      ]);
+    });
+
+    it("prefers the text insert before an op over the document", () => {
+      expect(opsForHost([{ insert: "\\nd*" }, { insert: NBSP }], on, () => "\\nd")).toEqual([
+        { insert: "\\nd*" },
+        { insert: " " },
+      ]);
+    });
+
+    it("reads the text of a document's ops, an embed counting as one character", () => {
+      const textBefore = textBeforeFromDocumentOps(() => [
+        { insert: "ab" },
+        { insert: { note: {} } },
+        { insert: "c" },
+      ]);
+      expect(textBefore(0)).toBe("");
+      expect(textBefore(3)).toBe("ab\ufffc");
+      expect(textBefore(4)).toBe("ab\ufffcc");
+    });
+
+    it("does not read the document when no NBSP starts the insert", () => {
+      const textBefore = vi.fn(() => "");
+      opsForHost(
+        [{ retain: 3 }, { insert: "grace" }, { retain: 1 }, { insert: " x" }],
+        on,
+        textBefore,
+      );
+      expect(textBefore).not.toHaveBeenCalled();
+    });
+
+    it("keeps a note's contents as they were", () => {
+      const note = (text: string) => ({
+        insert: { note: { style: "f", caller: "+", contents: { ops: [{ insert: text }] } } },
+      });
+      expect(opsForHost([note(`${NBSP}a`)], on, () => "\\fr")).toEqual([note(" a")]);
+    });
+  });
+
+  describe("coming in, in the document before the ops apply", () => {
+    const document = `In \\nd${NBSP}grace\\nd*${NBSP}of`;
+
+    it("does not respell the separator an insert after a retain starts with", () => {
+      expect(opsFromHost([{ retain: 6 }, { insert: `${NBSP}x` }], on, before(document))).toEqual([
+        { retain: 6 },
+        { insert: `${NBSP}x` },
+      ]);
+    });
+
+    it("respells an NBSP after a closing glyph", () => {
+      expect(opsFromHost([{ retain: 16 }, { insert: `${NBSP}x` }], on, before(document))).toEqual([
+        { retain: 16 },
+        { insert: `${NBSP_STAND_IN}x` },
+      ]);
+    });
+
+    it("reads the text before the deleted range for an insert after a delete", () => {
+      expect(
+        opsFromHost([{ retain: 6 }, { delete: 5 }, { insert: `${NBSP}x` }], on, before(document)),
+      ).toEqual([{ retain: 6 }, { delete: 5 }, { insert: `${NBSP}x` }]);
+      expect(
+        opsFromHost([{ retain: 16 }, { delete: 2 }, { insert: `${NBSP}x` }], on, before(document)),
+      ).toEqual([{ retain: 16 }, { delete: 2 }, { insert: `${NBSP_STAND_IN}x` }]);
+    });
+
+    it("counts a delete between a retain and the next insert", () => {
+      expect(
+        opsFromHost([{ delete: 3 }, { retain: 13 }, { insert: `${NBSP}x` }], on, before(document)),
+      ).toEqual([{ delete: 3 }, { retain: 13 }, { insert: `${NBSP_STAND_IN}x` }]);
+    });
   });
 });

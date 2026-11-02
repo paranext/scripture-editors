@@ -200,6 +200,12 @@ export function respellNbspToUsfm(displayText: string, nbspSpelling: string): st
   return withBodySpelling.replaceAll(ATTRIBUTE_NBSP_SPELLING, NBSP);
 }
 
+/** The text before an op: as it is, or produced when asked for. */
+type PreviousText = string | (() => string) | undefined;
+
+/** Stands in for an embed in the text before an op. It is never part of a marker glyph. */
+const EMBED_PLACEHOLDER = "\uFFFC";
+
 /** An opening marker glyph (`\nd`, `\+nd`, `\c`) at the end of a text; a closer ends in `*`. */
 const OPENING_GLYPH_AT_END = /\\\+?[^\s\\|*]+$/;
 
@@ -217,11 +223,19 @@ const OPENING_GLYPH_AT_END = /\\\+?[^\s\\|*]+$/;
  *
  * @param text - The op's text.
  * @param index - Where the NBSP is in `text`.
- * @param previousText - The text of the op before this one in the same ops list, if that op is a
- *   text insert.
+ * @param previousText - The text before this op: the op before it in the same ops list when that is
+ *   a text insert, otherwise the document text before the op (given lazily, as it can take a walk
+ *   of the document to produce), if known.
  */
-function isStructuralDisplayNbsp(text: string, index: number, previousText = ""): boolean {
-  return OPENING_GLYPH_AT_END.test(index === 0 ? previousText : text.slice(0, index));
+function isStructuralDisplayNbsp(
+  text: string,
+  index: number,
+  previousText: PreviousText = "",
+): boolean {
+  if (index !== 0) return OPENING_GLYPH_AT_END.test(text.slice(0, index));
+  return OPENING_GLYPH_AT_END.test(
+    typeof previousText === "function" ? previousText() : previousText,
+  );
 }
 
 /**
@@ -231,7 +245,7 @@ function isStructuralDisplayNbsp(text: string, index: number, previousText = "")
  * U+00A0 in them is anything but a no-break space or a marker's own separator. Length-preserving,
  * so op positions are unchanged.
  */
-function opTextOut(text: string, previousText: string | undefined, nbspSpelling: string): string {
+function opTextOut(text: string, previousText: PreviousText, nbspSpelling: string): string {
   let out = "";
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index];
@@ -247,7 +261,7 @@ function opTextOut(text: string, previousText: string | undefined, nbspSpelling:
  * ({@link controlCharactersToSpaces}), and each U+00A0 that is not a marker's separator or spacer
  * becomes `nbspSpelling`, the reverse of {@link opTextOut}.
  */
-function opTextIn(text: string, previousText: string | undefined, nbspSpelling: string): string {
+function opTextIn(text: string, previousText: PreviousText, nbspSpelling: string): string {
   const sanitized = controlCharactersToSpaces(text);
   if (!sanitized.includes(NBSP)) return sanitized;
   let result = "";
@@ -262,18 +276,68 @@ function opTextIn(text: string, previousText: string | undefined, nbspSpelling: 
 }
 
 /**
+ * Gives `textBefore` the text of a delta's first `position` characters, for
+ * {@link opsForHost} and {@link opsFromHost}. An embed counts as one character, as it does in
+ * delta positions. The document is read, and its text put together, once, when first asked for.
+ *
+ * @param getDocumentOps - Gets the ops of the whole document.
+ * @returns A function from a position in the document to the text before it.
+ */
+export function textBeforeFromDocumentOps(
+  getDocumentOps: () => readonly { insert?: unknown }[],
+): (position: number) => string {
+  let documentText: string | undefined;
+  return (position) => {
+    documentText ??= getDocumentOps()
+      .map(({ insert }) => {
+        if (typeof insert === "string") return insert;
+        return insert ? EMBED_PLACEHOLDER : "";
+      })
+      .join("");
+    return documentText.slice(0, position);
+  };
+}
+
+/**
  * Maps the text of every insert in `ops`, including the ops inside an embed's `contents`. `map` is
- * also given the original text of the op before, when that op is a text insert.
+ * also given the text before the insert: the op before it when that is a text insert, otherwise
+ * (top-level ops only) the document text before it, from `textBefore` when given.
+ *
+ * Positions run through the top-level ops in the document that `textBefore` reads. For ops going
+ * out, that is the document the ops produced: retains and inserts advance, deletes do not. For ops
+ * coming in, it is the document before they apply: retains and deletes advance, inserts do not,
+ * and an insert after a delete reads the text before the deleted range.
  */
 function mapOpsText<T extends { insert?: unknown }>(
   ops: T[],
-  map: (text: string, previousText: string | undefined) => string,
+  map: (text: string, previousText: PreviousText) => string,
+  textBefore?: (position: number) => string,
+  isIncoming = false,
 ): T[] {
+  let position = 0;
+  let deletedLength = 0;
   return ops.map((op, index) => {
     const { insert } = op;
+    const insertPosition = position - deletedLength;
+    if (insert !== undefined && insert !== null && insert !== "") {
+      if (!isIncoming) position += typeof insert === "string" ? insert.length : 1;
+      deletedLength = 0;
+    } else if ("retain" in op && typeof op.retain === "number") {
+      position += op.retain;
+      deletedLength = 0;
+    } else if (isIncoming && "delete" in op && typeof op.delete === "number") {
+      position += op.delete;
+      deletedLength += op.delete;
+    }
+
     if (typeof insert === "string") {
       const previousInsert = index > 0 ? ops[index - 1].insert : undefined;
-      const text = map(insert, typeof previousInsert === "string" ? previousInsert : undefined);
+      let previousText: PreviousText;
+      if (typeof previousInsert === "string") previousText = previousInsert;
+      else if (previousInsert && typeof previousInsert === "object")
+        previousText = EMBED_PLACEHOLDER;
+      else if (textBefore) previousText = () => textBefore(insertPosition);
+      const text = map(insert, previousText);
       return text === insert ? op : { ...op, insert: text };
     }
     if (!insert || typeof insert !== "object") return op;
@@ -306,15 +370,24 @@ function mapOpsText<T extends { insert?: unknown }>(
  *
  * @param ops - The editor's own ops.
  * @param viewOptions - The editor's view options.
+ * @param textBefore - The text of the document the ops produced (their own result) before a
+ *   position, for an insert whose op before it is not a text insert: an NBSP that starts it is a
+ *   marker's separator when the text before ends in an opening glyph. See
+ *   {@link textBeforeFromDocumentOps}.
  * @returns The ops a host is given.
  */
 export function opsForHost<T extends { insert?: unknown }>(
   ops: T[],
   viewOptions: ViewOptions | undefined,
+  textBefore?: (position: number) => string,
 ): T[] {
   if (!hasStandardViewWhitespace(viewOptions)) return ops;
   const nbspSpelling = getNbspSpelling(viewOptions);
-  return mapOpsText(ops, (text, previousText) => opTextOut(text, previousText, nbspSpelling));
+  return mapOpsText(
+    ops,
+    (text, previousText) => opTextOut(text, previousText, nbspSpelling),
+    textBefore,
+  );
 }
 
 /**
@@ -325,13 +398,21 @@ export function opsForHost<T extends { insert?: unknown }>(
  *
  * @param ops - The host's ops.
  * @param viewOptions - The editor's view options.
+ * @param textBefore - The text of the document before the ops apply, before a position, for an
+ *   insert whose op before it is not a text insert. See {@link textBeforeFromDocumentOps}.
  * @returns The ops the editor applies.
  */
 export function opsFromHost<T extends { insert?: unknown }>(
   ops: T[],
   viewOptions: ViewOptions | undefined,
+  textBefore?: (position: number) => string,
 ): T[] {
   if (!hasStandardViewWhitespace(viewOptions)) return ops;
   const nbspSpelling = getNbspSpelling(viewOptions);
-  return mapOpsText(ops, (text, previousText) => opTextIn(text, previousText, nbspSpelling));
+  return mapOpsText(
+    ops,
+    (text, previousText) => opTextIn(text, previousText, nbspSpelling),
+    textBefore,
+    true,
+  );
 }

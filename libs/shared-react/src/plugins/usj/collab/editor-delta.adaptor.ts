@@ -406,10 +406,9 @@ function $handleTextNodes(
     // Attribute display text is presentation-only regardless of WHERE it rides — inside a char
     // span (the original, narrower rule) or, like a milestone's or a verse's \va/\vp value, as a
     // plain sibling with no CharNode parent at all.
-    // A span whose only text was its separator reads as empty once the separator is stripped; its
-    // own empty-span op comes from the char walk, so a text op here would double it.
-    const isEmptyAfterStrip = isSeparatorStripped && text === "";
-    const shouldSkipTextOp = isPlaceholderText || isNodeAttributeText || isEmptyAfterStrip;
+    // An empty text carries nothing: a span whose only text was its separator reads as empty once
+    // the separator is stripped, and that span's empty-span op comes from the char walk.
+    const shouldSkipTextOp = !text || isPlaceholderText || isNodeAttributeText;
     if (!shouldSkipTextOp) {
       ops.push(textOp);
     }
