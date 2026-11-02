@@ -27,6 +27,7 @@ import {
 import { $getMarkerMenuContext } from "./markerMenu/markerMenuContext.utils";
 import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
 import { $insertFirstChapter } from "./markerEdit/firstChapter.utils";
+import { BookAndChapterLinesPlugin } from "./BookAndChapterLinesPlugin";
 import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
 import { HiddenViewCopyPlugin } from "./HiddenViewCopyPlugin";
 import { InlineRangeEditPlugin } from "./InlineRangeEditPlugin";
@@ -2159,6 +2160,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               allowInvisibleCharacters={viewOptions.allowInvisibleCharacters}
             />
           )}
+          {viewOptions?.markerMode === "hidden" && <BookAndChapterLinesPlugin />}
           {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
               normalization that keeps a point out of one is too. */}
           <DecoratorBoundarySelectionPlugin />
