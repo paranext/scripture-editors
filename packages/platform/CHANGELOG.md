@@ -288,6 +288,16 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- A delta applied in Standard view places the ops after an inserted char span correctly. An insert
+  that merged into a nested span measured the whole span, so later ops landed too far along; and an
+  empty char insert counted its placeholder no-break space twice, shifting later ops by one.
+- `EditorRef.getOpsAfterNote` reports an empty char span after a note as one empty-span op, not two.
+- Applying a character style to a selection that is exactly one stored no-break space keeps that
+  `~` inside the new span in the views that render no marker glyphs; it saved an empty span and lost
+  the `~`.
+- Removing the paragraph after a blank line (`\b`) with an applied update, e.g. a host or remote
+  delete, leaves the blank line's marker as it is; it took the removed paragraph's marker. Joining
+  the two paragraphs by editing still keeps the second paragraph's marker.
 - Ctrl+V and Ctrl+Shift+V no longer paste into a read-only editor (`isReadonly`, e.g. a preview or a
   resource text). `ClipboardPlugin` listens for its shortcuts on the editor root itself, outside
   Lexical's read-only gate, so the clipboard was inserted and reported through `onUsjChange`. A
