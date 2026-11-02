@@ -28,12 +28,12 @@ import {
   ImmutableChapterNode,
   ImmutableTypedTextNode,
   ImmutableUnmatchedNode,
+  isSerializedCaretHost,
   isSerializedCharNode,
   isSerializedImpliedParaNode,
   isSerializedMarkerNode,
   isSerializedTextNode,
   isSerializedTypedMarkNode,
-  isCursorPlaceholderOnly,
   LoggerBasic,
   MarkerNode,
   MILESTONE_VERSION,
@@ -581,7 +581,7 @@ function hasOtherCharContent(
         child[NODE_STATE_KEY]?.textType === undefined &&
         child.text !== "" &&
         child.text !== NBSP &&
-        !isCursorPlaceholderOnly(child.text)
+        !isSerializedCaretHost(child)
       );
     return "children" in child && child.type !== AttributeRunNode.getType();
   });
@@ -816,9 +816,9 @@ function recurseNodes(
         }
         if (
           serializedTextNode.text &&
-          // Drop a bare caret host (EmptyVerseCaretGuardPlugin). A legitimate ZWSP inside real text
-          // (Thai/Khmer line breaks) is not placeholder-only, so it still passes and is preserved.
-          !isCursorPlaceholderOnly(serializedTextNode.text) &&
+          // Drop a bare caret host (transientCaretHost.utils.ts), recognized by its mark: a
+          // zero-width space is content in Thai, Khmer and Lao, even in a run of its own.
+          !isSerializedCaretHost(serializedTextNode) &&
           // A byte test, not (only) the separator state tag, and deliberately so: a lone-NBSP
           // text node stands in for THREE presentation shapes — the tagged separators the
           // forward adaptor builds, the empty-char placeholder, and an orphaned structural

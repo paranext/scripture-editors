@@ -12,7 +12,6 @@ import {
   $setState,
   BLUR_COMMAND,
   COMMAND_PRIORITY_EDITOR,
-  createState,
   FOCUS_COMMAND,
   HISTORY_MERGE_TAG,
   LexicalEditor,
@@ -25,9 +24,11 @@ import {
 import { useCallback, useEffect, useRef } from "react";
 import {
   $caretHostAtBoundary,
-  $createCursorPlaceholderNode,
+  $createCaretHostNode,
+  $isCaretHost,
   $isCursorPlaceholderOnlyText,
   $placeCaretAtBoundary,
+  caretHostState,
   CURSOR_CHANGE_TAG,
   CURSOR_PLACEHOLDER_CHAR,
 } from "shared";
@@ -62,17 +63,6 @@ export type CaretHostAnchor = () => LexicalNode | undefined;
  * Mutating: call inside `editor.update()`.
  */
 export type CaretHostRepair = (target: LexicalNode | undefined) => void;
-
-/**
- * Marks a text node as a caret host from the moment it is created until text lands in it. It is
- * what recognizes a host from the node itself — after an undo brings one back, and in every guard
- * instance at once — rather than by the key one instance happens to track. A text node whose state
- * differs from its neighbor's is not merged with it either, so the mark also keeps Lexical from
- * folding text pasted beside the caret into the host.
- */
-const caretHostState = createState("isCaretHost", {
-  parse: (value) => value === true,
-});
 
 /**
  * The attribute a bare caret host's DOM element carries, so a stylesheet can target the host itself
@@ -124,42 +114,6 @@ function retainHostAttributeSync(editor: LexicalEditor): () => void {
     held.unregister();
     if (hostAttributeSyncs.get(editor) === held) hostAttributeSyncs.delete(editor);
   };
-}
-
-/**
- * A new caret host: a single placeholder character, marked as a host.
- *
- * Mutating: call inside `editor.update()`.
- */
-export function $createCaretHostNode(): TextNode {
-  return $setState($createCursorPlaceholderNode(), caretHostState, true);
-}
-
-/**
- * Whether `node` is a caret host nothing has landed in yet: a marked text node holding exactly its
- * own placeholder. A second zero-width space is one the user typed, which makes it content.
- *
- * Read-only: safe in any read.
- */
-export function $isCaretHost(node: LexicalNode | null | undefined): boolean {
-  return $isTextNode(node) && $isBareHost(node);
-}
-
-/** {@link $isCaretHost} for a node already known to be text. */
-function $isBareHost(node: TextNode): boolean {
-  return $getState(node, caretHostState) && node.getTextContent() === CURSOR_PLACEHOLDER_CHAR;
-}
-
-/**
- * Whether `node` carries the caret-host mark — a bare host, or one text has landed in that this
- * update's transforms have not yet turned into content. A transform that must leave a host alone
- * (`TextSpacingPlugin`'s) asks this rather than {@link $isCaretHost}, so its answer does not
- * depend on whether the host's own transform ran first.
- *
- * Read-only: safe in any read.
- */
-export function $hasCaretHostMark(node: LexicalNode | null | undefined): boolean {
-  return $isTextNode(node) && $getState(node, caretHostState);
 }
 
 /**
@@ -241,12 +195,13 @@ function $removeHostPlaceholder(node: TextNode): void {
  * and produces no delta op — and `HISTORY_MERGE_TAG`, so creating or removing a host is no step of
  * its own in undo and never clears the redo stack. The text that lands in a host is the user's
  * edit, so the transform that turns the host into that text adds no tags. The USJ serializer drops
- * a placeholder-only text node as well, and the outgoing delta gives it zero length, so a host
- * cannot reach saved Scripture or a peer even if one somehow outlived a commit. (Applying a
- * peer's delta still counts a host as one unit, so a remote op past a host lands one unit off.) All
- * placeholder handling is scoped to nodes marked as hosts, and removes only a host's own
- * placeholder — a zero-width space is legitimate content in some scripts (Thai/Khmer/Lao line
- * breaks) and is never touched.
+ * a marked host as well, and the outgoing delta gives it zero length, so a host cannot reach saved
+ * Scripture or a peer even if one somehow outlived a commit. Both recognize a host by its mark
+ * (`transientCaretHost.utils.ts` in `shared`), never by its text. (Applying a peer's delta still
+ * counts a host as one unit, so a remote op past a host lands one unit off.) All placeholder
+ * handling is scoped to nodes marked as hosts, and removes only a host's own placeholder — a
+ * zero-width space is legitimate content in some scripts (Thai/Khmer/Lao line breaks) and is never
+ * touched.
  *
  * Unlike the arrow-driven `CursorHandler` placeholder system (perf-react), this hosts a *resting*
  * caret.
@@ -281,7 +236,9 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       // Only a placeholder-only node counts: any text node can carry a caret, but a rule names
       // this boundary because typing must land in a node of its own there, not in whatever text
       // follows it. An unmarked one — a zero-width space loaded or typed as content — is reused
-      // rather than stacked behind, but being unmarked it is never stripped or removed.
+      // rather than stacked behind, but being unmarked it is never stripped or removed. Nor does it
+      // get CARET_HOST_ATTRIBUTE: the stylesheet's no-wrap rules there make up for a break
+      // opportunity a new host adds, and an authored one's is content that was there all along.
       const atBoundary = $caretHostAtBoundary(parent, boundary);
       const existing = $isCursorPlaceholderOnlyText(atBoundary) ? atBoundary : undefined;
       if (existing) {
@@ -340,7 +297,7 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
      */
     const $stripPlaceholderOnEdit = (node: TextNode): void => {
       // Still a bare host: nothing has landed in it.
-      if ($isBareHost(node)) return;
+      if ($isCaretHost(node)) return;
       // Whichever instance strips it, this one no longer tracks it: an undo can bring the same
       // node back as a host, and a stale key would then take it for one the caret has left.
       if (hostKeyRef.current === node.getKey()) hostKeyRef.current = undefined;

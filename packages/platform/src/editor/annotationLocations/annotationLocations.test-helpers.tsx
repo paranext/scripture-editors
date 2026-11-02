@@ -3,8 +3,9 @@
  * caret points in document order with their outbound labels, and read which bytes hold an
  * annotation. Plus the two hand-made corpora the default suite runs.
  */
-// Side-effect import: the `Range` rect and focus shims the mounted editor needs under jsdom.
-import "../settledGetUsj.test-helpers";
+// Also imported for its side effect: the `Range` rect and focus shims the mounted editor needs
+// under jsdom.
+import { requireViewOptions } from "../settledGetUsj.test-helpers";
 import Editor from "../Editor";
 import { EditorRef } from "../editor.model";
 import {
@@ -37,7 +38,6 @@ import {
 import {
   $getLocationFromNode,
   annotationHighlightClassNames,
-  getViewOptions,
   STANDARD_VIEW_MODE,
   ViewOptions,
 } from "shared-react";
@@ -77,12 +77,6 @@ export async function mountInView(usj: Usj, view: ViewOptions): Promise<MountedI
   });
   if (!lexicalRef.current || !unmount) throw new Error("mount failed");
   return { ref, lexical: lexicalRef.current, unmount, logs };
-}
-
-function requireViewOptions(mode: string): ViewOptions {
-  const options = getViewOptions(mode);
-  if (!options) throw new Error(`no view options for ${mode}`);
-  return options;
 }
 
 const standard = requireViewOptions(STANDARD_VIEW_MODE);

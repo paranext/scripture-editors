@@ -44,6 +44,7 @@ export * from "./NoteNode.js";
 export * from "./ParaNode.js";
 export * from "./pendedDisplayOwners.utils.js";
 export * from "./spaceRuns.utils.js";
+export * from "./transientCaretHost.utils.js";
 export * from "./VerseBlockNode.js";
 export * from "./VerseNode.js";
 

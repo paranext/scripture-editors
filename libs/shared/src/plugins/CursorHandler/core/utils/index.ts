@@ -30,17 +30,23 @@ export function $removeCursorPlaceholder(node: TextNode) {
 }
 
 /**
- * Whether `text` is a bare cursor host: non-empty but made up entirely of placeholder characters.
- * A zero-width space embedded in real text (e.g. a Thai/Khmer line break) is NOT placeholder-only,
- * so it is preserved. State consumers (serializers, OT positions, content indexes) use this to
- * treat a transient host as if it were not there.
+ * Whether `text` is non-empty and made up entirely of placeholder characters. This is a content-only
+ * test: the placeholder is a zero-width space, which is also authored text (a Thai/Khmer/Lao line
+ * break), so it cannot tell a transient caret host from an authored zero-width-space-only run.
+ * Never use it to decide what to leave out of saved, sent or indexed content — that would drop the
+ * authored run. Identify a host by its mark instead: `$isCaretHost` for a live node,
+ * `isSerializedCaretHost` for a serialized one (both in `nodes/usj/transientCaretHost.utils`).
+ *
+ * It is right only where treating an authored zero-width space as a host loses nothing: choosing
+ * where the caret rests, such as reusing an existing node at a boundary instead of stacking a new
+ * host there.
  *
  * @param text - The text content to test.
  * @returns `true` when `text` is non-empty and every character is a cursor placeholder.
  */
 export function isCursorPlaceholderOnly(text: string): boolean {
   // Fast path: the common case (no placeholder at all) short-circuits before any allocation, so
-  // this stays cheap when called per text node in serialization hot paths.
+  // this stays cheap when called per text node.
   return (
     text.length > 0 &&
     text.includes(CURSOR_PLACEHOLDER_CHAR) &&

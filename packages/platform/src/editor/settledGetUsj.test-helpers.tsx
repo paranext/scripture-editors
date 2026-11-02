@@ -108,10 +108,15 @@ interface MountOptions {
   structureProtectionMode?: StructureProtectionMode;
 }
 
-export function requireStandardViewOptions(): ViewOptions {
-  const options = getViewOptions(STANDARD_VIEW_MODE);
-  if (!options) throw new Error("Standard view options are required for these tests.");
+/** The view options registered for `mode`; throws when there are none. */
+export function requireViewOptions(mode: string): ViewOptions {
+  const options = getViewOptions(mode);
+  if (!options) throw new Error(`no view options for ${mode}`);
   return options;
+}
+
+export function requireStandardViewOptions(): ViewOptions {
+  return requireViewOptions(STANDARD_VIEW_MODE);
 }
 
 /** Standard view options with `noteMode: "expanded"` — see `mountExpandedNoteEditor`'s doc

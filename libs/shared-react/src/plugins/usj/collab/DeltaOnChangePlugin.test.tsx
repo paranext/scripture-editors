@@ -10,7 +10,6 @@ import {
   typeTextAtSelection,
 } from "../react-test.utils";
 import { DeltaOp } from "./delta-common.utils";
-import { $createCaretHostNode } from "../transientCaretHost";
 import { DeltaOnChangePlugin } from "./DeltaOnChangePlugin";
 import {
   $createTextNode,
@@ -24,6 +23,7 @@ import {
 } from "lexical";
 import {
   $createBookNode,
+  $createCaretHostNode,
   $createCharNode,
   $createNoteNode,
   $createImmutableChapterNode,

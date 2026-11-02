@@ -81,7 +81,7 @@ import {
   NBSP,
   UnknownAttributes,
 } from "./node-constants.js";
-import { isCursorPlaceholderOnly } from "../../plugins/CursorHandler/index.js";
+import { $isCaretHost } from "./transientCaretHost.utils.js";
 
 export { $getLogicalParent } from "./logicalParent.utils.js";
 export {
@@ -1183,9 +1183,9 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
     if (textType === MARKER_TRAILING_SPACE_TEXT_TYPE || textType === "attribute") return true;
 
     const text = node.getTextContent();
-    // "" / NBSP are presentation-only; a bare cursor host (EmptyVerseCaretGuardPlugin) likewise
+    // "" / NBSP are presentation-only; a bare caret host (transientCaretHost.utils.ts) likewise
     // carries no content, so it must not shift annotation content indexes while it rests.
-    if (text === "" || isCursorPlaceholderOnly(text)) return true;
+    if (text === "" || $isCaretHost(node)) return true;
     if (text === NBSP) return !$isNbspContentAtMark(node);
   }
   return false;
@@ -1229,7 +1229,7 @@ function $hasOtherCharContent(char: ElementNode, except: TextNode): boolean {
         $getState(child, textTypeState) === undefined &&
         child.getTextContent() !== "" &&
         child.getTextContent() !== NBSP &&
-        !isCursorPlaceholderOnly(child.getTextContent())
+        !$isCaretHost(child)
       );
     return $isElementNode(child) && !$isAttributeRunNode(child);
   });

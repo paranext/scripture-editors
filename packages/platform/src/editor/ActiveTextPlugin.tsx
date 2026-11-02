@@ -16,8 +16,14 @@ import {
   LexicalNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $getSelectedParaMarkerPara, $isImmutableTypedTextNode, $isMarkerNode, ZWSP } from "shared";
-import { $isCaretHost, $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-react";
+import {
+  $getSelectedParaMarkerPara,
+  $isCaretHost,
+  $isImmutableTypedTextNode,
+  $isMarkerNode,
+  ZWSP,
+} from "shared";
+import { $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-react";
 
 const ACTIVE_CLASS = "psc-active-text";
 export const EMPTY_CLASS = "psc-empty-text";
