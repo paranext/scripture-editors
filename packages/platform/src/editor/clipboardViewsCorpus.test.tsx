@@ -699,8 +699,9 @@ function viewsFor(kind: RangeKind | undefined): { name: string; view: ViewOption
  * as the context menu's Paste and the Edit menu's Paste get it too: the html and plain text, with no
  * `application/x-lexical-editor` flavor. A hidden-marker view's own node copy rides in an attribute
  * of that html ({@link NODE_COPY_HTML_ATTRIBUTE}). "native paste" is a paste the browser runs itself
- * (the macOS app menu's Paste), which delivers every flavor; only the hidden-marker views get these
- * rows, as Standard view's own node-copy path is pinned elsewhere (`markerEdit/`). "another app's
+ * (the macOS app menu's Paste, Shift+Insert), which delivers every flavor; Standard view leaves
+ * the `application/x-lexical-editor` flavor unread, so its native rows paste as its Ctrl+V rows
+ * do, while a hidden-marker view reads its node copy from that flavor. "another app's
  * html" is the html with that attribute gone, as a copy that went through another program arrives,
  * and the plain text. "plain text" is Ctrl+Shift+V (`pasteSelectionAsPlainText`). A cut is pasted
  * back where it was cut from, each way.
@@ -727,8 +728,7 @@ const OPERATIONS: Operation[] = [
 const NATIVE_OPERATIONS: Operation[] = ["copy, native paste", "cut, native paste back"];
 
 /** The operations a view's rows run. */
-const operationsFor = (view: ViewOptions): Operation[] =>
-  view.markerMode === "hidden" ? [...OPERATIONS, ...NATIVE_OPERATIONS] : OPERATIONS;
+const operationsFor = (): Operation[] => [...OPERATIONS, ...NATIVE_OPERATIONS];
 
 const isCut = (operation: Operation) => operation.startsWith("cut");
 
@@ -881,7 +881,7 @@ function rowsFor(fixture: string, usj: Usj): { ranges: RangeRow[]; plainTexts: P
     for (const { name: viewName, view } of viewsFor(range.kind)) {
       const scaffold = viewName === "footnotes-pane-row" ? inNoteScaffold(usj, range) : undefined;
       for (const protection of protectionsFor(viewName))
-        for (const operation of operationsFor(view))
+        for (const operation of operationsFor())
           ranges.push({
             key: `${fixture} | ${range.kind} | ${viewName} | ${protection} | ${operation}`,
             range: scaffold?.range ?? range,
@@ -1034,10 +1034,14 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | PlainRow): stri
     "range" in row &&
     (row.range.kind === "across a paragraph boundary" ||
       row.range.kind === "spans a whole paragraph") &&
+    // Standard view's Ctrl+V and native paste read the html and plain text, as another app's html
+    // arrives.
     (row.operation === "copy, Ctrl+V" ||
+      row.operation === "copy, native paste" ||
       row.operation === "copy, paste from another app's html" ||
       row.operation === "copy, paste plain text" ||
       row.operation === "cut, Ctrl+V back" ||
+      row.operation === "cut, native paste back" ||
       row.operation === "cut, paste back from another app's html")
   )
     return "PT-4388: Standard's text path over deliberately damaged USFM: a nameless marker re-tokenizes as text, and a bare backslash keeps the paste a pending literal";

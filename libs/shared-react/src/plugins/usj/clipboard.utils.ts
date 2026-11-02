@@ -7,6 +7,7 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_LOW,
   COPY_COMMAND,
   CUT_COMMAND,
@@ -347,13 +348,65 @@ export function withoutMarkerTokens(data: DataTransfer): DataTransfer | undefine
 }
 
 /**
- * A transfer reading as `data` but for the types in `overrides`. Lexical reads only `getData` from a
- * transfer it inserts, and a real `DataTransfer` cannot be constructed everywhere this runs.
+ * A transfer reading as `data` but for the types in `overrides`; a type overridden with `""` is
+ * left out of its `types`. Lexical reads `getData` from a transfer it inserts, and its paste
+ * handler `types` and `files` too; a real `DataTransfer` cannot be constructed everywhere this
+ * runs.
  */
 function transferWith(data: DataTransfer, overrides: { [type: string]: string }): DataTransfer {
   return {
     getData: (type: string) => overrides[type] ?? data.getData(type),
-  } as Pick<DataTransfer, "getData"> as DataTransfer;
+    types: (data.types ?? []).filter((type) => overrides[type] !== ""),
+    files: data.files ?? [],
+  } as Pick<DataTransfer, "getData" | "types" | "files"> as DataTransfer;
+}
+
+/**
+ * Has every paste in `editor` leave the node copy flavor ({@link LEXICAL_CLIPBOARD_TYPE}) unread
+ * while `isEnabled()` answers true, so a paste the browser delivers itself (macOS's Edit > Paste,
+ * Shift+Insert) takes exactly what Ctrl+V takes: Ctrl+V, the context menu's Paste and
+ * `EditorRef.paste()` read the clipboard with `navigator.clipboard.read()` ({@link pasteSelection}),
+ * which returns no custom flavor. A paste carrying the flavor is claimed and dispatched again as
+ * its own event seen through a clipboard without it, so every paste handler, Lexical's own among
+ * them, reads the same transfer, and the event's target and `preventDefault` stay its own.
+ *
+ * Registered at `COMMAND_PRIORITY_CRITICAL`. Handlers of one priority run in the order they were
+ * registered, so register it before every other paste handler: one registered earlier would see the
+ * paste twice.
+ *
+ * @param editor - The editor.
+ * @param isEnabled - Whether pastes leave the flavor unread, asked on each paste.
+ */
+export function registerPasteAsClipboardRead(
+  editor: LexicalEditor,
+  isEnabled: () => boolean,
+): () => void {
+  return editor.registerCommand(
+    PASTE_COMMAND,
+    (event) => {
+      if (!isEnabled() || !event || typeof event !== "object" || !("clipboardData" in event))
+        return false;
+      const data = event.clipboardData;
+      if (!data?.getData(LEXICAL_CLIPBOARD_TYPE)) return false;
+      const clipboardRead = transferWith(data, { [LEXICAL_CLIPBOARD_TYPE]: "" });
+      // Over an empty target, since a proxy must report a fixed property of its target as it is,
+      // and an event's `clipboardData` can be one. It reads as the event's own class.
+      const asRead = new Proxy<ClipboardEvent>(Object.create(null), {
+        get(_target, property) {
+          if (property === "clipboardData") return clipboardRead;
+          // Read with the event itself as `this`: a DOM event's own getters and methods refuse
+          // any other receiver.
+          const value: unknown = Reflect.get(event, property, event);
+          return typeof value === "function" ? value.bind(event) : value;
+        },
+        has: (_target, property) => property in event,
+        getPrototypeOf: () => Object.getPrototypeOf(event),
+      });
+      editor.dispatchCommand(PASTE_COMMAND, asRead);
+      return true;
+    },
+    COMMAND_PRIORITY_CRITICAL,
+  );
 }
 
 /**
