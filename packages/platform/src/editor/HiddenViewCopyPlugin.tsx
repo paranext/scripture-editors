@@ -16,7 +16,7 @@ import {
   CUT_COMMAND,
 } from "lexical";
 import { useEffect } from "react";
-import { htmlWithNodeCopy } from "shared-react";
+import { $removeTextKeepingBookAndChapterLines, htmlWithNodeCopy } from "shared-react";
 
 /**
  * Copies a hidden-marker view's selection as the text it shows. Lexical's own copy would write
@@ -36,7 +36,11 @@ import { htmlWithNodeCopy } from "shared-react";
  * - `application/x-lexical-editor`: {@link $hiddenViewLexicalFlavor}, for a paste the browser runs
  *   itself, such as the macOS app menu's Paste.
  *
- * A cut in a read-only editor copies but removes nothing (`$writeCopyPayload` owns that rule).
+ * A cut in a read-only editor copies but removes nothing (`$writeCopyPayload` owns that rule). A
+ * cut that runs across a book or chapter line keeps that line, and removes the rest of the
+ * selection ({@link $removeTextKeepingBookAndChapterLines}): a cut of Select All leaves the
+ * chapter document its book and chapter lines, and a paste of it back, which inserts neither,
+ * restores the document.
  *
  * `copyLimit` is `EditorOptions.copyLimit` and `allowInvisibleCharacters` is
  * `ViewOptions.allowInvisibleCharacters`; `CopyLimitPlugin` has already fitted the selection to
@@ -80,6 +84,7 @@ export function HiddenViewCopyPlugin({
         data,
         isCut,
         copyLimit,
+        $removeTextKeepingBookAndChapterLines,
       );
     };
     return mergeRegister(

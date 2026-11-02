@@ -1,4 +1,3 @@
-import { $selectionTouchesBookOrChapter } from "./markerEdit/whitespaceDisplay.plugin.utils";
 import { $sliceSelectedTextNodeContent } from "@lexical/selection";
 import { $findMatchingParent } from "@lexical/utils";
 import {
@@ -53,20 +52,16 @@ export function $isLeftOutOfHiddenViewCopy(node: LexicalNode): boolean {
  * - it holds the block-verse layout's paragraphs as the document has them, not as the layout cuts
  *   them to put each verse on a row ({@link rejoinVerseBlockFragments}).
  *
- * `undefined` — so a paste takes the html or plain text — when nothing is selected, when an end of
- * the selection lies inside an opaque construct (a node copy cannot carry part of one; it would
- * carry it whole), and when the selection touches a book or chapter line, which a paste must never
- * duplicate (`$selectionTouchesBookOrChapter`).
+ * `undefined` — so a paste takes the html or plain text — when nothing is selected, and when an end
+ * of the selection lies inside an opaque construct (a node copy cannot carry part of one; it would
+ * carry it whole). A selection across a book or chapter line, such as Select All, carries that line
+ * like any other: a hidden-marker view's paste inserts no book or chapter line from any flavor
+ * (`$removeBookAndChapterLines`, shared-react), so a paste never duplicates one.
  *
  * Read-only: call inside a copy or cut command handler.
  */
 export function $hiddenViewLexicalFlavor(selection: RangeSelection): string | undefined {
-  if (
-    selection.isCollapsed() ||
-    $rangeReachesIntoOpaqueBlock(selection) ||
-    $selectionTouchesBookOrChapter(selection)
-  )
-    return undefined;
+  if (selection.isCollapsed() || $rangeReachesIntoOpaqueBlock(selection)) return undefined;
   const selectedKeys = new Set(selection.getNodes().map((node) => node.getKey()));
   const copiedNodes: SerializedLexicalNode[] = [];
   for (const child of $getRoot().getChildren())
