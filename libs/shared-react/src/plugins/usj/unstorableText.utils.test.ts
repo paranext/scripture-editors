@@ -4,20 +4,27 @@
 import { baseTestEnvironment, sutUpdate, updateSelection } from "./react-test.utils";
 import { UnstorableCharacter } from "./unstorable-text.model";
 import {
+  $deletionJoinsSlashes,
   $removeUnstorableTextFromNodes,
   $textAroundSelection,
+  JudgedDeletion,
   removeUnstorableText,
 } from "./unstorableText.utils";
 import {
+  $createRangeSelection,
   $createTextNode,
   $getRoot,
   $getSelection,
   $isRangeSelection,
+  ElementNode,
+  LexicalEditor,
   LexicalNode,
+  PointType,
   TextNode,
 } from "lexical";
 import {
   $createCharNode,
+  $createGutterMarkerNode,
   $createImmutableTypedTextNode,
   $createImmutableUnmatchedNode,
   $createParaNode,
@@ -319,6 +326,204 @@ describe("$textAroundSelection", () => {
     });
 
     expect(around).toEqual({ before: "", after: "b" });
+  });
+});
+
+describe("$deletionJoinsSlashes", () => {
+  /** A point `offset` characters into `node`. */
+  function $at(node: TextNode, offset: number): PointType {
+    const selection = $createRangeSelection();
+    selection.anchor.set(node.getKey(), offset, "text");
+    return selection.anchor;
+  }
+
+  /** Builds `paras` (each a list of children) and judges `$deletion` against them. */
+  async function judge(
+    $paras: () => LexicalNode[][],
+    $deletion: (paras: ElementNode[]) => JudgedDeletion,
+  ): Promise<boolean> {
+    let paras: ElementNode[] = [];
+    const { editor }: { editor: LexicalEditor } = await baseTestEnvironment(() => {
+      paras = $paras().map((children) => $createParaNode("p").append(...children));
+      $getRoot().append(...paras);
+    });
+    return editor.read(() => $deletionJoinsSlashes($deletion(paras)));
+  }
+
+  /** The first text node of `para` holding `text`. */
+  function $text(para: ElementNode, text: string): TextNode {
+    const node = para.getAllTextNodes().find((candidate) => candidate.getTextContent() === text);
+    if (!node) throw new Error(`no text ${text}`);
+    return node;
+  }
+
+  it.each<[string, number, number, boolean]>([
+    ["a/bc/d", 2, 4, true],
+    ["a/bc/d", 1, 2, false],
+    ["a/bc/d", 3, 4, false],
+    ["a/b c/d", 2, 3, false],
+    // A `//` already in the text is not a join.
+    ["a//bc", 3, 5, false],
+    // Removing the middle of `///` joins the outer two.
+    ["a///b", 2, 3, true],
+  ])("a range: %j from %d to %d → %s", async (text, start, end, expected) => {
+    expect(
+      await judge(
+        () => [[$createTextNode(text)]],
+        ([para]) => ({
+          kind: "range",
+          start: $at($text(para, text), start),
+          end: $at($text(para, text), end),
+        }),
+      ),
+    ).toBe(expected);
+  });
+
+  it.each<[string, number, boolean, boolean]>([
+    ["a/b/c", 3, true, true],
+    ["a/b/c", 2, false, true],
+    ["a/b/c", 2, true, false],
+    ["a/bc/", 3, true, false],
+    ["a//bc", 5, true, false],
+  ])("a character: %j from %d, backward %s → %s", async (text, offset, isBackward, expected) => {
+    expect(
+      await judge(
+        () => [[$createTextNode(text)]],
+        ([para]) => ({ kind: "character", caret: $at($text(para, text), offset), isBackward }),
+      ),
+    ).toBe(expected);
+  });
+
+  it("takes a whole user-perceived character", async () => {
+    expect(
+      await judge(
+        () => [[$createTextNode("a/e\u0301/c")]],
+        ([para]) => ({
+          kind: "character",
+          caret: $at($text(para, "a/e\u0301/c"), 4),
+          isBackward: true,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("reads through a character span the delete empties", async () => {
+    expect(
+      await judge(
+        () => [
+          [
+            $createTextNode("a/"),
+            $createCharNode("nd").append($createTextNode("b")),
+            $createTextNode("/c"),
+          ],
+        ],
+        ([para]) => ({ kind: "character", caret: $at($text(para, "b"), 1), isBackward: true }),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps two `/` apart across a character span's edge that stays", async () => {
+    expect(
+      await judge(
+        () => [
+          [
+            $createCharNode("nd").append($createTextNode("a/")),
+            $createTextNode("x"),
+            $createCharNode("nd").append($createTextNode("/c")),
+          ],
+        ],
+        ([para]) => ({ kind: "character", caret: $at($text(para, "x"), 1), isBackward: true }),
+      ),
+    ).toBe(false);
+  });
+
+  it("reads across an annotation mark's edge", async () => {
+    expect(
+      await judge(
+        () => [
+          [
+            $createTextNode("a/b"),
+            $createTypedMarkNode({ comment: ["c1"] }).append($createTextNode("/c")),
+          ],
+        ],
+        ([para]) => ({ kind: "character", caret: $at($text(para, "a/b"), 3), isBackward: true }),
+      ),
+    ).toBe(true);
+  });
+
+  it("joins across what goes but not across what stays, such as a hidden construct", async () => {
+    const $paras = () => [
+      [
+        $createTextNode("a/"),
+        $createUnknownNode("figure", "fig").append($createTextNode("caption")),
+        $createTextNode("/c"),
+      ],
+    ];
+    expect(
+      await judge($paras, ([para]) => ({
+        kind: "character",
+        caret: $at($text(para, "/c"), 0),
+        isBackward: true,
+      })),
+    ).toBe(true);
+    expect(
+      await judge($paras, ([para]) => ({
+        kind: "range",
+        start: $at($text(para, "a/"), 1),
+        end: $at($text(para, "a/"), 2),
+      })),
+    ).toBe(false);
+  });
+
+  it("joins paragraphs: a join, a character delete at either edge, a range across the break", async () => {
+    const $paras = () => [[$createTextNode("a/")], [$createTextNode("/c")]];
+    expect(await judge($paras, ([first, second]) => ({ kind: "join", first, second }))).toBe(true);
+    expect(
+      await judge($paras, ([, second]) => ({
+        kind: "character",
+        caret: $at($text(second, "/c"), 0),
+        isBackward: true,
+      })),
+    ).toBe(true);
+    expect(
+      await judge($paras, ([first]) => ({
+        kind: "character",
+        caret: $at($text(first, "a/"), 2),
+        isBackward: false,
+      })),
+    ).toBe(true);
+    expect(
+      await judge(
+        () => [[$createTextNode("a/x")], [$createTextNode("y/c")]],
+        ([first, second]) => ({
+          kind: "range",
+          start: $at($text(first, "a/x"), 2),
+          end: $at($text(second, "y/c"), 1),
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("reads past a gutter glyph, which saves as nothing", async () => {
+    expect(
+      await judge(
+        () => [[$createTextNode("a/")], [$createGutterMarkerNode("\\p "), $createTextNode("/c")]],
+        ([, second]) => ({
+          kind: "character",
+          caret: $at($text(second, "/c"), 0),
+          isBackward: true,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not join a paragraph to one it leaves a letter against", async () => {
+    expect(
+      await judge(
+        () => [[$createTextNode("a/")], [$createTextNode("c")]],
+        ([first, second]) => ({ kind: "join", first, second }),
+      ),
+    ).toBe(false);
   });
 });
 

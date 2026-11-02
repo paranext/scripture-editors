@@ -1,13 +1,27 @@
 import { UnstorableCharacter } from "./unstorable-text.model";
 import {
+  $getState,
   $isElementNode,
+  $isRootNode,
   $isTextNode,
+  ElementNode,
   LexicalNode,
   PointType,
   RangeSelection,
   TextNode,
 } from "lexical";
-import { $isTypedMarkNode, $isUnknownNode } from "shared";
+import {
+  $hasAllSameCharAttributes,
+  $isCharNode,
+  $isCursorPlaceholderOnlyText,
+  $isGutterMarkerNode,
+  $isNoteNode,
+  $isParaLikeNode,
+  $isTypedMarkNode,
+  $isUnknownNode,
+  $wereSplitFromOneSpan,
+  charIdState,
+} from "shared";
 
 /** Which of a text's characters stay, and what the rest were. */
 interface UnstorableTextMask {
@@ -257,4 +271,316 @@ export function $textAroundSelection(selection: RangeSelection): { before: strin
     ? [selection.focus, selection.anchor]
     : [selection.anchor, selection.focus];
   return { before: $characterBeside(start, "before"), after: $characterBeside(end, "after") };
+}
+
+/**
+ * What a delete removes, for {@link $deletionJoinsSlashes}:
+ *
+ * - `range`: everything from `start` to `end` (in document order), joining their paragraphs when
+ *   they are in different ones.
+ * - `character`: the one character (or other unit a caret steps over: a verse, a note, a hidden
+ *   construct) beside `caret` on the side the delete goes, or, at the edge of a paragraph, the
+ *   break between it and the paragraph on that side.
+ * - `join`: the break between paragraph `first` and the paragraph `second` after it.
+ */
+export type JudgedDeletion =
+  | { kind: "range"; start: PointType; end: PointType }
+  | { kind: "character"; caret: PointType; isBackward: boolean }
+  | { kind: "join"; first: ElementNode; second: ElementNode };
+
+/** Where a deletion starts or ends, or the caret a character deletion goes from. */
+interface Marker {
+  which: "start" | "end" | "caret";
+  point: PointType;
+  isPlaced?: boolean;
+}
+
+/** An inline element (a character span) whose edges the check reads. */
+interface Span {
+  node: ElementNode;
+  isRemoved: boolean;
+}
+
+/**
+ * A stretch of a paragraph as the file stores it, in order: stored text, an edge of a character
+ * span, an atom (anything else the file stores: a verse, a note, a hidden construct, a decorator),
+ * or a marker. Annotation marks, gutter glyphs and cursor placeholders save as nothing, so they
+ * leave no piece.
+ */
+type Piece =
+  | { kind: "text"; text: string; isRemoved: boolean }
+  | { kind: "atom"; isRemoved: boolean }
+  | { kind: "edge"; span: Span; isOpening: boolean; isInRange: boolean }
+  | { kind: "marker"; which: Marker["which"] };
+
+/** The paragraph (or note) `point` is in, or `undefined` when it is in neither. */
+function $containerOf(point: PointType): ElementNode | undefined {
+  let node: LexicalNode | null = point.getNode();
+  while (node && !($isElementNode(node) && (!node.isInline() || $isNoteNode(node))))
+    node = node.getParent();
+  return node && !$isRootNode(node) ? node : undefined;
+}
+
+/**
+ * `container`'s content as {@link Piece}s, with each of `markers` that falls in it placed among
+ * them. Text and atoms between a `start` and an `end` marker are marked removed; `isInRange` says
+ * whether the read starts inside such a range (a range that began in the paragraph before).
+ */
+function $readPieces(container: ElementNode, markers: Marker[], isInRange = false): Piece[] {
+  const pieces: Piece[] = [];
+  const place = (marker: Marker) => {
+    marker.isPlaced = true;
+    pieces.push({ kind: "marker", which: marker.which });
+    if (marker.which === "start") isInRange = true;
+    else if (marker.which === "end") isInRange = false;
+  };
+  const placeWhere = (isHere: (marker: Marker) => boolean) => {
+    for (const marker of markers) if (!marker.isPlaced && isHere(marker)) place(marker);
+  };
+  const isElementPoint =
+    (element: ElementNode, index: number) =>
+    ({ point }: Marker) =>
+      point.type === "element" && point.key === element.getKey() && point.offset === index;
+  const visitChildren = (element: ElementNode) => {
+    element.getChildren().forEach((child, index) => {
+      placeWhere(isElementPoint(element, index));
+      visit(child);
+    });
+    placeWhere(isElementPoint(element, element.getChildrenSize()));
+  };
+  const visit = (node: LexicalNode) => {
+    if ($isTypedMarkNode(node)) {
+      visitChildren(node);
+      return;
+    }
+    if ($isGutterMarkerNode(node) || $isCursorPlaceholderOnlyText(node)) {
+      placeWhere(({ point }) => point.key === node.getKey());
+      return;
+    }
+    if ($isStoredText(node)) {
+      const text = node.getTextContent();
+      const here = markers
+        .filter((marker) => !marker.isPlaced && marker.point.key === node.getKey())
+        .sort((a, b) => a.point.offset - b.point.offset);
+      let from = 0;
+      for (const marker of here) {
+        const to = Math.min(Math.max(marker.point.offset, from), text.length);
+        if (to > from)
+          pieces.push({ kind: "text", text: text.slice(from, to), isRemoved: isInRange });
+        from = to;
+        place(marker);
+      }
+      if (from < text.length)
+        pieces.push({ kind: "text", text: text.slice(from), isRemoved: isInRange });
+      return;
+    }
+    if ($isElementNode(node) && node.isInline() && !$isNoteNode(node) && !$isUnknownNode(node)) {
+      const span: Span = { node, isRemoved: false };
+      pieces.push({ kind: "edge", span, isOpening: true, isInRange });
+      visitChildren(node);
+      pieces.push({ kind: "edge", span, isOpening: false, isInRange });
+      return;
+    }
+    // An atom goes whole or not at all. A range that ends inside one stops in front of it, and one
+    // that starts inside one starts after it, so it stays.
+    const isInside = ({ point }: Marker) => {
+      const pointNode = point.getNode();
+      return node.is(pointNode) || ($isElementNode(node) && node.isParentOf(pointNode));
+    };
+    const isAtStart = ({ point }: Marker) =>
+      point.key === node.getKey() && point.type === "text" && point.offset === 0;
+    placeWhere((marker) => isAtStart(marker) || (isInside(marker) && marker.which === "end"));
+    pieces.push({ kind: "atom", isRemoved: isInRange });
+    placeWhere(isInside);
+  };
+  visitChildren(container);
+  return pieces;
+}
+
+/**
+ * Settles which character spans go: one the range covers whole, and one left with nothing in it,
+ * since a span cannot be empty (`CharNode.canBeEmpty`) and Lexical removes it with its last child.
+ */
+function settleSpans(pieces: Piece[]): void {
+  const open: { span: Span; isInRange: boolean; items: number; removed: number }[] = [];
+  const count = (isRemoved: boolean) => {
+    const parent = open.at(-1);
+    if (!parent) return;
+    parent.items += 1;
+    if (isRemoved) parent.removed += 1;
+  };
+  for (const piece of pieces) {
+    if (piece.kind === "text" || piece.kind === "atom") count(piece.isRemoved);
+    if (piece.kind !== "edge") continue;
+    if (piece.isOpening) {
+      open.push({ span: piece.span, isInRange: piece.isInRange, items: 0, removed: 0 });
+      continue;
+    }
+    const frame = open.pop();
+    if (!frame) continue;
+    frame.span.isRemoved =
+      (frame.isInRange && piece.isInRange) || (frame.items > 0 && frame.removed === frame.items);
+    count(frame.span.isRemoved);
+  }
+}
+
+/**
+ * Whether character spans `preceding` and `following`, brought together, become one again:
+ * `CharNodePlugin` combines two pieces of one span that a split cut apart (Enter, then a join
+ * back), so their edges go and their text meets. Spans the document already held apart stay two.
+ */
+function $combineAgain(preceding: ElementNode, following: ElementNode): boolean {
+  return (
+    $isCharNode(preceding) &&
+    $isCharNode(following) &&
+    preceding.getMarker() !== "fp" &&
+    $wereSplitFromOneSpan(preceding, following) &&
+    $hasAllSameCharAttributes(
+      { style: preceding.getMarker(), cid: $getState(preceding, charIdState) },
+      preceding.getUnknownAttributes(),
+      following,
+    )
+  );
+}
+
+/** Whether what is left of `pieces` puts a `/` against a `/` that something removed stood between. */
+function $joinsSlashes(pieces: Piece[]): boolean {
+  settleSpans(pieces);
+  const left: { piece: Piece; isAfterRemoved: boolean }[] = [];
+  let isAfterRemoved = false;
+  for (const piece of pieces) {
+    if (piece.kind === "marker") continue;
+    const isRemoved = piece.kind === "edge" ? piece.span.isRemoved : piece.isRemoved;
+    if (isRemoved) {
+      isAfterRemoved = true;
+      continue;
+    }
+    const previous = left.at(-1)?.piece;
+    if (
+      isAfterRemoved &&
+      previous?.kind === "edge" &&
+      !previous.isOpening &&
+      piece.kind === "edge" &&
+      piece.isOpening &&
+      $combineAgain(previous.span.node, piece.span.node)
+    ) {
+      left.pop();
+      continue;
+    }
+    left.push({ piece, isAfterRemoved });
+    isAfterRemoved = false;
+  }
+  return left.some(({ piece, isAfterRemoved: isJoined }, index) => {
+    const previous = left[index - 1]?.piece;
+    return (
+      isJoined &&
+      previous?.kind === "text" &&
+      piece.kind === "text" &&
+      previous.text.endsWith("/") &&
+      piece.text.startsWith("/")
+    );
+  });
+}
+
+/** The last (or first) user-perceived character of `text`. */
+function edgeGrapheme(text: string, edge: "first" | "last"): string {
+  const segments =
+    typeof Intl !== "undefined" && "Segmenter" in Intl
+      ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), (s) =>
+          String(s.segment),
+        )
+      : Array.from(text);
+  return (edge === "first" ? segments[0] : segments.at(-1)) ?? "";
+}
+
+/**
+ * Marks removed the unit a character delete from the marker at `caretAt` takes: the nearest
+ * character or atom on that side, reading through span edges. Returns `false` when the paragraph
+ * has none on that side.
+ */
+function removeUnitBeside(pieces: Piece[], caretAt: number, isBackward: boolean): boolean {
+  const step = isBackward ? -1 : 1;
+  for (let index = caretAt + step; index >= 0 && index < pieces.length; index += step) {
+    const piece = pieces[index];
+    if (piece.kind === "atom") {
+      piece.isRemoved = true;
+      return true;
+    }
+    if (piece.kind !== "text") continue;
+    const unit = edgeGrapheme(piece.text, isBackward ? "last" : "first");
+    const rest = isBackward ? piece.text.slice(0, -unit.length) : piece.text.slice(unit.length);
+    const removed: Piece = { kind: "text", text: unit, isRemoved: true };
+    const kept: Piece[] = rest ? [{ kind: "text", text: rest, isRemoved: false }] : [];
+    pieces.splice(index, 1, ...(isBackward ? [...kept, removed] : [removed, ...kept]));
+    return true;
+  }
+  return false;
+}
+
+/** The break between two paragraphs, which a join removes. */
+function joinedBreak(): Piece {
+  return { kind: "atom", isRemoved: true };
+}
+
+/** Whether any of `containers` holds a `/` in its text, without which nothing can join. */
+function $holdsSlash(...containers: ElementNode[]): boolean {
+  return containers.some((container) => container.getTextContent().includes("/"));
+}
+
+/**
+ * Whether `deletion` would leave a `/` directly against a `/` it was not already touching, which a
+ * hidden-marker view must not save: `//` is USFM's optional line break, which those views hide.
+ *
+ * Reads what the file stores on either side of what goes: through annotation marks, gutter glyphs
+ * and cursor placeholders, which save as nothing; through a character span the delete empties,
+ * which goes with its last child; and through the edges of two pieces of one span that a join
+ * brings back together, which `CharNodePlugin` makes one span again. Any other span edge that
+ * stays keeps the two apart (its marker is between them in the file), and so does anything else
+ * the file stores, such as a verse or a note. Two `/` already touching are not joined by anything,
+ * so a delete beside a `//` already in the text is not counted.
+ *
+ * Read-only: call inside `editor.update()`, `editor.read()` or a command handler, which have the
+ * active editor it needs.
+ *
+ * @param deletion - What the delete removes.
+ */
+export function $deletionJoinsSlashes(deletion: JudgedDeletion): boolean {
+  if (deletion.kind === "join") {
+    if (!$holdsSlash(deletion.first, deletion.second)) return false;
+    return $joinsSlashes([
+      ...$readPieces(deletion.first, []),
+      joinedBreak(),
+      ...$readPieces(deletion.second, []),
+    ]);
+  }
+  if (deletion.kind === "range") {
+    const first = $containerOf(deletion.start);
+    const last = $containerOf(deletion.end);
+    if (!first || !last || !$holdsSlash(first, last)) return false;
+    const markers: Marker[] = [
+      { which: "start", point: deletion.start },
+      { which: "end", point: deletion.end },
+    ];
+    if (first.is(last)) return $joinsSlashes($readPieces(first, markers));
+    return $joinsSlashes([
+      ...$readPieces(first, markers),
+      joinedBreak(),
+      ...$readPieces(last, markers, true),
+    ]);
+  }
+  const container = $containerOf(deletion.caret);
+  if (!container) return false;
+  const { isBackward } = deletion;
+  const neighbour = isBackward ? container.getPreviousSibling() : container.getNextSibling();
+  const canJoin = $isParaLikeNode(container) && $isParaLikeNode(neighbour);
+  if (!$holdsSlash(container, ...(canJoin ? [neighbour] : []))) return false;
+  const pieces = $readPieces(container, [{ which: "caret", point: deletion.caret }]);
+  const caretAt = pieces.findIndex((piece) => piece.kind === "marker");
+  if (caretAt < 0) return false;
+  if (removeUnitBeside(pieces, caretAt, isBackward)) return $joinsSlashes(pieces);
+  if (!canJoin) return false;
+  const beside = $readPieces(neighbour, []);
+  return $joinsSlashes(
+    isBackward ? [...beside, joinedBreak(), ...pieces] : [...pieces, joinedBreak(), ...beside],
+  );
 }
