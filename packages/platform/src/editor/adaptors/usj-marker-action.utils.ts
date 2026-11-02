@@ -12,6 +12,7 @@ import {
   $isRangeSelection,
   $isTextNode,
   $setSelection,
+  $setState,
   EditorUpdateOptions,
   ElementNode,
   LexicalEditor,
@@ -418,7 +419,7 @@ export function getUsjMarkerAction(
           );
         } else if (selection.getTextContent().length > 0) {
           // If the selection has text content, wrap the text selection in an inline node
-          $wrapTextSelectionInInlineNode(selection, $createMarkedNode);
+          $wrapTextSelectionInInlineNode(selection, $createMarkedNode, viewOptions?.markerMode);
         } else if ($isElementNode(nodeToInsert) && !nodeToInsert.isInline()) {
           // If the selection is empty, insert a new paragraph and replace it with the USJ node
           const paragraph = selection.insertParagraph();
@@ -861,6 +862,7 @@ function getMarkerAction(
 function $wrapTextSelectionInInlineNode(
   selection: RangeSelection,
   createNode: () => LexicalNode,
+  markerMode?: ViewOptions["markerMode"],
 ): void {
   const [startOffset, endOffset] = $getSelectionOffsets(selection);
   const [start, end] = selection.isBackward()
@@ -964,6 +966,16 @@ function $wrapTextSelectionInInlineNode(
         if (hasOpener) $ensureSpanClosed(currentWrapper, $isCharNode(currentWrapper.getParent()));
       }
     }
+
+    // A stored no-break space wrapped on its own would read as the empty-span placeholder, which a
+    // save drops, wherever the span renders no glyphs of its own. Tagging it as the author's keeps
+    // it as the span's content.
+    if (
+      markerMode !== "editable" &&
+      $isTextNode(targetNode) &&
+      targetNode.getTextContent() === NBSP
+    )
+      $setState(targetNode, authoredNbspState, true);
 
     // Wrap the target node
     $wrapNode(targetNode, currentWrapper, isFreshWrapper);

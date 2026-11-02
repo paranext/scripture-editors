@@ -235,4 +235,27 @@ describe("lone-NBSP gestures", () => {
       },
     );
   });
+
+  describe("applying a style over a selection that is exactly one stored `~`", () => {
+    // Standard view shows a span's glyphs as text, so the `~` is never a lone-NBSP placeholder there.
+    const GLYPHLESS_VIEW_NAMES = enabledViews(EDITOR_VIEWS)
+      .filter((entry) => entry.view.markerMode !== "editable")
+      .map((entry) => entry.name);
+
+    it.each(GLYPHLESS_VIEW_NAMES)("keeps the `~` inside the new span (%s)", async (view) => {
+      const editor = await mount(usjOf(`a${NBSP}b`), view);
+      await update(editor, () => {
+        const text = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes(NBSP));
+        if (!text) throw new Error("no NBSP text");
+        const offset = text.getTextContent().indexOf(NBSP);
+        text.select(offset, offset + 1);
+      });
+      await act(async () => {
+        editor.ref.current?.insertMarker("nd");
+      });
+      expect(paraContent(editor.ref.current?.getUsj())).toEqual(["a", nd(NBSP), "b"]);
+    });
+  });
 });
