@@ -511,9 +511,18 @@ function spaceRun(units: readonly Unit[], fromEnd = false): number {
 /**
  * The documents `edit` may leave `before` as — every acceptable spelling, normalized — or none
  * when the model has no expectation for it (a block boundary at the edge of a sidebar or table).
- * `isGuarded` is whether the view edits under guarded structure protection.
+ *
+ * @param keepsBookAndChapterLines - Whether the view keeps the book line and each chapter line
+ *   through an edit over a range across them, as the hidden-marker views do: the range is removed
+ *   around those lines, and the text goes in at the start of the block after them.
+ * @param isGuarded - Whether the view edits under guarded structure protection.
  */
-function expectedDocs(before: Usj, edit: Edit, isGuarded: boolean): Set<string> {
+function expectedDocs(
+  before: Usj,
+  edit: Edit,
+  keepsBookAndChapterLines: boolean,
+  isGuarded: boolean,
+): Set<string> {
   const blocks = leafBlocks(before);
   const out = new Set<string>();
   const target = blocks[edit.block];
@@ -657,7 +666,44 @@ function expectedDocs(before: Usj, edit: Edit, isGuarded: boolean): Set<string> 
   // inline content.
   const isRemovable = (item: Item): boolean =>
     isBetweenBlockAtom(item) || !isObject(item) || isInlineType(item.type);
-  if (!isSameParent || !siblings.slice(index + 1, nextIndex).every(isRemovable)) return out;
+  const between = siblings.slice(index + 1, nextIndex);
+  if (!isSameParent || !between.every(isRemovable)) return out;
+  if (
+    keepsBookAndChapterLines &&
+    (target.block.type === "book" || between.some(isBetweenBlockAtom))
+  ) {
+    // The book line stays whole; any other first block loses the range's part of it, or goes when
+    // the range takes all of it. The chapter lines stay, and the next block takes the text.
+    const firstContent = withoutUnits(
+      target.block.content ?? [],
+      edit.from,
+      unitsOf(target.block.content).length,
+    );
+    const firstKept: Item[][] =
+      target.block.type === "book"
+        ? [[clone(target.block)]]
+        : edit.from === 0
+          ? [[]]
+          : [firstContent, pruned(firstContent)].map((content) => [
+              { ...clone(target.block), content },
+            ]);
+    const lines = between.filter(isBetweenBlockAtom).map(clone);
+    for (const first of firstKept)
+      for (const variant of variants(
+        withoutUnits(next.block.content ?? [], 0, edit.to),
+        0,
+        edit.text,
+      ))
+        out.add(
+          normalizedDoc(
+            spliced(target.path, nextIndex - index + 1, ...first, ...lines, {
+              ...clone(next.block),
+              content: variant,
+            }),
+          ),
+        );
+    return out;
+  }
   merge(target, next.block, nextIndex - index + 1, edit.from, edit.to, edit.text);
   return out;
 }
@@ -1543,7 +1589,12 @@ export function describeTypingFidelityOracle(
             }
             cases += 1;
             const expected = edit
-              ? expectedDocs(loaded, edit, oracleView.structureProtectionMode === "guarded")
+              ? expectedDocs(
+                  loaded,
+                  edit,
+                  view.markerMode === "hidden",
+                  oracleView.structureProtectionMode === "guarded",
+                )
               : new Set<string>();
             const got = normalizedDoc(after);
             const isUnchanged = JSON.stringify(after) === base;

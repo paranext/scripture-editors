@@ -8,11 +8,19 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isRootNode,
+  $isTextNode,
   LexicalNode,
   PointType,
   RangeSelection,
 } from "lexical";
-import { $isBookNode, $isParaLikeNode, $isParaNode, $isSomeChapterNode } from "shared";
+import {
+  $isBookNode,
+  $isParaLikeNode,
+  $isParaNode,
+  $isSomeChapterNode,
+  $isSynthesizedMarkerNode,
+  NBSP,
+} from "shared";
 
 /**
  * Whether `node` is a book (`\id`) line or a chapter line: a `BookNode`, a chapter node (Standard
@@ -131,12 +139,12 @@ export function $selectionSpansBookOrChapterLine(selection: RangeSelection): boo
 
 /**
  * Removes what `selection` holds as `RangeSelection.removeText` does, but keeps every book and
- * chapter line ({@link $isBookOrChapterLine}) it runs across whole, text and all, so a cut of, or a
- * paste over, Select All leaves the document its book and chapter lines. The other lines between
- * them come in runs. A run the selection covers whole goes, lines and all, and leaves no empty
- * paragraph; one it covers in part goes as Lexical removes a range, from the selection's start or
- * the run's first line's start to the selection's end or the run's last line's end. A selection
- * within one line is removed as Lexical removes it.
+ * chapter line ({@link $isBookOrChapterLine}) it runs across whole, text and all, so a cut of
+ * Select All, or a paste, a delete or typing over it, leaves the document its book and chapter
+ * lines. The other lines between them come in runs. A run the selection covers whole goes, lines
+ * and all, and leaves no empty paragraph; one it covers in part goes as Lexical removes a range,
+ * from the selection's start or the run's first line's start to the selection's end or the run's
+ * last line's end. A selection within one line is removed as Lexical removes it.
  *
  * One run hosts the caret, and so what a paste puts in after the removal: the run right after the
  * last chapter line the selection holds, the Scripture text, rather than chapter 1's front matter
@@ -220,7 +228,9 @@ function snapshotOf(point: PointType): Snapshot {
 
 /**
  * Whether a range from `from` to `to` takes the whole of the lines `firstLine` to `lastLine`: no
- * text of theirs lies before `from` or after `to`.
+ * text of theirs lies before `from` or after `to`. A paragraph's gutter marker glyph is display,
+ * not text, so a range from just past it, where a caret at the line's start sits, takes the line
+ * whole.
  */
 function $holdsNoTextOutside(
   from: Snapshot,
@@ -228,9 +238,19 @@ function $holdsNoTextOutside(
   to: Snapshot,
   lastLine: LexicalNode,
 ): boolean {
-  return (
-    $textBetween($lineStart(firstLine), from) === "" && $textBetween(to, $lineEnd(lastLine)) === ""
-  );
+  const start = $lineStart(firstLine);
+  const glyph = $textBetween(start, $pastGutterGlyph(firstLine));
+  return glyph.startsWith($textBetween(start, from)) && $textBetween(to, $lineEnd(lastLine)) === "";
+}
+
+/** The point just past top-level `line`'s gutter marker glyph and the space after it, or its start
+ * when it has none. */
+function $pastGutterGlyph(line: LexicalNode): Snapshot {
+  if (!$isElementNode(line) || !$isSynthesizedMarkerNode(line.getFirstChild()))
+    return $lineStart(line);
+  const next = line.getChildAtIndex(1);
+  const offset = $isTextNode(next) && next.getTextContent() === NBSP ? 2 : 1;
+  return { key: line.getKey(), offset, type: "element" };
 }
 
 /** The text a range from `from` to `to` holds. Read-only: the range is never made the selection. */

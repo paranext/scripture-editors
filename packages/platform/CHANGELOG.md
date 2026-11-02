@@ -371,8 +371,11 @@ refused. The public surface grew substantially; nothing was removed.
   copy's front matter (`\h`, `\mt1`, an introduction) goes in before the chapter line and its
   Scripture text after it, and a paste with no front matter (plain text, another program's html)
   goes after the chapter line. So Select All, cut, then paste back restores the document exactly,
-  front matter included, and a paste over Select All of its own copy changes nothing. Delete, Backspace and typing over such a
-  selection are unchanged. Standard view is unchanged.
+  front matter included, and a paste over Select All of its own copy changes nothing. A delete,
+  typed text, Enter or a drag-move over such a selection, which removed both lines and typed into
+  the book line, keeps them too and replaces the rest (`BookAndChapterLinesPlugin`, which `Editor`
+  mounts in those views), so typing over Select All goes in after the chapter line. Standard view
+  is unchanged.
 - **A copy from the block-verse layout pastes as normal paragraphs.** The text grid's aligned column
   cuts a paragraph into one fragment per verse for its rows, and its node copy carried those
   fragments, so a Ctrl+V into paragraph-structure started a paragraph at each verse, moved the space
