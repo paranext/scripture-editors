@@ -2122,7 +2122,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <AnnotationPlugin ref={annotationRef} logger={stableLogger} viewOptions={viewOptions} />
           <ArrowNavigationPlugin viewOptions={viewOptions} />
           <CharNodePlugin />
-          <ClipboardPlugin />
+          {/* Before every plugin that handles a paste. In the views that show markers, a paste the
+              browser delivers itself (macOS's Edit > Paste, Shift+Insert) takes what Ctrl+V takes,
+              without the node copy flavor; the hidden-marker views read their own node copy from
+              it (UnstorableTextPlugin, StructureKeyboardPlugin). */}
+          <ClipboardPlugin pastesAsClipboardRead={viewOptions?.markerMode !== "hidden"} />
           {/* Editable marker modes require literal backslash input (the marker-edit engine and
               the `\` marker menu consume it), so neither plugin here acts in Standard view. The
               hidden-marker views take a paste or drop with `\` or `//` in it, leaving those out,

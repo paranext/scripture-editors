@@ -4,16 +4,13 @@
  * plus the table kinds, which are their own dedicated `ImmutableTable*` nodes rather than
  * `UnknownNode`.
  *
- * The shape under test is the one `optbreakClipboardFidelity.test.tsx` established: a payload
- * carrying `application/x-lexical-editor` takes Lexical's own same-namespace fast path, which
- * rebuilds nodes from the JSON generator's output rather than re-tokenizing the plain text. That
- * generator computes exclusion from `UnknownNode.excludeFromCopy`, and an excluded node is not
- * dropped — its children are HOISTED into the parent in its place. For a construct whose children
- * are the content-free display decorators `unknownDisplayParts` builds (`\fig `, `|src="…"`,
- * `\fig*`), that hoisting produced a convincing lie: the pasted document RENDERED the construct's
- * full literal USFM bytes as loose siblings while its exported USJ silently dropped the node and
- * every one of its attributes. A save at that point persisted the loss with no error and a screen
- * that still showed the bytes.
+ * The copy still writes `application/x-lexical-editor`, Lexical's JSON generator's output, which
+ * computes exclusion from `UnknownNode.excludeFromCopy`; an excluded node is not dropped — its
+ * children are HOISTED into the parent in its place. For a construct whose children are the
+ * content-free display decorators `unknownDisplayParts` builds (`\fig `, `|src="…"`, `\fig*`),
+ * a paste rebuilding that flavor would render the construct's full literal USFM bytes as loose
+ * siblings while its exported USJ dropped the node and every one of its attributes. The boundary
+ * describe below pins what the copy writes.
  *
  * These pins mount the full `Editor` rather than `MarkerEditPlugin` alone: the plugins around the
  * engine take part in what a paste actually produces (see `figurePasteFidelity.test.tsx`), so a
@@ -21,6 +18,11 @@
  *
  * Where a kind cannot round-trip, the LOSS is asserted rather than the fidelity, so the sweep never
  * hides one — each such pin says in its own name what is lost and why.
+ *
+ * Standard view leaves the `application/x-lexical-editor` flavor of every paste unread
+ * (`ClipboardPlugin`'s `pastesAsClipboardRead`), so a native paste carrying it takes what Ctrl+V's
+ * clipboard read does: the `full` shape pastes as `plain+html` pastes. The rows keep it so a paste
+ * the browser delivers itself stays pinned.
  */
 
 import { copyEvent, pasteEvent } from "./markerEdit.test-helpers";
@@ -131,8 +133,7 @@ async function pasteIntoFreshHost(usj: Usj, payload: Payload): Promise<Usj | und
   );
   await settle();
   // A pasted literal that pends (a marker completed under the caret) settles only once the caret
-  // DEPARTS the paragraph it landed in; the lexical-flavor path inserts an already-structural tree
-  // and has nothing pending, so this step is a harmless no-op there.
+  // DEPARTS the paragraph it landed in.
   await act(async () =>
     lexical.update(() => {
       $getRoot().getLastChild()?.selectEnd();
@@ -143,7 +144,8 @@ async function pasteIntoFreshHost(usj: Usj, payload: Payload): Promise<Usj | und
 }
 
 /** The three real-world clipboard shapes: a plain-text source, the async Ctrl+V read (which drops
- * the private flavor), and the synchronous/native copy that keeps it. */
+ * the private flavor), and the synchronous/native copy that keeps it, which Standard view leaves
+ * unread. */
 async function pastedUsjFor(usj: Usj, shape: "plain" | "plain+html" | "full"): Promise<Usj> {
   const payload = await copyContentPayload(usj);
   const shaped: Payload =
@@ -156,13 +158,12 @@ async function pastedUsjFor(usj: Usj, shape: "plain" | "plain+html" | "full"): P
     throw new Error("copy wrote no application/x-lexical-editor payload");
   const pasted = await pasteIntoFreshHost(usj, shaped);
   if (!pasted) throw new Error("editor produced no USJ");
-  // A TEXT-carrier paste lands its bytes INSIDE the empty host paragraph the skeleton seeded, and
-  // each pasted line carries its own paragraph marker — so the host survives as an empty paragraph
-  // ahead of the pasted content, exactly as it does in Paratext 9. The host is the harness's, not
-  // the document's, so it is asserted and stripped here rather than expected to be consumed.
-  // Lexical's own node-tree fast path (the `full` shape) replaces the selection with real nodes
-  // instead of re-tokenizing text, and consumes the host on the way — hence the shape split.
-  return shape === "full" ? pasted : withoutPasteHost(pasted, usj);
+  // Every shape pastes by its text: the bytes land INSIDE the empty host paragraph the skeleton
+  // seeded, and each pasted line carries its own paragraph marker — so the host survives as an
+  // empty paragraph ahead of the pasted content, exactly as it does in Paratext 9. The host is the
+  // harness's, not the document's, so it is asserted and stripped here rather than expected to be
+  // consumed.
+  return withoutPasteHost(pasted, usj);
 }
 
 /** Drop the empty `\p` insertion host {@link headerSkeletonUsj} seeded, failing loudly if what sits
@@ -295,11 +296,9 @@ describe("periph (UnknownNode) copy→paste across all three payload shapes", ()
 
 describe("ref (UnknownNode) copy→paste across all three payload shapes", () => {
   const usj = corpusUsj("cross-reference ref target");
-  it("full payload (lexical flavor) round-trips the ref wrapper and its loc attribute", async () => {
-    expect(await pastedUsjFor(usj, "full")).toEqual(usj);
-  });
-
-  (["plain", "plain+html"] as const).forEach((shape) => {
+  // The `full` shape too: Standard view leaves its lexical flavor unread, which alone could carry
+  // the wrapper, so a native paste loses it as Ctrl+V does.
+  SHAPES.forEach((shape) => {
     // Inherent to the construct, not to the clipboard: USJ invented the `<ref>` container and USFM
     // never carried it, so a plain-text carrier has no bytes anywhere that mark the wrapper's
     // extent. A raw USFM export of the same document has the identical gap.

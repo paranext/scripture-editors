@@ -12,6 +12,7 @@ import {
   $isRangeSelection,
   $isTabNode,
   $setSelection,
+  COMMAND_PRIORITY_CRITICAL,
   LexicalEditor,
   PASTE_COMMAND,
   TextNode,
@@ -214,6 +215,63 @@ describe("ClipboardPlugin — Ctrl+V", () => {
 
     expect(event.defaultPrevented).toBe(true);
     expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ClipboardPlugin — a paste as reading the clipboard gives it", () => {
+  /** What a paste handler registered after the plugin reads of a paste carrying all three
+   * flavors. */
+  async function seenBy(pastesAsClipboardRead: boolean | undefined) {
+    const { editor } = await baseTestEnvironment(
+      () => $getRoot().append($createParaNode("p").append($createTextNode("text"))),
+      <ClipboardPlugin pastesAsClipboardRead={pastesAsClipboardRead} />,
+    );
+    const flavors = new Map([
+      ["application/x-lexical-editor", '{"namespace":"platformEditor","nodes":[]}'],
+      ["text/html", "<span>html</span>"],
+      ["text/plain", "plain"],
+    ]);
+    const event = {
+      clipboardData: {
+        types: [...flavors.keys()],
+        files: [],
+        getData: (type: string) => flavors.get(type) ?? "",
+      },
+      preventDefault: vi.fn(),
+    } as unknown as ClipboardEvent;
+    let seen: { types: readonly string[]; flavor: string; plain: string } | undefined;
+    editor.registerCommand(
+      PASTE_COMMAND,
+      (pasted) => {
+        const data = (pasted as ClipboardEvent).clipboardData;
+        if (data)
+          seen = {
+            types: [...data.types],
+            flavor: data.getData("application/x-lexical-editor"),
+            plain: data.getData("text/plain"),
+          };
+        return true;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    );
+    await act(async () => {
+      editor.update(() => {
+        editor.dispatchCommand(PASTE_COMMAND, event);
+      });
+    });
+    return seen;
+  }
+
+  it("leaves the node copy flavor out of every paste when asked", async () => {
+    expect(await seenBy(true)).toEqual({
+      types: ["text/html", "text/plain"],
+      flavor: "",
+      plain: "plain",
+    });
+  });
+
+  it("leaves a paste as it is by default", async () => {
+    expect((await seenBy(undefined))?.flavor).toContain("platformEditor");
   });
 });
 

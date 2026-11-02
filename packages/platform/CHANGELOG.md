@@ -352,6 +352,15 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- **A paste the browser delivers itself pastes as Ctrl+V does in the views that show markers**
+  (Standard, the Footnotes pane's row editor, Unformatted, Markers). macOS's Edit > Paste and
+  Shift+Insert, and a `PASTE_COMMAND` carrying the editor's node copy
+  (`application/x-lexical-editor`), took Lexical's node-tree path, which threw on a cut collapsed
+  footnote pasted back, put a paste meant inside a note after it, and showed a pasted marker it did
+  not save. Such a paste now leaves that flavor unread, as Ctrl+V's clipboard read does, and takes
+  the html and plain text. A `ref` pasted that way loses its wrapper and `loc`, as it does on
+  Ctrl+V. The copy still writes the flavor, and the views that hide markers still read their own
+  node copy from it. `ClipboardPlugin` takes `pastesAsClipboardRead` for this; `Editor` sets it.
 - **Select All, then copy, cut or paste, keeps one book line and one chapter line in the views that
   hide markers.** Under `"off"` and `"guarded"` structure a copy of Select All pasted at the end
   added a second chapter and the book line's text, so every later save of the chapter failed; a
