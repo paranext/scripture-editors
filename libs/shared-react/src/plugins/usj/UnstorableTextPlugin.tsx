@@ -54,7 +54,6 @@ import {
   isSelectionCapturedInDecoratorInput,
   KEY_DOWN_COMMAND,
   LexicalCommand,
-  LexicalEditor,
   LexicalNode,
   PASTE_COMMAND,
   PASTE_TAG,
