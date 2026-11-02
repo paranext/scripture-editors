@@ -296,8 +296,8 @@ export function $getOTPositionOfNode(
 
 /**
  * The OT length of `node` and everything in it, in `"apply"` coordinates (see
- * {@link OTCoordinateSystem}): what a `delete` of `$applyUpdate` has to span to remove it. Every
- * embed is one opaque unit, every other text counts its raw length (marker glyphs included), and a
+ * {@link OTCoordinateSystem}): what a `delete` of `$applyUpdate` has to span to remove it. Each
+ * leaf counts what {@link $getNodeOTContribution} gives it in `"apply"` coordinates, and a
  * para-like node adds its closing unit.
  *
  * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
@@ -307,9 +307,7 @@ export function $getOTPositionOfNode(
  * @returns Its length.
  */
 export function $getApplyLength(node: LexicalNode): number {
-  if ($isEmbedNode(node)) return 1;
-  if ($isTextNode(node)) return node.getTextContentSize();
-  if (!$isElementNode(node)) return 0;
+  if ($isEmbedNode(node) || !$isElementNode(node)) return $getNodeOTContribution(node, "apply");
   const contentLength = node
     .getChildren()
     .reduce((total, child) => total + $getApplyLength(child), 0);
