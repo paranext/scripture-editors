@@ -3121,6 +3121,57 @@ describe("Delta Utils $applyUpdate", () => {
       });
     });
 
+    it("places the ops after a char span merged into a captured editable span past its closer", async () => {
+      const viewOptions: ViewOptions = { ...defaultViewOptions, markerMode: "editable" };
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append($createParaNode());
+      });
+      await sutApplyUpdate(
+        editor,
+        [{ insert: "Lord", attributes: { char: { style: "nd" } } }, { insert: " God here" }],
+        viewOptions,
+      );
+      const before = editor.getEditorState().read(() => $getRoot().getTextContent());
+      expect(before).toBe(`\\nd${NBSP}Lord\\nd* God here`);
+
+      await sutApplyUpdate(
+        editor,
+        [
+          { retain: 5 },
+          { insert: "X", attributes: { char: { style: "nd" } } },
+          { retain: 2 },
+          { insert: "Y" },
+        ],
+        viewOptions,
+      );
+
+      editor.getEditorState().read(() => {
+        expect($getRoot().getTextContent()).toBe(`\\nd${NBSP}LordX\\nd*Y God here`);
+      });
+    });
+
+    it("gives an empty char op in editable mode a single placeholder and counts it once", async () => {
+      const viewOptions: ViewOptions = { ...defaultViewOptions, markerMode: "editable" };
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append($createParaNode());
+      });
+
+      await sutApplyUpdate(
+        editor,
+        [{ insert: "", attributes: { char: { style: "nd" } } }, { insert: " y" }],
+        viewOptions,
+      );
+
+      editor.getEditorState().read(() => {
+        const p = $getRoot().getFirstChild();
+        if (!$isParaNode(p)) throw new Error("p is not a ParaNode");
+        const [nd, text] = p.getChildren();
+        if (!$isCharNode(nd)) throw new Error("nd is not a CharNode");
+        expect(nd.getTextContent()).toBe(`\\nd${EMPTY_CHAR_PLACEHOLDER_TEXT}\\nd*`);
+        expect(text.getTextContent()).toBe(" y");
+      });
+    });
+
     it("(dc) should insert milestone embeds before and in text", async () => {
       const text = "“So you say,” answered Jesus.";
       const { editor } = await testEnvironment(() => {

@@ -1011,6 +1011,7 @@ function $handleCharText(
     existingNodes,
     false,
     isEditable,
+    textToInsert === "",
   );
   $markAppliedNbsp(textNode, textToInsert, viewOptions);
 
@@ -1020,7 +1021,7 @@ function $handleCharText(
     // The text, with any nested span the merge built around it.
     let added: LexicalNode = textNode;
     let parent = added.getParent();
-    while ($isCharNode(parent) && parent !== parentCharNode) {
+    while ($isCharNode(parent) && !parent.is(parentCharNode)) {
       added = parent;
       parent = added.getParent();
     }

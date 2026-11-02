@@ -300,6 +300,9 @@ export function $getOTPositionOfNode(
  * embed is one opaque unit, every other text counts its raw length (marker glyphs included), and a
  * para-like node adds its closing unit.
  *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ *
  * @param node - The node to measure.
  * @returns Its length.
  */
