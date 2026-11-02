@@ -4,19 +4,28 @@
  */
 export type UnstorableCharacter = "\\" | "//";
 
-/** Passed to {@link UnstorableTextRemovedHandler} when an edit's text lost unstorable characters. */
+/**
+ * Passed to {@link UnstorableTextRemovedHandler} when an edit's text lost unstorable characters, or
+ * a delete was refused because it would have made one.
+ */
 export interface UnstorableTextRemoved {
   /**
-   * What brought the text in. More sources may be added; a host that branches on this should handle
-   * values it does not know.
+   * What brought the text in, or `"deletion"` for a delete refused because what it left would put
+   * a `/` against another `/` (Backspace, Delete, a word or line delete, a cut, or the removal half
+   * of a drag-move). More sources may be added; a host that branches on this should handle values
+   * it does not know.
    */
-  readonly source: "paste" | "drop" | "typing";
-  /** What was removed or refused, each kind once, in the order first met. Never empty. */
+  readonly source: "paste" | "drop" | "typing" | "deletion";
+  /**
+   * What was removed or refused, each kind once, in the order first met. Never empty. A refused
+   * deletion is always `["//"]`.
+   */
   readonly removed: UnstorableCharacter[];
 }
 
 /**
- * Told once per paste, drop or refused keystroke that removed or refused unstorable text, so the
- * host can tell the user why some of what they pasted, dropped or typed is missing.
+ * Told once per paste, drop or refused keystroke that removed or refused unstorable text, and once
+ * per refused deletion, so the host can tell the user why some of what they pasted, dropped or
+ * typed is missing, or why a delete did nothing.
  */
 export type UnstorableTextRemovedHandler = (event: UnstorableTextRemoved) => void;

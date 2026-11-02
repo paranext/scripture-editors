@@ -148,7 +148,8 @@ refused. The public surface grew substantially; nothing was removed.
   keystroke in a view whose `markerMode` is `"hidden"` that removed or refused `\` or `//`, with its
   `source` (`"paste"`, `"drop"` or `"typing"`) and what was `removed` (`"\\"` and `"//"`, each once,
   in the order first met), so the host can tell the user why some of what they pasted, dropped or
-  typed is missing. Never called in Standard or Markers view, or when nothing was removed.
+  typed is missing; and once per refused deletion (below), with `source` `"deletion"` and `removed`
+  `["//"]`. Never called in Standard or Markers view, or when nothing was removed or refused.
 
 ### Changed
 
@@ -309,6 +310,19 @@ refused. The public surface grew substantially; nothing was removed.
   carries the next paragraph's gutter glyph) or a paste of a Markers-view copy would have inserted
   text such as `q1 ` that the user never wrote. The read-only Markers view still refuses `\` and
   `/`, and Standard view is unchanged.
+- **The views that hide markers refuse a delete that would join two `/` into `//`.** Deleting `b`
+  from `a/b/c` saved `a//c`, which USFM reads as an optional line break, so after the next load the
+  view showed `ac`. A delete whose result would put a `/` against a `/` it was not already touching
+  now does nothing, and `onUnstorableTextRemoved` is told once with `source: "deletion"`. This
+  covers Backspace and Delete and their word and line chords, the same deletes arriving without a
+  keystroke (a `beforeinput` delete or a menu), deleting a selection, a cut (which then copies
+  nothing either), the removal half of a drag-move (whose drop still goes in, leaving the text in
+  both places), and a paragraph join, including guarded structure's two-step join (refused at the
+  first press) and a selected paragraph marker. The check reads what the file stores either side of
+  what goes: through annotation marks, through a character span the delete empties, and through two
+  pieces of one span that a join makes one again. A `//` already in the text is left alone. Under
+  `"protected"` structure a join is refused by the protection, as before. Standard view is
+  unchanged.
 
 ### Fixed
 
