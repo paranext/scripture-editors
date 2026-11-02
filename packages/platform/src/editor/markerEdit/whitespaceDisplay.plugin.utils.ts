@@ -69,6 +69,7 @@ import { $isNoteCallerSlot } from "./noteCallerSlot.utils";
 import { paratext9HtmlToUsfm } from "./paratext9Clipboard.utils";
 import {
   controlCharactersToSpaces,
+  respellNbspToUsfm,
   withoutZeroWidthNoBreakSpaces,
 } from "./whitespaceDisplay.utils";
 
@@ -1192,8 +1193,7 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
       text += node.getTextContent().replaceAll(NBSP, " ");
     }
   }
-  const withBodySpelling = nbspSpelling === "~" ? text : text.replaceAll(nbspSpelling, NBSP);
-  return withBodySpelling.replaceAll(ATTRIBUTE_NBSP_SPELLING, NBSP);
+  return respellNbspToUsfm(text, nbspSpelling);
 }
 
 /**

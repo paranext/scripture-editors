@@ -62,7 +62,12 @@ export function registerEmptyCopyGuard(editor: LexicalEditor): () => void {
   );
 }
 
-/** Whether `node` is plain prose: a plain text node with no format and no engine role. */
+/**
+ * Whether `node` is plain prose: a plain text node with no format and no engine role.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ */
 export function $isPlainProse(node: LexicalNode): node is TextNode {
   return (
     $isTextNode(node) &&

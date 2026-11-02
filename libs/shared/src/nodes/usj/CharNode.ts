@@ -370,6 +370,18 @@ function $recordSplitContinuation(original: CharNode, continuation: CharNode): v
 }
 
 /**
+ * Forgets which char spans this editor's splits cut apart, for when the document and its undo
+ * history are replaced together: no undo can bring those spans back, so the record would only grow.
+ * Not part of the package's public API.
+ *
+ * Needs no active editor: call it wherever the history is cleared.
+ * @param editor - The editor whose split record to clear.
+ */
+export function clearSplitOrigins(editor: LexicalEditor): void {
+  splitOrigins.delete(editor);
+}
+
+/**
  * Whether `a` and `b` are pieces of one span that a split cut apart in this editor session, so
  * meeting again (the paragraphs a split made joined back) restores that one span. Spans the
  * document held apart, or that two different spans' splits made, are not.
@@ -387,11 +399,36 @@ export function $wereSplitFromOneSpan(a: CharNode, b: CharNode): boolean {
 }
 
 /**
- * For each editor, the char spans that its current update's clipboard insertions (a paste, a drop)
- * brought in, and the committed state that update started from — which is how a later update
- * knows the record is not its own.
+ * Creates a per-editor record of node keys that lasts one update. A record belongs to the committed state
+ * its update started from; a later update, which starts from a newer state, finds it stale and
+ * starts a fresh one.
  */
-const clipboardSpans = new WeakMap<LexicalEditor, { from: EditorState; keys: Set<NodeKey> }>();
+function createUpdateScopedKeys(): {
+  add: (key: NodeKey) => void;
+  has: (key: NodeKey) => boolean;
+} {
+  const records = new WeakMap<LexicalEditor, { from: EditorState; keys: Set<NodeKey> }>();
+  return {
+    add(key) {
+      const editor = $getEditor();
+      const from = editor.getEditorState();
+      let record = records.get(editor);
+      if (record?.from !== from) {
+        record = { from, keys: new Set() };
+        records.set(editor, record);
+      }
+      record.keys.add(key);
+    },
+    has(key) {
+      const editor = $getEditor();
+      const record = records.get(editor);
+      return record?.from === editor.getEditorState() && record.keys.has(key);
+    },
+  };
+}
+
+/** The char spans that the current update's clipboard insertions (a paste, a drop) brought in. */
+const clipboardSpans = createUpdateScopedKeys();
 
 /**
  * Record the char spans in `nodes`, nested ones included, as content one clipboard insertion is
@@ -402,16 +439,8 @@ const clipboardSpans = new WeakMap<LexicalEditor, { from: EditorState; keys: Set
  * @param nodes - The nodes the insertion inserts.
  */
 export function $recordClipboardSpans(nodes: LexicalNode[]): void {
-  const editor = $getEditor();
-  const from = editor.getEditorState();
-  let record = clipboardSpans.get(editor);
-  if (record?.from !== from) {
-    record = { from, keys: new Set() };
-    clipboardSpans.set(editor, record);
-  }
-  const { keys } = record;
   const collect = (node: LexicalNode): void => {
-    if ($isCharNode(node)) keys.add(node.getKey());
+    if ($isCharNode(node)) clipboardSpans.add(node.getKey());
     if ($isElementNode(node)) node.getChildren().forEach(collect);
   };
   nodes.forEach(collect);
@@ -426,18 +455,11 @@ export function $recordClipboardSpans(nodes: LexicalNode[]): void {
  * @param b - Another char span.
  */
 export function $arrivedTogetherFromClipboard(a: CharNode, b: CharNode): boolean {
-  const editor = $getEditor();
-  const record = clipboardSpans.get(editor);
-  if (record?.from !== editor.getEditorState()) return false;
-  return record.keys.has(a.getKey()) && record.keys.has(b.getKey());
+  return clipboardSpans.has(a.getKey()) && clipboardSpans.has(b.getKey());
 }
 
-/**
- * For each editor, the char spans that its current update's marker apply (the marker menu,
- * `insertMarker`) created, and the committed state that update started from — which is how a later
- * update knows the record is not its own.
- */
-const newlyMarkedSpans = new WeakMap<LexicalEditor, { from: EditorState; keys: Set<NodeKey> }>();
+/** The char spans that the current update's marker apply (the marker menu, `insertMarker`) made. */
+const newlyMarkedSpans = createUpdateScopedKeys();
 
 /**
  * Record `node`, when it is a char span, as one a marker apply is creating in this update, so
@@ -450,14 +472,7 @@ const newlyMarkedSpans = new WeakMap<LexicalEditor, { from: EditorState; keys: S
  */
 export function $recordNewlyMarkedSpan<T extends LexicalNode>(node: T): T {
   if (!$isCharNode(node)) return node;
-  const editor = $getEditor();
-  const from = editor.getEditorState();
-  let record = newlyMarkedSpans.get(editor);
-  if (record?.from !== from) {
-    record = { from, keys: new Set() };
-    newlyMarkedSpans.set(editor, record);
-  }
-  record.keys.add(node.getKey());
+  newlyMarkedSpans.add(node.getKey());
   return node;
 }
 
@@ -468,10 +483,7 @@ export function $recordNewlyMarkedSpan<T extends LexicalNode>(node: T): T {
  * @param span - A char span.
  */
 export function $isNewlyMarkedSpan(span: CharNode): boolean {
-  const editor = $getEditor();
-  const record = newlyMarkedSpans.get(editor);
-  if (record?.from !== editor.getEditorState()) return false;
-  return record.keys.has(span.getKey());
+  return newlyMarkedSpans.has(span.getKey());
 }
 
 export function isSerializedCharNode(

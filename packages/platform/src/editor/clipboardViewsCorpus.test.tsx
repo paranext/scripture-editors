@@ -880,7 +880,7 @@ async function runUsfmRow(row: UsfmRow, usj: Usj): Promise<void> {
     });
     // A pasted verse makes Standard view rebuild part of the paragraph it lands in, re-deriving
     // its verses, and an empty derived `sid` (the 2SA-3 fixture's) does not survive that.
-    // Dropping derived metadata is accepted (data-fidelity catalog F-8), so in that paragraph an
+    // Dropping derived metadata is accepted, so in that paragraph an
     // empty `sid` may be dropped; everything else, non-empty `sid`s included, must survive exactly.
     const settled = (content: Item[] | undefined) =>
       content && row.text === "\\v 9 x"

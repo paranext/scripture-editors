@@ -183,7 +183,18 @@ export function toUsfmNbspSpelling(
   displayText: string,
   viewOptions: ViewOptions | undefined,
 ): string {
-  const nbspSpelling = getNbspSpelling(viewOptions);
+  return respellNbspToUsfm(displayText, getNbspSpelling(viewOptions));
+}
+
+/**
+ * `displayText` with each no-break space spelling (the body text's `nbspSpelling` and the
+ * attribute values' {@link ATTRIBUTE_NBSP_SPELLING}) respelled as U+00A0. Not part of the package's
+ * public API.
+ *
+ * @param displayText - Text read from the editor's display.
+ * @param nbspSpelling - What a stored no-break space displays as in body text (`getNbspSpelling`).
+ */
+export function respellNbspToUsfm(displayText: string, nbspSpelling: string): string {
   const withBodySpelling =
     nbspSpelling === "~" ? displayText : displayText.replaceAll(nbspSpelling, NBSP);
   return withBodySpelling.replaceAll(ATTRIBUTE_NBSP_SPELLING, NBSP);

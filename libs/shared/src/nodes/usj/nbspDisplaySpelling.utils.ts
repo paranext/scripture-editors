@@ -47,9 +47,11 @@ export function registerNbspDisplaySpelling(
 
 /**
  * What the active editor displays a stored no-break space in body text as, or `undefined` when it
- * displays one as itself. A bare `editorState.read()` has no active editor and gets `undefined`, so
- * a caller comparing display bytes must read through the editor (`editor.read()`, an update, a
- * transform).
+ * displays one as itself.
+ *
+ * Read-only: call inside `editor.update()`, a command or transform, or
+ * `editor.getEditorState().read(fn, { editor })`. A bare `editorState.read(fn)` has no active
+ * editor and returns `undefined`, so a caller comparing display bytes must not read that way.
  */
 export function $getNbspDisplaySpelling(): string | undefined {
   let editor: LexicalEditor;
@@ -64,7 +66,11 @@ export function $getNbspDisplaySpelling(): string | undefined {
 /**
  * What the active editor displays a stored no-break space in an attribute value as:
  * {@link ATTRIBUTE_NBSP_SPELLING} where it respells a no-break space at all, else `undefined` (it
- * displays one as itself). Read it the way {@link $getNbspDisplaySpelling} must be read.
+ * displays one as itself).
+ *
+ * Read-only: call inside `editor.update()`, a command or transform, or
+ * `editor.getEditorState().read(fn, { editor })`. A bare `editorState.read(fn)` has no active
+ * editor and returns `undefined`.
  */
 export function $getAttributeNbspDisplaySpelling(): string | undefined {
   return $getNbspDisplaySpelling() === undefined ? undefined : ATTRIBUTE_NBSP_SPELLING;

@@ -414,6 +414,10 @@ export function $hasSameCharAttributes(
  * cid that {@link $hasSameCharAttributes} compares, and every other attribute too. Two spans that
  * differ only in another attribute are still two spans — each `\w` word keeps its own `lemma` —
  * so joining them would drop one span's value.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ *
  * @param charAttributes - The marker and cid to compare.
  * @param unknownAttributes - The other attributes to compare, `undefined` for none.
  * @param charNode - The character node to compare against.
