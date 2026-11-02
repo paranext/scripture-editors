@@ -289,9 +289,7 @@ refused. The public surface grew substantially; nothing was removed.
 ### Fixed
 
 - Undoing an edit that restores a char span's separator (its no-break space after the glyph) sends
-  the separator to the host as U+00A0, not a space, so the span gains no leading content space. An
-  incoming insert that follows a retain or a delete and starts with a separator is no longer taken
-  for a stored no-break space.
+  the separator to the host as U+00A0, not a space, so the span gains no leading content space.
 - A delta applied in Standard view places the ops after an inserted char span correctly. An insert
   that merged into a nested span measured the whole span, so later ops landed too far along; and an
   empty char insert counted its placeholder no-break space twice, shifting later ops by one.

@@ -1008,15 +1008,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         if (!holdsFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
         if (extraTag) $addUpdateTag(extraTag);
         try {
-          // The document the ops apply to (as this update sees it) is read only if an insert needs
-          // the text before it.
-          const textBefore = textBeforeFromDocumentOps(() => $getParticularNodeOps());
-          $applyUpdate(
-            opsFromHost(ops, viewOptions, textBefore),
-            viewOptions,
-            nodeOptions,
-            stableLogger,
-          );
+          $applyUpdate(opsFromHost(ops, viewOptions), viewOptions, nodeOptions, stableLogger);
         } catch (error) {
           // Lexical discards a throwing update but keeps its `onUpdate` for the next commit that
           // lands - the user's next edit - so end the signal here and make that callback a no-op,

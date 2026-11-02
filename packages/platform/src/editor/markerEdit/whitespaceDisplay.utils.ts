@@ -277,7 +277,7 @@ function opTextIn(text: string, previousText: PreviousText, nbspSpelling: string
 
 /**
  * Gives `textBefore` the text of a delta's first `position` characters, for
- * {@link opsForHost} and {@link opsFromHost}. An embed counts as one character, as it does in
+ * {@link opsForHost}. An embed counts as one character, as it does in
  * delta positions. The document is read, and its text put together, once, when first asked for.
  *
  * @param getDocumentOps - Gets the ops of the whole document.
@@ -303,31 +303,22 @@ export function textBeforeFromDocumentOps(
  * also given the text before the insert: the op before it when that is a text insert, otherwise
  * (top-level ops only) the document text before it, from `textBefore` when given.
  *
- * Positions run through the top-level ops in the document that `textBefore` reads. For ops going
- * out, that is the document the ops produced: retains and inserts advance, deletes do not. For ops
- * coming in, it is the document before they apply: retains and deletes advance, inserts do not,
- * and an insert after a delete reads the text before the deleted range.
+ * Positions run through the top-level ops in the document that `textBefore` reads, which is the
+ * document the ops produced: retains and inserts advance, deletes do not.
  */
 function mapOpsText<T extends { insert?: unknown }>(
   ops: T[],
   map: (text: string, previousText: PreviousText) => string,
   textBefore?: (position: number) => string,
-  isIncoming = false,
 ): T[] {
   let position = 0;
-  let deletedLength = 0;
   return ops.map((op, index) => {
     const { insert } = op;
-    const insertPosition = position - deletedLength;
+    const insertPosition = position;
     if (insert !== undefined && insert !== null && insert !== "") {
-      if (!isIncoming) position += typeof insert === "string" ? insert.length : 1;
-      deletedLength = 0;
+      position += typeof insert === "string" ? insert.length : 1;
     } else if ("retain" in op && typeof op.retain === "number") {
       position += op.retain;
-      deletedLength = 0;
-    } else if (isIncoming && "delete" in op && typeof op.delete === "number") {
-      position += op.delete;
-      deletedLength += op.delete;
     }
 
     if (typeof insert === "string") {
@@ -394,25 +385,19 @@ export function opsForHost<T extends { insert?: unknown }>(
  * Delta ops on their way into the editor (`applyUpdate`, `replaceEmbedUpdate`), the reverse of
  * {@link opsForHost}: in Standard view, control characters become spaces, and each U+00A0 that is
  * not the separator or spacer after an opening marker glyph becomes the display spelling of a
- * stored no-break space. Other views take the ops as they are.
+ * stored no-break space. Other views take the ops as they are. Ops are placed by the document as
+ * the update sees it, not by the text the editor shows, so only the insert before an op is read for
+ * a marker glyph.
  *
  * @param ops - The host's ops.
  * @param viewOptions - The editor's view options.
- * @param textBefore - The text of the document before the ops apply, before a position, for an
- *   insert whose op before it is not a text insert. See {@link textBeforeFromDocumentOps}.
  * @returns The ops the editor applies.
  */
 export function opsFromHost<T extends { insert?: unknown }>(
   ops: T[],
   viewOptions: ViewOptions | undefined,
-  textBefore?: (position: number) => string,
 ): T[] {
   if (!hasStandardViewWhitespace(viewOptions)) return ops;
   const nbspSpelling = getNbspSpelling(viewOptions);
-  return mapOpsText(
-    ops,
-    (text, previousText) => opTextIn(text, previousText, nbspSpelling),
-    textBefore,
-    true,
-  );
+  return mapOpsText(ops, (text, previousText) => opTextIn(text, previousText, nbspSpelling));
 }
