@@ -1,6 +1,12 @@
 import { $removeLeadingSpace, wasNodeCreated } from "../../nodes/usj/node-react.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getNodeByKey, $isElementNode, LexicalEditor } from "lexical";
+import {
+  $getNodeByKey,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  LexicalEditor,
+} from "lexical";
 import { useEffect } from "react";
 import {
   $isGutterMarkerNode,
@@ -35,7 +41,9 @@ function useParaNode(editor: LexicalEditor) {
  * middle of a paragraph. Update ParaNode to not contain text if it is a 'b' marker (blank line):
  * text typed into an empty one is removed. However, if the 'b' ParaNode already contained text, it
  * can be modified (backwards compatible with PT9 & USFM v3.0). A join of an empty one with the
- * paragraph after it keeps that paragraph: its marker replaces the blank line's. An applied update
+ * paragraph after it keeps the paragraph whose text survives: its marker replaces the blank line's.
+ * That is the paragraph after the blank line, or, when the user's own selection ran from the blank
+ * line into a later paragraph, the one the selection ended in. An applied update
  * that removes that paragraph without moving any of its content into the blank line leaves the
  * blank line's marker alone.
  *
@@ -62,16 +70,27 @@ function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
   if (!$isParaNode(node) || node.getMarker() !== "b" || node.isEmpty()) return;
 
   const prevEditorState = editor.getEditorState();
+  const isUserEdit = !getApplyingUpdateSource(editor);
   const { wasEmpty, wasBlank, nextKey, nextPara } = prevEditorState.read(() => {
     const prevNode = $getNodeByKey(node.getKey());
     const prevNext = prevNode?.getNextSibling();
+    // A range selection from the blank line over other paragraphs joins the paragraph it ends in,
+    // not the blank line's next sibling. While an update is applied, the previous selection is the
+    // local user's, unrelated to it.
+    let survivor = prevNext;
+    const selection = isUserEdit ? $getSelection() : undefined;
+    if ($isRangeSelection(selection) && !selection.isCollapsed()) {
+      const end = (selection.isBackward() ? selection.anchor : selection.focus).getNode();
+      const endPara = end.getTopLevelElement();
+      if ($isParaNode(endPara) && !endPara.is(prevNode)) survivor = endPara;
+    }
     return {
       wasEmpty: $isParaNode(prevNode) && prevNode.isEmpty(),
       // Empty but for a marker glyph the view shows in front of it (a gutter or visible marker).
       wasBlank: $isParaNode(prevNode) && prevNode.getChildren().every($isVisibleMarkerNode),
       nextKey: prevNext?.getKey(),
-      nextPara: $isParaNode(prevNext)
-        ? { marker: prevNext.getMarker(), unknownAttributes: prevNext.getUnknownAttributes() }
+      nextPara: $isParaNode(survivor)
+        ? { marker: survivor.getMarker(), unknownAttributes: survivor.getUnknownAttributes() }
         : undefined,
     };
   });

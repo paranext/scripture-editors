@@ -85,6 +85,16 @@ const BLANK_LINE_THEN_PARAGRAPH: Usj = {
   ],
 };
 
+/** `\id`, `\c 1`, an empty `\b`, `\q1 line`, then `\p text`. */
+const BLANK_LINE_THEN_TWO_PARAGRAPHS: Usj = {
+  ...BLANK_LINE_THEN_PARAGRAPH,
+  content: [
+    ...BLANK_LINE_THEN_PARAGRAPH.content.slice(0, 3),
+    { type: "para", marker: "q1", content: ["line"] },
+    ...BLANK_LINE_THEN_PARAGRAPH.content.slice(3),
+  ],
+};
+
 /** The editing views whose markers are hidden: a caret at a paragraph's text start is past no
  * marker glyph. */
 const HIDDEN_MARKER_VIEWS = EDITING_VIEWS.filter(({ name }) => name !== "standard");
@@ -184,6 +194,31 @@ for (const { name, view, structureProtectionMode, presses } of HIDDEN_MARKER_AND
         { marker: "p", text: "xext" },
       ]);
     });
+
+    // The joined paragraph is the one whose text survives: the one at the range's end.
+    it.each<[string, string | undefined]>([
+      ["Delete", undefined],
+      ["Typing", "x"],
+    ])(
+      "%s over a range from the blank line past a paragraph keeps the last paragraph's marker",
+      async (_, typed) => {
+        const mounted = await mountInView(BLANK_LINE_THEN_TWO_PARAGRAPHS, view, {
+          structureProtectionMode,
+        });
+        await act(async () => {
+          mounted.ref.current?.setSelection({
+            start: { jsonPath: "$.content[2]", offset: 0 },
+            end: { jsonPath: "$.content[4].content[0]", offset: 1 },
+          });
+        });
+
+        expect(await (typed ? press(mounted, typed, typed) : press(mounted, "Delete"))).toEqual([]);
+
+        expect(paragraphsAfterChapter(mounted.ref.current?.getUsj())).toEqual([
+          { marker: "p", text: typed ? `${typed}ext` : "ext" },
+        ]);
+      },
+    );
   });
 }
 
