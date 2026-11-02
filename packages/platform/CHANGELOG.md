@@ -150,7 +150,6 @@ refused. The public surface grew substantially; nothing was removed.
   in the order first met), so the host can tell the user why some of what they pasted, dropped or
   typed is missing; and once per refused deletion (below), with `source` `"deletion"` and `removed`
   `["//"]`. Never called in Standard or Markers view, or when nothing was removed or refused.
-  typed is missing. Never called in Standard or Markers view, or when nothing was removed.
 
 ### Changed
 
