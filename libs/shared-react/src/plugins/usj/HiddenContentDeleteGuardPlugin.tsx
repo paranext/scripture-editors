@@ -67,10 +67,11 @@ import {
 import { useEffect, useRef } from "react";
 import { $isUnknownNode, LoggerBasic, UnknownNode } from "shared";
 
-type DeleteGranularity = "character" | "word" | "line";
+/** How far a delete from a collapsed caret reaches. */
+export type DeleteGranularity = "character" | "word" | "line";
 
 /** A delete keystroke: which way it deletes from a collapsed caret, and how far. */
-interface DeleteChord {
+export interface DeleteChord {
   direction: DeleteDirection;
   granularity: DeleteGranularity;
 }
@@ -634,7 +635,7 @@ export function HiddenContentDeleteGuardPlugin({
  * for any other chord: off Apple platforms Alt+Backspace is the browser's Undo and Shift+Delete its
  * cut, and neither deletes.
  */
-function deleteChordOf(event: KeyboardEvent): DeleteChord | undefined {
+export function deleteChordOf(event: KeyboardEvent): DeleteChord | undefined {
   const wordMask = IS_APPLE ? { altKey: true } : { ctrlKey: true };
   const appleChord = (key: string) =>
     IS_APPLE && isExactShortcutMatch(event, key, { ctrlKey: true });

@@ -1,14 +1,18 @@
 import { removeMarkerGlyphElements } from "./clipboard.utils";
+import { DeleteGranularity, deleteChordOf } from "./HiddenContentDeleteGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
+import { $shouldBlockStructuralEdit, $shouldRefuseExtendedDelete } from "./structureKeyboard.utils";
 import {
   UnstorableCharacter,
   UnstorableTextRemoved,
   UnstorableTextRemovedHandler,
 } from "./unstorable-text.model";
 import {
+  $deletionJoinsSlashes,
   $insertsNothing,
   $removeUnstorableTextFromNodes,
   $textAroundSelection,
+  JudgedDeletion,
   removeUnstorableText,
 } from "./unstorableText.utils";
 import { $insertDataTransferForRichText } from "@lexical/clipboard";
@@ -16,22 +20,32 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
+  $createRangeSelection,
   $getSelection,
+  $isNodeSelection,
   $isRangeSelection,
   BaseSelection,
   COMMAND_PRIORITY_CRITICAL,
+  COMMAND_PRIORITY_HIGH,
   COMMAND_PRIORITY_NORMAL,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  CUT_COMMAND,
+  DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
   KEY_DOWN_COMMAND,
+  LexicalCommand,
   LexicalEditor,
   LexicalNode,
   PASTE_COMMAND,
   PASTE_TAG,
   PasteCommandType,
+  RangeSelection,
+  REMOVE_TEXT_COMMAND,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { LoggerBasic } from "shared";
+import { $getSelectedParaMarkerPara, $isParaLikeNode, LoggerBasic } from "shared";
 
 /** The clipboard flavor Lexical writes its own node copy to. */
 const LEXICAL_CLIPBOARD_TYPE = "application/x-lexical-editor";
@@ -42,8 +56,12 @@ function reportRemoved(
   onRemoved: UnstorableTextRemovedHandler | undefined,
   logger: LoggerBasic | undefined,
 ): void {
-  const from = event.source === "typing" ? "typed text" : `a ${event.source}`;
-  logger?.info(`UnstorableTextPlugin: removed ${event.removed.join(" and ")} from ${from}.`);
+  if (event.source === "deletion")
+    logger?.info("UnstorableTextPlugin: refused a deletion that would join two / into //.");
+  else {
+    const from = event.source === "typing" ? "typed text" : `a ${event.source}`;
+    logger?.info(`UnstorableTextPlugin: removed ${event.removed.join(" and ")} from ${from}.`);
+  }
   onRemoved?.(event);
 }
 
@@ -90,6 +108,14 @@ function $filterTypedText(text: string): { text: string; removed: UnstorableChar
     ? $textAroundSelection(selection)
     : { before: "", after: "" };
   return removeUnstorableText(text, before, after);
+}
+
+/** What deleting `selection` removes, from its start to its end in document order. */
+function rangeDeletion(selection: RangeSelection): JudgedDeletion {
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  return { kind: "range", start, end };
 }
 
 /**
@@ -152,7 +178,7 @@ function joinLines(text: string): string {
  * Keeps text a hidden-marker view cannot store out of every paste, drop and keystroke: each `\` and
  * each `//` goes and the rest goes in (see {@link removeUnstorableText}), and the host is told once
  * per paste, drop or refused keystroke through `onRemoved`. A paste or drop left with nothing to
- * insert changes nothing.
+ * insert changes nothing. A delete that would make a `//` out of two `/` is refused (below).
  *
  * Covers each route Lexical inserts by: a node copy from an editor of this namespace and html
  * (through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`), and plain text, pasted (`PASTE_COMMAND`) or
@@ -179,8 +205,19 @@ function joinLines(text: string): string {
  * its lines joined by one space each, as protected structure's html route joins paragraphs:
  * Lexical would otherwise make each line a paragraph of its own.
  *
+ * A delete is refused, and reported with `source: "deletion"`, when what it leaves would put a `/`
+ * against a `/` it was not already touching (see {@link $deletionJoinsSlashes}): Backspace, Delete
+ * and their word and line chords at the keystroke (`KEY_DOWN_COMMAND`, at `CRITICAL`, ahead of
+ * guarded structure's arming press and the hidden-content question), the same deletes without one
+ * (`DELETE_CHARACTER_COMMAND`, `DELETE_WORD_COMMAND`, `DELETE_LINE_COMMAND`), a cut, and the removal
+ * half of a drag-move (`REMOVE_TEXT_COMMAND`); a paragraph join and a selected paragraph marker
+ * among them. A word or line delete is judged by the extent the browser's `Selection.modify` gives,
+ * so where there is none it is not judged. A delete protected structure refuses outright is left to
+ * that refusal, and a composition's deletes are not judged.
+ *
  * @param structureProtectionMode - The editor's structure protection.
- * @param onRemoved - Told once per paste, drop or keystroke that lost or refused unstorable text.
+ * @param onRemoved - Told once per paste, drop or keystroke that lost or refused unstorable text,
+ *   and once per refused delete.
  * @param logger - Where each removal is logged, at `info`.
  * @returns `null`. This plugin has no DOM presence.
  */
@@ -318,6 +355,111 @@ export function UnstorableTextPlugin({
       return true;
     };
 
+    /**
+     * What a word or line delete from the caret `selection` would remove, measured as Lexical's own
+     * delete measures it, by extending a copy of the selection with the browser's
+     * `Selection.modify`; `undefined` where it reaches nothing or the browser cannot measure.
+     *
+     * Mutating: it moves the DOM selection and marks `selection` dirty, as
+     * `HiddenContentDeleteGuardPlugin` does measuring the same extent.
+     */
+    const $measureExtent = (
+      selection: RangeSelection,
+      isBackward: boolean,
+      granularity: "word" | "line",
+    ): RangeSelection | undefined => {
+      const domSelection = editor.getRootElement()?.ownerDocument.defaultView?.getSelection();
+      if (!domSelection || typeof domSelection.modify !== "function") return undefined;
+      const probe = selection.clone();
+      // Dirty makes `modify` start from the probe's own points rather than the DOM's.
+      probe.dirty = true;
+      probe.modify("extend", isBackward, granularity === "line" ? "lineboundary" : "word");
+      // The probe moved the DOM selection; dirty makes the delete's own `modify` start from the
+      // live caret again.
+      selection.dirty = true;
+      return probe.isCollapsed() ? undefined : probe;
+    };
+
+    /**
+     * What a delete of `granularity` from the current selection would remove. Empty where it
+     * removes nothing this plugin judges, and where protected structure refuses the delete outright,
+     * so that the user meets that refusal rather than this one.
+     */
+    const $deletionsAtSelection = (
+      isBackward: boolean,
+      granularity: DeleteGranularity,
+    ): JudgedDeletion[] => {
+      const selection = $getSelection();
+      if (!selection) return [];
+      const isProtected = structureProtectionModeRef.current === "protected";
+      const intent = isBackward ? "deleteBackward" : "deleteForward";
+      if (isProtected && $shouldBlockStructuralEdit(selection, intent)) return [];
+      if ($isNodeSelection(selection)) {
+        // A selected paragraph marker goes by joining its paragraph to the one before, which
+        // protected structure refuses.
+        const para = $getSelectedParaMarkerPara(selection);
+        if (para) {
+          const previous = para.getPreviousSibling();
+          return !isProtected && $isParaLikeNode(previous)
+            ? [{ kind: "join", first: previous, second: para }]
+            : [];
+        }
+        return selection.getNodes().flatMap((node): JudgedDeletion[] => {
+          const parent = node.getParent();
+          if (!parent) return [];
+          const index = node.getIndexWithinParent();
+          const around = $createRangeSelection();
+          around.anchor.set(parent.getKey(), index, "element");
+          around.focus.set(parent.getKey(), index + 1, "element");
+          return [rangeDeletion(around)];
+        });
+      }
+      if (!$isRangeSelection(selection)) return [];
+      if (!selection.isCollapsed()) return [rangeDeletion(selection)];
+      if (granularity === "character")
+        return [{ kind: "character", caret: selection.anchor, isBackward }];
+      const extent = $measureExtent(selection, isBackward, granularity);
+      if (!extent || (isProtected && $shouldRefuseExtendedDelete(extent))) return [];
+      return [rangeDeletion(extent)];
+    };
+
+    /** Whether a delete is this plugin's to judge: not in a read-only editor or an IME composition. */
+    const isJudgingDeletes = () => editor.isEditable() && !editor.isComposing();
+
+    /**
+     * Refuses `deletions` when what they leave would put a `/` against another `/`, and reports the
+     * refusal. Returns whether it refused.
+     */
+    const $refuseSlashJoin = (deletions: JudgedDeletion[]): boolean => {
+      if (!deletions.some($deletionJoinsSlashes)) return false;
+      reportRemoved(
+        { source: "deletion", removed: ["//"] },
+        onRemovedRef.current,
+        loggerRef.current,
+      );
+      return true;
+    };
+
+    /** A `DELETE_*_COMMAND` handler, judging the delete at `granularity`. */
+    const onDeleteCommand = (granularity: DeleteGranularity) => (isBackward: boolean) =>
+      isJudgingDeletes() && $refuseSlashJoin($deletionsAtSelection(isBackward, granularity));
+
+    /** A cut, or the removal half of a drag-move: the selection goes as it stands. */
+    const $onSelectionRemoval = (event: Event | null): boolean => {
+      if (!isJudgingDeletes()) return false;
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+      if (!$refuseSlashJoin([rangeDeletion(selection)])) return false;
+      event?.preventDefault();
+      return true;
+    };
+
+    const deleteCommands: [LexicalCommand<boolean>, DeleteGranularity][] = [
+      [DELETE_CHARACTER_COMMAND, "character"],
+      [DELETE_WORD_COMMAND, "word"],
+      [DELETE_LINE_COMMAND, "line"],
+    ];
+
     return mergeRegister(
       editor.registerCommand(
         SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
@@ -393,6 +535,38 @@ export function UnstorableTextPlugin({
         },
         // Critical, so no handler that inserts typed text can insert it unfiltered.
         COMMAND_PRIORITY_CRITICAL,
+      ),
+      // Every delete keystroke, judged before anything acts on it: protected structure's refusal,
+      // guarded structure's first press (which arms a join the second press carries out), the
+      // hidden-content question and the paragraph-marker merge all come after this.
+      editor.registerCommand(
+        KEY_DOWN_COMMAND,
+        (event: KeyboardEvent) => {
+          const chord = deleteChordOf(event);
+          if (!chord || event.isComposing || !isJudgingDeletes()) return false;
+          const isBackward = chord.direction === "backward";
+          if (!$refuseSlashJoin($deletionsAtSelection(isBackward, chord.granularity))) return false;
+          event.preventDefault();
+          return true;
+        },
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      // A delete that arrives without a keystroke: a `beforeinput` delete, a menu, a replay.
+      ...deleteCommands.map(([command, granularity]) =>
+        editor.registerCommand(command, onDeleteCommand(granularity), COMMAND_PRIORITY_CRITICAL),
+      ),
+      // HIGH: after the guards that narrow or refuse a cut (CRITICAL; a copy limit shortens it),
+      // ahead of the copy that performs it (NORMAL).
+      editor.registerCommand(CUT_COMMAND, $onSelectionRemoval, COMMAND_PRIORITY_HIGH),
+      // A drag-move's removal of its source (`deleteByDrag`), after the guards that narrow it and
+      // ahead of Lexical's own. The drop's insertion is an input event of its own, so a refused
+      // removal leaves the dragged text in both places rather than losing any. A composition's
+      // removal is left alone, as composed text is.
+      editor.registerCommand(
+        REMOVE_TEXT_COMMAND,
+        (event: InputEvent | null) =>
+          event?.inputType !== "deleteByComposition" && $onSelectionRemoval(event),
+        COMMAND_PRIORITY_HIGH,
       ),
       editor.registerRootListener((root, previousRoot) => {
         previousRoot?.removeEventListener("beforeinput", onBeforeInput, true);
