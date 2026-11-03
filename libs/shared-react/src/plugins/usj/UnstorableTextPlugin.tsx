@@ -209,10 +209,10 @@ function joinLines(text: string): string {
  * carries both. Such a copy splits around the document's chapter line only over a selection that
  * held that line or from a caret right beside it ({@link $chapterLineToSplitAt}): what it held
  * before its chapter line, chapter 1's front matter, goes before the document's, and the rest after
- * ({@link $pasteAroundChapterLine}). Any other paste puts it all at the caret. A paste over a selection that runs across a book or chapter line keeps it, and replaces
- * the rest of the selection ({@link $removeTextKeepingBookAndChapterLines}), whichever flavor it
- * inserts; what has no front matter of its own (plain text, another program's html) goes after the
- * chapter line.
+ * ({@link $pasteAroundChapterLine}). Any other paste puts it all at the caret. A paste over a
+ * selection that runs across a book or chapter line keeps it, and replaces the rest of the
+ * selection ({@link $removeTextKeepingBookAndChapterLines}), whichever flavor it inserts; what has
+ * no front matter of its own (plain text, another program's html) goes after the chapter line.
  *
  * Typing a `\` is refused, and so is typing a `/` that would touch a `/` beside it (over a
  * selection, one outside it); a lone `/` goes in. A keystroke is refused at its `keydown`
@@ -521,8 +521,8 @@ export function UnstorableTextPlugin({
      * - a transfer with any other node copy — another view's, such as Standard view's (tagged with
      *   the editor's own namespace), or one that makes no nodes ({@link $nodesFromNodeCopy}) — by
      *   its html or plain text, so another view's node shapes are never rebuilt here;
-     * - a marker view's copy, known by its node copy or its html's mark, without its marker tokens
-     *   ({@link withoutMarkerTokens}), changing nothing if nothing else is left;
+     * - a marker-showing view's copy, known by its node copy or its html's mark, without its marker
+     *   tokens ({@link withoutMarkerTokens}), changing nothing if nothing else is left;
      * - plain text or html that the filter or the glyph strip changes.
      */
     const $insertTransfer = (

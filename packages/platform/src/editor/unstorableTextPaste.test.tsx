@@ -449,7 +449,7 @@ describe("a paste carrying Lexical's own flavor beside glyph-bearing html", () =
  * is told. Only the markers go: a note's caller, a verse's number and an attribute list stay.
  */
 describe.each<StructureProtectionMode>(["off", "guarded", "protected"])(
-  "a marker view's copy pasted into paragraph-structure view, structure %s",
+  "a marker-showing view's copy pasted into paragraph-structure view, structure %s",
   (mode) => {
     /** The flavors a copy of `usfm` writes in a view that shows markers. */
     const markerViewCopy = (usfm: string): Flavors => ({
