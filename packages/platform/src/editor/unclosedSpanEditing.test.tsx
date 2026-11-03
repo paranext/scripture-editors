@@ -116,7 +116,20 @@ async function placeCaret(
   });
 }
 
-const GESTURES = [
+/** One edit: where the caret goes, then the keys pressed (or, in Standard view, `standard`). */
+interface Gesture {
+  name: string;
+  at: (text: string) => { offset: number } | { lead: number };
+  keys: { key: string; text?: string }[];
+  /** What Standard view does instead of `keys`, where they mean something else there. */
+  standard?: (mounted: MountedEditor) => void;
+  /** How many spans of the marker the paragraph holds afterwards. */
+  spans: number;
+  /** Text the gesture types, which must land inside the span. */
+  typed?: string;
+}
+
+const GESTURES: Gesture[] = [
   {
     name: "typing in the middle of the span",
     at: (text: string) => ({ offset: Math.floor(text.length / 2) }),
@@ -164,9 +177,10 @@ describe("editing inside a span the USFM never closed", () => {
     const mounted = await mountInView(shape.usj, editorView(view), { scrRef });
     const at = gesture.at(shape.text);
     await placeCaret(mounted, "lead" in at ? at : { marker: shape.marker, ...at });
-    if (view === "standard" && "standard" in gesture) {
+    const { standard } = gesture;
+    if (view === "standard" && standard) {
       await act(async () => {
-        gesture.standard(mounted);
+        standard(mounted);
       });
     } else {
       for (const { key, text } of gesture.keys) {
