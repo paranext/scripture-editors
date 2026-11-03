@@ -5,10 +5,11 @@
  * plain text alone; a native paste event also carries the editor's node copy
  * (`application/x-lexical-editor`), which those views leave unread.
  *
- * The cases are PT-4872's 2, 4, 5 and 8, each of which goes wrong only when that node copy is read:
- * a throw, a paste landing outside a note, and a screen that does not match the save. Each runs the
- * same copy and paste twice, in editors of their own, once pasting every flavor and once the html
- * and plain text, and compares the two.
+ * Each case goes wrong only when that node copy is read: a cut collapsed footnote pasted back
+ * throws, a paste over a note's `\ft` lands outside the note, and a pasted paragraph marker shows
+ * but is not saved, so the screen does not match the save. Each runs the same copy and paste twice,
+ * in editors of their own, once pasting every flavor and once the html and plain text, and compares
+ * the two.
  */
 import { depart, $screenBytes } from "./markerEdit/pendingSettledOracle.test-helpers";
 import { copyEvent, pasteEvent } from "./markerEdit/markerEdit.test-helpers";
@@ -130,8 +131,8 @@ async function paste(
 
 interface PasteCase {
   name: string;
-  /** The views it runs in: where PT-4872 found it, and the footnotes pane's row editor for the note
-   * cases. That editor shows no paragraph marker, which the paragraph-marker cases start in. */
+  /** The views it runs in: Standard view, and the footnotes pane's row editor for the note cases.
+   * That editor shows no paragraph marker, which the paragraph-marker cases start in. */
   views: string[];
   usj: Usj;
   /** The copy (or cut) and where its paste goes: run in a fresh editor. */

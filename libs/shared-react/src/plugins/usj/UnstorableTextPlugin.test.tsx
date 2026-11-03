@@ -251,7 +251,7 @@ describe("UnstorableTextPlugin — paste", () => {
   });
 
   describe.each(["off", "protected"] as StructureProtectionMode[])(
-    "a marker view's copy goes in without its marker tokens (%s)",
+    "a marker-showing view's copy goes in without its marker tokens (%s)",
     (structureProtectionMode) => {
       const markerViewCopy = (html: string, plain: string) => ({
         "application/x-lexical-editor": lexicalFlavor([], MARKER_VIEW_CLIPBOARD_NAMESPACE),
@@ -323,7 +323,7 @@ describe("UnstorableTextPlugin — paste", () => {
     expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["\\"] });
   });
 
-  it("protected structure leaves a marker view's html alone unless asked to remove its tokens", async () => {
+  it("protected structure leaves a marker-showing view's html alone unless asked to remove its tokens", async () => {
     const { editor } = await environment("x", {
       structureProtectionMode: "protected",
       withStructureKeyboard: "unfiltered",

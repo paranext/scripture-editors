@@ -312,8 +312,11 @@ export function separatorRemovalTokenizesIdentically(followingBytes: string): bo
 
 /**
  * The byte class CONTENTS (no brackets) of the marker-name run the editor RECOGNIZES as a marker in
- * text: `\w` plus the milestone hyphen. `markerName.pattern.ts` in the platform package documents
- * it and derives its regexes from it; it lives here so `shared-react` can derive from it too.
+ * text: `\w` plus the milestone hyphen. Wider than canonical USFM (uppercase, `_`) on purpose: the
+ * tokenizer's own name scan runs to the next whitespace/`\`/`|`/`*`, so a wrong-case or unknown name
+ * is still a marker-shaped edit that must pend and re-tokenize rather than sit unnoticed in content.
+ * Every regex that recognizes a marker name in text derives from it, in `platform` and
+ * `shared-react` alike.
  */
 export const ENGINE_MARKER_NAME_BYTES = String.raw`\w-`;
 
