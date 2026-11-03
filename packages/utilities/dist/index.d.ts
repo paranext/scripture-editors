@@ -287,7 +287,9 @@ export declare interface Usj {
   type: typeof USJ_TYPE;
   /**
    * The USJ spec version of this document, e.g. `"3.0"` or `"3.1"` — the same numbering as USX
-   * and USFM. A document converted from USX keeps the version that USX declared.
+   * and USFM. A document converted from USX keeps the version that USX declared, and the USX
+   * converted back from it declares the same one. A version that is not 3.x is preserved
+   * unchanged: the converters neither validate nor upgrade it.
    * `USJ_VERSION` is the newest version this package targets, not the only one allowed.
    */
   version: string;
@@ -638,8 +640,9 @@ export declare const USX_VERSION = "3.1";
  *
  * The USJ `version` is the root `<usx version>` the USX declares, so a document comes back out of
  * `usjToUsxString` at the version it went in at. USX, USJ and USFM share one version
- * numbering, so no translation is needed. A USX that declares no version (or an empty one) gets
- * {@link USJ_VERSION}.
+ * numbering, so no translation is needed. A version that is not 3.x (`"2.5"`, say) is preserved
+ * unchanged too: the conversion neither validates nor upgrades it. A USX that declares no version
+ * (or an empty one) gets {@link USJ_VERSION}.
  *
  * @param usxString - The USX string to convert.
  * @returns The converted USJ object.
