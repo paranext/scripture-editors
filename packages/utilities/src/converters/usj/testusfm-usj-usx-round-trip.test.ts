@@ -1,7 +1,7 @@
 import { MarkerContent, MarkerObject, Usj } from "./usj.model.js";
 import { usjToUsxString } from "./usj-to-usx.js";
 import { usxStringToUsj } from "./usx-to-usj.js";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -24,18 +24,17 @@ const CORPUS_DIR = [
 ].find((dir) => existsSync(dir));
 
 /**
- * The Paratext-flavored oracles, matching the shared-side corpus test's selection. `2SA-3` uses
- * the CORRECTED oracle rather than Paratext's raw output, which carries an acknowledged Paratext
- * 9.5 bug (a `\cp` with markers is partially folded into `pubnumber` and the remainder stranded
- * as an invalid top-level char).
+ * Every oracle in the corpus, discovered at run time so a newly vendored fixture is covered without
+ * a code change. `2SA-3` is vendored only as its CORRECTED oracle; Paratext's raw output carries an
+ * acknowledged Paratext 9.5 bug (a `\cp` with markers is partially folded into `pubnumber` and the
+ * remainder stranded as an invalid top-level char). The provider's real bytes for that chapter are
+ * covered by `testusfm-usx-usj-usx-round-trip.test.ts`.
  */
-const FIXTURES = [
-  "testUSFM-2SA-1.usj",
-  "testUSFM-2SA-2.usj",
-  "testUSFM-2SA-3-corrected.usj",
-  "web-matthew-1-and-2.usj",
-  "web-matthew-5-section-header.usj",
-];
+const FIXTURES = CORPUS_DIR
+  ? readdirSync(CORPUS_DIR)
+      .filter((name) => name.endsWith(".usj"))
+      .sort()
+  : [];
 
 function readOracle(name: string): Usj {
   if (!CORPUS_DIR) throw new Error("testUsfmCorpus fixture directory not found from cwd");
@@ -64,6 +63,10 @@ function withoutEmptyAttributes(content: MarkerContent[]): MarkerContent[] {
 }
 
 describe("testUSFM corpus round trip (USJ -> USX -> USJ)", () => {
+  it("finds the corpus", () => {
+    expect(FIXTURES.length).toBeGreaterThan(0);
+  });
+
   it.each(FIXTURES)("%s", (name) => {
     const usj = readOracle(name);
     const roundTripped = usxStringToUsj(usjToUsxString(usj));
