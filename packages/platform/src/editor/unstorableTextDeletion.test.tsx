@@ -646,4 +646,30 @@ describe("deleting after the editor switches from paragraph-structure into Stand
       mounted.unmount();
     }
   });
+
+  it("joins two `/` as asked after the editor switches from paragraph-structure", async () => {
+    const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+    const mounted = await mountInView(usjWith(["a/b/c"]), editorView("paragraph-structure"), {
+      onUnstorableTextRemoved: onRemoved,
+    });
+    try {
+      await mounted.rerenderWithView(editorView("standard"));
+      await select(mounted, { text: "a/b/c", offset: 3 });
+
+      await press(mounted, "Backspace");
+
+      expect(
+        mounted.lexical.getEditorState().read(() =>
+          $getRoot()
+            .getAllTextNodes()
+            .filter($isTextNode)
+            .map((node) => node.getTextContent())
+            .join(""),
+        ),
+      ).toContain("a//c");
+      expect(onRemoved).not.toHaveBeenCalled();
+    } finally {
+      mounted.unmount();
+    }
+  });
 });
