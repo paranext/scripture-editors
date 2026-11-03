@@ -10,7 +10,7 @@
  * an opening marker, where it is the marker's separator. Spaces in a run collapse to one space, as
  * data always does.
  */
-import { editorView, mountInView, MountedEditor } from "./editorViews.test-helpers";
+import { editorView, enabledViews, mountInView, MountedEditor } from "./editorViews.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -19,6 +19,7 @@ import {
   $getSelection,
   $isRangeSelection,
   COPY_COMMAND,
+  KEY_ENTER_COMMAND,
   LexicalEditor,
   PASTE_COMMAND,
   $setSelection,
@@ -317,3 +318,29 @@ describe.each<[string, boolean]>([
     expect(await roundTripAcrossNodes(stored)).toMatchObject({ pasted: expected });
   });
 });
+
+describe.each(enabledViews(["formatted", "paragraph-structure"] as const))(
+  "a no-break space pasted at the end of a span, then split by Enter, in %s view",
+  (viewName) => {
+    it.each<[string, boolean]>([
+      ["off", false],
+      ["on", true],
+    ])("keeps it in the new paragraph's span, allowInvisibleCharacters %s", async (_, allow) => {
+      const mounted = await mountInView(
+        usjWith([{ type: "char", marker: "nd", content: ["Lord"] }]),
+        { ...editorView(viewName), allowInvisibleCharacters: allow },
+      );
+      await select(mounted.lexical, "Lord", 4);
+      await pasteFlavors(mounted.lexical, { "text/plain": NBSP });
+      // The caret sits between the text and the pasted no-break space.
+      await select(mounted.lexical, "Lord", 4);
+      await act(async () => {
+        mounted.lexical.dispatchCommand(KEY_ENTER_COMMAND, null);
+      });
+      await commit(mounted);
+
+      expect(paraContent(mounted, 2)).toEqual([{ type: "char", marker: "nd", content: ["Lord"] }]);
+      expect(paraContent(mounted, 3)).toEqual([{ type: "char", marker: "nd", content: [NBSP] }]);
+    });
+  },
+);

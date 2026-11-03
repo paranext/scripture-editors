@@ -1245,8 +1245,9 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
  *   text of the span holding an NBSP, so a loaded `~` keeps its mark through any later edit,
  *   splits included;
  * - `CharNodePlugin`, on an NBSP typed into an empty span;
- * - `CharNodePlugin`, on a lone NBSP an edit leaves in a text that held more: an NBSP typed or
- *   pasted into existing text was never loaded, so only this catches it once it is stranded.
+ * - `CharNodePlugin`, on a text holding an NBSP among other text, and on a lone NBSP an edit leaves
+ *   in a text that held more: an NBSP typed or pasted into existing text was never loaded, so only
+ *   this catches it once a split or a delete strands it.
  *
  * {@link $isLoneNbspContent} and its serialized twin read it.
  */

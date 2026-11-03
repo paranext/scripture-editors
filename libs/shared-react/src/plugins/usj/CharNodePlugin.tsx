@@ -410,24 +410,33 @@ export function $dropFilledCharPlaceholder(node: TextNode): void {
 }
 
 /**
- * Marks a lone no-break space that an edit left as a glyph-less span's text as the author's own `~`.
+ * Marks the no-break space an edit left in a glyph-less span's text as the author's own `~`.
  *
  * Where a span renders no glyphs, its lone NBSP is also the placeholder an EMPTY span holds
  * ({@link $emptySpanPlaceholder}), and the editor→USJ conversion drops that one. A text node that
  * held more than that in the last committed state is not an empty span's placeholder: the edit
  * removed text around the author's NBSP (a cut or delete ending just before `trail~`'s `~`), so
  * the NBSP is content and is tagged as such, the way the USJ→editor adaptor tags one it loads.
- * A loaded NBSP is already tagged; this is what catches one the user typed or pasted into existing
- * text ({@link authoredNbspState} lists every place the tag is set).
- * @param node - TextNode that might be such a remainder.
+ * A text that holds an NBSP among other text is tagged too, before anything strands the NBSP: a
+ * split (Enter) copies the tag to both halves, so a `~` that ends up alone in the second half is
+ * still the author's. A loaded NBSP is already tagged; this is what catches one the user typed or
+ * pasted into existing text ({@link authoredNbspState} lists every place the tag is set).
+ *
+ * The one text left alone is a lone NBSP that held no content before the update, and the text that
+ * was the span's own placeholder before it (typing into an empty span: the placeholder-drop
+ * transform removes that byte and tags what is left): those NBSPs are the engine's.
+ * @param node - TextNode that might hold such an NBSP.
  */
 function $keepRemainingNbsp(node: TextNode): void {
-  if (node.getTextContent() !== EMPTY_CHAR_PLACEHOLDER_TEXT) return;
+  const text = node.getTextContent();
+  if (!text.includes(EMPTY_CHAR_PLACEHOLDER_TEXT)) return;
   const parent = node.getParent();
   if (!$isCharNode(parent) || $rendersOwnGlyphs(parent)) return;
   if (node.getType() !== TextNode.getType() || node.getMode() !== "normal") return;
   if ($getState(node, textTypeState) !== undefined || $getState(node, authoredNbspState)) return;
-  if (!$heldContentBeforeUpdate(node.getKey())) return;
+  if (text === EMPTY_CHAR_PLACEHOLDER_TEXT) {
+    if (!$heldContentBeforeUpdate(node.getKey())) return;
+  } else if ($placeholderKeyBeforeUpdate(parent.getKey()) === node.getKey()) return;
   $setState(node, authoredNbspState, true);
 }
 
