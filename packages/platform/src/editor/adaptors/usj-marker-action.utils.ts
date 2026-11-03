@@ -533,6 +533,10 @@ export function getUsjMarkerAction(
           } else {
             const nextNode = nodeToInsert.getNextSibling();
             if (nextNode) nextNode.selectStart();
+            // A verse marker ending its paragraph: selectStart() would put the caret BEFORE the
+            // number, in the previous verse. After it, EmptyVerseCaretGuardPlugin hosts the caret
+            // so typing starts the new verse.
+            else if ($isSomeVerseNode(nodeToInsert)) nodeToInsert.selectNext();
             else nodeToInsert.selectStart();
           }
         }

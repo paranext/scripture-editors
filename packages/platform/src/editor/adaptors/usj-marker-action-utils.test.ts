@@ -342,6 +342,43 @@ describe("USJ Marker Action Utils", () => {
         $expectSelectionToBe(tailTextNode, 0);
       });
     });
+
+    it("at the end of a paragraph, with the caret after the new verse rather than before it", () => {
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        verse1Text = $createTextNode("verse one");
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          $createParaNode().append($createImmutableVerseNode("1"), verse1Text),
+        );
+      });
+      const markerAction = getUsjMarkerAction(
+        "v",
+        expandedNoteKeyRef,
+        undefined,
+        undefined,
+        undefined,
+        { discrete: true },
+      );
+      updateSelection(editor, verse1Text);
+
+      markerAction.action({ editor, reference });
+
+      editor.getEditorState().read(() => {
+        const para = $getRoot().getChildren()[1];
+        if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+        const insertedNode = para.getLastChild();
+        if (!$isImmutableVerseNode(insertedNode)) throw new Error("Inserted node is not a verse");
+        expect(insertedNode.getNumber()).toBe("2");
+        // An element point after the marker, where EmptyVerseCaretGuardPlugin hosts the caret -
+        // not the end of verse 1's text, where typing would land in the previous verse.
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("Expected a range selection");
+        expect(selection.isCollapsed()).toBe(true);
+        expect(selection.anchor.type).toBe("element");
+        expect(selection.anchor.key).toBe(para.getKey());
+        expect(selection.anchor.offset).toBe(insertedNode.getIndexWithinParent() + 1);
+      });
+    });
   });
 
   describe("verse-number inference", () => {
