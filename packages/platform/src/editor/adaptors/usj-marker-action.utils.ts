@@ -36,7 +36,6 @@ import {
   $isVisibleMarkerNode,
   $liftOutOfCharStack,
   $normalizeSelectionOutOfGlyphText,
-  $placeCaretAtBoundary,
   $setCharNodeMarker,
   CharNode,
   createLexicalUsjNode,
@@ -69,6 +68,7 @@ import {
   ViewOptions,
 } from "shared-react";
 import usjEditorAdaptor from "./usj-editor.adaptor";
+import { $placeCaretAtVerseContentStart } from "../verseCaret.utils";
 import { $coveredTextNodes } from "../markerEdit/charFormatting.utils";
 import { $moveCaretOffChapterLine } from "../markerEdit/chapterLine.utils";
 import {
@@ -531,22 +531,15 @@ export function getUsjMarkerAction(
             } else {
               nodeToInsert.selectEnd();
             }
+          } else if ($isSomeVerseNode(nodeToInsert)) {
+            // Typing after a new verse number starts that verse, so the caret goes to the start of
+            // its content - the rule verse navigation uses. Selecting into whatever follows instead
+            // would land in a following note's marker, or before the number when nothing follows.
+            $placeCaretAtVerseContentStart(nodeToInsert);
           } else {
             const nextNode = nodeToInsert.getNextSibling();
-            if (nextNode) {
-              nextNode.selectStart();
-            } else if ($isSomeVerseNode(nodeToInsert)) {
-              // A verse marker ending its paragraph: selectStart() would put the caret BEFORE the
-              // number, in the previous verse. Park it where an empty verse's caret belongs, as
-              // $placeCaretAtVerseContentStart (ScriptureReferencePlugin) does: the end of an
-              // editable marker's own text, or the boundary after an immutable one, where
-              // EmptyVerseCaretGuardPlugin hosts it.
-              const parent = nodeToInsert.getParentOrThrow();
-              if ($isTextNode(nodeToInsert)) nodeToInsert.selectEnd();
-              else $placeCaretAtBoundary(parent, nodeToInsert.getIndexWithinParent() + 1);
-            } else {
-              nodeToInsert.selectStart();
-            }
+            if (nextNode) nextNode.selectStart();
+            else nodeToInsert.selectStart();
           }
         }
       } else {
