@@ -1,4 +1,6 @@
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
+import { isViewEnabled, mountInPaneRow, MountedEditor } from "../editorViews.test-helpers";
+import { EditorRef } from "../editor.model";
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import {
   copyEvent,
@@ -32,6 +34,7 @@ import {
   usjJsonPathFromIndexes,
   usxStringToUsj,
   MarkerContent,
+  MarkerObject,
 } from "@eten-tech-foundation/scripture-utilities";
 import { $dfs, mergeRegister } from "@lexical/utils";
 import {
@@ -66,6 +69,7 @@ import {
   $isTypedMarkNode,
   $isUnknownNode,
   NBSP,
+  NBSP_STAND_IN,
   NoteNode,
   ParaNode,
   textTypeState,
@@ -240,6 +244,62 @@ describe("a lone display NBSP", () => {
     },
   );
 
+  /**
+   * Mounts the note in `usj`'s paragraph in the footnotes pane's row editor, alone as that editor
+   * holds it, and reports `getUsj()` as `usj` with the note swapped for the one the row editor
+   * saves — so a row written against the paragraph checks the note the row editor gives back.
+   */
+  async function mountNoteInPaneRow(usj: Usj): Promise<MountedEditor> {
+    const para = usj.content[2];
+    if (typeof para === "string" || !para.content) throw new Error("no paragraph");
+    const paraContent = para.content;
+    const noteIndex = paraContent.findIndex(
+      (item) => typeof item !== "string" && item.type === "note",
+    );
+    if (noteIndex < 0) throw new Error("no note in the paragraph");
+    const mounted = await mountInPaneRow(paraContent[noteIndex] as MarkerObject);
+    const asParagraph = (rowUsj: Usj | undefined): Usj | undefined => {
+      const scaffold = rowUsj?.content[0];
+      const note = typeof scaffold === "object" ? scaffold.content?.[0] : undefined;
+      if (note === undefined) return undefined;
+      const content = paraContent.map((item, index) => (index === noteIndex ? note : item));
+      return {
+        ...usj,
+        content: usj.content.map((item) => (item === para ? { ...para, content } : item)),
+      };
+    };
+    const ref = {
+      get current(): EditorRef | null {
+        const editor = mounted.ref.current;
+        return editor && { ...editor, getUsj: () => asParagraph(editor.getUsj()) };
+      },
+    };
+    return { ...mounted, ref };
+  }
+
+  type Mount = typeof mountStandardViewEditor;
+
+  /**
+   * `rows` (whose last item is the mount), with every row mounted with expanded notes run again in
+   * the footnotes pane's row editor ({@link mountNoteInPaneRow}) unless its label is in `without`,
+   * and kept itself only while this run includes `standard+expandedNotes`.
+   */
+  function withPaneRowTwins<Row extends [string, ...unknown[]]>(
+    rows: Row[],
+    without: string[] = [],
+  ): Row[] {
+    return rows.flatMap((row) => {
+      if (row[row.length - 1] !== mountExpandedNoteEditor) return [row];
+      if (without.includes(row[0])) return isViewEnabled("standard+expandedNotes") ? [row] : [];
+      const twin = [
+        `${row[0]} in the footnotes pane's row editor`,
+        ...row.slice(1, -1),
+        mountNoteInPaneRow,
+      ] as unknown as Row;
+      return isViewEnabled("standard+expandedNotes") ? [twin, row] : [twin];
+    });
+  }
+
   /** `content` with every two-space string reduced to the one space it saves as. */
   function oneSpace(content: Usj["content"]): Usj["content"] {
     return JSON.parse(JSON.stringify(content).replaceAll('"  "', '" "'));
@@ -314,7 +374,7 @@ describe("a lone display NBSP", () => {
     ],
   ];
 
-  it.each(nestedSpaceRuns)(
+  it.each(withPaneRowTwins(nestedSpaceRuns))(
     "saves the space a backspace leaves %s",
     async (_label, content, mount) => {
       const { lexical, ref } = await mount(paraUsj(content));
@@ -329,7 +389,7 @@ describe("a lone display NBSP", () => {
     },
   );
 
-  it.each(nestedSpaceRuns)(
+  it.each(withPaneRowTwins(nestedSpaceRuns))(
     "saves the space %s when a second one is typed and backspaced",
     async (_label, content, mount) => {
       const saved = paraUsj(oneSpace(content));
@@ -416,77 +476,90 @@ describe("a lone display NBSP", () => {
     " after",
   ];
 
-  it.each<[string, Usj["content"], typeof mountStandardViewEditor]>([
-    [
-      "an empty char span",
-      ["before ", { type: "char", marker: "nd" }, " after"],
-      mountStandardViewEditor,
-    ],
-    [
-      "a char span opening with a nested span",
+  it.each<[string, Usj["content"], Mount]>(
+    withPaneRowTwins(
       [
-        "say ",
-        {
-          type: "char",
-          marker: "nd",
-          content: [{ type: "char", marker: "wj", content: ["God"] }],
-        },
-        " now",
-      ],
-      mountStandardViewEditor,
-    ],
-    [
-      "a nested span opening with a nested span",
-      [
-        {
-          type: "char",
-          marker: "nd",
-          content: [{ type: "char", marker: "wj", content: [twoWords[0], " ", twoWords[2]] }],
-        },
-      ],
-      mountStandardViewEditor,
-    ],
-    [
-      "an empty span nested in a span",
-      [{ type: "char", marker: "nd", content: ["Lord ", { type: "char", marker: "w" }, " now"] }],
-      mountStandardViewEditor,
-    ],
-    ["a collapsed footnote", footnote, mountStandardViewEditor],
-    ["an expanded footnote", footnote, mountExpandedNoteEditor],
-    ...([mountStandardViewEditor, mountExpandedNoteEditor] as const).map(
-      (mount) =>
         [
-          `${mount === mountStandardViewEditor ? "a collapsed" : "an expanded"} footnote with a space between spans and a span opening with a nested one`,
+          "an empty char span",
+          ["before ", { type: "char", marker: "nd" }, " after"],
+          mountStandardViewEditor,
+        ],
+        [
+          "a char span opening with a nested span",
           [
-            "before",
+            "say ",
             {
-              type: "note",
-              marker: "f",
-              caller: "+",
-              content: [
-                { type: "char", marker: "fr", content: ["1.1 "] },
-                { type: "char", marker: "ft", content: [twoWords[0], " ", twoWords[2]] },
-                " ",
-                { type: "char", marker: "fq", content: ["b"] },
-              ],
+              type: "char",
+              marker: "nd",
+              content: [{ type: "char", marker: "wj", content: ["God"] }],
             },
-            " after",
+            " now",
           ],
-          mount,
-        ] as [string, Usj["content"], typeof mountStandardViewEditor],
-    ),
-    [
-      "a footnote inside a char span",
-      [
-        {
-          type: "char",
-          marker: "nd",
-          content: ["Lord", footnote[1], " ", twoWords[2]],
-        },
+          mountStandardViewEditor,
+        ],
+        [
+          "a nested span opening with a nested span",
+          [
+            {
+              type: "char",
+              marker: "nd",
+              content: [{ type: "char", marker: "wj", content: [twoWords[0], " ", twoWords[2]] }],
+            },
+          ],
+          mountStandardViewEditor,
+        ],
+        [
+          "an empty span nested in a span",
+          [
+            {
+              type: "char",
+              marker: "nd",
+              content: ["Lord ", { type: "char", marker: "w" }, " now"],
+            },
+          ],
+          mountStandardViewEditor,
+        ],
+        ["a collapsed footnote", footnote, mountStandardViewEditor],
+        ["an expanded footnote", footnote, mountExpandedNoteEditor],
+        ...([mountStandardViewEditor, mountExpandedNoteEditor] as const).map(
+          (mount) =>
+            [
+              `${mount === mountStandardViewEditor ? "a collapsed" : "an expanded"} footnote with a space between spans and a span opening with a nested one`,
+              [
+                "before",
+                {
+                  type: "note",
+                  marker: "f",
+                  caller: "+",
+                  content: [
+                    { type: "char", marker: "fr", content: ["1.1 "] },
+                    { type: "char", marker: "ft", content: [twoWords[0], " ", twoWords[2]] },
+                    " ",
+                    { type: "char", marker: "fq", content: ["b"] },
+                  ],
+                },
+                " after",
+              ],
+              mount,
+            ] as [string, Usj["content"], typeof mountStandardViewEditor],
+        ),
+        [
+          "a footnote inside a char span",
+          [
+            {
+              type: "char",
+              marker: "nd",
+              content: ["Lord", footnote[1], " ", twoWords[2]],
+            },
+          ],
+          mountStandardViewEditor,
+        ],
+        // The expanded footnote's only lone NBSP is its paragraph's `\\p` separator, which the collapsed
+        // row covers in Standard view; the row editor shows no paragraph prefix, so it has no twin.
       ],
-      mountStandardViewEditor,
-    ],
-  ])("leaves the structural spacers of %s alone", async (_label, content, mount) => {
+      ["an expanded footnote"],
+    ),
+  )("leaves the structural spacers of %s alone", async (_label, content, mount) => {
     const usj = paraUsj(content);
     const { lexical, ref } = await mount(usj);
     const loaded = ref.current?.getUsj();
@@ -522,56 +595,58 @@ describe("a lone display NBSP", () => {
     caller: "+",
     content: [{ type: "char", marker: "fr", content: ["1.1 "] }, ...content],
   });
-  it.each<[string, Usj["content"], string, Usj["content"], typeof mountStandardViewEditor]>([
-    [
-      "a span opening with a nested span, at paragraph start",
-      [{ type: "char", marker: "nd", content: [w("a"), " b"] }, " z"],
-      "nd",
-      [w("a"), " b z"],
-      mountStandardViewEditor,
-    ],
-    [
-      "a span opening with a milestone",
-      [{ type: "char", marker: "nd", content: [milestone, "Lord"] }, " z"],
-      "nd",
-      [milestone, "Lord z"],
-      mountStandardViewEditor,
-    ],
-    [
-      "a span opening with a footnote",
-      [{ type: "char", marker: "nd", content: [note, "Lord"] }, " z"],
-      "nd",
-      [note, "Lord z"],
-      mountStandardViewEditor,
-    ],
-    [
-      "a nested span opening with a nested span",
+  it.each<[string, Usj["content"], string, Usj["content"], Mount]>(
+    withPaneRowTwins([
       [
-        {
-          type: "char",
-          marker: "nd",
-          content: [{ type: "char", marker: "wj", content: [w("a")] }],
-        },
+        "a span opening with a nested span, at paragraph start",
+        [{ type: "char", marker: "nd", content: [w("a"), " b"] }, " z"],
+        "nd",
+        [w("a"), " b z"],
+        mountStandardViewEditor,
       ],
-      "wj",
-      [{ type: "char", marker: "nd", content: [w("a")] }],
-      mountStandardViewEditor,
-    ],
-    [
-      "an expanded footnote's span opening with a nested span",
-      [expandedNote([{ type: "char", marker: "ft", content: [w("a"), " b"] }])],
-      "ft",
-      [expandedNote([w("a"), " b"])],
-      mountExpandedNoteEditor,
-    ],
-    [
-      "an expanded footnote's empty span",
-      [expandedNote([{ type: "char", marker: "ft" }])],
-      "ft",
-      [expandedNote([])],
-      mountExpandedNoteEditor,
-    ],
-  ])(
+      [
+        "a span opening with a milestone",
+        [{ type: "char", marker: "nd", content: [milestone, "Lord"] }, " z"],
+        "nd",
+        [milestone, "Lord z"],
+        mountStandardViewEditor,
+      ],
+      [
+        "a span opening with a footnote",
+        [{ type: "char", marker: "nd", content: [note, "Lord"] }, " z"],
+        "nd",
+        [note, "Lord z"],
+        mountStandardViewEditor,
+      ],
+      [
+        "a nested span opening with a nested span",
+        [
+          {
+            type: "char",
+            marker: "nd",
+            content: [{ type: "char", marker: "wj", content: [w("a")] }],
+          },
+        ],
+        "wj",
+        [{ type: "char", marker: "nd", content: [w("a")] }],
+        mountStandardViewEditor,
+      ],
+      [
+        "an expanded footnote's span opening with a nested span",
+        [expandedNote([{ type: "char", marker: "ft", content: [w("a"), " b"] }])],
+        "ft",
+        [expandedNote([w("a"), " b"])],
+        mountExpandedNoteEditor,
+      ],
+      [
+        "an expanded footnote's empty span",
+        [expandedNote([{ type: "char", marker: "ft" }])],
+        "ft",
+        [expandedNote([])],
+        mountExpandedNoteEditor,
+      ],
+    ]),
+  )(
     "saves no space when the opening glyph of %s is deleted",
     async (_label, content, marker, expected, mount) => {
       const { lexical, ref } = await mount(paraUsj(content));
@@ -1695,49 +1770,52 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       it("recognizes a marker name the ENGINE class allows but canonical USFM does not", () => {
         // The engine's name class is `\w` plus `-` — deliberately wider than canonical USFM, so a
         // wrong-case or underscored name is still a marker-shaped run the tokenizer will read as a
-        // marker (markerName.pattern.ts). The positional NBSP rules have to agree with it: a name
+        // marker (markerName.pattern.ts). The positional NBSP rule has to agree with it: a name
         // this normalization fails to recognize keeps its separator NBSP, which then survives into
         // content as a literal `~` right where the tokenizer expects a space.
         expect(normalizePastedNbsp(`\\my_marker${NBSP}light`)).toBe("\\my_marker light");
         expect(normalizePastedNbsp(`\\ND${NBSP}light`)).toBe("\\ND light");
-        expect(normalizePastedNbsp(`light${NBSP}\\my_marker*`)).toBe("light \\my_marker*");
+        expect(normalizePastedNbsp(`\\+my_marker${NBSP}light`)).toBe("\\+my_marker light");
       });
 
       it("leaves an NBSP that is not adjacent to any marker as data", () => {
         expect(normalizePastedNbsp(`a${NBSP}b`)).toBe("a~b");
       });
 
-      it("keeps every NBSP before a marker as a space, outside a note's layout spacers", () => {
-        // A space between two runs is content wherever it came from, including right before a
-        // closing marker and after another space.
+      it("keeps every NBSP before a marker or after a closer as a stored no-break space", () => {
+        // Only an opening marker's separator is read as a space. Anywhere else beside a marker an
+        // NBSP is the user's no-break space: this editor's own copy writes a stored one there as
+        // U+00A0 with the setting on.
         expect(normalizePastedNbsp(`the${NBSP}\\nd Lord\\nd* said`)).toBe(
-          "the \\nd Lord\\nd* said",
+          "the~\\nd Lord\\nd* said",
         );
-        expect(normalizePastedNbsp(`\\nd Lord${NBSP}\\nd* said`)).toBe("\\nd Lord \\nd* said");
-        expect(normalizePastedNbsp(`a ${NBSP}\\nd x`)).toBe("a  \\nd x");
-        // Inside a note, too, wherever the note layout puts no spacer: before a nested marker, or
-        // before a char's own closer.
+        expect(normalizePastedNbsp(`\\nd Lord${NBSP}\\nd* said`)).toBe("\\nd Lord~\\nd* said");
+        expect(normalizePastedNbsp(`\\nd Lord\\nd*${NBSP}said`)).toBe("\\nd Lord\\nd*~said");
+        expect(normalizePastedNbsp(`a ${NBSP}\\nd x`)).toBe("a ~\\nd x");
         expect(
           normalizePastedNbsp(`\\f + \\ft see \\fq a${NBSP}\\fq*${NBSP}\\+nd b\\+nd*\\f*`),
-        ).toBe("\\f + \\ft see \\fq a \\fq* \\+nd b\\+nd*\\f*");
-        expect(normalizePastedNbsp(`a${NBSP}\n${NBSP}\\nd x`)).toBe("a~\n \\nd x");
+        ).toBe("\\f + \\ft see \\fq a~\\fq*~\\+nd b\\+nd*\\f*");
+        expect(normalizePastedNbsp(`a${NBSP}\n${NBSP}\\nd x`)).toBe("a~\n~\\nd x");
       });
 
-      it("keeps a note display's layout NBSPs as spaces rather than dropping anything", () => {
+      it("keeps a note display's layout NBSPs as stored no-break spaces rather than dropping anything", () => {
         // A note's non-editable layout puts an NBSP after its caller and after every child, so a
-        // copy of that display carries one before each child marker and before `\\f*`. Nothing in
-        // the text tells those apart from a space the user typed in the same place, and losing a
-        // user's space is worse than keeping a stray one, so they all come through as spaces.
-        expect(normalizePastedNbsp(`\\f +${NBSP}\\fr 1:1${NBSP}\\ft note.${NBSP}\\f*`)).toBe(
-          "\\f + \\fr 1:1 \\ft note. \\f*",
-        );
+        // foreign copy of that display carries one before each child marker and before `\\f*`.
+        // Nothing in the text tells those apart from a no-break space the user put in the same
+        // place, so they are kept as no-break spaces: nothing is lost. Each opener's own separator
+        // is still a space.
+        expect(
+          normalizePastedNbsp(`\\f +${NBSP}\\fr${NBSP}1:1${NBSP}\\ft${NBSP}note.${NBSP}\\f*`),
+        ).toBe("\\f +~\\fr 1:1~\\ft note.~\\f*");
       });
 
-      it("maps EVERY member of a leading NBSP run to a plain space, not just the first", () => {
-        // A Standard-view paragraph-leading space run is stored as all-NBSP, so a run at a line's
-        // start is display spacing from its first member to its last, never data.
-        expect(normalizePastedNbsp(`${NBSP}${NBSP}word`)).toBe("  word");
-        expect(normalizePastedNbsp(`a\n${NBSP}${NBSP}${NBSP}word`)).toBe("a\n   word");
+      it("keeps an NBSP at the start of the paste or of a line as data, alone or in a run", () => {
+        // No copy this editor makes puts display spacing at a line start (its copy writes a space
+        // for every display NBSP), so a line-leading NBSP is the user's no-break space.
+        expect(normalizePastedNbsp(NBSP)).toBe("~");
+        expect(normalizePastedNbsp(`${NBSP}${NBSP}word`)).toBe("~~word");
+        expect(normalizePastedNbsp(`a\n${NBSP}${NBSP}${NBSP}word`)).toBe("a\n~~~word");
+        expect(normalizePastedNbsp(`${NBSP} word`, NBSP_STAND_IN)).toBe(`${NBSP_STAND_IN} word`);
       });
     });
 
@@ -1786,16 +1864,14 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       });
     });
 
-    it("keeps an NBSP pasted between `\\va*` and `\\vp` as a space, which unfolds `\\vp` — the byte is the user's", () => {
-      // The tokenizer treats any same-line whitespace between a verse and its attribute marker as
-      // content, so the space this leaves behind makes `\\vp` a standalone span instead of the
-      // verse's pubnumber (usfmFragmentToUsj.ts, the `attrTarget` text branch). That is the same
-      // outcome Paratext 9 reaches from the same bytes: with `AllowInvisibleChars` off — the
-      // default, and the semantics Standard view adopts — its own paste postprocessing turns every
-      // literal NBSP into a space too. Dropping the byte to preserve the fold would lose content
-      // the user pasted, which is the worse trade.
+    it("keeps an NBSP pasted between `\\va*` and `\\vp` as a stored no-break space, which unfolds `\\vp` — the byte is the user's", () => {
+      // After a closer an NBSP is the user's no-break space; only an opening marker's separator
+      // is read as a space. The tokenizer treats any same-line content between a verse and its
+      // attribute marker as content, so the byte kept here makes `\\vp` a standalone span instead
+      // of the verse's pubnumber (usfmFragmentToUsj.ts, the `attrTarget` text branch). Dropping the
+      // byte to preserve the fold would lose content the user pasted, which is the worse trade.
       expect(normalizePastedNbsp(`\\v 12 \\va 12b\\va*${NBSP}\\vp 12p\\vp*`)).toBe(
-        "\\v 12 \\va 12b\\va* \\vp 12p\\vp*",
+        "\\v 12 \\va 12b\\va*~\\vp 12p\\vp*",
       );
     });
 
@@ -1877,12 +1953,11 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       });
     });
 
-    it("an NBSP sitting before a closing marker outside a note is kept as the space it is", async () => {
+    it("an NBSP sitting before a closing marker is kept as a stored no-break space", async () => {
       // `\nd` + NBSP + `Lord` + NBSP + `\nd*`. The first NBSP follows the opening marker (its
-      // separator → space). The second is a space the text has before the closer: only a note's
-      // layout puts a spacer in front of a closer, and only in front of the note's OWN closer, so
-      // out here it is content and stays — the span's text is `Lord `. Round-tripped through copy
-      // (see `pasteAndCopyBack`) to sidestep asserting on Tier 2's pre-rebuild interim text.
+      // separator → space). The second is the user's no-break space: only an opening marker's
+      // separator is read as a space, so the span's text is `Lord` + NBSP. Round-tripped through
+      // copy (see `pasteAndCopyBack`) to sidestep asserting on Tier 2's pre-rebuild interim text.
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         const para = $createParaNode("p");
@@ -1895,11 +1970,10 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
         "text/plain": `\\nd${NBSP}Lord${NBSP}\\nd*`,
       });
 
-      expect(roundTripped).toContain("\\nd Lord \\nd*");
-      expect(roundTripped).not.toContain("~");
+      expect(roundTripped).toContain("\\nd Lord~\\nd*");
     });
 
-    it("normalizes a leading NBSP with no preceding marker literal (a partial selection starting at a char span's structural separator)", async () => {
+    it("keeps a leading NBSP with no preceding marker literal as data", async () => {
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         const para = $createParaNode("p");
@@ -1919,8 +1993,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       expect(handled).toBe(true);
       editor.getEditorState().read(() => {
         const content = $getRoot().getTextContent();
-        expect(content).toContain(" Lord");
-        expect(content).not.toContain("~Lord");
+        expect(content).toContain("~Lord");
       });
     });
 
@@ -1962,7 +2035,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       expect(roundTripped).not.toContain("~");
     });
 
-    it("recognizes a milestone's anonymous self-closer (`\\*`) as a marker token — the NBSP after it does not gain `~`", async () => {
+    it("keeps an NBSP after a milestone's anonymous self-closer (`\\*`) as a stored no-break space", async () => {
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         const para = $createParaNode("p");
@@ -1982,8 +2055,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       expect(handled).toBe(true);
       editor.getEditorState().read(() => {
         const content = $getRoot().getTextContent();
-        expect(content).toContain("\\qt-s\\* after");
-        expect(content).not.toContain("~");
+        expect(content).toContain("\\qt-s\\*~after");
       });
     });
   });
@@ -2028,11 +2100,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       });
     });
 
-    it("a leading NBSP on a SECOND line (right after an internal `\\n`, not string-start) also normalizes to a space, under the `gm`-flagged leading-NBSP pass", async () => {
-      // `normalizePastedNbsp`'s leading-NBSP pass uses the `gm` flags, so `^` matches after
-      // every `\n`, not just at the very start of the whole paste — a later paragraph of a
-      // multi-line paste can itself start mid-span (a partial selection spanning a paragraph
-      // boundary) and reads as the same structural separator the string-start case does.
+    it("keeps a leading NBSP on a SECOND line (right after an internal `\\n`) as data, as at the start of the paste", async () => {
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         const para = $createParaNode("p");
@@ -2056,9 +2124,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
         const paras = $getRoot().getChildren().filter($isParaNode);
         expect(paras).toHaveLength(2);
         expect(paras[0].getTextContent()).toContain("before one");
-        // The second line's leading NBSP became a plain space, not data — no `~` anywhere.
-        expect(paras[1].getTextContent()).toContain(" twoafter");
-        expect(paras[1].getTextContent()).not.toContain("~");
+        expect(paras[1].getTextContent()).toContain("~twoafter");
       });
     });
 
@@ -2378,13 +2444,14 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       expect(roundTripped).toContain("\\f - \\fr 1:1 \\ft Caller test.\\f*");
     });
 
-    it("a browser-hop/html-derived collapsed-footnote shape (display NBSPs before `\\ft` and `\\f*`, not only after `\\f`/`\\fr`) round-trips with no `~` and no lost space", async () => {
+    it("a browser-hop/html-derived collapsed-footnote shape (display NBSPs before `\\ft` and `\\f*`, not only after `\\f`/`\\fr`) round-trips with every marker and no lost space", async () => {
       // `createNote` (usj-editor.adaptor.ts) appends a display NBSP after EVERY child of a
       // collapsed note, so a copy of that display carries one between `\\fr`'s content and `\\ft`,
       // and another between `\\ft`'s content and `\\f*`. Standard view's own copy never carries
       // that shape (the copy walker drops those spacers); a foreign carrier holding the display
-      // still can. None becomes a `~` — the corruption this describe pins — and none is dropped:
-      // the text cannot tell them from a space the user typed there, so each stays a space.
+      // still can. The markers stay markers — the corruption this describe pins is an opener's
+      // separator turned into `~` — and nothing is dropped: the text cannot tell a spacer before a
+      // marker from a no-break space the user put there, so each is kept as a stored one.
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         const para = $createParaNode("p");
@@ -2397,8 +2464,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
         "text/plain": `\\f - \\fr 1:1${NBSP}\\ft Caller test.${NBSP}\\f*`,
       });
 
-      expect(roundTripped).not.toContain("~");
-      expect(roundTripped).toContain("\\f - \\fr 1:1 \\ft Caller test. \\f*");
+      expect(roundTripped).toContain("\\f - \\fr 1:1~\\ft Caller test.~\\f*");
     });
   });
 });

@@ -10,6 +10,7 @@
  * never a whitespace-only text a reader skips (ParatextData's `GetNextWord`) and a reload drops.
  */
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { isViewEnabled } from "../editorViews.test-helpers";
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { MarkerContent } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -34,71 +35,78 @@ function screenOf(lexical: LexicalEditor): string {
   );
 }
 
-describe.each([
-  {
-    name: "in front of a char span's opener",
-    view: "standard",
-    content: ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
-    glyph: "\\w",
-    at: "front",
-    expected: "In the  \\w grace",
-  },
-  {
-    name: "in front of an unclosed char span's opener",
-    view: "standard",
-    content: ["a ", { type: "char", marker: "bd", closed: "false", content: ["bold"] }],
-    glyph: "\\bd",
-    at: "front",
-    expected: "a  \\bd bold",
-  },
-  {
-    name: "in front of a nested char span's opener",
-    view: "standard",
-    content: [
-      "a ",
-      {
-        type: "char",
-        marker: "nd",
-        content: ["one ", { type: "char", marker: "wj", content: ["two"] }, " three"],
-      },
-    ],
-    glyph: "\\+wj",
-    at: "front",
-    expected: "one  \\+wj two",
-  },
-  {
-    name: "in front of a milestone",
-    view: "standard",
-    content: ["a ", { type: "ms", marker: "qt-s" }, "b"],
-    glyph: "\\qt-s",
-    at: "front",
-    expected: "a  \\qt-s",
-  },
-  {
-    name: "behind a note's closer",
-    view: "standard+expandedNotes",
-    content: [
-      "a",
-      {
-        type: "note",
-        marker: "f",
-        caller: "+",
-        content: [{ type: "char", marker: "ft", content: ["n"] }],
-      },
-      " b",
-    ],
-    glyph: "\\f*",
-    at: "back",
-    expected: "\\f*  b",
-  },
-] as {
-  name: string;
-  view: string;
-  content: MarkerContent[];
-  glyph: string;
-  at: "front" | "back";
-  expected: string;
-}[])("a space typed $name", ({ view, content, glyph, at, expected }) => {
+/** The rows whose `view` the registry includes this run. */
+function inEnabledViews<Row extends { view: string }>(rows: Row[]): Row[] {
+  return rows.filter(({ view }) => isViewEnabled(view));
+}
+
+describe.each(
+  inEnabledViews([
+    {
+      name: "in front of a char span's opener",
+      view: "standard",
+      content: ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      glyph: "\\w",
+      at: "front",
+      expected: "In the  \\w grace",
+    },
+    {
+      name: "in front of an unclosed char span's opener",
+      view: "standard",
+      content: ["a ", { type: "char", marker: "bd", closed: "false", content: ["bold"] }],
+      glyph: "\\bd",
+      at: "front",
+      expected: "a  \\bd bold",
+    },
+    {
+      name: "in front of a nested char span's opener",
+      view: "standard",
+      content: [
+        "a ",
+        {
+          type: "char",
+          marker: "nd",
+          content: ["one ", { type: "char", marker: "wj", content: ["two"] }, " three"],
+        },
+      ],
+      glyph: "\\+wj",
+      at: "front",
+      expected: "one  \\+wj two",
+    },
+    {
+      name: "in front of a milestone",
+      view: "standard",
+      content: ["a ", { type: "ms", marker: "qt-s" }, "b"],
+      glyph: "\\qt-s",
+      at: "front",
+      expected: "a  \\qt-s",
+    },
+    {
+      name: "behind a note's closer",
+      view: "standard+expandedNotes",
+      content: [
+        "a",
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ type: "char", marker: "ft", content: ["n"] }],
+        },
+        " b",
+      ],
+      glyph: "\\f*",
+      at: "back",
+      expected: "\\f*  b",
+    },
+  ] as {
+    name: string;
+    view: string;
+    content: MarkerContent[];
+    glyph: string;
+    at: "front" | "back";
+    expected: string;
+  }[]),
+)("a space typed $name", ({ view, content, glyph, at, expected }) => {
   it("stays on screen after the settle, beside the glyph it was typed at", async () => {
     const mounted = await mountInView(twoParaUsj(content), oracleView(view));
     const loaded = mounted.ref.current?.getUsj();
@@ -181,48 +189,53 @@ const note = {
   content: [{ type: "char", marker: "ft", content: ["n"] }],
 };
 
-describe.each([
-  {
-    name: "in front of a char span's opener right after a verse",
-    view: "standard",
-    content: [
-      { type: "verse", marker: "v", number: "1" },
-      { type: "char", marker: "w", content: ["g"] },
-    ],
-    glyph: { pick: isGlyph("\\w"), at: "front" },
-    neighbor: { pick: isGlyph("\\v 1 "), at: "end" },
-  },
-  {
-    name: "in front of a note's first span, right after its caller",
-    view: "standard+expandedNotes",
-    content: ["a", note, " b"],
-    glyph: { pick: isGlyph("\\ft"), at: "front" },
-    neighbor: {
-      pick: (text: TextNode) => text.isUnmergeable() && text.getTextContent().includes("+"),
-      at: "end",
+describe.each(
+  inEnabledViews([
+    {
+      name: "in front of a char span's opener right after a verse",
+      view: "standard",
+      content: [
+        { type: "verse", marker: "v", number: "1" },
+        { type: "char", marker: "w", content: ["g"] },
+      ],
+      glyph: { pick: isGlyph("\\w"), at: "front" },
+      neighbor: { pick: isGlyph("\\v 1 "), at: "end" },
     },
-  },
-  {
-    name: "at the start of the text right after a verse",
-    view: "standard",
-    content: [{ type: "verse", marker: "v", number: "1" }, "In the beginning"],
-    glyph: { pick: (text: TextNode) => text.getTextContent() === "In the beginning", at: "front" },
-    neighbor: { pick: isGlyph("\\v 1 "), at: "end" },
-  },
-  {
-    name: "behind a note's closer, right before a verse",
-    view: "standard+expandedNotes",
-    content: ["a", note, { type: "verse", marker: "v", number: "2" }, "b"],
-    glyph: { pick: isGlyph("\\f*"), at: "end" },
-    neighbor: { pick: isGlyph("\\v 2 "), at: "front" },
-  },
-] as {
-  name: string;
-  view: string;
-  content: MarkerContent[];
-  glyph: { pick: (text: TextNode) => boolean; at: "front" | "end" };
-  neighbor: { pick: (text: TextNode) => boolean; at: "front" | "end" };
-}[])("a space typed $name, with no plain text beside it", ({ view, content, glyph, neighbor }) => {
+    {
+      name: "in front of a note's first span, right after its caller",
+      view: "standard+expandedNotes",
+      content: ["a", note, " b"],
+      glyph: { pick: isGlyph("\\ft"), at: "front" },
+      neighbor: {
+        pick: (text: TextNode) => text.isUnmergeable() && text.getTextContent().includes("+"),
+        at: "end",
+      },
+    },
+    {
+      name: "at the start of the text right after a verse",
+      view: "standard",
+      content: [{ type: "verse", marker: "v", number: "1" }, "In the beginning"],
+      glyph: {
+        pick: (text: TextNode) => text.getTextContent() === "In the beginning",
+        at: "front",
+      },
+      neighbor: { pick: isGlyph("\\v 1 "), at: "end" },
+    },
+    {
+      name: "behind a note's closer, right before a verse",
+      view: "standard+expandedNotes",
+      content: ["a", note, { type: "verse", marker: "v", number: "2" }, "b"],
+      glyph: { pick: isGlyph("\\f*"), at: "end" },
+      neighbor: { pick: isGlyph("\\v 2 "), at: "front" },
+    },
+  ] as {
+    name: string;
+    view: string;
+    content: MarkerContent[];
+    glyph: { pick: (text: TextNode) => boolean; at: "front" | "end" };
+    neighbor: { pick: (text: TextNode) => boolean; at: "front" | "end" };
+  }[]),
+)("a space typed $name, with no plain text beside it", ({ view, content, glyph, neighbor }) => {
   it("saves what the same place at the neighbor's edge saves, with no whitespace node", async () => {
     const atGlyph = await savedAfterSpace(view, content, glyph.pick, glyph.at);
     const atNeighbor = await savedAfterSpace(view, content, neighbor.pick, neighbor.at);

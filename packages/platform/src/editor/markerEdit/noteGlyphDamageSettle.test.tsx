@@ -6,6 +6,7 @@
  * screen shows and the file gets.
  */
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { LIBRARY_VIEWS_ENABLED } from "../editorViews.test-helpers";
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -44,11 +45,14 @@ const edits: { name: string; glyph: string; text: string; caret: number }[] = [
   { name: "a backslash typed in front of the opener", glyph: "\\f", text: "\\\\f", caret: 1 },
 ];
 
-describe.each(
-  ["standard+expandedNotes", "unformatted"].flatMap((view) =>
-    edits.map((edit) => ({ view, ...edit })),
-  ),
-)("a note glyph with $name ($view view)", ({ view, glyph, text, caret }) => {
+// Both views are library-only, so the suite runs only with the registry's library-only views.
+describe
+  .skipIf(!LIBRARY_VIEWS_ENABLED)
+  .each(
+    ["standard+expandedNotes", "unformatted"].flatMap((view) =>
+      edits.map((edit) => ({ view, ...edit })),
+    ),
+  )("a note glyph with $name ($view view)", ({ view, glyph, text, caret }) => {
   it("settles the paragraph as the tokenizer reads the screen", async () => {
     const mounted = await mountInView(noteUsj, oracleView(view));
     await act(async () => {

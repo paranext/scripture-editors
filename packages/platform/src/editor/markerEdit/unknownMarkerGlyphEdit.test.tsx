@@ -6,6 +6,7 @@
  * degrade the marker to literal text), so the rebuild has to tell an intact span, which it must
  * keep, from one whose glyph the user has edited, whose bytes are now the instruction.
  */
+import { itInView, mountInPaneRow } from "../editorViews.test-helpers";
 import {
   expectTier2FixedPoint,
   mountExpandedNoteEditor,
@@ -117,10 +118,18 @@ function paraContent(usj: Usj | undefined): MarkerContent[] | undefined {
 }
 
 function noteContent(usj: Usj | undefined): MarkerContent[] | undefined {
+  return paraContent(usj)?.find(
+    (item): item is MarkerObject => typeof item === "object" && item.type === "note",
+  )?.content;
+}
+
+/** The note in `usj`'s paragraph. */
+function noteOf(usj: Usj): MarkerObject {
   const note = paraContent(usj)?.find(
     (item): item is MarkerObject => typeof item === "object" && item.type === "note",
   );
-  return note?.content;
+  if (!note) throw new Error("no note in the paragraph");
+  return note;
 }
 
 describe("deleting the backslash of an undeclared char marker", () => {
@@ -153,11 +162,15 @@ describe("deleting the backslash of an undeclared char marker", () => {
     if (settled) expectTier2FixedPoint(settled);
   });
 
-  it("turns the marker back into text inside a note's run", async () => {
-    const { ref, lexical } = await mountExpandedNoteEditor(noteWithUnknownUsj);
+  it("turns the marker back into text inside a note's run in the footnotes pane's row editor", async () => {
+    const { ref, lexical } = await mountInPaneRow(noteOf(noteWithUnknownUsj));
 
     await editOpener(lexical, "\\+df", "+df ");
-    await departCaret(lexical);
+    // The row editor holds the note alone: the caret leaves it as the editor loses focus.
+    const rootElement = lexical.getRootElement();
+    if (!rootElement) throw new Error("editor root not found");
+    act(() => rootElement.blur());
+    act(() => ref.current?.commitPendingMarkerEdits());
 
     const content = noteContent(ref.current?.getUsj());
     expect(JSON.stringify(content)).not.toContain('"marker":"df"');
@@ -168,6 +181,25 @@ describe("deleting the backslash of an undeclared char marker", () => {
       content: ["a +df name"],
     });
   });
+
+  itInView("standard+expandedNotes")(
+    "turns the marker back into text inside a note's run",
+    async () => {
+      const { ref, lexical } = await mountExpandedNoteEditor(noteWithUnknownUsj);
+
+      await editOpener(lexical, "\\+df", "+df ");
+      await departCaret(lexical);
+
+      const content = noteContent(ref.current?.getUsj());
+      expect(JSON.stringify(content)).not.toContain('"marker":"df"');
+      expect(content?.[0]).toEqual({
+        type: "char",
+        marker: "ft",
+        closed: "false",
+        content: ["a +df name"],
+      });
+    },
+  );
 
   it("keeps an intact undeclared span whole through a rebuild of its paragraph", async () => {
     const { ref, lexical } = await mountStandardViewEditor(nestedUnknownUsj);

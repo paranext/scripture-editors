@@ -1,6 +1,6 @@
-import { createEditor } from "lexical";
+import { $createParagraphNode, $createRangeSelection, $getRoot, createEditor } from "lexical";
 import { describe, expect, it } from "vitest";
-import { $createCharNode, CharNode } from "./CharNode.js";
+import { $createCharNode, $wereSplitFromOneSpan, CharNode, clearSplitOrigins } from "./CharNode.js";
 
 interface ThemeOverrides {
   [key: string]: unknown;
@@ -158,5 +158,32 @@ describe("CharNode.isValidMarker", () => {
 
   it("returns false for a marker not in the extra list", () => {
     expect(CharNode.isValidMarker("app", ["other"])).toBe(false);
+  });
+});
+
+describe("split origins", () => {
+  it("are forgotten once the editor's document is replaced", () => {
+    const editor = createTestEditor();
+    let original: CharNode | undefined;
+    let continuation: CharNode | undefined;
+    editor.update(
+      () => {
+        original = $createCharNode("nd");
+        $getRoot().append($createParagraphNode().append(original));
+        continuation = original.insertNewAfter($createRangeSelection(), false);
+        expect($wereSplitFromOneSpan(original, continuation)).toBe(true);
+      },
+      { discrete: true },
+    );
+
+    clearSplitOrigins(editor);
+
+    editor.update(
+      () => {
+        if (!original || !continuation) throw new Error("expected the split pieces");
+        expect($wereSplitFromOneSpan(original, continuation)).toBe(false);
+      },
+      { discrete: true },
+    );
   });
 });

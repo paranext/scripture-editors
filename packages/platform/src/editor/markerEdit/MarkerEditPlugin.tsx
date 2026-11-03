@@ -38,12 +38,16 @@ import {
   $displayWhitespaceTransform,
   $handleCopyForStandardView,
   $handlePasteForStandardView,
+  registerTypedNbspSpelling,
+  $handleDropForStandardView,
+  $setStandardViewDragData,
   getDataTransferPayload,
   normalizePastedNbsp,
   stripPastedBlockMarkers,
   stripPastedChapterAndBookId,
   getPastePayload,
 } from "./whitespaceDisplay.plugin.utils";
+import { registerNbspStandInFont } from "./nbspStandInFont";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -60,6 +64,7 @@ import {
   COMMAND_PRIORITY_LOW,
   COMMAND_PRIORITY_NORMAL,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  DRAGSTART_COMMAND,
   COPY_COMMAND,
   createCommand,
   CUT_COMMAND,
@@ -111,6 +116,7 @@ import {
   NoteNode,
   PARA_MARKER_DEFAULT,
   ParaNode,
+  registerNbspDisplaySpelling,
   registerPendedDisplayOwners,
   textTypeState,
   VerseNode,
@@ -121,6 +127,7 @@ import {
   $shouldBlockStructuralEdit,
   EditIntent,
   editorHoldsDomFocus,
+  getNbspSpelling,
   hasStandardViewWhitespace,
   keyDownToIntent,
   releaseTagsAfterNextCommit,
@@ -440,16 +447,16 @@ function registerPasteNormalization(
         if (!payload.text.includes("\n")) return false;
         // Standard view: every pasted NBSP is normalized POSITIONALLY here, via the same
         // `normalizePastedNbsp` the Standard-view external-paste handler uses
-        // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`,
-        // a note's inter-child spacer) settles to a space exactly as it would outside a note, and
-        // only genuine data survives as `~`. Inserted raw an NBSP is
-        // indistinguishable from a display-NBSP (a plain space in a run), so serialization would
-        // corrupt it into a plain space if left unmapped. A pasted literal `~` is already the
-        // display form and passes through unchanged. `\c`/`\id` bytes are dropped first, via the
-        // same `stripPastedChapterAndBookId` the external handler uses — note content
-        // re-tokenizes literal text through the SAME Tier 2 tokenizer a paragraph does, so a
-        // pasted `\c`/`\id` landing here is just as reachable (and just as save-poisoning) as one
-        // landing in body text.
+        // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`, a
+        // note's inter-child spacer) settles to a space exactly as it would outside a note, and
+        // only genuine data survives, as the display spelling (`~` or `NBSP_STAND_IN`). Inserted
+        // raw an NBSP is indistinguishable from a display-NBSP (a plain space in a run), so
+        // serialization would corrupt it into a plain space if left unmapped. A pasted literal `~`
+        // is already the display form, or an ordinary character, and passes through unchanged.
+        // `\c`/`\id` bytes are dropped first, via the same `stripPastedChapterAndBookId` the
+        // external handler uses — note content re-tokenizes literal text through the SAME Tier 2
+        // tokenizer a paragraph does, so a pasted `\c`/`\id` landing here is just as reachable (and
+        // just as save-poisoning) as one landing in body text.
         //
         // Both run before the line-break test BELOW (the raw gate above only rules out text that
         // never had a break), because the claim below removes the selected range before it inserts
@@ -465,7 +472,9 @@ function registerPasteNormalization(
           isStandardView && context.structureProtectionMode === "protected"
             ? stripPastedBlockMarkers(withoutChapterOrBookId, context.getMarker)
             : withoutChapterOrBookId;
-        const noteText = isStandardView ? normalizePastedNbsp(withoutStructure) : withoutStructure;
+        const noteText = isStandardView
+          ? normalizePastedNbsp(withoutStructure, getNbspSpelling(context.viewOptions))
+          : withoutStructure;
         if (noteText.includes("\n")) {
           const lines = noteText.split("\n");
           let outcome = $handlePasteLinesInNote(lines, context.getMarker);
@@ -513,6 +522,7 @@ function registerPasteNormalization(
             context.splitExpected.current = true;
           },
           context.getMarker,
+          getNbspSpelling(context.viewOptions),
         );
         if (isClaimed) event?.preventDefault();
         return isClaimed;
@@ -674,6 +684,18 @@ export function MarkerEditPlugin({
   const markerSettleSuspendedRef = useRef(false);
   // Wiring too, read by the Standard-view copy and cut claims at each copy or cut.
   const copyLimitRef = useRef(copyLimit);
+
+  // The display-run syncs redraw attribute values from node state, so they must spell a value's
+  // no-break space as the adaptor did when it built the run (its `attributeNbspSpelling`, which
+  // `$getAttributeNbspDisplaySpelling` derives from this registration), and the writers of bytes
+  // that become body text spell one as body text does.
+  const nbspDisplaySpelling = hasStandardViewWhitespace(viewOptions)
+    ? getNbspSpelling(viewOptions)
+    : undefined;
+  useEffect(() => {
+    if (!isEnabled) return;
+    return registerNbspDisplaySpelling(editor, nbspDisplaySpelling);
+  }, [editor, isEnabled, nbspDisplaySpelling]);
 
   // Refresh the wiring on the live context every render, without tearing the engine down. The
   // registration effect below deliberately does NOT depend on these values, so an identity-only
@@ -1121,6 +1143,17 @@ export function MarkerEditPlugin({
               if (editor.isComposing()) return;
               $displayWhitespaceTransform(node);
             }),
+            registerTypedNbspSpelling(editor, () => getNbspSpelling(context.viewOptions)),
+            registerNbspStandInFont(editor),
+            // Never claims the drag: the plugins that refuse one run ahead of this at HIGH.
+            editor.registerCommand(
+              DRAGSTART_COMMAND,
+              (event) => {
+                $setStandardViewDragData(event, editor, getNbspSpelling(context.viewOptions));
+                return false;
+              },
+              COMMAND_PRIORITY_LOW,
+            ),
             editor.registerCommand(
               COPY_COMMAND,
               (event) =>
@@ -1134,6 +1167,7 @@ export function MarkerEditPlugin({
                   editor,
                   false,
                   copyLimitRef.current,
+                  getNbspSpelling(context.viewOptions),
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -1149,6 +1183,7 @@ export function MarkerEditPlugin({
                   editor,
                   true,
                   copyLimitRef.current,
+                  getNbspSpelling(context.viewOptions),
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -1169,6 +1204,7 @@ export function MarkerEditPlugin({
                     context.splitExpected.current = true;
                   },
                   context.getMarker,
+                  getNbspSpelling(context.viewOptions),
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -1339,22 +1375,38 @@ export function MarkerEditPlugin({
       ),
       // A drop inserts through Lexical's clipboard path, which splits at every line break without
       // going through INSERT_PARAGRAPH_COMMAND, so a drop on a chapter line is claimed and goes in
-      // as a paste there does. LOW: below structure protection's HIGH block and the NORMAL
+      // as a paste there does, and in Standard view every other drop goes in as a paste does too
+      // ($handleDropForStandardView). LOW: below structure protection's HIGH block and the NORMAL
       // replace-selection delete, above Lexical's own insertion at EDITOR.
       editor.registerCommand(
         CONTROLLED_TEXT_INSERTION_COMMAND,
         (payload) => {
           if (typeof payload === "string" || !payload.dataTransfer) return false;
+          const isProtected = context.structureProtectionMode === "protected";
+          const armSplitExpected = () => {
+            context.splitExpected.current = true;
+          };
+          const nbspSpelling = getNbspSpelling(context.viewOptions);
           const { text } = getDataTransferPayload(payload.dataTransfer, editor._config.namespace);
-          return (
-            !!text &&
+          if (
+            text &&
             $pasteOnChapterLine(
               text,
-              context.structureProtectionMode === "protected",
-              () => {
-                context.splitExpected.current = true;
-              },
+              isProtected,
+              armSplitExpected,
               context.getMarker,
+              nbspSpelling,
+            )
+          )
+            return true;
+          return (
+            hasStandardViewWhitespace(context.viewOptions) &&
+            $handleDropForStandardView(
+              payload.dataTransfer,
+              isProtected,
+              armSplitExpected,
+              context.getMarker,
+              nbspSpelling,
             )
           );
         },

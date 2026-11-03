@@ -51,7 +51,6 @@ import {
   MarkerContent,
   MarkerObject,
   Usj,
-  USJ_VERSION,
   usxStringToUsj,
 } from "@eten-tech-foundation/scripture-utilities";
 import { $getRoot, COPY_COMMAND, PASTE_COMMAND, RootNode } from "lexical";
@@ -204,6 +203,7 @@ async function copyPasteRoundTrip(usj: Usj): Promise<Usj | undefined> {
   const pasted = deserializeSerializedEditorState(
     targetEditor.getEditorState().toJSON(),
     viewOptions,
+    usj.version,
   );
   return withoutPasteHost(pasted, usj);
 }
@@ -355,10 +355,6 @@ describe("real-world multi-construct fixture (2sa)", () => {
     // never had a sid, or keep passing unchanged on the day the loss is closed.
     expect(countVerseSids(usj2Sa)).toBe(26);
     expect(countVerseSids(pasted)).toBe(0);
-    // The editor re-stamps the document's USJ version on export, and a plain load→save of this
-    // same fixture does exactly the same (it declares 3.0), so it is not a clipboard property —
-    // asserted on its own rather than waived, then normalized out of the whole-document compare.
-    expect(pasted?.version).toBe(USJ_VERSION);
-    expect({ ...pasted, version: usj2Sa.version }).toEqual(withoutVerseSids(usj2Sa));
+    expect(pasted).toEqual(withoutVerseSids(usj2Sa));
   });
 });

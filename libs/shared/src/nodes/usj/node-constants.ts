@@ -10,6 +10,19 @@ export interface UnknownAttributes {
 export const NBSP = "\u00A0";
 /** Zero-width space (U+200B). */
 export const ZWSP = "\u200B";
+/**
+ * SUBSTITUTE (U+001A), the character Standard view holds in place of a stored no-break space, instead
+ * of `~`, wherever `~` is an ordinary character: in body text where the project stores U+00A0 itself
+ * (see `ViewOptions.allowInvisibleCharacters` in shared-react), and in every attribute value, whose
+ * `~` Paratext always keeps as `~` (`ATTRIBUTE_NBSP_SPELLING`). It never leaves the editor: every way
+ * text goes out turns it back into U+00A0, and every way text comes in turns a U+001A (like every
+ * other C0 control character but tab, line feed and carriage return) into a space first, so the
+ * only U+001A an editor holds is its own. It is safe for that because Paratext's own reader
+ * (`ScrText.GetText`) turns U+0001-U+0008 and U+000E-U+001F into spaces, so project text can never
+ * hold one. It is drawn as a blank the width of a space by the `NBSP_STAND_IN_FONT_FAMILY` font
+ * face, so it looks like the no-break space it stands for.
+ */
+export const NBSP_STAND_IN = "\u001A";
 
 export const EMPTY_CHAR_PLACEHOLDER_TEXT = NBSP;
 

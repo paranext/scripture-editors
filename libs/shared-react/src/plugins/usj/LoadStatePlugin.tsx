@@ -1,7 +1,13 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $addUpdateTag, CLEAR_HISTORY_COMMAND, SKIP_DOM_SELECTION_TAG } from "lexical";
 import { RefObject, useEffect } from "react";
-import { EditorAdaptor, EXTERNAL_USJ_MUTATION_TAG, LoggerBasic, NodeOptions } from "shared";
+import {
+  clearSplitOrigins,
+  EditorAdaptor,
+  EXTERNAL_USJ_MUTATION_TAG,
+  LoggerBasic,
+  NodeOptions,
+} from "shared";
 import { editorHoldsDomFocus } from "./editorUpdate.utils";
 
 /**
@@ -68,6 +74,8 @@ export function LoadStatePlugin<TLogger extends LoggerBasic>({
             if (!editorHasFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
             editor.setEditorState(editorState);
             editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
+            // No undo can restore a span of the replaced document, so its split record goes too.
+            clearSplitOrigins(editor);
           },
           { tag: EXTERNAL_USJ_MUTATION_TAG },
         );

@@ -43,6 +43,7 @@ export {
   MarkerType,
 } from "shared";
 export { generateUsjCss } from "./editor/generateUsjCss";
+export { toUsfmNbspSpelling } from "./editor/markerEdit/whitespaceDisplay.utils";
 export { getEnterMenuItems, getMarkerMenuItems } from "./editor/markerMenu/markerItemSource";
 export {
   BLOCK_VERSE_VIEW_MODE,

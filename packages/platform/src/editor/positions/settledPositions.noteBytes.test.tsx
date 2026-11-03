@@ -13,7 +13,8 @@
  *
  * Every settled coordinate is derived from the document `getUsj()` actually returned.
  */
-import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { editorView, mountInView, rowsInEnabledViews } from "../editorViews.test-helpers";
+import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes } from "./settledScopes.utils";
 import {
   $livePointFromSettledLocation,
@@ -586,19 +587,35 @@ describe("a typed note literal in front of a char span's glyph", () => {
   });
 });
 
+/**
+ * The views a caret reaches a note's own glyphs in while its content pends: Standard view, where a
+ * note with no closer shows expanded with its shell editable, and the text with notes expanded
+ * (library-only), where any note does. The footnotes pane's row editor keeps the caret out of the
+ * shell (`isNoteShellEditable: false`), and only the library-only view shows a closer as editable
+ * glyph text.
+ */
+const ownGlyphViews = rowsInEnabledViews([
+  { view: "standard", unclosed: true },
+  { view: "standard+expandedNotes", unclosed: false },
+]);
+
+type OwnGlyphView = (typeof ownGlyphViews)[number];
+
 /** A note whose CONTENT is pending: its reference span's glyphs are retyped. */
-async function noteContentPending() {
-  const mounted = await mountExpandedNoteEditor(
+async function noteContentPending({ view, unclosed }: OwnGlyphView) {
+  const mounted = await mountInView(
     twoParaUsj([
       "before ",
       {
         type: "note",
         marker: "f",
         caller: "+",
+        ...(unclosed && { closed: "false" }),
         content: [{ type: "char", marker: "fr", content: ["1.1"] }, "note body"],
       },
       " after",
     ]),
+    editorView(view),
   );
   await act(async () => {
     mounted.lexical.update(() => {
@@ -626,150 +643,172 @@ function $liveNote(): NoteNode {
   return note;
 }
 
-/** The live note's opening glyph, editable caller and closing glyph. */
-function $noteOwnNodes(): { opener: TextNode; caller: TextNode; closer: TextNode } {
+/** The live note's opening glyph and editable caller. */
+function $noteOwnNodes(): { opener: TextNode; caller: TextNode } {
   const children = $liveNote().getChildren();
   const opener = children[0];
-  const closer = children[children.length - 1];
   const caller = children.find(
     (child): child is TextNode =>
       $isTextNode(child) && !$isMarkerNode(child) && child.getTextContent().includes("+"),
   );
-  if (!$isMarkerNode(opener) || !$isMarkerNode(closer) || !caller)
-    throw new Error("expected the note's opening glyph, caller and closing glyph");
-  return { opener, caller, closer };
+  if (!$isMarkerNode(opener) || !caller)
+    throw new Error("expected the note's opening glyph and caller");
+  return { opener, caller };
 }
 
-describe("a caret on the own glyphs of a note whose content is pending", () => {
-  it("reports a caret in the opening glyph as the settled note's marker bytes", async () => {
-    const { lexical, context, notePath } = await noteContentPending();
-    // The premise: the note is its own scope, whose fragment spells only the note's content.
-    const kinds = lexical
-      .getEditorState()
-      .read(() => [...$prepareSettleScopes(context).byFirstLiveKey.values()].map((p) => p.kind));
-    expect(kinds).toEqual(["note"]);
+/** The live note's closing glyph. */
+function $noteCloser(): TextNode {
+  const closer = $liveNote().getLastChild();
+  if (!$isMarkerNode(closer) || closer.getMarkerSyntax() !== "closing")
+    throw new Error("expected the note's closing glyph");
+  return closer;
+}
 
-    expect(settledLocationOf(lexical, context, () => [$noteOwnNodes().opener, 1])).toEqual({
-      jsonPath: propertyPath(notePath, "marker"),
-      propertyOffset: 0,
+describe.each(ownGlyphViews)(
+  "a caret on the own glyphs of a note whose content is pending ($view)",
+  (ownGlyphView) => {
+    /** A test of the note's closing glyph, which only a closed note shows. */
+    const itOnCloser = ownGlyphView.unclosed ? it.skip : it;
+
+    it("reports a caret in the opening glyph as the settled note's marker bytes", async () => {
+      const { lexical, context, notePath } = await noteContentPending(ownGlyphView);
+      // The premise: the note is its own scope, whose fragment spells only the note's content.
+      const kinds = lexical
+        .getEditorState()
+        .read(() => [...$prepareSettleScopes(context).byFirstLiveKey.values()].map((p) => p.kind));
+      expect(kinds).toEqual(["note"]);
+
+      expect(settledLocationOf(lexical, context, () => [$noteOwnNodes().opener, 1])).toEqual({
+        jsonPath: propertyPath(notePath, "marker"),
+        propertyOffset: 0,
+      });
+      expect(settledLocationOf(lexical, context, () => [$noteOwnNodes().opener, 0])).toEqual({
+        jsonPath: contentPath(notePath),
+      });
     });
-    expect(settledLocationOf(lexical, context, () => [$noteOwnNodes().opener, 0])).toEqual({
-      jsonPath: contentPath(notePath),
+
+    it("reports a caret in the caller as the settled note's caller", async () => {
+      const { lexical, context, notePath } = await noteContentPending(ownGlyphView);
+
+      expect(
+        settledLocationOf(lexical, context, () => {
+          const { caller } = $noteOwnNodes();
+          return [caller, caller.getTextContent().indexOf("+")];
+        }),
+      ).toEqual({ jsonPath: propertyPath(notePath, "caller"), propertyOffset: 0 });
     });
-  });
 
-  it("reports a caret in the caller as the settled note's caller", async () => {
-    const { lexical, context, notePath } = await noteContentPending();
+    itOnCloser(
+      "reports a caret in the closing glyph at that byte of the settled closer",
+      async () => {
+        const { lexical, context, notePath } = await noteContentPending(ownGlyphView);
 
-    expect(
-      settledLocationOf(lexical, context, () => {
+        expect(settledLocationOf(lexical, context, () => [$noteCloser(), 2])).toEqual({
+          jsonPath: contentPath(notePath),
+          closingMarkerOffset: 2,
+        });
+      },
+    );
+
+    it("resolves the settled note's marker bytes onto the live opening glyph", async () => {
+      const { lexical, context, notePath } = await noteContentPending(ownGlyphView);
+      const opener = lexical.getEditorState().read(() => $noteOwnNodes().opener.getKey());
+
+      expect(
+        livePointOf(lexical, context, {
+          jsonPath: propertyPath(notePath, "marker"),
+          propertyOffset: 0,
+        }),
+      ).toEqual({ key: opener, offset: 1, type: "text" });
+      expect(livePointOf(lexical, context, { jsonPath: contentPath(notePath) })).toEqual({
+        key: opener,
+        offset: 0,
+        type: "text",
+      });
+    });
+
+    it("resolves the settled note's caller onto the live caller", async () => {
+      const { lexical, context, notePath } = await noteContentPending(ownGlyphView);
+      const [callerKey, plusOffset] = lexical.getEditorState().read(() => {
         const { caller } = $noteOwnNodes();
-        return [caller, caller.getTextContent().indexOf("+")];
-      }),
-    ).toEqual({ jsonPath: propertyPath(notePath, "caller"), propertyOffset: 0 });
-  });
+        return [caller.getKey(), caller.getTextContent().indexOf("+")] as const;
+      });
 
-  it("reports a caret in the closing glyph at that byte of the settled closer", async () => {
-    const { lexical, context, notePath } = await noteContentPending();
-
-    expect(settledLocationOf(lexical, context, () => [$noteOwnNodes().closer, 2])).toEqual({
-      jsonPath: contentPath(notePath),
-      closingMarkerOffset: 2,
+      expect(
+        livePointOf(lexical, context, {
+          jsonPath: propertyPath(notePath, "caller"),
+          propertyOffset: 0,
+        }),
+      ).toEqual({ key: callerKey, offset: plusOffset, type: "text" });
     });
-  });
 
-  it("resolves the settled note's marker bytes onto the live opening glyph", async () => {
-    const { lexical, context, notePath } = await noteContentPending();
-    const opener = lexical.getEditorState().read(() => $noteOwnNodes().opener.getKey());
+    itOnCloser("resolves a byte of the settled closer onto the live closing glyph", async () => {
+      const { lexical, context, notePath } = await noteContentPending(ownGlyphView);
+      const closer = lexical.getEditorState().read(() => $noteCloser().getKey());
 
-    expect(
-      livePointOf(lexical, context, {
+      expect(
+        livePointOf(lexical, context, { jsonPath: contentPath(notePath), closingMarkerOffset: 2 }),
+      ).toEqual({ key: closer, offset: 2, type: "text" });
+    });
+  },
+);
+
+describe.each(ownGlyphViews)(
+  "a caret on the own glyphs of a pending note inside its own settling paragraph ($view)",
+  ({ view, unclosed }) => {
+    /** A test of the note's closing glyph, which only a closed note shows. */
+    const itOnCloser = unclosed ? it.skip : it;
+
+    /** The note's content and its paragraph both pending, with an emptied husk in front of the note
+     * so the note's settled index differs from its live one. */
+    async function nested() {
+      const mounted = await mountInView(huskBeforeNoteUsj({ unclosed }), editorView(view));
+      await pendNoteInsideSettlingPara(mounted.lexical);
+      const para = settledPara(mounted.ref.current?.getUsj(), PARA_TOP_INDEX);
+      return {
+        ...mounted,
+        notePath: [PARA_TOP_INDEX, settledNoteIndex(para)],
+        context: settledPositionContext(mounted.lexical),
+      };
+    }
+
+    it("reports a caret in the opening glyph at the note's SETTLED path", async () => {
+      const { lexical, context, notePath } = await nested();
+
+      expect(settledLocationOf(lexical, context, () => [$noteOwnNodes().opener, 1])).toEqual({
         jsonPath: propertyPath(notePath, "marker"),
         propertyOffset: 0,
-      }),
-    ).toEqual({ key: opener, offset: 1, type: "text" });
-    expect(livePointOf(lexical, context, { jsonPath: contentPath(notePath) })).toEqual({
-      key: opener,
-      offset: 0,
-      type: "text",
-    });
-  });
-
-  it("resolves the settled note's caller onto the live caller", async () => {
-    const { lexical, context, notePath } = await noteContentPending();
-    const [callerKey, plusOffset] = lexical.getEditorState().read(() => {
-      const { caller } = $noteOwnNodes();
-      return [caller.getKey(), caller.getTextContent().indexOf("+")] as const;
+      });
     });
 
-    expect(
-      livePointOf(lexical, context, {
-        jsonPath: propertyPath(notePath, "caller"),
-        propertyOffset: 0,
-      }),
-    ).toEqual({ key: callerKey, offset: plusOffset, type: "text" });
-  });
+    itOnCloser("reports a caret in the closing glyph at the note's SETTLED path", async () => {
+      const { lexical, context, notePath } = await nested();
 
-  it("resolves a byte of the settled closer onto the live closing glyph", async () => {
-    const { lexical, context, notePath } = await noteContentPending();
-    const closer = lexical.getEditorState().read(() => $noteOwnNodes().closer.getKey());
-
-    expect(
-      livePointOf(lexical, context, { jsonPath: contentPath(notePath), closingMarkerOffset: 2 }),
-    ).toEqual({ key: closer, offset: 2, type: "text" });
-  });
-});
-
-describe("a caret on the own glyphs of a pending note inside its own settling paragraph", () => {
-  /** The note's content and its paragraph both pending, with an emptied husk in front of the note
-   * so the note's settled index differs from its live one. */
-  async function nested() {
-    const mounted = await mountExpandedNoteEditor(huskBeforeNoteUsj());
-    await pendNoteInsideSettlingPara(mounted.lexical);
-    const para = settledPara(mounted.ref.current?.getUsj(), PARA_TOP_INDEX);
-    return {
-      ...mounted,
-      notePath: [PARA_TOP_INDEX, settledNoteIndex(para)],
-      context: settledPositionContext(mounted.lexical),
-    };
-  }
-
-  it("reports a caret in the opening glyph at the note's SETTLED path", async () => {
-    const { lexical, context, notePath } = await nested();
-
-    expect(settledLocationOf(lexical, context, () => [$noteOwnNodes().opener, 1])).toEqual({
-      jsonPath: propertyPath(notePath, "marker"),
-      propertyOffset: 0,
+      expect(settledLocationOf(lexical, context, () => [$noteCloser(), 1])).toEqual({
+        jsonPath: contentPath(notePath),
+        closingMarkerOffset: 1,
+      });
     });
-  });
 
-  it("reports a caret in the closing glyph at the note's SETTLED path", async () => {
-    const { lexical, context, notePath } = await nested();
+    it("resolves the settled note's marker bytes onto the live opening glyph", async () => {
+      const { lexical, context, notePath } = await nested();
+      const opener = lexical.getEditorState().read(() => $noteOwnNodes().opener.getKey());
 
-    expect(settledLocationOf(lexical, context, () => [$noteOwnNodes().closer, 1])).toEqual({
-      jsonPath: contentPath(notePath),
-      closingMarkerOffset: 1,
+      expect(
+        livePointOf(lexical, context, {
+          jsonPath: propertyPath(notePath, "marker"),
+          propertyOffset: 0,
+        }),
+      ).toEqual({ key: opener, offset: 1, type: "text" });
     });
-  });
 
-  it("resolves the settled note's marker bytes onto the live opening glyph", async () => {
-    const { lexical, context, notePath } = await nested();
-    const opener = lexical.getEditorState().read(() => $noteOwnNodes().opener.getKey());
+    itOnCloser("resolves a byte of the settled closer onto the live closing glyph", async () => {
+      const { lexical, context, notePath } = await nested();
+      const closer = lexical.getEditorState().read(() => $noteCloser().getKey());
 
-    expect(
-      livePointOf(lexical, context, {
-        jsonPath: propertyPath(notePath, "marker"),
-        propertyOffset: 0,
-      }),
-    ).toEqual({ key: opener, offset: 1, type: "text" });
-  });
-
-  it("resolves a byte of the settled closer onto the live closing glyph", async () => {
-    const { lexical, context, notePath } = await nested();
-    const closer = lexical.getEditorState().read(() => $noteOwnNodes().closer.getKey());
-
-    expect(
-      livePointOf(lexical, context, { jsonPath: contentPath(notePath), closingMarkerOffset: 1 }),
-    ).toEqual({ key: closer, offset: 1, type: "text" });
-  });
-});
+      expect(
+        livePointOf(lexical, context, { jsonPath: contentPath(notePath), closingMarkerOffset: 1 }),
+      ).toEqual({ key: closer, offset: 1, type: "text" });
+    });
+  },
+);

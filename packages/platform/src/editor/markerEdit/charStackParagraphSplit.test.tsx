@@ -18,6 +18,8 @@ import {
   $splitParagraphAtCharStack,
 } from "./charFormatting.utils";
 import { $splitParagraphWithMarker } from "../markerMenu/markerMenuApply.utils";
+import { EDITING_VIEWS, forEachView, mountInView } from "../editorViews.test-helpers";
+import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createTextNode,
@@ -578,4 +580,67 @@ it("leaves a comment-wrapped span inside a NOTE to the note's own break, never a
   expect(gated).toBe(false);
   expect(split).toBe(false);
   editor.getEditorState().read(() => expect($paras()).toHaveLength(1));
+});
+
+/** `\id`, `\c 1`, then one paragraph holding `content`. */
+function oneParaUsj(content: MarkerContent[]): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      { type: "para", marker: "p", content },
+    ],
+  };
+}
+
+/** The content of every paragraph of `usj`, in document order. */
+function paraContents(usj: Usj | undefined): (MarkerContent[] | undefined)[] {
+  return (usj?.content ?? []).flatMap((item) =>
+    typeof item === "object" && item.type === "para" ? [item.content] : [],
+  );
+}
+
+// The real editor in each editing view, judged on the document it saves. With markers hidden the
+// marker-edit engine and its close-and-reopen split are off, so Enter there is the view's own.
+forEachView(EDITING_VIEWS, ({ view }) => {
+  describe("Enter inside a character style, in the saved document", () => {
+    it("keeps both halves of a \\nd run \\nd", async () => {
+      const { ref, lexical } = await mountInView(
+        oneParaUsj([{ type: "char", marker: "nd", content: ["thing"] }]),
+        view,
+      );
+      await act(async () => {
+        ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[0].content[0]", offset: 2 },
+        });
+      });
+
+      await pressEnter(lexical);
+
+      expect(paraContents(ref.current?.getUsj())).toEqual([
+        [{ type: "char", marker: "nd", content: ["th"] }],
+        [{ type: "char", marker: "nd", content: ["ing"] }],
+      ]);
+    });
+
+    it("keeps both halves of a nested stack nested", async () => {
+      const nested = (text: string): MarkerContent => ({
+        type: "char",
+        marker: "wj",
+        content: [{ type: "char", marker: "nd", content: [text] }],
+      });
+      const { ref, lexical } = await mountInView(oneParaUsj([nested("thing")]), view);
+      await act(async () => {
+        ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[0].content[0].content[0]", offset: 2 },
+        });
+      });
+
+      await pressEnter(lexical);
+
+      expect(paraContents(ref.current?.getUsj())).toEqual([[nested("th")], [nested("ing")]]);
+    });
+  });
 });

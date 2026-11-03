@@ -285,7 +285,7 @@
       ],
       "failures": {}
     },
-    "formatted": {
+    "preview": {
       "ops": 1498,
       "opsSha256": "09b8bae60f79b424db713fd305ae0367a68c39b4c072cea661493f9ba0b5ab8d",
       "anomalies": [],
@@ -484,7 +484,7 @@
       ],
       "failures": {}
     },
-    "formatted": {
+    "preview": {
       "ops": 365,
       "opsSha256": "fb2cb0c0cf4a9007c742170e10a0b06145d815832a7ea068ce47f85b6f49fa4a",
       "anomalies": [],

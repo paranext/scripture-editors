@@ -265,6 +265,44 @@ describe("closing an unclosed note in the middle, in a note editor", () => {
   });
 });
 
+describe("reading what follows a note", () => {
+  it("reports an empty char span after the note as one op", async () => {
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+        { type: "chapter", marker: "c", number: "1" },
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            { type: "verse", marker: "v", number: "1" },
+            "a ",
+            {
+              type: "note",
+              marker: "f",
+              caller: "+",
+              content: [{ type: "char", marker: "ft", content: ["n"] }],
+            },
+            " ",
+            { type: "char", marker: "nd", content: [] },
+            " b",
+          ],
+        },
+      ],
+    };
+    const text = await renderEditor(usj);
+
+    const after = requireDefined(text.editorRef.getOpsAfterNote(0), "ops after the note");
+
+    const emptySpanOps = after.filter(
+      (op) => op.insert === "" && JSON.stringify(op.attributes) === '{"char":{"style":"nd"}}',
+    );
+    expect(emptySpanOps).toHaveLength(1);
+  });
+});
+
 describe("closing an unclosed note in the middle, in the text", () => {
   it("one undo takes the committed closer away and opens the note again, text and all", async () => {
     const text = await renderEditor(scriptureUsj);

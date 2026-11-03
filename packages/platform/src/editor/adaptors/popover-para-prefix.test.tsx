@@ -15,6 +15,7 @@
  * traverse into.
  */
 import Editorial from "../../Editorial";
+import { isViewEnabled } from "../editorViews.test-helpers";
 import { EditorOptions, EditorRef } from "../editor.model";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act, render } from "@testing-library/react";
@@ -61,6 +62,21 @@ function popoverOptions(view: ViewOptions): EditorOptions {
     view: { ...view, noteMode: "expanded" },
   };
 }
+
+/**
+ * The views a paragraph shows its marker prefix in when nothing turns it off: Standard view, and the
+ * popover's options with the prefix left on (library-only: the footnotes pane's row editor, the
+ * popover the app mounts, turns it off).
+ */
+const prefixDefaultViews = [
+  {
+    name: "standard",
+    options: (): EditorOptions => ({ ...popoverOptions(standardView), view: standardView }),
+  },
+  ...(isViewEnabled("standard+expandedNotes")
+    ? [{ name: "standard+expandedNotes", options: () => popoverOptions(standardView) }]
+    : []),
+];
 
 /** The popover's scaffold document — one para, deliberately carrying no marker. */
 const PARAGRAPH_USJ: Usj = { type: "USJ", version: "3.1", content: [{ type: "para" }] };
@@ -135,16 +151,19 @@ function $findNote(): NoteNode {
 }
 
 describe("scaffolding paragraph marker prefix", () => {
-  it("renders the `\\p` prefix by default in editable marker mode (the current behavior)", async () => {
-    const { lexical } = await renderEditor(popoverOptions(standardView), PARAGRAPH_USJ);
+  it.each(prefixDefaultViews)(
+    "renders the `\\p` prefix by default in editable marker mode ($name)",
+    async ({ options }) => {
+      const { lexical } = await renderEditor(options(), PARAGRAPH_USJ);
 
-    lexical.getEditorState().read(() => {
-      const para = $scaffoldPara();
-      // The glyph plus its NBSP separator token.
-      expect(paraPrefixNodes(para)).toHaveLength(2);
-      expect(para.getTextContent()).toBe(`\\p${NBSP}`);
-    });
-  });
+      lexical.getEditorState().read(() => {
+        const para = $scaffoldPara();
+        // The glyph plus its NBSP separator token.
+        expect(paraPrefixNodes(para)).toHaveLength(2);
+        expect(para.getTextContent()).toBe(`\\p${NBSP}`);
+      });
+    },
+  );
 
   it("renders no prefix nodes for the scaffold paragraph when para marker prefixes are off", async () => {
     const { lexical } = await renderEditor(
@@ -270,16 +289,19 @@ describe("scaffolding paragraph marker prefix", () => {
     });
   });
 
-  it("still renders prefixes for real paragraphs when the option is absent", async () => {
-    const realUsj: Usj = {
-      type: "USJ",
-      version: "3.1",
-      content: [{ type: "para", marker: "q1", content: ["poetry"] }],
-    };
-    const { lexical } = await renderEditor(popoverOptions(standardView), realUsj);
+  it.each(prefixDefaultViews)(
+    "still renders prefixes for real paragraphs when the option is absent ($name)",
+    async ({ options }) => {
+      const realUsj: Usj = {
+        type: "USJ",
+        version: "3.1",
+        content: [{ type: "para", marker: "q1", content: ["poetry"] }],
+      };
+      const { lexical } = await renderEditor(options(), realUsj);
 
-    lexical.getEditorState().read(() => {
-      expect($scaffoldPara().getTextContent()).toBe(`\\q1${NBSP}poetry`);
-    });
-  });
+      lexical.getEditorState().read(() => {
+        expect($scaffoldPara().getTextContent()).toBe(`\\q1${NBSP}poetry`);
+      });
+    },
+  );
 });

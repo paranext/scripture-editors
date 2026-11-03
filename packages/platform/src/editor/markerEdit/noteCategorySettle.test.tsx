@@ -15,6 +15,8 @@ import {
   viewOptions,
 } from "./markerEdit.test-helpers";
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
+import { editorView, mountInView } from "../editorViews.test-helpers";
+import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $getRoot, $isTextNode, $setSelection, TextNode } from "lexical";
 import {
@@ -178,5 +180,44 @@ describe("note \\cat category run", () => {
     );
     const after = JSON.stringify(editor.getEditorState().toJSON());
     expect(after).toBe(before);
+  });
+});
+
+describe("note \\cat category run in the footnotes pane's row editor", () => {
+  it("reads the edited value as the category while the edit is still pending", async () => {
+    const note: MarkerObject = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      category: "People",
+      content: [{ type: "char", marker: "ft", content: ["text"] }],
+    };
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [{ type: "para", marker: "p", content: [note] }],
+    };
+    const mounted = await mountInView(usj, editorView("footnotes-pane-row"));
+
+    await act(async () =>
+      mounted.lexical.update(() => {
+        const value = requireDefined(
+          $noteCategoryRunPieces(findOnlyNote($getRoot())).value,
+          "cat value not found",
+        );
+        value.setTextContent(`${NBSP}Places`);
+        value.select(value.getTextContentSize(), value.getTextContentSize());
+      }),
+    );
+
+    // The caret is still in the value, so the note has not settled ...
+    mounted.lexical.getEditorState().read(() => {
+      expect(findOnlyNote($getRoot()).getCategory()).toBe("People");
+    });
+    // ... but what the host reads is the settled note.
+    expect(mounted.ref.current?.getUsj()?.content).toEqual([
+      { type: "para", marker: "p", content: [{ ...note, category: "Places" }] },
+    ]);
+    mounted.unmount();
   });
 });

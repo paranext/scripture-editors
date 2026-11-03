@@ -7,6 +7,7 @@ import {
   UsjNodeOptions,
 } from "../../nodes/usj";
 import { ViewOptions } from "../../views/view-options.utils";
+import { $dropFilledCharPlaceholder } from "./CharNodePlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
@@ -37,7 +38,6 @@ import {
   $isParaLikeNode,
   $isSomeParaNode,
   CharNode,
-  EMPTY_CHAR_PLACEHOLDER_TEXT,
   GENERATOR_NOTE_CALLER,
   getEditableCallerText,
   LoggerBasic,
@@ -186,8 +186,11 @@ function useNoteNode(
 function $noteNodeTransform(node: NoteNode, viewOptions: ViewOptions | undefined): void {
   const nodeChildren = node.getChildren();
   const hasNoteCaller = nodeChildren.some((child) => $isImmutableNoteCallerNode(child));
-  if (!hasNoteCaller && viewOptions?.markerMode !== "editable" && node.getCaller() !== "")
+  if (!hasNoteCaller && viewOptions?.markerMode !== "editable" && node.getCaller() !== "") {
+    // A removed note has no place to move its stray first child to.
     node.remove();
+    return;
+  }
 
   if (nodeChildren.length > 0) {
     const firstChild = nodeChildren[0];
@@ -258,7 +261,7 @@ function $noteCharNodeTransform(node: CharNode): void {
 /**
  * Changes in NoteNode children text are updated in the NoteNodeCaller preview text.
  * Also restore a note separator whose text was changed, keeping any added text as content.
- * Also remove 'empty' placeholder in CharNode inside NoteNode once other text content is added.
+ * Also remove an empty CharNode's placeholder inside NoteNode once other text content is added.
  * @param node - TextNode thats needs its preview text updated.
  */
 function $noteTextNodeTransform(node: TextNode): void {
@@ -274,13 +277,9 @@ function $noteTextNodeTransform(node: TextNode): void {
   if ($isNoteNode(parent) && $isMarkerTrailingSeparator(node) && node.getTextContent() !== NBSP)
     $restoreNoteSeparator(node);
 
-  if ($isCharNode(parent) && parent.getChildrenSize() === 1) {
-    const text = node.getTextContent();
-    if (text.length > 1 && text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT)) {
-      node.setTextContent(text.slice(1));
-      node.selectEnd();
-    }
-  }
+  // Only an empty span's placeholder goes, by the char spans' own rule: a span's text that merely
+  // starts with a no-break space is the author's `~`.
+  $dropFilledCharPlaceholder(node);
 
   const previewText = $getNoteCallerPreviewText(children);
   if (noteCaller.getPreviewText() !== previewText) noteCaller.setPreviewText(previewText);

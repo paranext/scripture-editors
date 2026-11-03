@@ -14,6 +14,10 @@ let verseEid: string | undefined;
 /**
  * Converts a USJ object to a USX string.
  *
+ * The root `<usx version>` is the USJ's own `version` (USX, USJ and USFM share one version
+ * numbering), so USX read by `usxStringToUsj` is written back at the version it declared.
+ * A USJ with no `version` is written at {@link USX_VERSION}.
+ *
  * @param usj - The USJ object to convert
  * @returns The converted USX string.
  *
@@ -22,7 +26,7 @@ let verseEid: string | undefined;
 export function usjToUsxString(usj: Usj): string {
   const usxDoc = new DOMImplementation().createDocument("", USX_TYPE);
   if (usxDoc.documentElement) {
-    usxDoc.documentElement.setAttribute("version", USX_VERSION);
+    usxDoc.documentElement.setAttribute("version", usj.version || USX_VERSION);
     usjToUsxDom(usj, usxDoc);
   }
   return usxDoc.toString();

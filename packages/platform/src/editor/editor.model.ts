@@ -279,6 +279,11 @@ export interface EditorRef {
    * reflected when this call returns; its `onUsjChange` comes when it commits, with these ops and
    * `source`.
    *
+   * In Standard view, a C0 control character other than tab, line feed and carriage return in an
+   * inserted text goes in as a space, and with `ViewOptions.allowInvisibleCharacters` on a U+00A0
+   * that is not a marker's separator goes in as a stored no-break space — the same text the
+   * editor's own ops give out.
+   *
    * @throws Will throw an error if the editor uses the block verse layout and `source` is
    *   `"local"`.
    */
@@ -1041,7 +1046,9 @@ export interface EditorProps<TLogger extends LoggerBasic> {
    * - `ops` — **Live**: refers to the editor's current tree as displayed, including marker text
    *   the user is still typing that has not settled yet; the change's delta ops in the live
    *   document's delta coordinates, absent when the change moved no delta (a marker glyph or
-   *   attribute text edited, or its undo).
+   *   attribute text edited, or its undo). In Standard view with
+   *   `ViewOptions.allowInvisibleCharacters` on, a stored no-break space is U+00A0 in them and a
+   *   space the view shows as an NBSP (in a run) is a space, as in every op the editor gives out.
    * - `insertedNodeKey` — **Live**: refers to the editor's current tree as displayed; the editor
    *   key of a node the change inserted into it.
    */

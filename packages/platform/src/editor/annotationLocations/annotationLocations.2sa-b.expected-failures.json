@@ -896,7 +896,7 @@
       ],
       "failures": {}
     },
-    "formatted": {
+    "preview": {
       "ops": 8684,
       "opsSha256": "c75f2779af41dfb30f8bd826ee7da88565ffb5ed31bdfdd2a2a29eb8d6a7e235",
       "anomalies": [],
