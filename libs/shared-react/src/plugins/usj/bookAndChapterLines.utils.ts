@@ -103,12 +103,21 @@ export function $chapterLineToSplitAt(selection: RangeSelection): LexicalNode | 
 }
 
 /**
+ * Whether `node` is chapter 1's chapter line, the only one USFM lets lines (chapter 1's front
+ * matter: `\h`, `\mt1`, an introduction) come before.
+ */
+export function $isFirstChapterLine(node: LexicalNode): boolean {
+  return $isSomeChapterNode(node) && node.getNumber() === "1";
+}
+
+/**
  * Pastes a copy that held a chapter line around the document's `chapter` line
  * ({@link $chapterLineToSplitAt}): `frontMatter`, what the copy held before its chapter line
- * (chapter 1's `\h`, `\mt1` and introduction), goes just before `chapter`, and the rest of
- * `nodes` after it. From a caret after `chapter` the rest is left for Lexical to insert at the
- * caret, so a cut across the chapter line pasted back restores the text exactly; from a caret
- * before it, the rest goes in right after `chapter`, as whole blocks.
+ * (chapter 1's `\h`, `\mt1` and introduction) when `chapter` is chapter 1's
+ * ({@link $isFirstChapterLine}), goes just before `chapter`, and the rest of `nodes` after it. From
+ * a caret after `chapter` the rest is left for Lexical to insert at the caret, so a cut across the
+ * chapter line pasted back restores the text exactly; from a caret before it, the rest goes in
+ * right after `chapter`, as whole blocks.
  *
  * Mutating: call inside `editor.update()`.
  *
