@@ -333,6 +333,16 @@ refused. The public surface grew substantially; nothing was removed.
   paragraph next to another paragraph, by Delete inside it or by Backspace from the start of the
   paragraph after it, now removes the empty one instead of moving the other paragraph's text under
   its marker. None of this applies in Standard view, where markers are editable text.
+- Copying or cutting text in a hidden-marker view (Formatted, Paragraph Structure, Block verse) no
+  longer puts the NBSP spacers it shows around a collapsed note, or an empty span's placeholder,
+  into `text/plain`, so a footnote pasted with Paste as Plain Text no longer has two spaces at each
+  end. One ordinary space now separates a note's text from the text around it, where neither side
+  already has whitespace. A stored no-break space is still written as `~` when invisible characters
+  are not allowed. `text/html` and the internal flavor are unchanged, as the editor's own
+  paste reads them back. These views' copies and cuts are now written by the editor rather than by
+  Lexical's rich-text handler, so a cut in a read-only editor copies without removing anything.
+  Lexical's handler still takes a range with no text to copy (a lone verse number, or only spacers
+  or placeholders), and writes it as before.
 - A text node holding only zero-width spaces that the author typed (a line-break opportunity in
   Thai, Khmer and Lao), which an annotation or other split leaves in a node of its own, is now kept
   by `getUsj()`, sent in delta ops, and counted in annotation and OT positions. It used to be taken
