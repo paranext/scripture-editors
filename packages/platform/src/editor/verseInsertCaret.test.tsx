@@ -1,12 +1,14 @@
 /**
- * Inserting a verse number at the end of a paragraph leaves the caret in the NEW verse, so typing
- * starts the new verse rather than extending the previous one. With the markers hidden (the view
- * Platform.Bible's Simple mode uses) the number is an immutable decorator, and the caret rests in
- * the host `EmptyVerseCaretGuardPlugin` puts after it.
+ * Inserting a verse number leaves the caret at the start of the NEW verse's content, so typing
+ * starts the new verse: not extending the previous one when nothing follows the number, and not
+ * inside a footnote that does. With the markers hidden (the view Platform.Bible's Simple mode uses)
+ * the number is an immutable decorator, and at the end of a paragraph the caret rests in the host
+ * `EmptyVerseCaretGuardPlugin` puts after it.
  */
 import { mountViewEditor, requireViewOptions } from "./settledGetUsj.test-helpers";
-import { Usj } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { SerializedVerseRef } from "@sillsdev/scripture";
+import { $findMatchingParent } from "@lexical/utils";
 import { act } from "@testing-library/react";
 import {
   $getRoot,
@@ -16,7 +18,7 @@ import {
   LexicalEditor,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
-import { $isCaretHost, $isParaNode, $isVerseNode } from "shared";
+import { $isCaretHost, $isNoteNode, $isParaNode, $isVerseNode } from "shared";
 import {
   $isImmutableVerseNode,
   PARAGRAPH_STRUCTURE_VIEW_MODE,
@@ -47,12 +49,39 @@ async function dispatchSelectionChange(lexical: LexicalEditor): Promise<void> {
   });
 }
 
-/** Mount `lastVerseUsj` under `viewMode` and insert a verse at the end of verse 1's text. */
+/** Verse 1's text, then `following` - content the new verse will open with. */
+function verseFollowedByUsj(following: MarkerContent): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      {
+        type: "para",
+        marker: "p",
+        content: [{ type: "verse", marker: "v", number: "1" }, "hello world", following],
+      },
+    ],
+  };
+}
+
+const footnote: MarkerContent = {
+  type: "note",
+  marker: "f",
+  caller: "+",
+  content: [{ type: "char", marker: "ft", content: ["a note"] }],
+};
+
+const wordSpan: MarkerContent = { type: "char", marker: "w", content: ["word"] };
+
+/** Mount `usj` under `viewMode` and insert a verse at the end of verse 1's "hello world" text. */
 async function insertVerseAtEndOfLastVerse(
   viewMode: string,
   onScrRefChange?: (scrRef: SerializedVerseRef) => void,
+  usj: Usj = lastVerseUsj,
 ) {
-  const mounted = await mountViewEditor(lastVerseUsj, requireViewOptions(viewMode), {
+  const mounted = await mountViewEditor(usj, requireViewOptions(viewMode), {
     scrRef,
     onScrRefChange,
   });
@@ -150,6 +179,55 @@ describe("inserting a verse at the end of a paragraph", () => {
           "abc",
         ],
       });
+    },
+  );
+});
+
+describe("inserting a verse right before content the new verse opens with", () => {
+  it.each([
+    ["a footnote", "hidden (Simple)", footnote, PARAGRAPH_STRUCTURE_VIEW_MODE],
+    ["a footnote", "editable (Standard)", footnote, STANDARD_VIEW_MODE],
+    ["a character span", "hidden (Simple)", wordSpan, PARAGRAPH_STRUCTURE_VIEW_MODE],
+    ["a character span", "editable (Standard)", wordSpan, STANDARD_VIEW_MODE],
+  ])(
+    "before %s with markers %s, keeps the caret in the new verse and out of any note",
+    async (_content, _view, following, viewMode) => {
+      const { ref, lexical } = await insertVerseAtEndOfLastVerse(
+        viewMode,
+        undefined,
+        verseFollowedByUsj(following),
+      );
+
+      lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("Expected a range selection");
+        expect($findMatchingParent(selection.focus.getNode(), $isNoteNode)).toBeNull();
+      });
+
+      await act(async () => {
+        lexical.update(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.insertText("abc");
+        });
+      });
+
+      const para = ref.current
+        ?.getUsj()
+        ?.content?.find((node) => typeof node !== "string" && node.type === "para");
+      if (!para || typeof para === "string") throw new Error("Expected a para");
+      const content = para.content ?? [];
+      const newVerseIndex = content.findIndex(
+        (node) => typeof node !== "string" && node.type === "verse" && node.number === "2",
+      );
+      expect(newVerseIndex).toBeGreaterThan(0);
+      expect(content.slice(0, newVerseIndex)).toEqual([
+        { type: "verse", marker: "v", number: "1" },
+        "hello world ",
+      ]);
+      // The typed text opens the new verse, and none of it went into the note.
+      expect(JSON.stringify(content.slice(newVerseIndex + 1))).toContain("abc");
+      const note = content.find((node) => typeof node !== "string" && node.type === "note");
+      expect(JSON.stringify(note ?? {})).not.toContain("abc");
     },
   );
 });
