@@ -2232,10 +2232,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             structureProtectionMode={structureProtectionMode}
           />
           <ParaNodePlugin />
-          {/* Only the hidden-marker views filter what the sanitizer inserts: Standard view stores a
-              pasted `\` as the marker it spells. And only they read their own node copy, which
-              Standard view's node shapes do not match. Standard view stores a pasted marker too,
-              so only they take marker tokens out of a marker view's copy. */}
+          {/* Only the hidden-marker views filter what the sanitizer inserts and take marker tokens
+              out of a marker-showing view's copy: Standard view stores a pasted `\` as the marker
+              it spells. And only they read their own node copy, which Standard view's node shapes
+              do not match. */}
           <StructureKeyboardPlugin
             structureProtectionMode={structureProtectionMode}
             $filterPastedNodes={

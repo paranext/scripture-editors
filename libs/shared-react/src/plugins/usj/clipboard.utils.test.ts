@@ -56,7 +56,7 @@ describe("withoutMarkerTokens", () => {
   const nodeCopy = (namespace: string) => JSON.stringify({ namespace, nodes: [] });
   const USFM_HTML = '<p><span style="white-space: pre-wrap;">1 \\ft a &amp; \\nd b\\nd*</span></p>';
 
-  it("removes the tokens from the html and plain text of a marker view's copy", () => {
+  it("removes the tokens from the html and plain text of a marker-showing view's copy", () => {
     const stripped = withoutMarkerTokens(
       transfer({
         [LEXICAL_CLIPBOARD_TYPE]: nodeCopy(MARKER_VIEW_CLIPBOARD_NAMESPACE),
@@ -328,7 +328,7 @@ describe("the node copy in a copy's html", () => {
   });
 });
 
-describe("html marked as a marker view's text", () => {
+describe("html marked as a marker-showing view's text", () => {
   const data = (html: string, plain: string) =>
     ({
       getData: (type: string) => (type === "text/html" ? html : type === "text/plain" ? plain : ""),

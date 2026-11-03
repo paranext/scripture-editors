@@ -210,7 +210,7 @@ export function $removeTextKeepingBookAndChapterLines(selection: RangeSelection)
     selection.isBackward()
       ? [selection.focus, selection.anchor]
       : [selection.anchor, selection.focus]
-  ).map((point) => ({ key: point.key, offset: point.offset, type: point.type }));
+  ).map(snapshotOf);
   const runs: LexicalNode[][] = [];
   let run: LexicalNode[] = [];
   for (const line of lines)

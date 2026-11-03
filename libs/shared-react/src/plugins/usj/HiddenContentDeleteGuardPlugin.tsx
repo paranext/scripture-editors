@@ -664,10 +664,10 @@ function preventAndClaim(event: Event | null): true {
 /**
  * Whether a paste would insert nothing, leaving nothing to ask about: a clipboard of files alone, or
  * plain text alone that is nothing but text the view cannot store (`\` and `//`), which
- * `UnstorableTextPlugin` removes, inserting nothing, after this plugin has run; or a marker view's
- * copy of nothing but marker tokens ({@link withoutMarkerTokens}), which that plugin and protected
- * structure's sanitizer claim, changing nothing. Any other node copy or html goes in as nodes, so it
- * is asked about.
+ * `UnstorableTextPlugin` removes, inserting nothing, after this plugin has run; or a
+ * marker-showing view's copy of nothing but marker tokens ({@link withoutMarkerTokens}), which that
+ * plugin and protected structure's sanitizer claim, changing nothing. Any other node copy or html
+ * goes in as nodes, so it is asked about.
  */
 function pasteInsertsNothing(event: PasteCommandType): boolean {
   if (typeof ClipboardEvent === "undefined" || !(event instanceof ClipboardEvent)) return false;
