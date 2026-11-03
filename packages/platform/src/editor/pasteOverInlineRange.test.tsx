@@ -1,12 +1,14 @@
 /**
  * A paste over a range that spans more than one text of a paragraph, in the views that hide markers.
  * It replaces only the selected text, as typing over the same range does: what follows the range
- * stays where it was, in its own order, whichever clipboard flavor the paste comes through.
+ * stays where it was, in its own order, whichever clipboard flavor the paste comes through and
+ * whichever structure protection mode the host sets.
  */
 import { EDITING_VIEWS, forEachView, mountInView } from "./editorViews.test-helpers";
 import { ContentJsonPath, MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { LexicalEditor, PASTE_COMMAND } from "lexical";
+import { StructureProtectionMode } from "shared-react";
 import { describe, expect, it } from "vitest";
 
 const HIDDEN_MARKER_VIEWS = EDITING_VIEWS.filter(({ name }) => name !== "standard");
@@ -47,6 +49,7 @@ const SPAN_BETWEEN_PROSE = oneParaUsj(["abc", char("nd", "Lord"), " def"]);
 
 const HTML_CLIPBOARD = { "text/html": "<span>X</span>", "text/plain": "X" };
 const PLAIN_CLIPBOARD = { "text/plain": "X" };
+const PROTECTION_MODES: StructureProtectionMode[] = ["off", "guarded", "protected"];
 const BOTH_CLIPBOARDS = [
   { flavor: "html", clipboard: HTML_CLIPBOARD },
   { flavor: "plain text", clipboard: PLAIN_CLIPBOARD },
@@ -78,8 +81,14 @@ async function paste(editor: LexicalEditor, flavors: ClipboardFlavors): Promise<
 
 forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
   /** The document content after `flavors` is pasted over the given range of `usj`. */
-  async function pastedOver(usj: Usj, start: RangeEnd, end: RangeEnd, flavors: ClipboardFlavors) {
-    const mounted = await mountInView(usj, view);
+  async function pastedOver(
+    usj: Usj,
+    start: RangeEnd,
+    end: RangeEnd,
+    flavors: ClipboardFlavors,
+    structureProtectionMode: StructureProtectionMode = "off",
+  ) {
+    const mounted = await mountInView(usj, view, { structureProtectionMode });
     await act(async () => {
       mounted.ref.current?.setSelection({ start, end });
     });
@@ -87,13 +96,16 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
     return { mounted, content: () => mounted.ref.current?.getUsj()?.content.slice(2) };
   }
 
-  describe.each(BOTH_CLIPBOARDS)("a $flavor paste over a range", ({ clipboard }) => {
+  describe.each(
+    PROTECTION_MODES.flatMap((mode) => BOTH_CLIPBOARDS.map((entry) => ({ ...entry, mode }))),
+  )("a $flavor paste over a range, structure protection $mode", ({ clipboard, mode }) => {
     it("from a nested span into its enclosing span keeps the text in order", async () => {
       const { content } = await pastedOver(
         NESTED_SPAN,
         { jsonPath: NESTED_TWO, offset: 2 },
         { jsonPath: NESTED_THREE, offset: 1 },
         clipboard,
+        mode,
       );
 
       expect(content()).toEqual([
@@ -111,6 +123,7 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
         { jsonPath: NESTED_TWO, offset: 2 },
         { jsonPath: AFTER_NESTED_SPAN, offset: 1 },
         clipboard,
+        mode,
       );
 
       expect(content()).toEqual([
@@ -125,6 +138,7 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
         { jsonPath: "$.content[2].content[0]", offset: 3 },
         { jsonPath: "$.content[2].content[2]", offset: 2 },
         clipboard,
+        mode,
       );
 
       expect(content()).toEqual([
@@ -138,6 +152,7 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
         { jsonPath: NESTED_TWO, offset: 0 },
         { jsonPath: NESTED_THREE, offset: 5 },
         clipboard,
+        mode,
       );
 
       expect(content()).toEqual([
@@ -151,11 +166,25 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
         { jsonPath: NESTED_TWO, offset: 2 },
         { jsonPath: NESTED_THREE, offset: 1 },
         clipboard,
+        mode,
       );
 
       await act(async () => mounted.ref.current?.undo());
 
       expect(content()).toEqual(NESTED_SPAN.content.slice(2));
+    });
+  });
+
+  describe.each(
+    PROTECTION_MODES.flatMap((mode) => BOTH_CLIPBOARDS.map((entry) => ({ ...entry, mode }))),
+  )("a $flavor paste at a caret, structure protection $mode", ({ clipboard, mode }) => {
+    it("inside a span lands in the span", async () => {
+      const at = { jsonPath: "$.content[2].content[1].content[0]" as ContentJsonPath, offset: 2 };
+      const { content } = await pastedOver(SPAN_BETWEEN_PROSE, at, at, clipboard, mode);
+
+      expect(content()).toEqual([
+        { type: "para", marker: "p", content: ["abc", char("nd", "LoXrd"), " def"] },
+      ]);
     });
   });
 

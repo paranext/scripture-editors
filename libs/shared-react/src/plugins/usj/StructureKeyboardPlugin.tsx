@@ -47,6 +47,7 @@ import {
   KEY_DOWN_COMMAND,
   PASTE_COMMAND,
   RangeSelection,
+  SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { $isSomeVerseNode } from "../../nodes/usj";
@@ -55,7 +56,6 @@ import {
   $getSelectedParaMarkerPara,
   $isBookNode,
   $isSomeParaNode,
-  $recordClipboardSpans,
   $selectParaMarker,
   MARKER_TEXT_TYPE,
 } from "shared";
@@ -316,12 +316,17 @@ export function StructureKeyboardPlugin({
       const sanitized = $sanitizeNodesForProtectedStructure($generateNodesFromDOM(editor, dom));
       // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
       const selection = $getSelection();
-      if ($isRangeSelection(selection)) {
-        // Inserted directly rather than through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, so
-        // record the spans the way that command's listener in `CharNodePlugin` does.
-        $recordClipboardSpans(sanitized);
+      // Through the command a paste's nodes always go through, so its listeners run here too:
+      // prose lands inside the caret's span, a range over several texts is replaced as typing
+      // replaces it, pasted spans are recorded and display annotations stripped.
+      if (
+        $isRangeSelection(selection) &&
+        !editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+          nodes: sanitized,
+          selection,
+        })
+      )
         selection.insertNodes(sanitized);
-      }
       event.preventDefault();
       return true;
     };
