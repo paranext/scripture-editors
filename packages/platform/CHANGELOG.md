@@ -316,7 +316,8 @@ refused. The public surface grew substantially; nothing was removed.
   now does nothing, and `onUnstorableTextRemoved` is told once with `source: "deletion"`. This
   covers Backspace and Delete and their word and line chords, the same deletes arriving without a
   keystroke (a `beforeinput` delete or a menu), deleting a selection, a cut (which then copies
-  nothing either), the removal half of a drag-move (whose drop still goes in, leaving the text in
+  nothing either, except one that first asks about hidden content in the selection: that copy is
+  made before the question, so it stays on the clipboard), the removal half of a drag-move (whose drop still goes in, leaving the text in
   both places), and a paragraph join, including guarded structure's two-step join (refused at the
   first press) and a selected paragraph marker. The check reads what the file stores either side of
   what goes: through annotation marks, through a character span the delete empties, and through two
