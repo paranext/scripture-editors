@@ -45,19 +45,24 @@ export function $isBookOrChapterLine(node: LexicalNode): boolean {
  * Mutating: call inside `editor.update()`.
  *
  * @param nodes - The nodes about to be inserted; changed in place.
- * @returns Whether anything was removed, and the remaining top-level nodes that came before the
- *   first top-level chapter line removed: chapter 1's front matter (`\h`, `\mt1`, an
- *   introduction), which belongs before the document's chapter line
- *   ({@link $insertBeforeChapterLine}). Empty when the nodes held no chapter line.
+ * @returns Whether anything was removed; whether the nodes held a top-level chapter line; and the
+ *   remaining top-level nodes that came before the first one: chapter 1's front matter (`\h`,
+ *   `\mt1`, an introduction), which belongs before the document's chapter line
+ *   ({@link $pasteAroundChapterLine}). Empty when the nodes held no chapter line.
  */
 export function $removeBookAndChapterLines(nodes: LexicalNode[]): {
   isRemoved: boolean;
+  holdsChapterLine: boolean;
   beforeChapter: LexicalNode[];
 } {
   const chapterAt = nodes.findIndex($isSomeChapterNode);
   const beforeChapter = chapterAt < 0 ? [] : nodes.slice(0, chapterAt);
   const isRemoved = $removeLinesFrom(nodes);
-  return { isRemoved, beforeChapter: beforeChapter.filter((node) => nodes.includes(node)) };
+  return {
+    isRemoved,
+    holdsChapterLine: chapterAt >= 0,
+    beforeChapter: beforeChapter.filter((node) => nodes.includes(node)),
+  };
 }
 
 /** Removes every book and chapter line from `nodes`, at any depth; whether it removed any. */
@@ -75,26 +80,65 @@ function $removeLinesFrom(nodes: LexicalNode[]): boolean {
 }
 
 /**
- * Inserts pasted block `nodes` just before the chapter line the collapsed `selection` follows, the
- * last chapter line before the line its caret is in, where a copy's front matter belongs: a paste
- * of a whole chapter 1 puts its `\h`, `\mt1` and introduction there and its Scripture text at the
- * caret.
+ * The document's chapter line a paste of a copy holding a chapter line splits around
+ * ({@link $pasteAroundChapterLine}): the last chapter line `selection` runs across, or the one a
+ * caret sits right beside — at the start of the line after it, where a cut across it leaves the
+ * caret, or at the end of the line before it. A paragraph's gutter marker glyph and a verse number
+ * are not text, so a caret past either still counts as the line's start. `undefined` anywhere else,
+ * where a paste goes in at the caret like any other.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+export function $chapterLineToSplitAt(selection: RangeSelection): LexicalNode | undefined {
+  if (!selection.isCollapsed()) return $topLevelNodesOf(selection)?.findLast($isSomeChapterNode);
+  const line = $topLevelNodeAt(selection.anchor, false);
+  if (!line) return undefined;
+  if ($isSomeChapterNode(line)) return line;
+  const caret = snapshotOf(selection.anchor);
+  const previous = line.getPreviousSibling();
+  if ($isSomeChapterNode(previous) && $holdsOnlyGlyphBefore(line, caret)) return previous;
+  const next = line.getNextSibling();
+  if ($isSomeChapterNode(next) && $textBetween(caret, $lineEnd(line)) === "") return next;
+  return undefined;
+}
+
+/**
+ * Pastes a copy that held a chapter line around the document's `chapter` line
+ * ({@link $chapterLineToSplitAt}): `frontMatter`, what the copy held before its chapter line
+ * (chapter 1's `\h`, `\mt1` and introduction), goes just before `chapter`, and the rest of
+ * `nodes` after it. From a caret after `chapter` the rest is left for Lexical to insert at the
+ * caret, so a cut across the chapter line pasted back restores the text exactly; from a caret
+ * before it, the rest goes in right after `chapter`, as whole blocks.
  *
  * Mutating: call inside `editor.update()`.
  *
- * @returns Whether it inserted them: not when a node is not a block, or no chapter line comes
- *   before the caret's line (the caret is in the front matter itself), and they then go in at the
- *   caret with the rest.
+ * @param nodes - The nodes about to be inserted, `frontMatter` among them; what this inserts is
+ *   taken out.
+ * @returns Whether it inserted everything. When a node is not a block it inserts nothing, and the
+ *   whole copy goes in at the caret.
  */
-export function $insertBeforeChapterLine(nodes: LexicalNode[], selection: RangeSelection): boolean {
+export function $pasteAroundChapterLine(
+  nodes: LexicalNode[],
+  frontMatter: LexicalNode[],
+  chapter: LexicalNode,
+  selection: RangeSelection,
+): boolean {
   const isBlock = (node: LexicalNode) =>
     ($isElementNode(node) || $isDecoratorNode(node)) && !node.isInline();
-  if (nodes.length === 0 || !nodes.every(isBlock)) return false;
-  let line = $topLevelNodeAt(selection.anchor, false) ?? $getRoot().getLastChild() ?? undefined;
-  while (line && !$isSomeChapterNode(line)) line = line.getPreviousSibling() ?? undefined;
-  if (!line) return false;
-  const chapter = line;
-  nodes.forEach((node) => chapter.insertBefore(node));
+  if (!nodes.every(isBlock)) return false;
+  const take = (inserted: LexicalNode[]) =>
+    inserted.forEach((node) => nodes.splice(nodes.indexOf(node), 1));
+  frontMatter.forEach((node) => chapter.insertBefore(node));
+  take(frontMatter);
+  const caretLine = $topLevelNodeAt(selection.anchor, false);
+  const isCaretBefore = !!caretLine && (caretLine === chapter || caretLine.isBefore(chapter));
+  if (!isCaretBefore || nodes.length === 0) return nodes.length === 0;
+  const rest = [...nodes];
+  rest.reduce<LexicalNode>((previous, node) => previous.insertAfter(node), chapter);
+  take(rest);
+  const last = rest[rest.length - 1];
+  if ($isElementNode(last)) last.selectEnd();
+  else last.selectNext();
   return true;
 }
 
@@ -238,9 +282,13 @@ function $holdsNoTextOutside(
   to: Snapshot,
   lastLine: LexicalNode,
 ): boolean {
-  const start = $lineStart(firstLine);
-  const glyph = $textBetween(start, $pastGutterGlyph(firstLine));
-  return glyph.startsWith($textBetween(start, from)) && $textBetween(to, $lineEnd(lastLine)) === "";
+  return $holdsOnlyGlyphBefore(firstLine, from) && $textBetween(to, $lineEnd(lastLine)) === "";
+}
+
+/** Whether top-level `line` holds no text before `point` but its gutter marker glyph. */
+function $holdsOnlyGlyphBefore(line: LexicalNode, point: Snapshot): boolean {
+  const start = $lineStart(line);
+  return $textBetween(start, $pastGutterGlyph(line)).startsWith($textBetween(start, point));
 }
 
 /** The point just past top-level `line`'s gutter marker glyph and the space after it, or its start
