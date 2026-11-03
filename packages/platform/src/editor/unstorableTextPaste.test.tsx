@@ -152,6 +152,16 @@ describe.each(["paragraph-structure", "formatted"])("pasting into %s view", (vie
       expect(onRemoved).toHaveBeenCalledWith({ source: "drop", removed: ["\\"] });
     });
 
+    it("drops a link that carries only `text/uri-list` without its `//`, as Lexical reads it", async () => {
+      const { mounted, onRemoved } = await mount(viewName, mode);
+
+      await drop(mounted, { "text/uri-list": "https://example.org" });
+
+      expect(savedParas(mounted)).toEqual(["first https:example.orgverse text"]);
+      expect(onRemoved).toHaveBeenCalledTimes(1);
+      expect(onRemoved).toHaveBeenCalledWith({ source: "drop", removed: ["//"] });
+    });
+
     it("changes nothing for a paste of only `\\`, and says so once", async () => {
       const { mounted, onRemoved } = await mount(viewName, mode);
 
