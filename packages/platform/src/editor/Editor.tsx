@@ -2147,7 +2147,12 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               run in the order they were registered, so CopyLimitPlugin's over-limit writer claims
               a shortened copy as plain text only, before this one would add the HTML and internal
               flavors (which carry collapsed note text the limit did not count). */}
-          {viewOptions?.markerMode === "hidden" && <HiddenViewCopyPlugin copyLimit={copyLimit} />}
+          {viewOptions?.markerMode === "hidden" && (
+            <HiddenViewCopyPlugin
+              copyLimit={copyLimit}
+              allowInvisibleCharacters={viewOptions.allowInvisibleCharacters}
+            />
+          )}
           {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
               normalization that keeps a point out of one is too. */}
           <DecoratorBoundarySelectionPlugin />
