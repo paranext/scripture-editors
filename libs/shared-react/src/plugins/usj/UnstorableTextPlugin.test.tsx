@@ -352,7 +352,9 @@ describe("UnstorableTextPlugin — paste", () => {
     expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["\\"] });
   });
 
-  it("leaves a protected html paste alone when the sanitizer has no filter", async () => {
+  it("filters a protected html paste the sanitizer inserts when it has no filter of its own", async () => {
+    // The sanitizer inserts through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, which this plugin
+    // filters.
     const { editor, onRemoved } = await environment("x", {
       structureProtectionMode: "protected",
       withStructureKeyboard: "unfiltered",
@@ -365,8 +367,9 @@ describe("UnstorableTextPlugin — paste", () => {
       ),
     );
 
-    expect(readParas(editor)).toEqual(["xa \\v 9 b"]);
-    expect(onRemoved).not.toHaveBeenCalled();
+    expect(readParas(editor)).toEqual(["xa v 9 b"]);
+    expect(onRemoved).toHaveBeenCalledTimes(1);
+    expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["\\"] });
   });
 
   it("changes nothing for a protected html paste of nothing but unstorable text over a selection", async () => {
