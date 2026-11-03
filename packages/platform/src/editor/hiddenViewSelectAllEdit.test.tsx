@@ -17,6 +17,8 @@ import {
   $getSelection,
   $isRangeSelection,
   $setSelection,
+  DELETE_LINE_COMMAND,
+  INSERT_LINE_BREAK_COMMAND,
   REMOVE_TEXT_COMMAND,
   SELECT_ALL_COMMAND,
 } from "lexical";
@@ -159,6 +161,25 @@ describe.each(CHAPTERS)("an edit over Select All in $name", ({ front }) => {
 
         expect(content(mounted)).toEqual([BOOK, CHAPTER, EMPTY_FIRST, EMPTY_FIRST]);
       });
+
+      it.each([
+        ["A line delete", DELETE_LINE_COMMAND, true],
+        ["A line break", INSERT_LINE_BREAK_COMMAND, false],
+      ] as const)(
+        "%s keeps the book and chapter lines and empties the rest",
+        async (_name, command, payload) => {
+          await selectAll(mounted);
+
+          await act(async () => {
+            mounted.lexical.update(() => {
+              mounted.lexical.dispatchCommand(command, payload);
+            });
+          });
+          await settle();
+
+          expect(content(mounted)).toEqual([BOOK, CHAPTER, EMPTY_FIRST]);
+        },
+      );
 
       it("a drag-move's removal keeps the book and chapter lines", async () => {
         await selectAll(mounted);

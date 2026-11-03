@@ -27,7 +27,7 @@ import {
   TextNode,
 } from "lexical";
 import { useEffect, useState } from "react";
-import { $createParaNode, $isImmutableUnmatchedNode } from "shared";
+import { $createMilestoneNode, $createParaNode, $isImmutableUnmatchedNode } from "shared";
 
 interface Flavors {
   [type: string]: string | undefined;
@@ -174,6 +174,35 @@ describe("UnstorableTextPlugin — paste", () => {
     expect(onRemoved).toHaveBeenCalledTimes(1);
     expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["//"] });
     expect(logger.info).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a paste into an input inside a decorator node to that input", async () => {
+    const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+    let textNode: TextNode;
+    let milestone: LexicalNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        textNode = $createTextNode("see ");
+        milestone = $createMilestoneNode("ts");
+        $getRoot().append($createParaNode("p").append(textNode, milestone));
+      },
+      <UnstorableTextPlugin onRemoved={onRemoved} />,
+    );
+    updateSelection(editor, textNode!, 4);
+    // An input a decorator renders, holding the focus as it does while the user types in it.
+    const input = document.createElement("input");
+    editor.getElementByKey(milestone!.getKey())!.append(input);
+    input.focus();
+    const event = Object.assign(pasteEvent({ "text/plain": "https://example.org" }), {
+      target: input,
+    });
+
+    const isClaimed = await dispatch(editor, () => editor.dispatchCommand(PASTE_COMMAND, event));
+
+    expect(isClaimed).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(readParas(editor)).toEqual(["see "]);
+    expect(onRemoved).not.toHaveBeenCalled();
   });
 
   it("drops a pasted slash that would touch the document's slash", async () => {
