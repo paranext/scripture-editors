@@ -45,6 +45,7 @@ import {
 import {
   $createChapterNode,
   $createCharNode,
+  $createImpliedParaNode,
   $createImmutableUnmatchedNode,
   $createMarkerNode,
   $createNoteNode,
@@ -53,6 +54,7 @@ import {
   $isBookNode,
   $isChapterNode,
   $isCharNode,
+  $isImpliedParaNode,
   $isMarkerNode,
   $isNoteNode,
   $isParaNode,
@@ -61,6 +63,7 @@ import {
   defaultStyleInfo,
   getEditableCallerText,
   getVisibleOpenMarkerText,
+  ImpliedParaNode,
   LoggerBasic,
   MarkerNode,
   NBSP,
@@ -401,6 +404,48 @@ describe("$applyMarkerMenuSelection", () => {
         const paras = $getRoot().getChildren().filter($isParaNode);
         expect(paras).toHaveLength(1);
         expect($getRoot().getTextContent()).toContain("one \\q1two");
+      });
+    });
+
+    // Deleting the marker of the only paragraph in a chapter leaves a blank line with no marker,
+    // where the user picks one.
+    it.each([
+      ["a blank line with no marker", ""],
+      ["the start of a line with no marker", "loose text"],
+    ])("gives %s the picked marker, keeping its content", async (_label, content) => {
+      let line: ImpliedParaNode;
+      const { editor } = await historyTestEnvironment(() => {
+        line = $createImpliedParaNode();
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createMarkerNode("p"),
+            $createTrailingSpaceNode(),
+            $createTextNode("first"),
+          ),
+          line.append(...(content ? [$createTextNode(content)] : [])),
+        );
+      });
+      await act(async () => editor.update(() => line.select(0, 0)));
+
+      await applyParagraphPick(editor, "s");
+
+      editor.getEditorState().read(() => {
+        const [, para] = $getRoot().getChildren();
+        expect($getRoot().getChildrenSize()).toBe(2);
+        expect($isParaNode(para) && para.getMarker()).toBe("s");
+        const first = $isParaNode(para) ? para.getFirstChild() : undefined;
+        expect($isMarkerNode(first) && first.getMarker()).toBe("s");
+        expect(para.getTextContent()).toContain(content);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        expect(selection.focus.getNode().getTopLevelElement()?.is(para)).toBe(true);
+      });
+
+      await act(async () => {
+        editor.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+      editor.getEditorState().read(() => {
+        expect($isImpliedParaNode($getRoot().getLastChild())).toBe(true);
       });
     });
   });

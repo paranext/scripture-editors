@@ -60,6 +60,7 @@ import {
   $createUnknownNode,
   $getSelectedParaMarker,
   $isGutterMarkerNode,
+  $isImpliedParaNode,
   $isParaNode,
   $selectParaMarker,
   createEmptyHistoryState,
@@ -788,6 +789,214 @@ describe.each(["off", "guarded"] as const)(
     });
   },
 );
+
+describe("ParaMarkerSelectionPlugin — the selected marker of an empty paragraph after a chapter", () => {
+  /** `\c 1`, an empty `\s`, then `\p first`, with the plugins a delete on the marker passes through. */
+  async function emptyAfterChapterEnvironment(structureProtectionMode: StructureProtectionMode) {
+    let empty: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        empty = $createParaNode("s");
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          empty.append($createGutterGlyphNode("s")),
+          $createParaNode("p").append($createGutterGlyphNode("p"), $createTextNode("first")),
+        );
+      },
+      <>
+        <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
+        <ParaMarkerSelectionPlugin structureProtectionMode={structureProtectionMode} />
+      </>,
+    );
+    return { editor, empty: empty! };
+  }
+
+  const removed = [{ marker: "p", glyphs: 1, text: "first" }];
+
+  /** Asserts the caret landed in the `\p` after the removed paragraph. */
+  function expectCaretInNextPara(editor: LexicalEditor) {
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      const caretPara = selection.focus.getNode().getTopLevelElementOrThrow();
+      expect($isParaNode(caretPara) && caretPara.getMarker()).toBe("p");
+    });
+  }
+
+  it.each(["Backspace", "Delete"])(
+    'under "guarded", the first %s arms its removal and the second removes it',
+    async (key) => {
+      const { editor, empty } = await emptyAfterChapterEnvironment("guarded");
+      await selectMarkerOf(editor, empty);
+      const before = documentJson(editor);
+
+      await pressKey(editor, key);
+
+      expect(documentJson(editor)).toBe(before);
+      expect(editor.getRootElement()?.getAttribute("data-verse-delete-kind")).toBe(
+        "removeEmptyPara",
+      );
+
+      await pressKey(editor, key);
+
+      expect(paragraphsOf(editor)).toEqual(removed);
+      expectCaretInNextPara(editor);
+    },
+  );
+
+  it.each(["Backspace", "Delete"])('under "off", %s removes it in one press', async (key) => {
+    const { editor, empty } = await emptyAfterChapterEnvironment("off");
+    await selectMarkerOf(editor, empty);
+
+    const event = await pressKey(editor, key);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(paragraphsOf(editor)).toEqual(removed);
+    expectCaretInNextPara(editor);
+  });
+
+  it('under "off", a backward delete from the caret in it removes it in one press', async () => {
+    const { editor, empty } = await emptyAfterChapterEnvironment("off");
+    await sutUpdate(editor, () => empty.selectEnd());
+
+    await act(async () => {
+      editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+    });
+
+    expect(paragraphsOf(editor)).toEqual(removed);
+    expectCaretInNextPara(editor);
+  });
+
+  it.each([
+    ["guarded", 2],
+    ["off", 1],
+  ] as const)(
+    'under "%s", alone in its chapter, leaves a blank line with no marker and the caret in it',
+    async (structureProtectionMode, presses) => {
+      let empty: ParaNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          empty = $createParaNode("s");
+          $getRoot().append(
+            $createImmutableChapterNode("1"),
+            empty.append($createGutterGlyphNode("s")),
+            $createImmutableChapterNode("2"),
+          );
+        },
+        <>
+          <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
+          <ParaMarkerSelectionPlugin structureProtectionMode={structureProtectionMode} />
+        </>,
+      );
+      await selectMarkerOf(editor, empty!);
+
+      for (let i = 0; i < presses; i++) await pressKey(editor, "Backspace");
+
+      editor.getEditorState().read(() => {
+        const [, blank] = $getRoot().getChildren();
+        expect($isImpliedParaNode(blank) && blank.getTextContent()).toBe("");
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        expect(selection.focus.getNode().getTopLevelElementOrThrow().is(blank)).toBe(true);
+      });
+    },
+  );
+});
+
+describe("ParaMarkerSelectionPlugin — Delete on the selected marker of an empty paragraph", () => {
+  it.each([
+    ["guarded", 2],
+    ["off", 1],
+  ] as const)(
+    'under "%s", joins it to the paragraph before and leaves the caret there',
+    async (structureProtectionMode, presses) => {
+      let first: ParaNode;
+      let empty: ParaNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          first = $createParaNode("p");
+          empty = $createParaNode("s");
+          $getRoot().append(
+            first.append($createGutterGlyphNode("p"), $createTextNode("first")),
+            empty.append($createGutterGlyphNode("s")),
+            $createParaNode("q1").append($createGutterGlyphNode("q1"), $createTextNode("second")),
+          );
+        },
+        <>
+          <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
+          <ParaMarkerSelectionPlugin structureProtectionMode={structureProtectionMode} />
+        </>,
+      );
+      await selectMarkerOf(editor, empty!);
+
+      for (let i = 0; i < presses; i++) await pressKey(editor, "Delete");
+
+      expect(paragraphsOf(editor)).toEqual([
+        { marker: "p", glyphs: 1, text: "first" },
+        { marker: "q1", glyphs: 1, text: "second" },
+      ]);
+      editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        expect(selection.focus.getNode().getTopLevelElementOrThrow().getKey()).toBe(
+          first!.getKey(),
+        );
+      });
+    },
+  );
+});
+
+describe("ParaMarkerSelectionPlugin — a backward delete from the start of the paragraph after an empty one", () => {
+  it.each([
+    ["guarded", 2],
+    ["off", 1],
+  ] as const)(
+    'under "%s", removes the empty paragraph and keeps this one\'s marker and the caret',
+    async (structureProtectionMode, presses) => {
+      let second: ParaNode;
+      let secondText: TextNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          second = $createParaNode("q1");
+          secondText = $createTextNode("second");
+          $getRoot().append(
+            $createParaNode("p").append($createGutterGlyphNode("p"), $createTextNode("first")),
+            $createParaNode("s").append($createGutterGlyphNode("s")),
+            second.append($createGutterGlyphNode("q1"), secondText),
+          );
+        },
+        <>
+          <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
+          <ParaMarkerSelectionPlugin structureProtectionMode={structureProtectionMode} />
+        </>,
+      );
+      await sutUpdate(editor, () => secondText!.select(0, 0));
+      // Where the removal itself leaves the caret, read from the update that removes the paragraph:
+      // jsdom's DOM selection can move the editor's afterward, which a browser's would not.
+      let caretParaKey: string | undefined;
+      const unregister = editor.registerUpdateListener(({ editorState }) =>
+        editorState.read(() => {
+          const selection = $getSelection();
+          if (caretParaKey || $getRoot().getChildrenSize() > 2 || !$isRangeSelection(selection))
+            return;
+          caretParaKey = selection.focus.getNode().getTopLevelElementOrThrow().getKey();
+        }),
+      );
+
+      for (let i = 0; i < presses; i++)
+        await act(async () => {
+          editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+        });
+      unregister();
+
+      expect(paragraphsOf(editor)).toEqual([
+        { marker: "p", glyphs: 1, text: "first" },
+        { marker: "q1", glyphs: 1, text: "second" },
+      ]);
+      expect(caretParaKey).toBe(second!.getKey());
+    },
+  );
+});
 
 describe("ParaMarkerSelectionPlugin — deletion without a Backspace/Delete keydown", () => {
   const merged = [

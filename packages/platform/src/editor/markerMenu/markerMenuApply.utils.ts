@@ -57,8 +57,10 @@ import {
   $isBookNode,
   $isBookPrefixGlyph,
   $isCharNode,
+  $isImpliedParaNode,
   $isMarkerNode,
   $isParaNode,
+  $isSomeParaNode,
   $normalizeSelectionOutOfGlyphText,
   $selectCharContentStart,
   BookNode,
@@ -122,7 +124,8 @@ function $retagParagraph(para: ParaNode, marker: string, viewOptions?: ViewOptio
  * Applies a PARAGRAPH-kind menu pick per PT9's two semantics:
  * - Caret at the current paragraph's CONTENT START (the same probe that made the menu offer
  *   the paragraph source in the first place): RETAG the paragraph in place — PT9's reformat
- *   outcome for committing `\q1 ` at paragraph start.
+ *   outcome for committing `\q1 ` at paragraph start. A line with no marker (a blank line left
+ *   where a chapter's only paragraph was deleted, say) gets the picked marker the same way.
  * - Anywhere mid-text: a paragraph marker starts a NEW paragraph at that point in PT9, so
  *   split via `$splitParagraphWithMarker`.
  *
@@ -146,13 +149,15 @@ function $applyParagraphSelection(
   // backward range selection. Reading the anchor made a forward selection whose anchor sat at
   // paragraph content start silently retag the paragraph instead of splitting at the cursor.
   const focusNode = selection.focus.getNode();
-  const para = $findMatchingParent(focusNode, $isParaNode);
+  const para = $findMatchingParent(focusNode, $isSomeParaNode);
   if (
     trigger === "backslash" &&
     para &&
     $isAtParagraphContentStart(para, focusNode, selection.focus.offset)
   ) {
-    $retagParagraph(para, marker, viewOptions);
+    // A line with no marker becomes a paragraph with the picked one, keeping its content.
+    const target = $isImpliedParaNode(para) ? para.replace($createParaNode(marker), true) : para;
+    $retagParagraph(target, marker, viewOptions);
     return;
   }
   // No retag arm for the `\id` line: a book can never be retagged, so a pick there falls through
