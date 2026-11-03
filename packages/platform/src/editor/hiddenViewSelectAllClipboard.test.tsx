@@ -494,3 +494,86 @@ describe.each(CHAPTERS)("Select All in $name", ({ front }) => {
     });
   });
 });
+
+describe.each(["paragraph-structure", "formatted"])(
+  "a chapter 1 copy pasted into another chapter, in the %s view",
+  (viewName) => {
+    const chapterOne: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [BOOK, ...FRONT_MATTER, CHAPTER, FIRST, SECOND],
+    };
+    const CHAPTER_TWO = { type: "chapter", marker: "c", number: "2" };
+    const chapterTwo: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [BOOK, CHAPTER_TWO, SECOND],
+    };
+
+    describe.each(UNLOCKED)("structure %s", (mode) => {
+      /** A copy of Select All in chapter 1, front matter and all. */
+      async function copyOfChapterOne(): Promise<Map<string, string>> {
+        const source = await mountInView(chapterOne, editorView(viewName), {
+          structureProtectionMode: mode,
+        });
+        try {
+          await selectAll(source);
+          return await copyOrCut(source, COPY_COMMAND);
+        } finally {
+          source.unmount();
+        }
+      }
+
+      // Only chapter 1 has lines before its chapter line: anywhere else the copy's front matter is
+      // just more text, and goes after the chapter line with the rest.
+      it("over Select All, puts all of it after the chapter line", async () => {
+        const store = await copyOfChapterOne();
+        const mounted = await mountInView(chapterTwo, editorView(viewName), {
+          structureProtectionMode: mode,
+        });
+        try {
+          await selectAll(mounted);
+
+          await ctrlV(mounted, store);
+
+          expect(content(mounted)).toEqual([BOOK, CHAPTER_TWO, ...FRONT_MATTER, FIRST, SECOND]);
+        } finally {
+          mounted.unmount();
+        }
+      });
+
+      it("from the end of the book line, puts all of it after the chapter line", async () => {
+        const store = await copyOfChapterOne();
+        const mounted = await mountInView(chapterTwo, editorView(viewName), {
+          structureProtectionMode: mode,
+        });
+        try {
+          await act(async () =>
+            mounted.lexical.update(
+              () => {
+                const book = $getRoot().getFirstChild();
+                if (!$isElementNode(book)) throw new Error("no book line");
+                book.selectEnd();
+              },
+              { discrete: true },
+            ),
+          );
+          await settle();
+
+          await ctrlV(mounted, store);
+
+          expect(content(mounted)).toEqual([
+            BOOK,
+            CHAPTER_TWO,
+            ...FRONT_MATTER,
+            FIRST,
+            SECOND,
+            SECOND,
+          ]);
+        } finally {
+          mounted.unmount();
+        }
+      });
+    });
+  },
+);

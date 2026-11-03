@@ -379,7 +379,8 @@ refused. The public surface grew substantially; nothing was removed.
   a chapter line splits around the document's only when pasted over a selection that holds it or
   from a caret right beside it (the start of the line after it, where a cut leaves the caret, or
   the end of the line before it): chapter 1's front matter (`\h`, `\mt1`, an introduction) goes
-  before the chapter line and the Scripture text after it. Pasted anywhere else, the whole copy
+  before the chapter line when the document is chapter 1, and after it with the Scripture text in
+  any other chapter. Pasted anywhere else, the whole copy
   goes in at the caret. A paste with no front matter (plain text, another program's html) over
   such a selection goes after the chapter line. So Select All, cut, then paste back restores the document exactly,
   front matter included, and a paste over Select All of its own copy changes nothing. A delete,
@@ -693,10 +694,11 @@ refused. The public surface grew substantially; nothing was removed.
 - A note pasted in the editor opens like the one copied: clicking its caller calls
   `nodes.noteCallerOnClick`. A caller rebuilt from the editor's own node copy had no click handler,
   so the click did nothing, in every view.
-- In the views that hide markers, a pasted tab is saved as a space however it arrives, as a paste
-  that reads the clipboard itself already saved it: a native paste (a host menu's own Paste), a
-  drop, and html whose whitespace is preformatted. Such a tab was
-  saved as nothing, joining the words either side of it.
+- A tab a paste inserts as Lexical's tab node is saved as a space, in every view (and in any editor
+  mounting `ClipboardPlugin`), as a paste that reads the clipboard itself already saved it: a
+  native paste (a host menu's own Paste), a drop, and html whose whitespace is preformatted. Such a
+  tab was saved as nothing, joining the words either side of it. A tab inside pasted text stays a
+  tab, as Standard view's own paste stores it.
 - In the views that hide markers, an edit that arrives with no keydown (an input method composing,
   macOS Ctrl+H) over a range holding a verse marker no longer bypasses structure protection. Under
   `"protected"` it is refused instead of removing the verse; under `"guarded"` a delete arms the
