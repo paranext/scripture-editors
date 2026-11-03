@@ -473,7 +473,11 @@ function registerPasteNormalization(
             ? stripPastedBlockMarkers(withoutChapterOrBookId, context.getMarker)
             : withoutChapterOrBookId;
         const noteText = isStandardView
-          ? normalizePastedNbsp(withoutStructure, getNbspSpelling(context.viewOptions))
+          ? normalizePastedNbsp(
+              withoutStructure,
+              getNbspSpelling(context.viewOptions),
+              context.getMarker,
+            )
           : withoutStructure;
         if (noteText.includes("\n")) {
           const lines = noteText.split("\n");
