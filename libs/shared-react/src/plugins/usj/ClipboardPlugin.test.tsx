@@ -7,6 +7,7 @@ import {
   $createRangeSelection,
   $createTabNode,
   $createTextNode,
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $isRangeSelection,
@@ -272,6 +273,49 @@ describe("ClipboardPlugin — a paste as reading the clipboard gives it", () => 
 
   it("leaves a paste as it is by default", async () => {
     expect((await seenBy(undefined))?.flavor).toContain("platformEditor");
+  });
+
+  it("pastes the html in place of the node copy, keeping the browser from pasting again", async () => {
+    let text: TextNode | undefined;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        text = $createTextNode("text");
+        $getRoot().append($createParaNode("p").append(text));
+      },
+      <ClipboardPlugin pastesAsClipboardRead />,
+    );
+    if (!text) throw new Error("expected the initial text node to exist");
+    const textKey = text.getKey();
+    await act(async () => {
+      editor.update(() => $getNodeByKey(textKey)?.selectEnd(), { discrete: true });
+    });
+    // The editor's own node copy, which Lexical would paste in place of the html were it read.
+    const nodeCopy = JSON.stringify({
+      namespace: "TestEditor",
+      nodes: [{ type: "text", version: 1, text: "nodes", detail: 0, format: 0, mode: "normal" }],
+    });
+    const flavors = new Map([
+      ["application/x-lexical-editor", nodeCopy],
+      ["text/html", "<span>html</span>"],
+      ["text/plain", "plain"],
+    ]);
+    const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        types: [...flavors.keys()],
+        files: [],
+        getData: (type: string) => flavors.get(type) ?? "",
+      },
+    });
+
+    await act(async () => {
+      editor.update(() => {
+        editor.dispatchCommand(PASTE_COMMAND, event);
+      });
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe("texthtml");
   });
 });
 

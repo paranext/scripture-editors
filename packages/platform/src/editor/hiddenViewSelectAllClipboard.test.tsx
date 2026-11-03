@@ -16,6 +16,7 @@ import {
   $getRoot,
   $isElementNode,
   $setSelection,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
   CUT_COMMAND,
   PASTE_COMMAND,
@@ -136,6 +137,24 @@ async function pasteFlavors(
       lexical.dispatchCommand(PASTE_COMMAND, clipboardEvent(delivered));
     }),
   );
+  await settle();
+}
+
+/** Drops `store`'s flavors at the selection, as Lexical's `beforeinput` handler dispatches a drop
+ * that is not files. */
+async function drop({ lexical }: MountedEditor, store: Map<string, string>): Promise<void> {
+  const event = {
+    inputType: "insertFromDrop",
+    dataTransfer: {
+      types: [...store.keys()],
+      files: [],
+      getData: (type: string) => store.get(type) ?? "",
+    },
+    preventDefault: vi.fn(),
+  };
+  await act(async () => {
+    lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, event as unknown as InputEvent);
+  });
   await settle();
 }
 
@@ -274,6 +293,100 @@ describe.each(CHAPTERS)("Select All in $name", ({ front }) => {
           SECOND,
           FIRST,
           SECOND,
+        ]);
+      });
+
+      it("pasted mid-text in the line after the chapter line, puts the whole copy in at the caret", async () => {
+        await selectAll(mounted);
+        const store = await copyOrCut(mounted, COPY_COMMAND);
+        await act(async () =>
+          mounted.lexical.update(
+            () => {
+              const first = $getRoot()
+                .getAllTextNodes()
+                .find((node) => node.getTextContent() === "first ");
+              if (!first) throw new Error("no first Scripture text");
+              first.select(3, 3);
+            },
+            { discrete: true },
+          ),
+        );
+
+        await ctrlV(mounted, store);
+
+        // The caret has text before it, so the copy's front matter goes in there with the rest. The
+        // first pasted paragraph joins the text before the caret, and the last one the text after.
+        const [firstPasted, ...restPasted] = [...front, FIRST] as (typeof FIRST)[];
+        const joined =
+          front.length > 0
+            ? ["fir" + String(firstPasted.content[0])]
+            : ["fir ", ...firstPasted.content];
+        expect(content(mounted)).toEqual([
+          BOOK,
+          ...front,
+          CHAPTER,
+          { ...FIRST, content: [FIRST.content[0], ...joined] },
+          ...restPasted,
+          { ...SECOND, content: [SECOND.content[0], "second linest ", ...FIRST.content.slice(2)] },
+          SECOND,
+        ]);
+      });
+
+      it.runIf(front.length > 0)(
+        "pasted at the start of the line before the chapter line, puts the whole copy in at the caret",
+        async () => {
+          await selectAll(mounted);
+          const store = await copyOrCut(mounted, COPY_COMMAND);
+          await act(async () =>
+            mounted.lexical.update(
+              () => {
+                const line = $getRoot().getChildAtIndex(chapterAt - 1);
+                if (!$isParaLikeNode(line)) throw new Error("no line before the chapter line");
+                $placeCaretAtParaContentStart(line);
+              },
+              { discrete: true },
+            ),
+          );
+
+          await ctrlV(mounted, store);
+
+          // The caret has the line's text after it, so the copy's Scripture text goes in there with
+          // the rest, ahead of that text, and the chapter line keeps only what followed it.
+          const after = content(mounted);
+          const chapterNow = after.findIndex(
+            (item) => typeof item !== "string" && item.type === "chapter",
+          );
+          expect(after.slice(chapterNow)).toEqual([CHAPTER, FIRST, SECOND]);
+          expect(after[chapterNow - 1]).toEqual({
+            ...SECOND,
+            content: [SECOND.content[0], "second lineAn introduction to the book."],
+          });
+          expect(after.slice(0, chapterNow)).toContainEqual(FIRST);
+          const lines = after.filter((item) => typeof item !== "string" && item.type !== "para");
+          expect(lines).toEqual([BOOK, CHAPTER]);
+        },
+      );
+
+      it("dropped at the end, adds no second book or chapter line", async () => {
+        await selectAll(mounted);
+        const store = await copyOrCut(mounted, COPY_COMMAND);
+        await caretAtEnd(mounted);
+
+        await drop(mounted, store);
+
+        // As the same copy pasted there: everything goes in at the caret.
+        const [firstPasted, ...restPasted] = [...front, FIRST, SECOND] as (typeof FIRST)[];
+        const joined =
+          front.length > 0
+            ? ["second line" + String(firstPasted.content[0])]
+            : ["second line ", ...firstPasted.content];
+        expect(content(mounted)).toEqual([
+          BOOK,
+          ...front,
+          CHAPTER,
+          FIRST,
+          { ...SECOND, content: [SECOND.content[0], ...joined] },
+          ...restPasted,
         ]);
       });
 
