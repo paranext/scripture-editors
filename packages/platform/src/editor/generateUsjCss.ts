@@ -8,6 +8,7 @@
  * vertical text mode.
  */
 import { MarkerStyleInfo, StyleInfo } from "shared";
+import { NBSP_STAND_IN_FONT_FAMILY } from "./markerEdit/nbspStandInFont";
 
 /**
  * Options controlling {@link generateUsjCss}'s output. {@link generateUsjFontCss} takes `zoom` and
@@ -117,7 +118,9 @@ const FONT_FALLBACK = "var(--usj-font-fallback, serif)";
  * is a visible typeface break mid-verse. Omit it for the base rule, whose font IS that default.
  */
 function fontFamilyDeclaration(fontName: string, projectDefaultFont?: string): string {
-  const families = [fontName];
+  // The stand-in's family leads: a browser draws a control character itself unless the first
+  // family has a glyph for it (see NBSP_STAND_IN_FONT_FAMILY). It covers U+001A alone.
+  const families = [NBSP_STAND_IN_FONT_FAMILY, fontName];
   if (projectDefaultFont && projectDefaultFont !== fontName) families.push(projectDefaultFont);
   const names = families.map((family) => `"${escapeCssString(family)}"`).join(", ");
   return `font-family: ${names}, ${FONT_FALLBACK}`;

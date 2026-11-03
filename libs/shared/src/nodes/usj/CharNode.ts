@@ -4,10 +4,13 @@ import { UnknownAttributes } from "./node-constants.js";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import {
   $applyNodeReplacement,
+  $getEditor,
+  $isElementNode,
   DOMConversionMap,
   DOMConversionOutput,
   DOMExportOutput,
   EditorConfig,
+  EditorState,
   ElementNode,
   LexicalEditor,
   LexicalNode,
@@ -288,6 +291,7 @@ export class CharNode extends ElementNode {
     newElement.setFormat(this.getFormatType());
     newElement.setStyle(this.getTextStyle());
     this.insertAfter(newElement, restoreSelection);
+    $recordSplitContinuation(this, newElement);
     return newElement;
   }
 
@@ -345,6 +349,141 @@ function isCharElement(node: HTMLElement | null | undefined): boolean {
 
 export function $isCharNode(node: LexicalNode | null | undefined): node is CharNode {
   return node instanceof CharNode;
+}
+
+/**
+ * For each editor, the char spans that a split (`insertNewAfter`: Enter, or a multi-paragraph
+ * paste) created, mapped to the key of the span they were first cut from. A continuation of a
+ * continuation maps to that first span too, so every piece of one span shares one origin.
+ */
+const splitOrigins = new WeakMap<LexicalEditor, Map<NodeKey, NodeKey>>();
+
+function $recordSplitContinuation(original: CharNode, continuation: CharNode): void {
+  const editor = $getEditor();
+  let origins = splitOrigins.get(editor);
+  if (!origins) {
+    origins = new Map();
+    splitOrigins.set(editor, origins);
+  }
+  const originalKey = original.getKey();
+  origins.set(continuation.getKey(), origins.get(originalKey) ?? originalKey);
+}
+
+/**
+ * Forgets which char spans this editor's splits cut apart, for when the document and its undo
+ * history are replaced together: no undo can bring those spans back, so the record would only grow.
+ * Not part of the package's public API.
+ *
+ * Needs no active editor: call it wherever the history is cleared.
+ * @param editor - The editor whose split record to clear.
+ */
+export function clearSplitOrigins(editor: LexicalEditor): void {
+  splitOrigins.delete(editor);
+}
+
+/**
+ * Whether `a` and `b` are pieces of one span that a split cut apart in this editor session, so
+ * meeting again (the paragraphs a split made joined back) restores that one span. Spans the
+ * document held apart, or that two different spans' splits made, are not.
+ *
+ * Call it inside an editor update or read.
+ * @param a - A char span.
+ * @param b - Another char span.
+ */
+export function $wereSplitFromOneSpan(a: CharNode, b: CharNode): boolean {
+  const origins = splitOrigins.get($getEditor());
+  if (!origins) return false;
+  const aKey = a.getKey();
+  const bKey = b.getKey();
+  return (origins.get(aKey) ?? aKey) === (origins.get(bKey) ?? bKey);
+}
+
+/**
+ * Creates a per-editor record of node keys that lasts one update. A record belongs to the committed state
+ * its update started from; a later update, which starts from a newer state, finds it stale and
+ * starts a fresh one.
+ */
+function createUpdateScopedKeys(): {
+  add: (key: NodeKey) => void;
+  has: (key: NodeKey) => boolean;
+} {
+  const records = new WeakMap<LexicalEditor, { from: EditorState; keys: Set<NodeKey> }>();
+  return {
+    add(key) {
+      const editor = $getEditor();
+      const from = editor.getEditorState();
+      let record = records.get(editor);
+      if (record?.from !== from) {
+        record = { from, keys: new Set() };
+        records.set(editor, record);
+      }
+      record.keys.add(key);
+    },
+    has(key) {
+      const editor = $getEditor();
+      const record = records.get(editor);
+      return record?.from === editor.getEditorState() && record.keys.has(key);
+    },
+  };
+}
+
+/** The char spans that the current update's clipboard insertions (a paste, a drop) brought in. */
+const clipboardSpans = createUpdateScopedKeys();
+
+/**
+ * Record the char spans in `nodes`, nested ones included, as content one clipboard insertion is
+ * about to insert in this update, so {@link $arrivedTogetherFromClipboard} can tell two of them
+ * apart from spans an edit made.
+ *
+ * Call it inside the editor update that inserts `nodes`.
+ * @param nodes - The nodes the insertion inserts.
+ */
+export function $recordClipboardSpans(nodes: LexicalNode[]): void {
+  const collect = (node: LexicalNode): void => {
+    if ($isCharNode(node)) clipboardSpans.add(node.getKey());
+    if ($isElementNode(node)) node.getChildren().forEach(collect);
+  };
+  nodes.forEach(collect);
+}
+
+/**
+ * Whether `a` and `b` both came in from the clipboard in this update ({@link $recordClipboardSpans}),
+ * so the copied content held them as two spans.
+ *
+ * Call it inside an editor update or read.
+ * @param a - A char span.
+ * @param b - Another char span.
+ */
+export function $arrivedTogetherFromClipboard(a: CharNode, b: CharNode): boolean {
+  return clipboardSpans.has(a.getKey()) && clipboardSpans.has(b.getKey());
+}
+
+/** The char spans that the current update's marker apply (the marker menu, `insertMarker`) made. */
+const newlyMarkedSpans = createUpdateScopedKeys();
+
+/**
+ * Record `node`, when it is a char span, as one a marker apply is creating in this update, so
+ * {@link $isNewlyMarkedSpan} can tell it from a span the document already held. Every span one apply
+ * creates is recorded, so the pieces of one marked run are recognized as made together.
+ *
+ * Call it inside the editor update that creates `node`.
+ * @param node - The node the marker apply created.
+ * @returns `node`, so a node factory can record what it builds inline.
+ */
+export function $recordNewlyMarkedSpan<T extends LexicalNode>(node: T): T {
+  if (!$isCharNode(node)) return node;
+  newlyMarkedSpans.add(node.getKey());
+  return node;
+}
+
+/**
+ * Whether a marker apply created `span` in this update ({@link $recordNewlyMarkedSpan}).
+ *
+ * Call it inside an editor update or read.
+ * @param span - A char span.
+ */
+export function $isNewlyMarkedSpan(span: CharNode): boolean {
+  return newlyMarkedSpans.has(span.getKey());
 }
 
 export function isSerializedCharNode(

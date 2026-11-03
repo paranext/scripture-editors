@@ -96,7 +96,7 @@ import {
   $isVerseNode,
   isSerializedVerseNode,
   $isMarkerTrailingSeparator,
-  $isNbspContentAtMark,
+  $isLoneNbspContent,
   $isTypedMarkNode,
   $milestoneAttributeRunPieces,
   $verseAttributeRunPieces,
@@ -104,6 +104,7 @@ import {
   $createTypedMarkNode,
   $displayAnnotationsOf,
   $wrapSelectionInTypedMarkNode,
+  ATTRIBUTE_NBSP_SPELLING,
   closingMarkerText,
   getDisplayAnnotationRegistration,
   getEditableCallerText,
@@ -138,6 +139,7 @@ import {
   $isImmutableNoteCallerNode,
   $selectAfterNote,
   $selectNote,
+  getNbspSpelling,
   hasStandardViewWhitespace,
   usjReactNodes,
   ViewOptions,
@@ -287,15 +289,18 @@ function preservedNodeKind(run: LexicalNode[]): PreservedNodeKind {
  * placeholders goes through here, so each placeholder parses as the node it stands for (a note or
  * a verse ends the note open in front of it), and a bare `\` the user left in front of a preserved
  * node stays exactly that: the separator `pushSentinel` spells after it is not a byte of the
- * document, and the file reads `\` directly followed by the node's own marker the same way.
+ * document, and the file reads `\` directly followed by the node's own marker the same way. An
+ * attribute value's no-break space is read as the fragment spells it in every view
+ * (`ATTRIBUTE_NBSP_SPELLING`; see {@link attributeFragmentText}).
  */
 export function tokenizeFragment(
   fragment: FragmentAccumulator,
-  options: Omit<UsfmFragmentOptions, "placeholders">,
+  options: Omit<UsfmFragmentOptions, "placeholders" | "attributeNbspSpelling">,
 ): MarkerContent[] {
   return withoutBareBackslashSeparators(
     usfmFragmentToUsjContent(withoutDisplayLineBreaks(fragment.text), {
       ...options,
+      attributeNbspSpelling: ATTRIBUTE_NBSP_SPELLING,
       placeholders: fragment.sentinels.map(preservedNodeKind),
     }),
   );
@@ -306,22 +311,23 @@ export function tokenizeFragment(
  * an attribute run, and not the para-prefix separator. What an NBSP byte in such a run MEANS
  * depends on the view, so the flattening must too:
  *
- * - Standard-view whitespace: a data NBSP displays as `~` (usjTextToDisplay), so an NBSP byte in
- *   display text is always a display artifact — a space-run member or a structural separator —
- *   and flattens to " " ({@link toFragmentText}).
+ * - Standard-view whitespace: a data NBSP displays as its spelling (`~`, or `NBSP_STAND_IN` when `~`
+ *   is an ordinary character — `getNbspSpelling`; usjTextToDisplay), so an NBSP byte in display
+ *   text is always a display artifact — a space-run member or a structural separator — and
+ *   flattens to " " ({@link toFragmentText}).
  * - Unformatted (editable without the standard whitespace mapping): a content NBSP IS the data
- *   byte. It is spelled `~` — the tokenizer's input convention (`usjText` maps `~` back to NBSP,
- *   PT9 UsfmParser) — so a settle that rewrites the paragraph round-trips it instead of
- *   corrupting it to a plain space. Two structural shapes still flatten to " " even here: a node
- *   that is EXACTLY one NBSP (the engine-owned spacer / empty-char placeholder shape, which
- *   serialization also treats as structural — the lone-NBSP byte test in editor-usj.adaptor.ts)
- *   unless it is a no-break space an annotation mark split off content (`isNbspContent`, from
- *   `$isNbspContentAtMark`), and the one structural leading NBSP fused onto a char span's first
- *   content child (`structuralLead` — the twin of the conversion's positional separator strip,
- *   `precedesOpeningCharGlyph` in editor-usj.adaptor.ts). When that first content child has LOST
- *   its separator, its leading bytes run on as the opener's marker name, and the name ends at the
- *   first space the screen shows — an NBSP there included, which flattens to " " so the name never
- *   swallows it (`\wLord⍽God` reads as `\wLord` followed by `God`, as `\wLord God` does).
+ *   byte. It is spelled the way the tokenizer is told to read a no-break space (`getNbspSpelling`,
+ *   passed to it as `nbspSpelling`; `~` is PT9 UsfmParser's spelling) — so a settle that rewrites
+ *   the paragraph round-trips it instead of corrupting it to a plain space. Two structural shapes
+ *   still flatten to " " even here: a node that is EXACTLY one NBSP in one of the engine's display
+ *   slots (a spacer, separator or empty-char placeholder — `isNbspContent`, from
+ *   `$isLoneNbspContent`, the rule serialization keeps content by), and the one structural leading
+ *   NBSP fused onto a char span's first content child (`structuralLead` — the twin of the
+ *   conversion's positional separator strip, `precedesOpeningCharGlyph` in editor-usj.adaptor.ts).
+ *   When that first content child has LOST its separator, its leading bytes run on as the opener's
+ *   marker name, and the name ends at the first space the screen shows — an NBSP there included,
+ *   which flattens to " " so the name never swallows it (`\wLord⍽God` reads as `\wLord` followed by
+ *   `God`, as `\wLord God` does).
  *
  * ONE definition for every fragment producer: the mutating rebuilds and the read-only settle both
  * build their fragments through `$appendNodesFragment` below, so the mirror can never flatten a
@@ -336,12 +342,31 @@ export function contentFragmentText(
 ): string {
   if (hasStandardViewWhitespace(viewOptions)) return toFragmentText(text);
   if (text === NBSP && !isNbspContent) return " ";
+  const nbspSpelling = getNbspSpelling(viewOptions);
   const hasLead = structuralLead && text.startsWith(NBSP);
   const body = hasLead ? text.slice(1) : text;
   const runOnName = structuralLead && !hasLead ? NAME_ENDING_AT_NBSP_REGEX.exec(body) : null;
   if (runOnName)
-    return `${runOnName[0]} ${body.slice(runOnName[0].length + 1).replaceAll(NBSP, "~")}`;
-  return (hasLead ? " " : "") + body.replaceAll(NBSP, "~");
+    return `${runOnName[0]} ${body.slice(runOnName[0].length + 1).replaceAll(NBSP, nbspSpelling)}`;
+  return (hasLead ? " " : "") + body.replaceAll(NBSP, nbspSpelling);
+}
+
+/**
+ * Display text → USFM fragment text for an attribute run (`|lemma="…"`, a milestone's ` |who`, a
+ * `\va`/`\vp`/`\cat`/`\ca`/`\cp` value). Its leading NBSP, where it has one, is the file's real
+ * separator before the bytes, and flattens to " " in every view. Under Standard-view whitespace a
+ * value's own no-break space displays as `ATTRIBUTE_NBSP_SPELLING` (applied by the adaptor and the
+ * display-run syncs), so every other NBSP is display spacing as well ({@link toFragmentText}).
+ * Elsewhere (Unformatted) the value's NBSP IS the data byte, and is spelled
+ * `ATTRIBUTE_NBSP_SPELLING` too, the spelling the tokenizer reads in a value
+ * ({@link tokenizeFragment}). Either way a value's `~` stays an ordinary character, as Paratext
+ * keeps it, whatever the body text's spelling.
+ */
+export function attributeFragmentText(text: string, viewOptions: ViewOptions | undefined): string {
+  if (hasStandardViewWhitespace(viewOptions)) return toFragmentText(text);
+  const hasLead = text.startsWith(NBSP);
+  const body = hasLead ? text.slice(1) : text;
+  return (hasLead ? " " : "") + body.replaceAll(NBSP, ATTRIBUTE_NBSP_SPELLING);
 }
 
 /** Leading bytes the tokenizer's name scan runs through (anything but whitespace, a zero-width
@@ -1374,29 +1399,30 @@ function $appendNodesFragment(
       // point in it is anchored at the boundary it stands at (`$anchorForPoint`).
       continue;
     } else if ($isTextNode(node)) {
-      // Glyph-adjacent structural text (the para-prefix separator, attribute runs — whose own
-      // leading NBSP is the file's real separator byte before `|…`, a chapter's `\c N` glyph
+      // Glyph-adjacent structural text (the para-prefix separator, a chapter's `\c N` glyph
       // text — whose NBSP is the separator after `\c`) keeps the blanket NBSP-to-space
-      // flattening in every view; everything else is a content run, where the flattening is
-      // view-dependent (see `contentFragmentText`).
+      // flattening in every view. An attribute run's leading NBSP is the file's real separator
+      // byte before its bytes, but the value after it is data (`attributeFragmentText`), and
+      // everything else is a content run; both of those flatten by view (`contentFragmentText`).
       const parent = node.getParent();
+      const isAttributeRun = $getState(node, textTypeState) === "attribute";
       const isStructuralRun =
         $isMarkerTrailingSeparator(node) ||
-        $getState(node, textTypeState) === "attribute" ||
+        isAttributeRun ||
         ($isChapterNode(parent) && !!$chapterGlyphTextNode(parent)?.is(node));
       const structuralLead = consumeCharLead() && !isStructuralRun;
-      pushText(
-        out,
-        node,
-        isStructuralRun
-          ? toFragmentText($textNodeFragmentText(node))
-          : contentFragmentText(
-              $textNodeFragmentText(node),
-              viewOptions,
-              structuralLead,
-              $isNbspContentAtMark(node),
-            ),
-      );
+      let fragmentText: string;
+      if (isAttributeRun)
+        fragmentText = attributeFragmentText($textNodeFragmentText(node), viewOptions);
+      else if (isStructuralRun) fragmentText = toFragmentText($textNodeFragmentText(node));
+      else
+        fragmentText = contentFragmentText(
+          $textNodeFragmentText(node),
+          viewOptions,
+          structuralLead,
+          $isLoneNbspContent(node),
+        );
+      pushText(out, node, fragmentText);
     } else if ($isElementNode(node)) {
       // TypedMarkNode and other transparent wrappers: an annotation is a host overlay, never
       // document content, so only its children's text reaches the tokenizer — in the SAME content
@@ -3003,6 +3029,7 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
   const content: MarkerContent[] = tokenizeFragment(combined, {
     getMarker: getMarkerFn,
     opensNamelessParagraph: $opensNamelessParagraph(paras),
+    nbspSpelling: getNbspSpelling(viewOptions),
   });
   if (content.length === 0) {
     logger?.debug("[MarkerEdit] Tier 2 skipped: tokenizer produced no content");
@@ -3253,6 +3280,7 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   const content: MarkerContent[] = tokenizeFragment(out, {
     getMarker: getMarkerFn,
     isNoteContext: true,
+    nbspSpelling: getNbspSpelling(viewOptions),
   });
   if (content.length === 0) {
     logger?.debug("[MarkerEdit] Note Tier 2 skipped: tokenizer produced no content");
@@ -3547,8 +3575,12 @@ const LEADING_DEFAULT_PARA_MARKER = new RegExp(
 export function tokenizedBookLine(
   fragment: FragmentAccumulator,
   getMarkerFn: MarkerLookup,
+  nbspSpelling: string,
 ): { content: MarkerContent[]; lineContent: MarkerContent[]; followingBlocks: MarkerContent[] } {
-  const content: MarkerContent[] = tokenizeFragment(fragment, { getMarker: getMarkerFn });
+  const content: MarkerContent[] = tokenizeFragment(fragment, {
+    getMarker: getMarkerFn,
+    nbspSpelling,
+  });
   const [first, ...rest] = content;
   const opensWithImpliedPara =
     typeof first === "object" &&
@@ -3617,7 +3649,7 @@ export function $rebuildBook(
     $getEditor(),
   );
 
-  const tokenized = tokenizedBookLine(out, getMarkerFn);
+  const tokenized = tokenizedBookLine(out, getMarkerFn, getNbspSpelling(viewOptions));
   // Symmetry bail-out (see `$rebuildParas`): a preserved-run/placeholder mismatch aborts the
   // rebuild with the line untouched rather than silently dropping a node.
   if (countSentinels(tokenized.content) !== out.sentinels.length) {
@@ -3919,9 +3951,15 @@ const LEADING_PARA_MARKER_REGEX = /^\s*\\p(?:\s|$)/;
  * Display-only line breaks are not read ({@link withoutDisplayLineBreaks}). Exported for the
  * read-only settle (virtualSettle.utils.ts), which must read the same content.
  */
-export function chapterFragmentContent(text: string, getMarkerFn: MarkerLookup): MarkerContent[] {
+export function chapterFragmentContent(
+  text: string,
+  getMarkerFn: MarkerLookup,
+  nbspSpelling: string,
+): MarkerContent[] {
   const content = usfmFragmentToUsjContent(withoutDisplayLineBreaks(text), {
     getMarker: getMarkerFn,
+    nbspSpelling,
+    attributeNbspSpelling: ATTRIBUTE_NBSP_SPELLING,
   });
   const [first, ...others] = content;
   if (
@@ -4016,7 +4054,7 @@ function areSerializedTextsMergeable(
 }
 
 /** A plain serialized space, the node `$createTextNode(" ")` exports. */
-const SERIALIZED_SPACE = {
+export const SERIALIZED_SPACE = {
   type: "text",
   version: 1,
   detail: 0,
@@ -4130,7 +4168,7 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
   // destroys them — carried the way `$rebuildParas` carries a paragraph's.
   const markRanges = $captureMarkByteRanges(region, out, undefined, $getEditor());
 
-  const content = chapterFragmentContent(out.text, getMarkerFn);
+  const content = chapterFragmentContent(out.text, getMarkerFn, getNbspSpelling(viewOptions));
   if (content.length === 0 && anchorInRegion) {
     logger?.debug("[MarkerEdit] Chapter Tier 2 deferred: emptied chapter line holds the caret");
     return false;
@@ -4402,22 +4440,25 @@ export function $idleSettleWouldDiscardCaretHeldBytes(
     ? $buildBookFragment(scope, getMarkerFn, viewOptions).out
     : $buildParaFragment(scope, getMarkerFn, viewOptions);
   if (!fragment) return false;
+  const nbspSpelling = getNbspSpelling(viewOptions);
   const content = tokenizeFragment(fragment, {
     getMarker: getMarkerFn,
     opensNamelessParagraph: $opensNamelessParagraph([scope]),
+    nbspSpelling,
   });
   if (content.length === 0) return false;
   const counts = new Map<string, number>();
-  for (const ch of fragment.text)
+  // Fragment text spells a data NBSP as `nbspSpelling` in body text and `ATTRIBUTE_NBSP_SPELLING`
+  // in an attribute value (in every view: the standard-view display already shows it that way, and
+  // `contentFragmentText`/`attributeFragmentText` spell unformatted NBSPs the same way), while the
+  // fold emits the real NBSP byte — which `\s` matches, so it would silently vanish from this count
+  // and report every caret-held data NBSP as a discard. Count both spellings as `nbspSpelling`, and
+  // the fold's NBSP the same way.
+  for (const ch of fragment.text.replaceAll(ATTRIBUTE_NBSP_SPELLING, nbspSpelling))
     if (!FRAGMENT_WS.test(ch)) counts.set(ch, (counts.get(ch) ?? 0) + 1);
   const folded: string[] = [];
   appendContentBytes(content, folded);
-  // Fragment text spells a data NBSP as `~` (in every view: the standard-view display already
-  // shows `~`, and `contentFragmentText` spells unformatted content NBSPs the same way), while
-  // the fold emits the real NBSP byte — which `\s` matches, so it would silently vanish from
-  // this count and report every caret-held data NBSP as a discard. Count it as the fragment
-  // spells it.
-  for (const ch of folded.join("").replaceAll(NBSP, "~")) {
+  for (const ch of folded.join("").replaceAll(NBSP, nbspSpelling)) {
     if (FRAGMENT_WS.test(ch)) continue;
     const remaining = counts.get(ch);
     if (remaining !== undefined && remaining > 0) counts.set(ch, remaining - 1);

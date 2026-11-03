@@ -22,8 +22,20 @@
  * or visual-regression harness, which this repo does not have.
  */
 
+import { flushQueuedEvents } from "../../editor-test.utils";
+import { deserializeEditorState } from "../editor-usj.adaptor";
+import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { $dfs } from "@lexical/utils";
-import { $getRoot, $isDecoratorNode, $isTextNode, LexicalEditor } from "lexical";
+import { act } from "@testing-library/react";
+import {
+  $getRoot,
+  $isDecoratorNode,
+  $isElementNode,
+  $isTextNode,
+  LexicalEditor,
+  LexicalNode,
+} from "lexical";
+import { ViewOptions } from "shared-react";
 import { expect } from "vitest";
 
 /**
@@ -54,4 +66,33 @@ export function expectEveryTextBearingNodeRendered(editor: LexicalEditor, when: 
   // An empty violation list says nothing unless the walk actually reached content: an editor that
   // never loaded has nothing to render, and would otherwise satisfy this net vacuously.
   expect(textBearingNodes, `${when}: no text-bearing node was visited`).toBeGreaterThan(0);
+}
+
+/** Marks `node` and every descendant dirty, so each one's registered transforms run. */
+function $markSubtreeDirty(node: LexicalNode): void {
+  node.markDirty();
+  if ($isElementNode(node)) node.getChildren().forEach($markSubtreeDirty);
+}
+
+/**
+ * Marks every node of the mounted `lexical` dirty, so each transform the mounted view registers runs
+ * once — what a user's first edit does to the region it touches — and reads the document back.
+ * Lexical runs no transform on a load, only on a dirty node, so a transform that fabricates or
+ * deletes content does so on the first edit and nowhere a load-only check can see it.
+ *
+ * The document is read back with the adaptor `Editor` runs on every local change
+ * (`deserializeEditorState` over the whole tree), NOT through `getUsj()`: until the first edit
+ * `getUsj()` returns the USJ it was handed, unchanged, so reading it would compare the input with
+ * itself. `version` is the mounted document's version, which `Editor` hands that adaptor too.
+ */
+export async function runEveryTransform(
+  lexical: LexicalEditor,
+  view: ViewOptions,
+  version: string,
+): Promise<Usj | undefined> {
+  await act(async () => {
+    lexical.update(() => $getRoot().getChildren().forEach($markSubtreeDirty), { discrete: true });
+  });
+  await flushQueuedEvents();
+  return deserializeEditorState(lexical.getEditorState(), view, version);
 }

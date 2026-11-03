@@ -40,6 +40,10 @@ import {
 } from "../nodes/usj/displayRunDescriptor.js";
 import { $hasCaretGracedSeparatorGap } from "../nodes/usj/markerSeparators.utils.js";
 import { $isMilestoneNode } from "../nodes/usj/MilestoneNode.js";
+import {
+  $getAttributeNbspDisplaySpelling,
+  nbspValueToDisplay,
+} from "../nodes/usj/nbspDisplaySpelling.utils.js";
 import { NBSP } from "../nodes/usj/node-constants.js";
 import { $isVerseNode } from "../nodes/usj/VerseNode.js";
 import { textTypeState } from "../nodes/collab/delta.state.js";
@@ -176,7 +180,10 @@ function verseDescriptor(marker: VerseAttributeMarker): DisplayRunDescriptor {
       if (!$isVerseNode(owner)) return NO_RUN;
       const value = marker === "va" ? owner.getAltnumber() : owner.getPubnumber();
       if (value === undefined) return NO_RUN;
-      return { wantsRun: true, valueText: NBSP + value };
+      return {
+        wantsRun: true,
+        valueText: NBSP + nbspValueToDisplay(value, $getAttributeNbspDisplaySpelling()),
+      };
     },
     scanPieces: (owner) =>
       $isVerseNode(owner)
@@ -232,6 +239,7 @@ const charDescriptor: DisplayRunDescriptor = {
     const text = canonicalAttributeText(
       owner.getUnknownAttributes() ?? {},
       defaultMarkerAttribute(owner.getMarker()),
+      $getAttributeNbspDisplaySpelling(),
     );
     return text === "" ? NO_RUN : { wantsRun: true, valueText: text };
   },
@@ -319,7 +327,10 @@ const catDescriptor: DisplayRunDescriptor = {
     if (owner.getIsCollapsed() !== false) return NO_RUN;
     const category = owner.getCategory();
     if (category === undefined) return NO_RUN;
-    return { wantsRun: true, valueText: NBSP + category };
+    return {
+      wantsRun: true,
+      valueText: NBSP + nbspValueToDisplay(category, $getAttributeNbspDisplaySpelling()),
+    };
   },
   scanPieces: (owner) => ($isNoteNode(owner) ? $noteCategoryRunPieces(owner) : NO_PIECES),
   graceSite: (owner, pieces) => {
@@ -418,7 +429,10 @@ function chapterDescriptor(marker: "ca" | "cp"): DisplayRunDescriptor {
       if (!$isChapterNode(owner)) return NO_RUN;
       const value = marker === "ca" ? owner.getAltnumber() : owner.getPubnumber();
       if (value === undefined) return NO_RUN;
-      return { wantsRun: true, valueText: NBSP + value };
+      return {
+        wantsRun: true,
+        valueText: NBSP + nbspValueToDisplay(value, $getAttributeNbspDisplaySpelling()),
+      };
     },
     scanPieces: (owner) =>
       !$isChapterNode(owner)
@@ -510,7 +524,11 @@ const milestoneDescriptor: DisplayRunDescriptor = {
       owner.getUnknownAttributes(),
       owner.getAttributeOrder(),
     );
-    const text = canonicalAttributeText(attributes, milestoneDefaultAttribute(owner.getMarker()));
+    const text = canonicalAttributeText(
+      attributes,
+      milestoneDefaultAttribute(owner.getMarker()),
+      $getAttributeNbspDisplaySpelling(),
+    );
     // The glyph pair is unconditional: a milestone always displays `\qt-s …\*`, so the run is
     // wanted even when no attribute text rides between the glyphs.
     return { wantsRun: true, valueText: text === "" ? undefined : NBSP + text };

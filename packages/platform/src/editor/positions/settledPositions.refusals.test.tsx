@@ -13,7 +13,8 @@
  * it when its bytes have none (settledPositions.snapLeft.test.tsx) — or, for a plan the live tree
  * has moved on from under it, the nearest one a rebuilt basis can still answer from (below).
  */
-import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { editorView, mountInView, rowsInEnabledViews } from "../editorViews.test-helpers";
+import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes } from "./settledScopes.utils";
 import {
   $liveSelectionFromSettled,
@@ -185,118 +186,125 @@ describe("a settled location the settled document does not have", () => {
   });
 });
 
-describe("a basis the tree has moved on under", () => {
-  /**
-   * A memoized plan (`SettledScopeCache`) holds live node references across reads. The cache
-   * rebuilds a plan once any node in its scope changes (settledScopes.utils.test.tsx); these rows
-   * instead reuse a basis prepared BEFORE a change in a read AFTER it, so the translation itself has
-   * to notice mid-walk that its plan no longer describes the live tree and answer from what the
-   * tree still has — the scope's own front, for a byte alignment that can no longer be walked at
-   * all — rather than refuse outright.
-   *
-   * The paragraph is pending only on its emptied optbreak husk, so both notes ride through its
-   * rebuild as preserved runs and cross by their child paths.
-   */
-  async function staleBasis(change: (lexical: LexicalEditor) => void) {
-    const mounted = await mountExpandedNoteEditor(optbreakAndTwoNotesUsj());
-    await emptyOptbreakHusk(mounted.lexical);
-    const usj: Usj | undefined = mounted.ref.current?.getUsj();
-    const para = settledPara(usj, PARA_TOP_INDEX);
-    const context = settledPositionContext(mounted.lexical);
-    const prepared = mounted.lexical.getEditorState().read(() => $prepareSettleScopes(context));
-    await act(async () => {
-      mounted.lexical.update(() => change(mounted.lexical), { discrete: true });
-      await Promise.resolve();
-    });
-    const [noteIndex] = settledNoteIndexes(para);
-    const note = para.content?.[noteIndex] as MarkerObject;
-    /** The settled location of `offset` in the first note's body text. */
-    const inFirstNoteBody = (offset: number): UsjDocumentLocation => ({
-      jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, settledTextIndex(note, "note one")]),
-      offset,
-    });
-    /** The pending paragraph's own live key — where a rebuilt scope's front lands. */
-    const paraKey = mounted.lexical
-      .getEditorState()
-      .read(() => $getRoot().getChildren().filter($isParaNode)[0].getKey());
-    return { ...mounted, context, prepared, inFirstNoteBody, paraKey };
-  }
+describe.each(rowsInEnabledViews([{ view: "standard" }, { view: "standard+expandedNotes" }]))(
+  "a basis the tree has moved on under ($view)",
+  ({ view }) => {
+    /**
+     * A memoized plan (`SettledScopeCache`) holds live node references across reads. The cache
+     * rebuilds a plan once any node in its scope changes (settledScopes.utils.test.tsx); these rows
+     * instead reuse a basis prepared BEFORE a change in a read AFTER it, so the translation itself has
+     * to notice mid-walk that its plan no longer describes the live tree and answer from what the
+     * tree still has — the scope's own front, for a byte alignment that can no longer be walked at
+     * all — rather than refuse outright.
+     *
+     * The paragraph is pending only on its emptied optbreak husk, so both notes ride through its
+     * rebuild as preserved runs and cross by their child paths.
+     */
+    async function staleBasis(change: (lexical: LexicalEditor) => void) {
+      const mounted = await mountInView(optbreakAndTwoNotesUsj(), editorView(view));
+      await emptyOptbreakHusk(mounted.lexical);
+      const usj: Usj | undefined = mounted.ref.current?.getUsj();
+      const para = settledPara(usj, PARA_TOP_INDEX);
+      const context = settledPositionContext(mounted.lexical);
+      const prepared = mounted.lexical.getEditorState().read(() => $prepareSettleScopes(context));
+      await act(async () => {
+        mounted.lexical.update(() => change(mounted.lexical), { discrete: true });
+        await Promise.resolve();
+      });
+      const [noteIndex] = settledNoteIndexes(para);
+      const note = para.content?.[noteIndex] as MarkerObject;
+      /** The settled location of `offset` in the first note's body text. */
+      const inFirstNoteBody = (offset: number): UsjDocumentLocation => ({
+        jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, settledTextIndex(note, "note one")]),
+        offset,
+      });
+      /** The pending paragraph's own live key — where a rebuilt scope's front lands. */
+      const paraKey = mounted.lexical
+        .getEditorState()
+        .read(() => $getRoot().getChildren().filter($isParaNode)[0].getKey());
+      return { ...mounted, context, prepared, inFirstNoteBody, paraKey };
+    }
 
-  /** The first note in the first paragraph. */
-  function $firstNote() {
-    const note = $getRoot().getChildren().filter($isParaNode)[0].getChildren().find($isNoteNode);
-    if (!note) throw new Error("no note");
-    return note;
-  }
+    /** The first note in the first paragraph. */
+    function $firstNote() {
+      const note = $getRoot().getChildren().filter($isParaNode)[0].getChildren().find($isNoteNode);
+      if (!note) throw new Error("no note");
+      return note;
+    }
 
-  /** The second note in the first paragraph. */
-  function $secondNote() {
-    const notes = $getRoot().getChildren().filter($isParaNode)[0].getChildren().filter($isNoteNode);
-    const note = notes[1];
-    if (!note) throw new Error("no second note");
-    return note;
-  }
+    /** The second note in the first paragraph. */
+    function $secondNote() {
+      const notes = $getRoot()
+        .getChildren()
+        .filter($isParaNode)[0]
+        .getChildren()
+        .filter($isNoteNode);
+      const note = notes[1];
+      if (!note) throw new Error("no second note");
+      return note;
+    }
 
-  it("rebuilds a live point in a preserved node that has since been removed, from the scope's front", async () => {
-    const { lexical, context, prepared, inFirstNoteBody, paraKey } = await staleBasis(() =>
-      $firstNote().remove(),
-    );
-
-    const point = lexical
-      .getEditorState()
-      .read(() => $livePointFromSettledLocation(context, prepared, inFirstNoteBody(2)));
-
-    expect(point).toEqual({ key: paraKey, offset: 0, type: "element" });
-  });
-
-  it("rebuilds a live point whose settled child path no longer exists in the live node, from the scope's front", async () => {
-    const { lexical, context, prepared, inFirstNoteBody, paraKey } = await staleBasis(() => {
-      // The body text and everything after it, so the body's child index names no child at all.
-      const children = $firstNote().getChildren();
-      const body = children.findIndex(
-        (child) => $isTextNode(child) && child.getTextContent().includes("note one"),
+    it("rebuilds a live point in a preserved node that has since been removed, from the scope's front", async () => {
+      const { lexical, context, prepared, inFirstNoteBody, paraKey } = await staleBasis(() =>
+        $firstNote().remove(),
       );
-      if (body < 0) throw new Error("no note body text");
-      children.slice(body).forEach((child) => child.remove());
+
+      const point = lexical
+        .getEditorState()
+        .read(() => $livePointFromSettledLocation(context, prepared, inFirstNoteBody(2)));
+
+      expect(point).toEqual({ key: paraKey, offset: 0, type: "element" });
     });
 
-    const point = lexical
-      .getEditorState()
-      .read(() => $livePointFromSettledLocation(context, prepared, inFirstNoteBody(2)));
+    it("rebuilds a live point whose settled child path no longer exists in the live node, from the scope's front", async () => {
+      const { lexical, context, prepared, inFirstNoteBody, paraKey } = await staleBasis(() => {
+        // The body text and everything after it, so the body's child index names no child at all.
+        const children = $firstNote().getChildren();
+        const body = children.findIndex(
+          (child) => $isTextNode(child) && child.getTextContent().includes("note one"),
+        );
+        if (body < 0) throw new Error("no note body text");
+        children.slice(body).forEach((child) => child.remove());
+      });
 
-    expect(point).toEqual({ key: paraKey, offset: 0, type: "element" });
-  });
+      const point = lexical
+        .getEditorState()
+        .read(() => $livePointFromSettledLocation(context, prepared, inFirstNoteBody(2)));
 
-  it("rebuilds a settled location for a live point in a child the settled node does not have", async () => {
-    const { lexical, prepared } = await staleBasis(() =>
-      $firstNote().append($createTextNode(" added")),
-    );
-
-    const location = lexical.getEditorState().read(() => {
-      const added = $firstNote().getLastChild();
-      if (!added) throw new Error("no added child");
-      return $settledLocationFromLivePoint(prepared, added, 1);
+      expect(point).toEqual({ key: paraKey, offset: 0, type: "element" });
     });
 
-    expect(location).toBeDefined();
-  });
+    it("rebuilds a settled location for a live point in a child the settled node does not have", async () => {
+      const { lexical, prepared } = await staleBasis(() =>
+        $firstNote().append($createTextNode(" added")),
+      );
 
-  it("rebuilds a settled location for a live point in a SECOND preserved run's new content", async () => {
-    // The same guard as the row above, exercised on a different preserved run in the same scope —
-    // the fix is not specific to whichever run happens to be first.
-    const { lexical, prepared } = await staleBasis(() =>
-      $secondNote().append($createTextNode(" added")),
-    );
+      const location = lexical.getEditorState().read(() => {
+        const added = $firstNote().getLastChild();
+        if (!added) throw new Error("no added child");
+        return $settledLocationFromLivePoint(prepared, added, 1);
+      });
 
-    const location = lexical.getEditorState().read(() => {
-      const added = $secondNote().getLastChild();
-      if (!added) throw new Error("no added child");
-      return $settledLocationFromLivePoint(prepared, added, 1);
+      expect(location).toBeDefined();
     });
 
-    expect(location).toBeDefined();
-  });
-});
+    it("rebuilds a settled location for a live point in a SECOND preserved run's new content", async () => {
+      // The same guard as the row above, exercised on a different preserved run in the same scope —
+      // the fix is not specific to whichever run happens to be first.
+      const { lexical, prepared } = await staleBasis(() =>
+        $secondNote().append($createTextNode(" added")),
+      );
+
+      const location = lexical.getEditorState().read(() => {
+        const added = $secondNote().getLastChild();
+        if (!added) throw new Error("no added child");
+        return $settledLocationFromLivePoint(prepared, added, 1);
+      });
+
+      expect(location).toBeDefined();
+    });
+  },
+);
 
 describe("a pend the settle has nothing to rebuild for", () => {
   it("prepares no scope, so a position addresses the live tree unchanged", async () => {

@@ -4,8 +4,9 @@
  * marker is gone) while its separator stays behind as the text's own space for the next press, and
  * the caret stays where the user is deleting.
  */
-import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
-import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { editorView, enabledViews, mountInPaneRow, mountInView } from "../editorViews.test-helpers";
+import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $getRoot,
@@ -156,38 +157,46 @@ describe("forward Delete through an opening char glyph", () => {
     expect(textWithCaret(lexical)).toMatch(/a \|text end/);
   });
 
-  it("does the same for a span inside a note", async () => {
-    const noteUsj: Usj = {
-      type: "USJ",
-      version: "3.1",
-      content: [
-        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
-        { type: "chapter", marker: "c", number: "1" },
-        {
-          type: "para",
-          marker: "p",
-          content: [
-            "a ",
-            {
-              type: "note",
-              marker: "f",
-              caller: "+",
-              closed: "false",
-              content: [
-                { type: "char", marker: "ft", closed: "false", content: ["x "] },
-                { type: "char", marker: "df", closed: "false", content: ["text"] },
-              ],
-            } as MarkerContent,
-          ],
-        },
-      ],
-    };
-    const { ref, lexical } = await mountExpandedNoteEditor(noteUsj);
-    await caretAtGlyphStart(lexical, "\\df");
+  // An unclosed note shows expanded in Standard view's text as well as in the footnotes pane's row
+  // editor, which holds it alone.
+  it.each(enabledViews(["standard", "footnotes-pane-row", "standard+expandedNotes"] as const))(
+    "does the same for a span inside a note (%s)",
+    async (view) => {
+      const noteUsj: Usj = {
+        type: "USJ",
+        version: "3.1",
+        content: [
+          { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+          { type: "chapter", marker: "c", number: "1" },
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              "a ",
+              {
+                type: "note",
+                marker: "f",
+                caller: "+",
+                closed: "false",
+                content: [
+                  { type: "char", marker: "ft", closed: "false", content: ["x "] },
+                  { type: "char", marker: "df", closed: "false", content: ["text"] },
+                ],
+              } as MarkerContent,
+            ],
+          },
+        ],
+      };
+      const note = (noteUsj.content[2] as MarkerObject).content?.[1] as MarkerObject;
+      const { ref, lexical } = await (view === "footnotes-pane-row"
+        ? mountInPaneRow(note)
+        : mountInView(noteUsj, editorView(view)));
+      await caretAtGlyphStart(lexical, "\\df");
 
-    await deleteGlyph(lexical, "\\df");
+      await deleteGlyph(lexical, "\\df");
 
-    expect(textWithCaret(lexical)).toMatch(/x \| text/);
-    expect(JSON.stringify(ref.current?.getUsj())).not.toContain('"marker":"df"');
-  });
+      expect(textWithCaret(lexical, view === "footnotes-pane-row" ? 0 : 2)).toMatch(/x \| text/);
+      expect(JSON.stringify(ref.current?.getUsj())).not.toContain('"marker":"df"');
+    },
+  );
 });

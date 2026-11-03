@@ -19,6 +19,7 @@
  * always renders a caller; the two paths never meet on that input. An editable EXPANDED note keeps
  * an empty caller's slot on both paths, which noteCallerDeletion.test.tsx pins.
  */
+import { editorView, isViewEnabled } from "../editorViews.test-helpers";
 import {
   buildInsertedSerializedNote,
   normalizeSerializedNote,
@@ -140,6 +141,12 @@ interface NoteTwinCombo {
   noteMode: NoteMode;
   closed: string | undefined;
   expected: NormalizedNoteShape;
+  /**
+   * The registry view the combination is, where it is one: `standard+expandedNotes` (library-only;
+   * its rows register only when this run includes it) or `footnotes-pane-row`, whose own options
+   * (an atomic shell) are mounted instead of the bare combination.
+   */
+  view?: "standard+expandedNotes" | "footnotes-pane-row";
 }
 
 const combos: NoteTwinCombo[] = [
@@ -186,6 +193,7 @@ const combos: NoteTwinCombo[] = [
     markerMode: "editable",
     noteMode: "expanded",
     closed: undefined,
+    view: "standard+expandedNotes",
     expected: {
       marker: "f",
       caller: "+",
@@ -199,6 +207,7 @@ const combos: NoteTwinCombo[] = [
     markerMode: "editable",
     noteMode: "expanded",
     closed: "false",
+    view: "standard+expandedNotes",
     expected: {
       marker: "f",
       caller: "+",
@@ -337,19 +346,34 @@ const combos: NoteTwinCombo[] = [
   },
 ];
 
+/** Caller text in the footnotes pane's row editor: the same bytes, but atomic, as the whole shell. */
+const CALLER_TOKEN: NormalizedNodeShape = { ...CALLER_TEXT, mode: "token" };
+
+/** The editable expanded combinations again in the footnotes pane's row editor. */
+const paneRowCombos: NoteTwinCombo[] = combos
+  .filter(({ view }) => view === "standard+expandedNotes")
+  .map((combo) => ({
+    ...combo,
+    view: "footnotes-pane-row",
+    expected: {
+      ...combo.expected,
+      children: combo.expected.children.map((child) =>
+        child === CALLER_TEXT ? CALLER_TOKEN : child,
+      ),
+    },
+  }));
+
 describe("note shape twins: createNote (forward adaptor) vs $createWholeNote (runtime)", () => {
-  it.each(combos)(
-    "$markerMode markers / $noteMode notes / closed=$closed build the same note shape",
-    ({ markerMode, noteMode, closed, expected }) => {
+  it.each([...combos, ...paneRowCombos].filter(({ view }) => !view || isViewEnabled(view)))(
+    "$markerMode markers / $noteMode notes / closed=$closed build the same note shape (view $view)",
+    ({ markerMode, noteMode, closed, expected, view }) => {
       // The reference text "1:5 " and content are free of NBSP/space runs on purpose: the
       // standard-view display encoding of LOADED text is a forward-adaptor concern pinned by the
       // whitespace-display tests, not part of this shape contract.
-      const viewOptions: ViewOptions = {
-        markerMode,
-        noteMode,
-        hasSpacing: true,
-        isFormattedFont: true,
-      };
+      const viewOptions: ViewOptions =
+        view === "footnotes-pane-row"
+          ? editorView(view)
+          : { markerMode, noteMode, hasSpacing: true, isFormattedFont: true };
 
       const loaded = normalizeSerializedNote(
         serializeLoadedNote(usjDocWithNote(NOTE_CONTENT, closed), viewOptions),

@@ -22,6 +22,7 @@ import {
   $getSelectedParaMarkerPara,
   $isCaretHost,
   $isGutterMarkerNode,
+  $isImmutableChapterNode,
   $isMarkerNode,
   $isMarkerTrailingSeparator,
   $isParaLikeNode,
@@ -516,6 +517,32 @@ export function $isUnmergeableParaStart(selection: BaseSelection): boolean {
   return !$isSomeParaNode(para) || !$canDeletePara(para);
 }
 
+/**
+ * True when a collapsed caret sits at a block's edge with an atomic chapter glyph right past it, in
+ * the views that hide markers: at the block's content start for a Backspace, at its end for a
+ * Delete. A guarded delete from there may act on a paragraph ({@link $structuralDeleteTarget}), but
+ * never on the chapter, which left to the native delete it would remove. Standard view's chapter
+ * line is editable marker text, not a glyph, so this never answers true there. A caret in front of a
+ * line's gutter glyph is judged from just past it, where a forward delete would run from.
+ *
+ * Read-only: safe in any read or update.
+ */
+export function $isCaretBesideChapterGlyph(
+  selection: BaseSelection,
+  intent: DeleteIntent,
+): boolean {
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  if (intent === "deleteBackward") {
+    if (!$caretAtParaStart(selection)) return false;
+    const para = $getParaAncestor(selection.anchor.getNode());
+    return $isImmutableChapterNode(para?.getPreviousSibling());
+  }
+  const from = selection.clone();
+  $moveCaretPastGutterGlyph(from);
+  if (!$caretAtParaEnd(from)) return false;
+  return $isImmutableChapterNode($getParaAncestor(from.anchor.getNode())?.getNextSibling());
+}
+
 /** True when the live selection still encodes the armed target. */
 export function $isArmedSelection(selection: BaseSelection | null, armed: ArmedDelete): boolean {
   if (!selection) return false;
@@ -745,6 +772,11 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   // ImmutableTypedTextNode) is still its first child here; moving it into `prev` would fuse it
   // onto `prev`'s trailing text as a literal marker byte (e.g. `first\qsecond`), so it is dropped
   // along with the separator instead of moved.
+  // Lexical's history folds an update whose only dirty leaf is a text that kept its text into the
+  // step before, even one tagged `history-push`. Removing an empty paragraph touches only the text
+  // the caret lands in, so the leaves that go with the paragraph are marked too, and Undo takes the
+  // removal back on its own.
+  for (const child of para.getChildren()) if (!$isElementNode(child)) child.markDirty();
   const moved = para
     .getChildren()
     .filter(

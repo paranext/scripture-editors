@@ -1,4 +1,5 @@
-import { corpusFixtures, ROUND_TRIP_VIEW_CONFIGS } from "./corpus-data";
+import { ROUND_TRIP_VIEW_CONFIGS } from "../../editorViews.test-helpers";
+import { corpusFixtures } from "./corpus-data";
 import {
   initialize as initializeSerialize,
   reset,
@@ -52,7 +53,11 @@ describe("corpus round-trip (USJ -> editor state -> USJ)", () => {
         reset();
         initializeDeserialize(undefined);
         const editorState = serializeEditorState(usj, viewOptions);
-        const roundTripped = deserializeSerializedEditorState(editorState, viewOptions);
+        const roundTripped = deserializeSerializedEditorState(
+          editorState,
+          viewOptions,
+          usj.version,
+        );
         expect(roundTripped).toEqual(usj);
       });
     }

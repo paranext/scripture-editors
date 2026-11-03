@@ -41,11 +41,20 @@ import {
 } from "./markerSeparators.utils.js";
 import { $isNestedCharNode } from "./nestedGlyphs.utils.js";
 import { canonicalAttributeText } from "./attributeDisplay.utils.js";
+import { $getNbspDisplaySpelling } from "./nbspDisplaySpelling.utils.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { defaultMarkerAttribute } from "../../converters/usfm/usfmFragmentToUsj.js";
 import { NBSP } from "./node-constants.js";
+import { $isLoneNbspContent } from "./node.utils.js";
 import { $findMatchingParent } from "@lexical/utils";
-import { $createTextNode, $getState, $isElementNode, $isTextNode, LexicalNode } from "lexical";
+import {
+  $createTextNode,
+  $getState,
+  $isElementNode,
+  $isTextNode,
+  LexicalNode,
+  TextNode,
+} from "lexical";
 
 /** How a lift treats the gap it opens in a character-style stack. */
 export interface CharStackLiftOptions {
@@ -101,10 +110,12 @@ export function $charStackContainer(node: LexicalNode): LexicalNode | null {
 }
 
 /**
- * Whether `char` holds no CONTENT — only its own glyphs and the structural NBSP separator those
- * glyphs own (markerSeparators.utils.ts). Such a span serializes to `\nd \nd*`: a marker pair
- * around nothing, which is not what the user asked for when a close-and-reopen happened to land at
- * a run's edge. A genuine space is content and does NOT make a span empty — only the NBSP does.
+ * Whether `char` holds no CONTENT — only its own glyphs, the structural NBSP separator those
+ * glyphs own (markerSeparators.utils.ts), and the empty-span placeholder. Such a span serializes to
+ * `\nd \nd*`: a marker pair around nothing, which is not what the user asked for when a
+ * close-and-reopen happened to land at a run's edge. A genuine space is content and does NOT make a
+ * span empty, and neither does the author's `~`: an NBSP is display only where the editor→USJ
+ * conversion drops it ({@link $isLoneNbspContent}).
  *
  * Read-only: safe inside `editor.update()` or either read form.
  */
@@ -120,8 +131,15 @@ export function $isCharContentEmpty(char: CharNode): boolean {
       (child) =>
         $isMarkerNode(child) ||
         (ownsDisplayRun && $getState(child, textTypeState) === "attribute") ||
-        ($isTextNode(child) && child.getTextContent().replaceAll(NBSP, "") === ""),
+        ($isTextNode(child) && $isDisplayOnlyText(child)),
     );
+}
+
+/** Whether `text`, a char span's child, holds nothing past its separator but a display NBSP. */
+function $isDisplayOnlyText(text: TextNode): boolean {
+  const content = text.getTextContent();
+  if (content.slice($charSeparatorPrefixLength(text)) === "") return true;
+  return content === NBSP && !$isLoneNbspContent(text);
 }
 
 /**
@@ -141,14 +159,19 @@ function $ownsDisplayRun(char: CharNode): boolean {
  * thing that carried them — dropping it silently would delete `|lemma="grace"` from the file.
  * Routed through {@link canonicalAttributeText}, the same one serializer `$unwrapCharNode` uses, so
  * the two paths cannot spell the same attributes differently: a lone default attribute collapses to
- * `|value`, anything else stays `|name="value" …`.
+ * `|value`, anything else stays `|name="value" …`. The bytes are body text from here on, so a
+ * value's no-break space is spelled as body text spells one.
  *
  * Mutating: call inside `editor.update()`.
  */
 function $removeCharKeepingAttributeBytes(char: CharNode, contentEnd: LexicalNode): void {
   const attributes = char.getUnknownAttributes();
   const bytes = attributes
-    ? canonicalAttributeText(attributes, defaultMarkerAttribute(char.getMarker()))
+    ? canonicalAttributeText(
+        attributes,
+        defaultMarkerAttribute(char.getMarker()),
+        $getNbspDisplaySpelling(),
+      )
     : "";
   if (bytes !== "") contentEnd.insertAfter($createTextNode(bytes));
   char.remove();

@@ -1,7 +1,7 @@
 import { MarkerContent, MarkerObject, Usj } from "./usj.model.js";
 import { usjToUsxString } from "./usj-to-usx.js";
 import { usxStringToUsj } from "./usx-to-usj.js";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -24,18 +24,17 @@ const CORPUS_DIR = [
 ].find((dir) => existsSync(dir));
 
 /**
- * The Paratext-flavored oracles, matching the shared-side corpus test's selection. `2SA-3` uses
- * the CORRECTED oracle rather than Paratext's raw output, which carries an acknowledged Paratext
- * 9.5 bug (a `\cp` with markers is partially folded into `pubnumber` and the remainder stranded
- * as an invalid top-level char).
+ * Every oracle in the corpus, discovered at run time so a newly vendored fixture is covered without
+ * a code change. `2SA-3` is vendored only as its CORRECTED oracle; Paratext's raw output carries an
+ * acknowledged Paratext 9.5 bug (a `\cp` with markers is partially folded into `pubnumber` and the
+ * remainder stranded as an invalid top-level char). The provider's real bytes for that chapter are
+ * covered by `testusfm-usx-usj-usx-round-trip.test.ts`.
  */
-const FIXTURES = [
-  "testUSFM-2SA-1.usj",
-  "testUSFM-2SA-2.usj",
-  "testUSFM-2SA-3-corrected.usj",
-  "web-matthew-1-and-2.usj",
-  "web-matthew-5-section-header.usj",
-];
+const FIXTURES = CORPUS_DIR
+  ? readdirSync(CORPUS_DIR)
+      .filter((name) => name.endsWith(".usj"))
+      .sort()
+  : [];
 
 function readOracle(name: string): Usj {
   if (!CORPUS_DIR) throw new Error("testUsfmCorpus fixture directory not found from cwd");
@@ -43,20 +42,16 @@ function readOracle(name: string): Usj {
 }
 
 /**
- * Drops EMPTY `sid`/`vid` attributes, recursively — exactly the two artifacts Paratext 9.5's USJ
- * carries (`sid: ""` on verses, `vid: ""` on paras). The serializer omits empty attributes from
- * USX and the parser additionally drops para `vid` as inconsistent derived metadata, so
- * `"" -> absent` is the converter pair's deliberate normalization for these two, not a loss —
- * they carry no document bytes. Deliberately NARROW: any OTHER attribute arriving empty and
- * getting dropped should turn this net red, so the drop is decided consciously rather than
- * silently absorbed here.
+ * Drops EMPTY `sid` attributes, recursively — the artifact Paratext 9.5's USJ carries on verses in
+ * a chapter after the first. The serializer omits empty attributes from USX, so `"" -> absent` is
+ * the converter pair's deliberate normalization, not a loss — it carries no document bytes.
+ * Deliberately NARROW: any OTHER attribute arriving empty and getting dropped should turn this net
+ * red, so the drop is decided consciously rather than silently absorbed here.
  */
 function withoutEmptyAttributes(content: MarkerContent[]): MarkerContent[] {
   return content.map((item) => {
     if (typeof item === "string") return item;
-    const entries = Object.entries(item).filter(
-      ([key, value]) => !((key === "sid" || key === "vid") && value === ""),
-    );
+    const entries = Object.entries(item).filter(([key, value]) => !(key === "sid" && value === ""));
     const cleaned = Object.fromEntries(entries) as MarkerObject;
     if (cleaned.content) cleaned.content = withoutEmptyAttributes(cleaned.content);
     return cleaned;
@@ -64,14 +59,16 @@ function withoutEmptyAttributes(content: MarkerContent[]): MarkerContent[] {
 }
 
 describe("testUSFM corpus round trip (USJ -> USX -> USJ)", () => {
+  it("finds the corpus", () => {
+    expect(FIXTURES.length).toBeGreaterThan(0);
+  });
+
   it.each(FIXTURES)("%s", (name) => {
     const usj = readOracle(name);
     const roundTripped = usxStringToUsj(usjToUsxString(usj));
-    // The oracles carry `version: "3.0"`; the converters emit 3.1. That is the documented output
-    // version, not a round-trip loss, so compare CONTENT — the bytes and structure this net
-    // exists to protect — rather than the version stamp.
-    expect(withoutEmptyAttributes(roundTripped.content)).toEqual(
-      withoutEmptyAttributes(usj.content),
-    );
+    expect({ ...roundTripped, content: withoutEmptyAttributes(roundTripped.content) }).toEqual({
+      ...usj,
+      content: withoutEmptyAttributes(usj.content),
+    });
   });
 });

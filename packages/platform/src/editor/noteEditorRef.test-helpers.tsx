@@ -8,6 +8,7 @@
 import Editorial from "../Editorial";
 import { EditorOptions, EditorProps, EditorRef } from "./editor.model";
 import { flushQueuedEvents } from "./editor-test.utils";
+import { editorView } from "./editorViews.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act, render } from "@testing-library/react";
 import { createRef } from "react";
@@ -17,19 +18,20 @@ import { $dfs } from "@lexical/utils";
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { getEmbeddedLexicalEditor } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 import { $isNoteNode, LoggerBasic, NoteNode } from "shared";
-import { getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
+import { ViewOptions } from "shared-react";
 
 export function requireDefined<T>(value: T | undefined | null, message: string): T {
   if (value === undefined || value === null) throw new Error(message);
   return value;
 }
 
-export const options: EditorOptions = {
-  hasSpellCheck: false,
-  markerMenuTrigger: "\\",
-  view: requireDefined(getViewOptions(STANDARD_VIEW_MODE), "standard view options"),
-  hasExternalUI: true,
-};
+/** The host options these suites mount with, in `view`. */
+export function optionsInView(view: ViewOptions): EditorOptions {
+  return { hasSpellCheck: false, markerMenuTrigger: "\\", view, hasExternalUI: true };
+}
+
+/** {@link optionsInView} in Standard view, the view these suites mount in by default. */
+export const options: EditorOptions = optionsInView(editorView("standard"));
 
 export const scrRef = { book: "GEN", chapterNum: 1, verseNum: 1 };
 
@@ -51,8 +53,8 @@ export function note(text: string): MarkerObject {
  * Mount `<Editorial>` on `defaultUsj` and hand back its public ref, the raw Lexical editor, and
  * the rendered container.
  *
- * @param editorOptions - Defaults to Standard view (`options`); pass a different `EditorOptions`
- *   for a suite that needs another marker or note mode.
+ * @param editorOptions - Defaults to Standard view (`options`); pass `optionsInView(view)` to mount
+ *   in another view.
  * @param onUsjChange - The host-facing change notification (see {@link EditorProps.onUsjChange}).
  *   Pass it when a test needs to observe what each commit reports to a host, as distinct from the
  *   settled `EditorRef.getUsj()` read.

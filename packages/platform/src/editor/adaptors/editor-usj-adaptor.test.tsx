@@ -28,6 +28,7 @@ import {
   usjMarks,
   usjWithUnknownItems,
 } from "../../../../utilities/src/converters/usj/converter-test.data";
+import { editorView, itInView, paneRowScaffold } from "../editorViews.test-helpers";
 import editorUsjAdaptor, {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,
@@ -53,6 +54,7 @@ import {
   $setState,
   LexicalEditor,
   SerializedEditorState,
+  SerializedLexicalNode,
   SerializedTextNode,
   TextNode,
 } from "lexical";
@@ -126,6 +128,30 @@ describe("Editor USJ Adaptor", () => {
     const usj = editorUsjAdaptor.deserializeEditorState(editorState);
 
     expect(usj).toEqual(usjGen1v1);
+  });
+
+  it("should stamp the version it is given", () => {
+    const editorState = editor.parseEditorState(editorStateGen1v1);
+
+    const usj = editorUsjAdaptor.deserializeEditorState(editorState, undefined, "3.0");
+
+    expect(usj).toEqual({ ...usjGen1v1, version: "3.0" });
+  });
+
+  it("should stamp the version it is given on an empty document", () => {
+    const editorState = editor.parseEditorState(editorStateEmpty);
+
+    const usj = editorUsjAdaptor.deserializeEditorState(editorState, undefined, "3.0");
+
+    expect(usj).toEqual({ ...EMPTY_USJ, version: "3.0" });
+  });
+
+  it("should stamp the version it is given on a lone empty implied para", () => {
+    initializeSerialize(undefined, undefined);
+    reset();
+    const usj = deserializeSerializedEditorState(serializeEditorState(undefined), undefined, "3.0");
+
+    expect(usj).toEqual({ ...EMPTY_USJ, version: "3.0" });
   });
 
   it("should convert to USJ from Lexical editor state JSON with an empty implied para", () => {
@@ -570,6 +596,19 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
     expect(JSON.stringify(usj).includes(withZwsp)).toBe(true);
   });
 
+  /** The first serialized text node under `nodes`, depth-first, whose text contains `needle`. */
+  function findSerializedText(nodes: SerializedLexicalNode[], needle: string): SerializedTextNode {
+    const found = nodes
+      .flatMap(function flatten(node): SerializedLexicalNode[] {
+        const children = (node as { children?: SerializedLexicalNode[] }).children;
+        return [node, ...(Array.isArray(children) ? children.flatMap(flatten) : [])];
+      })
+      .find((node) => isSerializedTextNode(node) && node.text.includes(needle));
+    if (!found || !isSerializedTextNode(found))
+      throw new Error(`no serialized text containing ${needle}`);
+    return found;
+  }
+
   function buildPatchedStandardState(displayText: string) {
     const usj = usxStringToUsj(
       `<usx version="3.0"><book code="RUT" style="id" /><chapter number="1" style="c" /><para style="p"><verse number="1" style="v" />in the days</para></usx>`,
@@ -596,17 +635,40 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
     expect(JSON.stringify(roundTripped)).toContain(`in${NBSP}the days`);
   });
 
-  it("inverts display whitespace when deserializing editable+expanded standard view", () => {
-    // Expanded notes do not change that this is standard-view text: the display `~` (= data NBSP)
-    // and display-NBSP space run MUST invert on deserialization exactly as in collapsed standard
-    // view. Before the gating fix, editable+expanded skipped inversion, so a display `~` survived
-    // into the saved data as a literal tilde.
-    const state = buildPatchedStandardState(`in~the${NBSP}${NBSP}days`);
+  itInView("standard+expandedNotes")(
+    "inverts display whitespace when deserializing editable+expanded standard view",
+    () => {
+      // Expanded notes do not change that this is standard-view text: the display `~` (= data NBSP)
+      // and display-NBSP space run MUST invert on deserialization exactly as in collapsed standard
+      // view. Before the gating fix, editable+expanded skipped inversion, so a display `~` survived
+      // into the saved data as a literal tilde.
+      const state = buildPatchedStandardState(`in~the${NBSP}${NBSP}days`);
+      initializeDeserialize(undefined);
+      const standard = getViewOptions(STANDARD_VIEW_MODE);
+      if (!standard) throw new Error("standard view options not found");
+      const expandedStandard = { ...standard, noteMode: "expanded" as const };
+      const roundTripped = deserializeSerializedEditorState(state, expandedStandard);
+      expect(JSON.stringify(roundTripped)).toContain(`in${NBSP}the days`);
+    },
+  );
+
+  it("inverts display whitespace in a note's text when deserializing in the footnotes pane's row editor", () => {
+    // The row editor is Standard view with the note expanded: a display `~` (= data NBSP) and a
+    // display-NBSP space run in the note's text must invert exactly as in the text.
+    const paneRow = editorView("footnotes-pane-row");
+    const note: MarkerObject = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [{ type: "char", marker: "ft", content: ["in the days"] }],
+    };
+    initializeSerialize(undefined, undefined);
+    reset();
+    const state = serializeEditorState(paneRowScaffold(note), paneRow);
+    const text = findSerializedText(state.root.children, "in the days");
+    text.text = `in~the${NBSP}${NBSP}days`;
     initializeDeserialize(undefined);
-    const standard = getViewOptions(STANDARD_VIEW_MODE);
-    if (!standard) throw new Error("standard view options not found");
-    const expandedStandard = { ...standard, noteMode: "expanded" as const };
-    const roundTripped = deserializeSerializedEditorState(state, expandedStandard);
+    const roundTripped = deserializeSerializedEditorState(state, paneRow);
     expect(JSON.stringify(roundTripped)).toContain(`in${NBSP}the days`);
   });
 
@@ -657,6 +719,7 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
     const roundTripped = deserializeSerializedEditorState(
       state,
       getViewOptions(STANDARD_VIEW_MODE),
+      usj.version,
     );
     // Exact equality, not just a substring: the outer span's own glyph-adjacent separator
     // ("LORD", right after the opening glyph) is still stripped, and the byte after the nested
@@ -884,11 +947,11 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       if (!roundTripped) throw new Error("Expected a round-tripped USJ");
 
       const note = findNote(roundTripped);
-      // Both occurrences survive. The loose one loses only its leading space: Standard view
-      // collapses the space run it makes with the separator the writer puts after the caller.
+      // Both occurrences survive. Each loses only its leading space, which follows a separator
+      // the writer puts in front of it: the caller's for the loose one, `\ft`'s for the other.
       expect(note?.content).toEqual([
         callerLookalike.trimStart(),
-        { type: "char", marker: "ft", content: [callerLookalike] },
+        { type: "char", marker: "ft", content: [callerLookalike.trimStart()] },
       ]);
     });
 
@@ -1611,9 +1674,7 @@ describe("Note caller index vs the USJ note walk", () => {
   });
 
   // A paragraph-leading whitespace-only content string is where the standard-view display
-  // mapping and the reverse adaptor's lone-NBSP structural-spacer drop can meet: a lone " "
-  // rewritten to display NBSP becomes byte-identical to the engine's untagged spacers, so it
-  // was swallowed on save. Each variant pins the exact round trip.
+  // mapping and the reverse adaptor's lone-NBSP rule meet. Each variant pins the exact round trip.
   describe("paragraph-leading whitespace-only content string round trip", () => {
     function roundTripLeading(lead: string, viewMode: string): MarkerContent[] | undefined {
       const usj: Usj = {
@@ -1668,13 +1729,9 @@ describe("Note caller index vs the USJ note walk", () => {
       ]);
     });
 
-    // Known cost of the reverse adaptor's lone-NBSP byte test (documented at the test itself in
-    // editor-usj.adaptor.ts): outside standard view there is no display mapping to disguise a
-    // data NBSP, so a content string that is EXACTLY one NBSP is indistinguishable from an
-    // untagged structural spacer and is dropped. Pinned as-is: fixing it needs a per-context
-    // story for the untagged spacer shapes, not a byte-test tweak.
-    it("formatted view: drops a lone leading data NBSP (byte-test cost, pinned)", () => {
+    it("formatted view: preserves a lone leading data NBSP", () => {
       expect(roundTripLeading(NBSP, FORMATTED_VIEW_MODE)).toEqual([
+        NBSP,
         { type: "verse", marker: "v", number: "1" },
         "in the days",
       ]);

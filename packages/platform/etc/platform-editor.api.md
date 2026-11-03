@@ -602,6 +602,9 @@ export interface Thread {
 }
 
 // @public
+export function toUsfmNbspSpelling(displayText: string, viewOptions: ViewOptions | undefined): string;
+
+// @public
 export interface TransientInput {
     // (undocumented)
     kind: "marker-literal";
@@ -677,6 +680,7 @@ export const viewModeToViewNames: {
 
 // @public
 export interface ViewOptions {
+    allowInvisibleCharacters?: boolean;
     hasActiveTextFocusBox?: boolean;
     hasGutterParaMarkers?: boolean;
     hasSpacing: boolean;

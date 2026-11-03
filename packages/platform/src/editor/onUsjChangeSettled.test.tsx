@@ -1,5 +1,6 @@
 import Editor from "./Editor";
 import { EditorRef } from "./editor.model";
+import { EDITING_VIEWS, editorView, mountInView } from "./editorViews.test-helpers";
 import { mountStandardViewEditor } from "./settledGetUsj.test-helpers";
 import { $textContaining, twoParaUsj } from "./positions/positions.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -15,6 +16,7 @@ import {
   DeltaSource,
   FORMATTED_VIEW_MODE,
   getViewOptions,
+  ViewOptions,
 } from "shared-react";
 
 // Undo restores a caret while the root holds DOM focus; Lexical's scroll-into-view then reads an
@@ -45,10 +47,10 @@ interface Emission {
 const graceUsj = () =>
   twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God made"]);
 
-async function mountRecording() {
+async function mountRecording(view: ViewOptions = editorView("standard")) {
   const emissions: Emission[] = [];
   const holder: { get?: () => Usj | undefined } = {};
-  const mounted = await mountStandardViewEditor(graceUsj(), {
+  const mounted = await mountInView(graceUsj(), view, {
     onUsjChange: (usj, ops) => emissions.push({ usj, ops, getUsjNow: holder.get?.() }),
   });
   holder.get = () => mounted.ref.current?.getUsj() ?? undefined;
@@ -134,6 +136,19 @@ it("emits exactly once per content commit, synchronously", async () => {
   expect(emissions.length).toBe(before + 1);
 });
 
+it.each(EDITING_VIEWS)(
+  "emits exactly once per plain-text commit, synchronously ($name)",
+  async ({ view }) => {
+    const { lexical, emissions } = await mountRecording(view);
+    const before = emissions.length;
+    appendNow(lexical, "of God", " all");
+    expect(emissions.length).toBe(before + 1);
+    expect(JSON.stringify(emissions[before].usj)).toContain("of God made all");
+    await flush();
+    expect(emissions.length).toBe(before + 1);
+  },
+);
+
 it("emits once per commit after a reload re-registers the change listeners", async () => {
   const { lexical, ref, emissions } = await mountRecording();
   await act(async () => {
@@ -174,8 +189,8 @@ it("emits the settled document, synchronously, on an undo that restores a pendin
   expect(emissions.length).toBe(before + 1);
 });
 
-it("emits nothing for a selection-only commit", async () => {
-  const { lexical, emissions } = await mountRecording();
+it.each(EDITING_VIEWS)("emits nothing for a selection-only commit ($name)", async ({ view }) => {
+  const { lexical, emissions } = await mountRecording(view);
   const before = emissions.length;
   commitNow(lexical, () => $textContaining("of God").select(2, 2));
   await flush();
@@ -189,39 +204,49 @@ it("keeps ops in live delta coordinates", async () => {
   expect(emissions[before].ops?.length ?? 0).toBeGreaterThan(0);
 });
 
-it("emits nothing for a commit that changes no bytes, after the first load or a reload", async () => {
-  const { lexical, ref, emissions } = await mountRecording();
-  await flush();
-  const touchWithoutChange = (needle: string) =>
-    commitNow(lexical, () => $textContaining(needle).markDirty());
-  touchWithoutChange("of God");
-  await flush();
-  expect(emissions).toHaveLength(0);
-  await act(async () => {
-    ref.current?.setUsj(twoParaUsj(["In the beginning"]));
-    await Promise.resolve();
-  });
-  await flush();
-  touchWithoutChange("beginning");
-  await flush();
-  expect(emissions).toHaveLength(0);
-});
+it.each(EDITING_VIEWS)(
+  "emits nothing for a commit that changes no bytes, after the first load or a reload ($name)",
+  async ({ view }) => {
+    const { lexical, ref, emissions } = await mountRecording(view);
+    await flush();
+    const touchWithoutChange = (needle: string) =>
+      commitNow(lexical, () => $textContaining(needle).markDirty());
+    touchWithoutChange("of God");
+    await flush();
+    expect(emissions).toHaveLength(0);
+    await act(async () => {
+      ref.current?.setUsj(twoParaUsj(["In the beginning"]));
+      await Promise.resolve();
+    });
+    await flush();
+    touchWithoutChange("beginning");
+    await flush();
+    expect(emissions).toHaveLength(0);
+  },
+);
 
 // Standard view's export collapses a run of spaces, so a double space makes the load round trip
-// lossy; the single space is the control.
-it.each([
-  ["a lossless load", "In the beginning of God"],
-  ["a lossy load (a double space)", "In the  beginning of God"],
-])("emits nothing for a paragraph commit that changes no bytes after %s", async (_, text) => {
-  const emissions: Usj[] = [];
-  const { lexical } = await mountStandardViewEditor(twoParaUsj([text]), {
-    onUsjChange: (usj) => emissions.push(usj),
-  });
-  await flush();
-  commitNow(lexical, () => $textContaining("of God").getParentOrThrow().markDirty());
-  await flush();
-  expect(emissions).toHaveLength(0);
-});
+// lossy there; the single space is the control. The views that keep a double space run both too.
+it.each(
+  EDITING_VIEWS.flatMap(({ name, view }) =>
+    [
+      { load: "a lossless load", text: "In the beginning of God" },
+      { load: "a lossy load (a double space)", text: "In the  beginning of God" },
+    ].map((row) => ({ ...row, name, view })),
+  ),
+)(
+  "emits nothing for a paragraph commit that changes no bytes after $load ($name)",
+  async ({ text, view }) => {
+    const emissions: Usj[] = [];
+    const { lexical } = await mountInView(twoParaUsj([text]), view, {
+      onUsjChange: (usj) => emissions.push(usj),
+    });
+    await flush();
+    commitNow(lexical, () => $textContaining("of God").getParentOrThrow().markDirty());
+    await flush();
+    expect(emissions).toHaveLength(0);
+  },
+);
 
 /** The text of the first paragraph of `usj`, which `twoParaUsj` fills. */
 function firstParaText(usj: Usj | undefined): unknown {
@@ -327,40 +352,43 @@ it.each([
   },
 );
 
-it("announces a local applyUpdate exactly once, with the caller's ops and the inserted node", async () => {
-  const emissions: {
-    ops: DeltaOp[] | undefined;
-    source: DeltaSource | undefined;
-    insertedNodeKey: string | undefined;
-  }[] = [];
-  const { lexical, ref } = await mountStandardViewEditor(graceUsj(), {
-    onUsjChange: (_usj, ops, source, insertedNodeKey) =>
-      emissions.push({ ops, source, insertedNodeKey }),
-  });
-  await flush();
-  // Just after "In the " — addressed in "apply" coordinates, the ones `applyUpdate` reads.
-  const retain =
-    (lexical
-      .getEditorState()
-      .read(() => $getOTPositionOfNode($textContaining("In the "), "apply")) ?? 0) +
-    "In the ".length;
-  const ops: DeltaOp[] = [
-    { retain },
-    { insert: { note: { style: "f", caller: "+", contents: { ops: [{ insert: "a note" }] } } } },
-  ];
-  act(() => ref.current?.applyUpdate(ops, "local"));
-  await flush();
-  expect(emissions).toHaveLength(1);
-  expect(emissions[0].ops).toBe(ops);
-  expect(emissions[0].source).toBe("local");
-  const insertedNodeKey = emissions[0].insertedNodeKey;
-  expect(insertedNodeKey).toBeDefined();
-  expect(
-    lexical.getEditorState().read(() => $isNoteNode($getNodeByKey(insertedNodeKey ?? ""))),
-  ).toBe(true);
-});
+it.each(EDITING_VIEWS)(
+  "announces a local applyUpdate exactly once, with the caller's ops and the inserted node ($name)",
+  async ({ view }) => {
+    const emissions: {
+      ops: DeltaOp[] | undefined;
+      source: DeltaSource | undefined;
+      insertedNodeKey: string | undefined;
+    }[] = [];
+    const { lexical, ref } = await mountInView(graceUsj(), view, {
+      onUsjChange: (_usj, ops, source, insertedNodeKey) =>
+        emissions.push({ ops, source, insertedNodeKey }),
+    });
+    await flush();
+    // Just after "In the " — addressed in "apply" coordinates, the ones `applyUpdate` reads.
+    const retain =
+      (lexical
+        .getEditorState()
+        .read(() => $getOTPositionOfNode($textContaining("In the "), "apply")) ?? 0) +
+      "In the ".length;
+    const ops: DeltaOp[] = [
+      { retain },
+      { insert: { note: { style: "f", caller: "+", contents: { ops: [{ insert: "a note" }] } } } },
+    ];
+    act(() => ref.current?.applyUpdate(ops, "local"));
+    await flush();
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0].ops).toBe(ops);
+    expect(emissions[0].source).toBe("local");
+    const insertedNodeKey = emissions[0].insertedNodeKey;
+    expect(insertedNodeKey).toBeDefined();
+    expect(
+      lexical.getEditorState().read(() => $isNoteNode($getNodeByKey(insertedNodeKey ?? ""))),
+    ).toBe(true);
+  },
+);
 
-describe("a remote applyUpdate", () => {
+describe.each(EDITING_VIEWS)("a remote applyUpdate ($name)", ({ view }) => {
   interface SourcedEmission {
     usj: Usj;
     ops: DeltaOp[] | undefined;
@@ -369,7 +397,7 @@ describe("a remote applyUpdate", () => {
 
   async function mountSourced() {
     const emissions: SourcedEmission[] = [];
-    const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning"]), {
+    const mounted = await mountInView(twoParaUsj(["In the beginning"]), view, {
       onUsjChange: (usj, ops, source) => emissions.push({ usj, ops, source }),
     });
     await flush();
@@ -411,7 +439,7 @@ describe("a remote applyUpdate", () => {
   it("called inside an update of the editor is applied and announced once, with its ops", async () => {
     const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
     const emissions: SourcedEmission[] = [];
-    const { lexical, ref } = await mountStandardViewEditor(twoParaUsj(["In the beginning"]), {
+    const { lexical, ref } = await mountInView(twoParaUsj(["In the beginning"]), view, {
       onUsjChange: (usj, ops, source) => emissions.push({ usj, ops, source }),
       logger,
     });

@@ -59,6 +59,7 @@ import { $isCharNode, CharNode } from "./CharNode.js";
 import { MilestoneNode, MS_NON_ATTRIBUTE_PROPS } from "./MilestoneNode.js";
 import { UnknownAttributes } from "./node-constants.js";
 import { getEditableCallerText, openingMarkerText } from "./markerText.utils.js";
+import { nbspValueToDisplay } from "./nbspDisplaySpelling.utils.js";
 import { NoteNode } from "./NoteNode.js";
 import { $isVerseNode, VerseNode } from "./VerseNode.js";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
@@ -71,15 +72,19 @@ export const ATTRIBUTE_EXCLUDED_KEYS: ReadonlySet<string> = new Set(["closed"]);
  * The canonical PT9 byte form of an attribute set, including the leading `|` — or `""` when
  * nothing displays. A lone attribute that IS the marker's default collapses to the bare value
  * (`|gloss`); everything else is explicit `name="value"` pairs, double-quoted, single-spaced,
- * insertion order. Values are kept byte-exact (ParatextData treats trailing space as value).
+ * insertion order. Values are kept byte-exact (ParatextData treats trailing space as value), but
+ * for the spelling of a no-break space: `nbspSpelling` is what the display shows one as
+ * (`nbspValueToDisplay`), so a value's U+00A0 is never read back as display spacing.
  */
 export function canonicalAttributeText(
   attributes: { [name: string]: string | undefined },
   defaultAttributeName?: string,
+  nbspSpelling?: string,
 ): string {
-  const entries = Object.entries(attributes).filter(
-    ([name, value]) => value !== undefined && !ATTRIBUTE_EXCLUDED_KEYS.has(name),
-  );
+  const entries: [string, string][] = [];
+  for (const [name, value] of Object.entries(attributes))
+    if (value !== undefined && !ATTRIBUTE_EXCLUDED_KEYS.has(name))
+      entries.push([name, nbspValueToDisplay(value, nbspSpelling)]);
   if (entries.length === 0) return "";
   // The bare-value collapse requires a NON-EMPTY value: a lone `|` is a byte sequence the
   // tokenizer refuses outright (`parseAttributeText`, PT9 parity), so collapsing an empty

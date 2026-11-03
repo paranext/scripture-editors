@@ -22,6 +22,7 @@ import { TypedMarkNode } from "shared";
 import {
   $getRangeFromUsjSelection,
   $getUsjSelectionFromEditor,
+  getNbspSpelling,
   getViewOptions,
   STANDARD_VIEW_MODE,
   usjReactNodes,
@@ -57,7 +58,9 @@ export function $selectionToUsfmViaStandardView(
   return standardView.state.read(
     () => {
       const selection = $getRangeFromUsjSelection(range, standardView.standardViewOptions);
-      return selection ? $selectionToUsfmText(selection) : undefined;
+      return selection
+        ? $selectionToUsfmText(selection, getNbspSpelling(standardView.standardViewOptions))
+        : undefined;
     },
     { editor: standardView.editor },
   );
@@ -97,8 +100,14 @@ function rebuildAsStandardView(
   source: EditorState,
   viewOptions: ViewOptions,
 ): StandardViewRebuild | undefined {
-  const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
-  if (!standardViewOptions) return undefined;
+  const standardModeOptions = getViewOptions(STANDARD_VIEW_MODE);
+  if (!standardModeOptions) return undefined;
+  // Carries the project's `allowInvisibleCharacters` over, so the copy spells `~` and U+00A0 as a
+  // Standard-view copy of the same project does.
+  const standardViewOptions: ViewOptions = {
+    ...standardModeOptions,
+    allowInvisibleCharacters: viewOptions.allowInvisibleCharacters,
+  };
   const usj = editorUsjAdaptor.deserializeEditorState(source, viewOptions);
   if (!usj) return undefined;
   const standardEditor = createEditor({

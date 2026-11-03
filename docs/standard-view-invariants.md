@@ -418,6 +418,98 @@ string `"made"` — ParatextData produces the same USJ from that input. The sett
 before a typed `\c`, `\tr`, `\esb` or `\esbe` that ParatextData trims on save; positions count only
 non-whitespace bytes, so the kept space never moves one.
 
+### A no-break space has one spelling per project
+
+Standard view holds a stored no-break space (U+00A0) as a distinct, editable character, because a
+display NBSP means a space (a run member or a separator) everywhere in the engine. Which character
+depends on the project, through `ViewOptions.allowInvisibleCharacters` (Paratext's
+`AllowInvisibleChars`):
+
+- **Off (default):** `~`, Paratext's own USFM spelling, shown as `~`. The project cannot hold a
+  literal tilde in body text — ParatextData reads `~` back as U+00A0 there — so the USJ's text
+  never contains one. An attribute value can (below).
+- **On:** the project stores U+00A0 itself and `~` is an ordinary character, so a stored U+00A0 is
+  held as `NBSP_STAND_IN` (U+001A, SUBSTITUTE) and `~` is never touched. The `PlatformEditorNbspStandIn`
+  font face (one empty glyph a quarter of an em wide, `unicode-range: U+1A`, added to the document
+  by the editor) draws it as a blank the width of a space, so it looks like the no-break space it is.
+  A browser draws a control character as a visible box unless the FIRST family in the element's
+  font stack has a glyph for it, so that family leads every Scripture `font-family` —
+  `generateUsjCss` emits it first, and `usj-nodes.css` (and every host copy of it) puts it in front
+  of `--usj-font-fallback`. The library does not export the name: a host stylesheet spells
+  `PlatformEditorNbspStandIn` itself, so the name is part of the contract and must not change.
+
+Why U+001A: no project text can hold it. ParatextData's `ScrText.GetText` turns U+0001–U+0008 and
+U+000E–U+001F into spaces on every read (measured), so the stand-in collides with nothing. Its
+Unicode properties fit a no-break space: bidi class BN, line-break class CM (no break before it),
+one grapheme. Not U+0000 (`SIGNATURE_SEPARATOR` in `settledScopes.utils.ts`), nor U+000B/U+000C
+(whitespace to JavaScript's `\s`), nor U+001C–U+001F (bidi paragraph and segment separators).
+
+The stand-in is internal and must never leave the editor, and nothing from outside may become it:
+
+- **Out:** every boundary gives U+00A0 — `getUsj`/`onUsjChange`, the delta ops `onUsjChange` and the
+  note-op getters return (`opsForHost`, which also gives a space for an NBSP the view shows in a
+  space run, so a U+00A0 in the ops is always a no-break space or a marker's own separator), the
+  copy and cut flavors (`$selectionToUsfmText` writes U+00A0; the internal Lexical flavor is left
+  out when the selection holds a stand-in), the drag data (`$setStandardViewDragData`, the same USFM
+  a copy writes), annotation callbacks' text, and note-caller previews. Text a host reads from the
+  DOM still holds it; `toUsfmNbspSpelling` turns it back.
+- **In:** every C0 control character but tab, line feed and carriage return becomes a space before
+  anything else reads the text (`controlCharactersToSpaces`) — a load
+  (`usjWithoutControlCharacters`, attribute values included), a paste or a drop
+  (`getDataTransferPayload`), typing (`registerTypedNbspSpelling`), applied ops (`opsFromHost`) — in
+  either setting. U+0001–U+0008 and U+000E–U+001F become spaces as ParatextData would read them
+  back; ParatextData keeps U+000B and U+000C, which become spaces on purpose, since JavaScript's
+  `\s` reads them as whitespace. Then a U+00A0 that is data becomes the stand-in: typed, pasted or
+  dropped (every U+00A0 but an opening marker's separator — `normalizePastedNbsp`), or in applied ops when it is not a marker's
+  separator or a lone spacer.
+- **The tokenizer** keeps the spellings as characters: `regularizeSpaces` would otherwise turn a
+  control character into a space before `UsfmFragmentOptions.nbspSpelling` (or
+  `attributeNbspSpelling`) maps it to U+00A0.
+
+Every layer that turns body display or fragment text into data, or data into display, takes the
+spelling from `getNbspSpelling(viewOptions)` and never writes a literal `~`: the load and save
+adaptors, the settle's fragment tokenizer (`UsfmFragmentOptions.nbspSpelling`), the Unformatted
+view's content fragments, paste, drop, copy (the copy writes U+00A0 itself when the spelling is not
+`~`), and a typed U+00A0 (kept as the spelling when it is not `~`; a space otherwise, as in Paratext
+9). A layer that spelled it on its own would load under one spelling and save under another.
+
+An attribute value — a char span's `|lemma`, a milestone's `who`, a figure's `src`, a note's or
+sidebar's `\cat`, a verse's `\va`/`\vp`, a chapter's `\ca`/`\cp` — is text on screen too, but
+Paratext keeps its bytes as they are under either setting: `UsfmParser` reads `~` as U+00A0 only in
+body text, and the attribute lists and folded `\va`/`\vp`/`\ca`/`\cp`/`\cat` values are written byte
+for byte. So a value's `~` is an ordinary character in every project, and a value's U+00A0 takes
+`ATTRIBUTE_NBSP_SPELLING` (`NBSP_STAND_IN`) in Standard view whatever the body text's spelling
+(`\w g|lemma="h<U+001A>i~j"\w*`). The adaptor spells it as it builds each run
+(`canonicalAttributeText`/`unknownDisplayParts`/`nbspValueToDisplay` with `attributeNbspSpelling()`);
+the display-run syncs, which redraw a run from node state and never see view options, read
+`$getAttributeNbspDisplaySpelling`, which answers `ATTRIBUTE_NBSP_SPELLING` wherever
+`MarkerEditPlugin` registered a body spelling for the editor (`registerNbspDisplaySpelling`), as do
+a collapsed note's copied `\cat` and the annotation byte maps. The settle tokenizes with
+`UsfmFragmentOptions.attributeNbspSpelling` (`tokenizeFragment`, `chapterFragmentContent`), which
+reads the stand-in as U+00A0 in a milestone's, figure's or char span's attribute list and in a folded
+value, and keeps every other byte. A char span's `|…` list is part of its content until the span
+closes, so the tokenizer reads body text last (`finishContent`), after `extractAttributes` has read
+the list with its bytes intact. In note content a `\cat` span opening the fragment is the note's
+category (the note-content settle folds it, `extractLeadingCategoryFold`), so its text is read as a
+value too. The stand-in is never data, so the tokenizer reads it as U+00A0 in body text as well.
+
+Two places stay body text, because they are body text to Paratext: a `\periph` line (its title and
+its attributes) keeps the body spelling, and the `|…` bytes a span leaves behind when it is
+unwrapped or emptied (`$unknownAttributesText`, `$removeCharKeepingAttributeBytes`) are written with
+`$getNbspDisplaySpelling`, so with the setting off a `~` among them becomes a no-break space, as it
+does in Paratext 9's file. A `\vp` that is not folded into its verse is a char span, and its text is
+body text.
+
+Out of the editor a value's stand-in becomes U+00A0 like any other: the copy
+(`$selectionToUsfmText`) and `toUsfmNbspSpelling` turn it back under either setting and leave `~`
+alone. A paste reads a pasted U+00A0 as body text's spelling (`normalizePastedNbsp`), so with the
+setting off a value's copied U+00A0 pastes back as `~` — Paratext 9's paste does the same. A paste
+landing wholly inside one value node skips that rule (paste ≡ typing), so a pasted U+00A0 there is
+display spacing and settles as a space under either setting, and a pasted `~` is a `~`. Outside
+Standard view a value shows U+00A0 itself; the Unformatted view's settle spells it
+`ATTRIBUTE_NBSP_SPELLING` past the run's leading separator (`attributeFragmentText`), so its `~`
+survives too.
+
 ---
 
 ## 3. What applying a marker DOES to the document
@@ -454,7 +546,14 @@ The host owns which KEY does what (see its half); this repo owns the resulting d
 **Space runs collapse on save; the display is deliberately NOT collapsed to match.** Type `a  b` and
 after a settle the screen keeps both spaces while the file gets one, indefinitely. That is a real,
 permanent screen-vs-file divergence, ratified anyway: it models Paratext 9's `RegularizeSpaces`, and
-normalizing the display instead would delete a byte under the user's caret.
+normalizing the display instead would delete a byte under the user's caret. The same holds for spaces
+right after a marker's separator — at a paragraph's start, after a verse number, and at the start of
+a char span's content (`\nd  things` saves as `\nd things`): Paratext 9's tokenizer skips all
+whitespace after an opening marker, so the screen keeps them and the file does not. That includes a
+span holding nothing but spaces (a selected space wrapped in `\nd`): Paratext 9 saves `\nd  \nd*` as
+the empty `\nd \nd*`, so the words on either side join in the file. A no-break space (`~`, or the stand-in
+where `~` is an ordinary character — see "A no-break space has one spelling per project") is data,
+never one of these spaces: `\nd ~lead\nd*` and `\nd ~\nd*` keep it.
 
 Positions do not diverge with it. The logical content model drops a displayed run's extra spaces
 from its coordinates exactly where serialization drops them, from one shared definition
@@ -470,7 +569,8 @@ The related-but-opposite rule, and NOT an exception to anything: a space the use
 marker is inserted, stays visible, and leaves the caret immediately after it — in a verse or chapter
 glyph's separator run, after a char opener, and inside any of the five display runs (`va`, `vp`,
 `ca`, `cp`, `cat`). The file is unaffected either way because the writer emits structural whitespace
-itself. Accepting that keystroke and discarding it would be the no-silent-no-ops failure.
+itself and, after a char opener, the space is one Paratext 9 skips (above). Accepting that keystroke
+and discarding it from the screen would be the no-silent-no-ops failure.
 
 **Multi-step undo for a palette item apply** is intentional. (Settles are not part of this — see
 Invariant IV.)

@@ -37,7 +37,7 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
   it("emits the base rule and per-marker rules (ltr, zoom 1)", () => {
     expect(generateUsjCss(styleInfo)).toBe(
       [
-        '.editor-input.usfm { font-family: "Charis SIL", var(--usj-font-fallback, serif); font-size: 12pt; }',
+        '.editor-input.usfm { font-family: "PlatformEditorNbspStandIn", "Charis SIL", var(--usj-font-fallback, serif); font-size: 12pt; }',
         ".editor-input.usfm .usfm_s1 { font-weight: bold; color: #003380; font-size: 116%; margin-top: 8pt; margin-bottom: 4pt; text-align: center; }",
         ".editor-input.usfm .usfm_q1 { text-indent: -10vw; margin-left: 25vw; line-height: 1.5; }",
         ".editor-input.usfm .usfm_v { vertical-align: text-top; font-size: 66%; white-space: nowrap; unicode-bidi: embed; }",
@@ -57,14 +57,14 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
       markers: { wj: { marker: "wj", styleType: "character", fontName: "Also Nonexistent" } },
     });
     expect(css).toContain(
-      '.editor-input.usfm { font-family: "Nonexistent Project Font", var(--usj-font-fallback, serif); font-size: 12pt; }',
+      '.editor-input.usfm { font-family: "PlatformEditorNbspStandIn", "Nonexistent Project Font", var(--usj-font-fallback, serif); font-size: 12pt; }',
     );
     // The project's own default sits between a marker font and the chain: a marker font that is
     // unavailable should land on what the rest of the project's text is already using. Without it,
     // a project whose default font is not Latin shows the marker's runs in a Latin serif while the
     // text around them stays in the project font — a typeface break mid-verse.
     expect(css).toContain(
-      '.editor-input.usfm .usfm_wj { font-family: "Also Nonexistent", "Nonexistent Project Font", var(--usj-font-fallback, serif); }',
+      '.editor-input.usfm .usfm_wj { font-family: "PlatformEditorNbspStandIn", "Also Nonexistent", "Nonexistent Project Font", var(--usj-font-fallback, serif); }',
     );
   });
 
@@ -74,7 +74,7 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
       markers: { wj: { marker: "wj", styleType: "character", fontName: "Charis SIL" } },
     });
     expect(css).toContain(
-      '.editor-input.usfm .usfm_wj { font-family: "Charis SIL", var(--usj-font-fallback, serif); }',
+      '.editor-input.usfm .usfm_wj { font-family: "PlatformEditorNbspStandIn", "Charis SIL", var(--usj-font-fallback, serif); }',
     );
   });
 
@@ -90,7 +90,7 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
   it("flips margins and justification under rtl and scales with zoom", () => {
     const css = generateUsjCss(styleInfo, { zoom: 2, rtl: true });
     expect(css).toContain(
-      '.editor-input.usfm { font-family: "Charis SIL", var(--usj-font-fallback, serif); font-size: 24pt; }',
+      '.editor-input.usfm { font-family: "PlatformEditorNbspStandIn", "Charis SIL", var(--usj-font-fallback, serif); font-size: 24pt; }',
     );
     expect(css).toContain("margin-right: 50vw"); // q1 leftMargin flipped + zoomed
     expect(css).toContain("text-indent: -20vw");
@@ -121,7 +121,7 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
         ".editor-input.usfm .usfm_pd { line-height: 2; }",
         ".editor-input.usfm .usfm_p3 { font-weight: bold; }",
         ".editor-input.usfm .usfm_em { font-style: italic; text-decoration: underline; }",
-        '.editor-input.usfm .usfm_wj { font-family: "Andika", var(--usj-font-fallback, serif); }',
+        '.editor-input.usfm .usfm_wj { font-family: "PlatformEditorNbspStandIn", "Andika", var(--usj-font-fallback, serif); }',
         ".editor-input.usfm .usfm_zsub { vertical-align: text-bottom; font-size: 66%; }",
         ".editor-input.usfm .usfm_fr { font-size: 116%; vertical-align: text-top; font-size: 66%; }",
       ].join("\n"),
@@ -144,7 +144,7 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
     expect(generateUsjCss(smallBaseStyleInfo)).toBe(
       [
         // The base rule carries the non-default project size…
-        '.editor-input.usfm { font-family: "Charis SIL", var(--usj-font-fallback, serif); font-size: 10pt; }',
+        '.editor-input.usfm { font-family: "PlatformEditorNbspStandIn", "Charis SIL", var(--usj-font-fallback, serif); font-size: 10pt; }',
         // …and the marker percentages stay /12: floor(14*100/12) = 116, NOT floor(14*100/10) = 140.
         ".editor-input.usfm .usfm_s1 { font-size: 116%; }",
         // floor(9*100/12) = 75, NOT floor(9*100/10) = 90.
@@ -228,13 +228,13 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
       const css = generateUsjCss({
         markers: { x: { marker: "x", styleType: "character", fontName: 'Bad" }' } },
       });
-      expect(css).toContain('font-family: "Bad\\" }"'); // quote escaped, stays inside the string
+      expect(css).toContain('font-family: "PlatformEditorNbspStandIn", "Bad\\" }"'); // quote escaped, stays inside the string
       expect(css).not.toContain('"Bad" }"'); // a raw quote would end the string early
     });
 
     it("escapes double quotes in the project defaultFont", () => {
       const css = generateUsjCss({ defaultFont: 'Bad" }', defaultFontSize: 12, markers: {} });
-      expect(css).toContain('font-family: "Bad\\" }"');
+      expect(css).toContain('font-family: "PlatformEditorNbspStandIn", "Bad\\" }"');
     });
 
     it("keeps valid colors (hex, rgb(), named)", () => {
@@ -283,7 +283,9 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
       });
       expect(css).not.toContain("</style>");
       expect(css).not.toContain("<script>");
-      expect(css).toContain('font-family: "\\3C /style\\3E \\3C script\\3E ');
+      expect(css).toContain(
+        'font-family: "PlatformEditorNbspStandIn", "\\3C /style\\3E \\3C script\\3E ',
+      );
     });
 
     it("escapes angle brackets in a marker fontName", () => {
@@ -291,7 +293,7 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
         markers: { x: { marker: "x", styleType: "character", fontName: "</style>" } },
       });
       expect(css).not.toContain("</style>");
-      expect(css).toContain('font-family: "\\3C /style\\3E "');
+      expect(css).toContain('font-family: "PlatformEditorNbspStandIn", "\\3C /style\\3E "');
     });
 
     it("escapes special characters in the marker used for the .usfm_<marker> selector", () => {
@@ -438,20 +440,24 @@ describe("generateUsjFontCss", () => {
     const options = { zoom: 2, containerSelector: ".x" };
     expect(generateUsjFontCss(base, options)).toBe(generateUsjCss(base, options));
     expect(generateUsjFontCss(base, options)).toBe(
-      `.x { font-family: "Ezra SIL", ${FALLBACK}; font-size: 25pt; }`,
+      `.x { font-family: "PlatformEditorNbspStandIn", "Ezra SIL", ${FALLBACK}; font-size: 25pt; }`,
     );
   });
 
   it("follows a marker font with the project default font, then the fallback", () => {
     expect(
       generateUsjFontCss({ defaultFont: "Ezra SIL", markers: fontMarker("nd", "Noto") }),
-    ).toContain(`${SCOPE} .usfm_nd { font-family: "Noto", "Ezra SIL", ${FALLBACK}; }`);
+    ).toContain(
+      `${SCOPE} .usfm_nd { font-family: "PlatformEditorNbspStandIn", "Noto", "Ezra SIL", ${FALLBACK}; }`,
+    );
   });
 
   it("does not repeat the default font after a marker font equal to it", () => {
     expect(
       generateUsjFontCss({ defaultFont: "Ezra SIL", markers: fontMarker("nd", "Ezra SIL") }),
-    ).toContain(`${SCOPE} .usfm_nd { font-family: "Ezra SIL", ${FALLBACK}; }`);
+    ).toContain(
+      `${SCOPE} .usfm_nd { font-family: "PlatformEditorNbspStandIn", "Ezra SIL", ${FALLBACK}; }`,
+    );
   });
 
   it("emits only the font family for a marker that also sets other presentation", () => {
@@ -469,7 +475,9 @@ describe("generateUsjFontCss", () => {
         },
       },
     });
-    expect(css).toBe(`${SCOPE} .usfm_p { font-family: "X", ${FALLBACK}; }`);
+    expect(css).toBe(
+      `${SCOPE} .usfm_p { font-family: "PlatformEditorNbspStandIn", "X", ${FALLBACK}; }`,
+    );
   });
 
   it("emits no rule for a marker without a font name", () => {
@@ -505,7 +513,7 @@ describe("generateUsjFontCss", () => {
     expect(generateUsjFontCss({ defaultFontSize: size, markers: {} })).toBe("");
     expect(
       generateUsjFontCss({ defaultFont: "Ezra SIL", defaultFontSize: size, markers: {} }),
-    ).toBe(`${SCOPE} { font-family: "Ezra SIL", ${FALLBACK}; }`);
+    ).toBe(`${SCOPE} { font-family: "PlatformEditorNbspStandIn", "Ezra SIL", ${FALLBACK}; }`);
   });
 
   it.each([0, -1, NaN, Infinity])("omits a marker size of %s from generateUsjCss", (size) => {
@@ -522,9 +530,11 @@ describe("generateUsjFontCss", () => {
       defaultFont: 'A\\B"C',
       markers: fontMarker("nd", 'D\\E"F'),
     };
-    const family = `"D\\\\E\\"F", "A\\\\B\\"C", ${FALLBACK}`;
+    const family = `"PlatformEditorNbspStandIn", "D\\\\E\\"F", "A\\\\B\\"C", ${FALLBACK}`;
     for (const css of [generateUsjFontCss(styles), generateUsjCss(styles)]) {
-      expect(css).toContain(`${SCOPE} { font-family: "A\\\\B\\"C", ${FALLBACK}; }`);
+      expect(css).toContain(
+        `${SCOPE} { font-family: "PlatformEditorNbspStandIn", "A\\\\B\\"C", ${FALLBACK}; }`,
+      );
       expect(css).toContain(`${SCOPE} .usfm_nd { font-family: ${family}; }`);
     }
   });
@@ -541,7 +551,9 @@ describe("generateUsjFontCss", () => {
       { markers: fontMarker("nd", "Noto") },
       { containerSelector: ".x { } body" },
     );
-    expect(css).toBe(`${SCOPE} .usfm_nd { font-family: "Noto", ${FALLBACK}; }`);
+    expect(css).toBe(
+      `${SCOPE} .usfm_nd { font-family: "PlatformEditorNbspStandIn", "Noto", ${FALLBACK}; }`,
+    );
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("[generateUsjFontCss]"));
     warn.mockRestore();
   });
@@ -553,7 +565,9 @@ describe("generateUsjFontCss", () => {
       { defaultFont: "Noto", defaultFontSize: 12, markers: {} },
       { containerSelector: footnoteRows },
     );
-    expect(css).toBe(`${footnoteRows} { font-family: "Noto", ${FALLBACK}; font-size: 12pt; }`);
+    expect(css).toBe(
+      `${footnoteRows} { font-family: "PlatformEditorNbspStandIn", "Noto", ${FALLBACK}; font-size: 12pt; }`,
+    );
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });

@@ -23,6 +23,7 @@ import {
 } from "lexical";
 import {
   $createMarkerNode,
+  $getNbspDisplaySpelling,
   $createMarkerTrailingSeparator,
   $isCharNode,
   $isMarkerNode,
@@ -479,16 +480,23 @@ export function $paraMarkerDeletionTransform(para: ParaNode, context: MarkerEdit
 
 /** The canonical `|…` attribute bytes for a span whose glyphs are being dropped (PT9 keeps these
  * as literal bytes when the span is unwrapped), or `undefined` when there are none. Routed through
- * {@link canonicalAttributeText} — the one PT9 serializer — so the reconstructed bytes are
- * byte-identical to the span's own display run (a lone default attribute collapses to `|value`,
- * everything else is `|name="value" …`) rather than a second, divergent rendering. `closed` is
- * excluded there: it is derived USJ metadata (ParatextData emits `closed="false"` on char spans
- * with no explicit closing marker — extremely common on footnote-content chars like `\fr`/`\ft`),
- * not user bytes, and paranext-core's USFM writer likewise never emits it as an attribute. */
-function unknownAttributesText(char: CharNode): string | undefined {
+ * {@link canonicalAttributeText} — the one PT9 serializer — so the reconstructed bytes have the
+ * span's own display run's shape (a lone default attribute collapses to `|value`, everything else is
+ * `|name="value" …`) rather than a second, divergent rendering. They are body text from here on, as
+ * they are in Paratext 9's file, so a value's no-break space is spelled as body text spells one,
+ * and a `~` among them is read as a no-break space wherever body text reads `~` that way.
+ * `closed` is excluded there: it is derived USJ metadata (ParatextData emits `closed="false"` on
+ * char spans with no explicit closing marker — extremely common on footnote-content chars like
+ * `\fr`/`\ft`), not user bytes, and paranext-core's USFM writer likewise never emits it as an
+ * attribute. */
+function $unknownAttributesText(char: CharNode): string | undefined {
   const attributes = char.getUnknownAttributes();
   if (!attributes) return undefined;
-  const text = canonicalAttributeText(attributes, defaultMarkerAttribute(char.getMarker()));
+  const text = canonicalAttributeText(
+    attributes,
+    defaultMarkerAttribute(char.getMarker()),
+    $getNbspDisplaySpelling(),
+  );
   return text === "" ? undefined : text;
 }
 
@@ -507,7 +515,7 @@ export function $unwrapCharNode(char: CharNode): void {
   // PT9 leaves an unknown-attribute span's attributes as literal bytes on unwrap. The char node
   // is about to be dropped, so reconstruct the canonical `|…` suffix as plain text after the
   // content (where the closer glyph used to be) so the bytes survive serialization.
-  const attributesText = unknownAttributesText(char);
+  const attributesText = $unknownAttributesText(char);
   if (attributesText) children.push($createTextNode(attributesText));
   // Reinsert AFTER the span (in order), then drop the span — never insertBefore. The tree comes
   // out identical either way, but not the caret: a collapsed ELEMENT point at the span's own

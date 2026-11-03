@@ -18,6 +18,7 @@ export * from "./HiddenContentDeleteGuardPlugin";
 export * from "./KeyDownCaretSyncPlugin";
 export * from "./LoadStatePlugin";
 export * from "./NoteCallerHighlightPlugin";
+export * from "./NoteEnterGuardPlugin";
 export * from "./NoteNodePlugin";
 export * from "./NoteShellCaretGuardPlugin";
 export * from "./OnSelectionChangePlugin";
