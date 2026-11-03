@@ -42,11 +42,13 @@ import {
   $createMarkerNode,
   $createNoteNode,
   $createParaNode,
+  $createVerseNode,
   $isCharNode,
   $isImmutableChapterNode,
   $isMarkerNode,
   $isNoteNode,
   $isParaNode,
+  $isVerseNode,
   CharNode,
   charIdState,
   closingMarkerText,
@@ -374,9 +376,46 @@ describe("USJ Marker Action Utils", () => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) throw new Error("Expected a range selection");
         expect(selection.isCollapsed()).toBe(true);
-        expect(selection.anchor.type).toBe("element");
-        expect(selection.anchor.key).toBe(para.getKey());
-        expect(selection.anchor.offset).toBe(insertedNode.getIndexWithinParent() + 1);
+        expect(selection.focus.type).toBe("element");
+        expect(selection.focus.key).toBe(para.getKey());
+        expect(selection.focus.offset).toBe(insertedNode.getIndexWithinParent() + 1);
+      });
+    });
+
+    it("at the end of a paragraph in markerMode 'editable', with the caret at the end of the new verse's marker text", () => {
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        verse1Text = $createTextNode("verse one");
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          $createParaNode().append($createVerseNode("1"), verse1Text),
+        );
+      });
+      const markerAction = getUsjMarkerAction(
+        "v",
+        expandedNoteKeyRef,
+        getViewOptions(STANDARD_VIEW_MODE),
+        undefined,
+        undefined,
+        { discrete: true },
+      );
+      updateSelection(editor, verse1Text);
+
+      markerAction.action({ editor, reference });
+
+      editor.getEditorState().read(() => {
+        const para = $getRoot().getChildren()[1];
+        if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+        const insertedNode = para.getLastChild();
+        if (!$isVerseNode(insertedNode)) throw new Error("Inserted node is not an editable verse");
+        expect(insertedNode.getNumber()).toBe("2");
+        // The editable marker's own text ends in this verse, so the caret rests there - no caret
+        // host is wanted after an editable marker.
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("Expected a range selection");
+        expect(selection.isCollapsed()).toBe(true);
+        expect(selection.focus.type).toBe("text");
+        expect(selection.focus.key).toBe(insertedNode.getKey());
+        expect(selection.focus.offset).toBe(insertedNode.getTextContentSize());
       });
     });
   });
