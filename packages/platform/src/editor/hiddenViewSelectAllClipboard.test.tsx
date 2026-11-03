@@ -14,13 +14,19 @@ import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
   $getRoot,
+  $isElementNode,
   $setSelection,
   COPY_COMMAND,
   CUT_COMMAND,
   PASTE_COMMAND,
   SELECT_ALL_COMMAND,
 } from "lexical";
-import { NODE_COPY_HTML_ATTRIBUTE, StructureProtectionMode } from "shared-react";
+import { $isParaLikeNode } from "shared";
+import {
+  $placeCaretAtParaContentStart,
+  NODE_COPY_HTML_ATTRIBUTE,
+  StructureProtectionMode,
+} from "shared-react";
 
 const NOTE = {
   type: "note",
@@ -163,17 +169,22 @@ describe.each(CHAPTERS)("Select All in $name", ({ front }) => {
 
         await ctrlV(mounted, store);
 
-        // The copy's front matter goes before the chapter line, after the document's own; the first
-        // pasted Scripture paragraph joins the one at the caret, and the editor puts its own space
-        // before the verse that now follows text.
+        // Everything goes in at the caret, the copy's front matter included: the selection the paste
+        // replaces holds no chapter line, so nothing says the copy belongs on either side of one.
+        // The first pasted paragraph joins the one at the caret, and the editor puts its own space
+        // before a verse that now follows text.
+        const [firstPasted, ...restPasted] = [...front, FIRST, SECOND] as (typeof FIRST)[];
+        const joined =
+          front.length > 0
+            ? ["second line" + String(firstPasted.content[0])]
+            : ["second line ", ...firstPasted.content];
         expect(content(mounted)).toEqual([
           BOOK,
           ...front,
-          ...front,
           CHAPTER,
           FIRST,
-          { ...SECOND, content: [SECOND.content[0], "second line ", ...FIRST.content] },
-          SECOND,
+          { ...SECOND, content: [SECOND.content[0], ...joined] },
+          ...restPasted,
         ]);
       });
 
@@ -196,18 +207,74 @@ describe.each(CHAPTERS)("Select All in $name", ({ front }) => {
           new Map([["text/html", withoutNodeCopyAttribute(store.get("text/html") ?? "")]]),
         );
 
+        // The caret is nowhere near the chapter line, so the copy's front matter goes in there too.
         const after = content(mounted);
-        expect(after.slice(0, chapterAt)).toEqual([BOOK, ...front]);
-        expect(after.slice(chapterAt + front.length, chapterAt + front.length + 2)).toEqual([
-          CHAPTER,
-          FIRST,
-        ]);
+        expect(after.slice(0, chapterAt + 2)).toEqual([BOOK, ...front, CHAPTER, FIRST]);
         const lines = after.flatMap((item) =>
           typeof item !== "string" && (item.type !== "para" || item.marker === "id") ? [item] : [],
         );
         expect(lines).toEqual([BOOK, CHAPTER]);
         expect(JSON.stringify(after)).not.toMatch(/Genesis title.*Genesis title/);
         expect(after).toHaveLength(5 + 2 * front.length);
+      });
+
+      it("pasted right after the chapter line, puts the copy's front matter before it", async () => {
+        await selectAll(mounted);
+        const store = await copyOrCut(mounted, COPY_COMMAND);
+        await act(async () =>
+          mounted.lexical.update(
+            () => {
+              // Where a click at the start of the first Scripture line leaves the caret: past its
+              // gutter marker glyph and its verse number.
+              const line = $getRoot().getChildAtIndex(chapterAt + 1);
+              if (!$isParaLikeNode(line)) throw new Error("no line after the chapter line");
+              $placeCaretAtParaContentStart(line);
+            },
+            { discrete: true },
+          ),
+        );
+
+        await ctrlV(mounted, store);
+
+        const after = content(mounted);
+        expect(after.slice(0, chapterAt + front.length + 1)).toEqual([
+          BOOK,
+          ...front,
+          ...front,
+          CHAPTER,
+        ]);
+        const lines = after.filter((item) => typeof item !== "string" && item.type !== "para");
+        expect(lines).toEqual([BOOK, CHAPTER]);
+      });
+
+      it("pasted right before the chapter line, puts the copy's Scripture text after it", async () => {
+        await selectAll(mounted);
+        const store = await copyOrCut(mounted, COPY_COMMAND);
+        await act(async () =>
+          mounted.lexical.update(
+            () => {
+              // The end of the line before the chapter line: the book line when there is no front
+              // matter.
+              const line = $getRoot().getChildAtIndex(chapterAt - 1);
+              if (!$isElementNode(line)) throw new Error("no line before the chapter line");
+              line.selectEnd();
+            },
+            { discrete: true },
+          ),
+        );
+
+        await ctrlV(mounted, store);
+
+        expect(content(mounted)).toEqual([
+          BOOK,
+          ...front,
+          ...front,
+          CHAPTER,
+          FIRST,
+          SECOND,
+          FIRST,
+          SECOND,
+        ]);
       });
 
       it("pastes plain text over Select All in place of everything after the chapter line", async () => {

@@ -1,5 +1,6 @@
 import {
-  $insertBeforeChapterLine,
+  $chapterLineToSplitAt,
+  $pasteAroundChapterLine,
   $removeBookAndChapterLines,
   $removeTextKeepingBookAndChapterLines,
   $selectionSpansBookOrChapterLine,
@@ -205,12 +206,13 @@ function joinLines(text: string): string {
  *
  * No paste or drop inserts a book (`\id`) or chapter line, from a node copy or from html
  * ({@link $removeBookAndChapterLines}): the chapter document has its own, and a copy of Select All
- * carries both. What such a copy held before its chapter line, chapter 1's front matter, goes in
- * before the document's chapter line ({@link $insertBeforeChapterLine}), and the rest at the caret.
- * A paste over a selection that runs across a book or chapter line keeps it, and replaces the rest
- * of the selection ({@link $removeTextKeepingBookAndChapterLines}), whichever flavor it inserts;
- * what has no front matter of its own (plain text, another program's html) goes after the chapter
- * line.
+ * carries both. Such a copy splits around the document's chapter line only over a selection that
+ * held that line or from a caret right beside it ({@link $chapterLineToSplitAt}): what it held
+ * before its chapter line, chapter 1's front matter, goes before the document's, and the rest after
+ * ({@link $pasteAroundChapterLine}). Any other paste puts it all at the caret. A paste over a selection that runs across a book or chapter line keeps it, and replaces
+ * the rest of the selection ({@link $removeTextKeepingBookAndChapterLines}), whichever flavor it
+ * inserts; what has no front matter of its own (plain text, another program's html) goes after the
+ * chapter line.
  *
  * Typing a `\` is refused, and so is typing a `/` that would touch a `/` beside it (over a
  * selection, one outside it); a lone `/` goes in. A keystroke is refused at its `keydown`
@@ -562,7 +564,11 @@ export function UnstorableTextPlugin({
       register(
         SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
         ({ nodes, selection }) => {
-          const { isRemoved: isLineRemoved, beforeChapter } = $removeBookAndChapterLines(nodes);
+          const {
+            isRemoved: isLineRemoved,
+            holdsChapterLine,
+            beforeChapter,
+          } = $removeBookAndChapterLines(nodes);
           const removed = $filterUnstorablePastedNodes(
             nodes,
             selection,
@@ -577,14 +583,16 @@ export function UnstorableTextPlugin({
           )
             return true;
           if (!$isRangeSelection(selection)) return false;
+          // A copy holding a chapter line splits around the document's, but only over a selection
+          // that held it or from a caret right beside it, where the user put it there: anywhere
+          // else the whole copy goes in at the caret, as any paste does.
+          const chapter = holdsChapterLine ? $chapterLineToSplitAt(selection) : undefined;
           // Lexical goes on to insert over this same selection, which is collapsed by then.
           if ($selectionSpansBookOrChapterLine(selection))
             $removeTextKeepingBookAndChapterLines(selection);
-          // A copy's front matter goes before the chapter line, and Lexical puts the rest in.
-          const frontMatter = beforeChapter.filter((node) => nodes.includes(node));
-          if ($insertBeforeChapterLine(frontMatter, selection)) {
-            frontMatter.forEach((node) => nodes.splice(nodes.indexOf(node), 1));
-            if (nodes.length === 0) return true;
+          if (chapter) {
+            const frontMatter = beforeChapter.filter((node) => nodes.includes(node));
+            if ($pasteAroundChapterLine(nodes, frontMatter, chapter, selection)) return true;
           }
           return false;
         },
