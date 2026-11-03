@@ -25,6 +25,8 @@ import {
   $isNodeSelection,
   $isRangeSelection,
   BaseSelection,
+  CommandListener,
+  CommandListenerPriority,
   COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   COMMAND_PRIORITY_NORMAL,
@@ -215,6 +217,12 @@ function joinLines(text: string): string {
  * so where there is none it is not judged. A delete protected structure refuses outright is left to
  * that refusal, and a composition's deletes are not judged.
  *
+ * Mount it whatever the view, and say with `isEnabled` whether it acts: its handlers are
+ * registered once, so a view that starts or stops hiding markers leaves them where they are among
+ * the other plugins' handlers of the same priority, which run in the order they were registered.
+ *
+ * @param isEnabled - Whether it acts: only in a view that hides markers, since a view that shows
+ *   them needs a typed or pasted `\`. Asked on each command and event. Defaults to `true`.
  * @param structureProtectionMode - The editor's structure protection.
  * @param onRemoved - Told once per paste, drop or keystroke that lost or refused unstorable text,
  *   and once per refused delete.
@@ -222,10 +230,12 @@ function joinLines(text: string): string {
  * @returns `null`. This plugin has no DOM presence.
  */
 export function UnstorableTextPlugin({
+  isEnabled = true,
   structureProtectionMode = "off",
   onRemoved,
   logger,
 }: {
+  isEnabled?: boolean;
   structureProtectionMode?: StructureProtectionMode;
   onRemoved?: UnstorableTextRemovedHandler;
   logger?: LoggerBasic;
@@ -233,14 +243,16 @@ export function UnstorableTextPlugin({
   const [editor] = useLexicalComposerContext();
   // Refs, so a host handing fresh props each render does not re-register every command (which
   // would move this plugin's handlers to the end of their priority and flip same-priority ties).
+  const isEnabledRef = useRef(isEnabled);
   const structureProtectionModeRef = useRef(structureProtectionMode);
   const onRemovedRef = useRef(onRemoved);
   const loggerRef = useRef(logger);
   useEffect(() => {
+    isEnabledRef.current = isEnabled;
     structureProtectionModeRef.current = structureProtectionMode;
     onRemovedRef.current = onRemoved;
     loggerRef.current = logger;
-  }, [structureProtectionMode, onRemoved, logger]);
+  }, [isEnabled, structureProtectionMode, onRemoved, logger]);
 
   useEffect(() => {
     // Set while a drop that Lexical inserts as nodes is being inserted: its nodes reach
@@ -279,6 +291,7 @@ export function UnstorableTextPlugin({
 
     /** A `beforeinput` the browser would apply itself, without telling Lexical in a command. */
     const onBeforeInput = (event: InputEvent) => {
+      if (!isEnabledRef.current) return;
       if (event.inputType !== "insertText" || !editor.isEditable() || editor.isComposing()) return;
       const text = event.data ?? event.dataTransfer?.getData("text/plain");
       // The test comes first because `editor.read` commits pending updates, which ordinary typing
@@ -460,8 +473,20 @@ export function UnstorableTextPlugin({
       [DELETE_LINE_COMMAND, "line"],
     ];
 
-    return mergeRegister(
+    /** Registers `listener` for `command`, acting only while the plugin is enabled. */
+    const register = <P,>(
+      command: LexicalCommand<P>,
+      listener: CommandListener<P>,
+      priority: CommandListenerPriority,
+    ) =>
       editor.registerCommand(
+        command,
+        (payload, commandEditor) => isEnabledRef.current && listener(payload, commandEditor),
+        priority,
+      );
+
+    return mergeRegister(
+      register(
         SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
         ({ nodes, selection }) => {
           const removed = $filterUnstorablePastedNodes(
@@ -477,7 +502,7 @@ export function UnstorableTextPlugin({
         // Critical, so a handler that does insert the nodes cannot insert them unfiltered.
         COMMAND_PRIORITY_CRITICAL,
       ),
-      editor.registerCommand(
+      register(
         PASTE_COMMAND,
         (event: PasteCommandType) => {
           const data = "clipboardData" in event ? event.clipboardData : null;
@@ -491,7 +516,7 @@ export function UnstorableTextPlugin({
         // sanitizer, which takes html pastes first.
         COMMAND_PRIORITY_NORMAL,
       ),
-      editor.registerCommand(
+      register(
         CONTROLLED_TEXT_INSERTION_COMMAND,
         (payload) => {
           if (typeof payload === "string" || payload.inputType !== "insertFromDrop") return false;
@@ -507,7 +532,7 @@ export function UnstorableTextPlugin({
         // Below the guards that refuse an insertion outright (several at HIGH), above Lexical's own.
         COMMAND_PRIORITY_NORMAL,
       ),
-      editor.registerCommand(
+      register(
         KEY_DOWN_COMMAND,
         (event: KeyboardEvent) => {
           if (event.key !== "\\" && event.key !== "/") return false;
@@ -520,7 +545,7 @@ export function UnstorableTextPlugin({
         },
         COMMAND_PRIORITY_NORMAL,
       ),
-      editor.registerCommand(
+      register(
         CONTROLLED_TEXT_INSERTION_COMMAND,
         (payload) => {
           if (isInsertingFiltered || editor.isComposing()) return false;
@@ -539,7 +564,7 @@ export function UnstorableTextPlugin({
       // Every delete keystroke, judged before anything acts on it: protected structure's refusal,
       // guarded structure's first press (which arms a join the second press carries out), the
       // hidden-content question and the paragraph-marker merge all come after this.
-      editor.registerCommand(
+      register(
         KEY_DOWN_COMMAND,
         (event: KeyboardEvent) => {
           const chord = deleteChordOf(event);
@@ -553,16 +578,16 @@ export function UnstorableTextPlugin({
       ),
       // A delete that arrives without a keystroke: a `beforeinput` delete, a menu, a replay.
       ...deleteCommands.map(([command, granularity]) =>
-        editor.registerCommand(command, onDeleteCommand(granularity), COMMAND_PRIORITY_CRITICAL),
+        register(command, onDeleteCommand(granularity), COMMAND_PRIORITY_CRITICAL),
       ),
       // HIGH: after the guards that narrow or refuse a cut (CRITICAL; a copy limit shortens it),
       // ahead of the copy that performs it (NORMAL).
-      editor.registerCommand(CUT_COMMAND, $onSelectionRemoval, COMMAND_PRIORITY_HIGH),
+      register(CUT_COMMAND, $onSelectionRemoval, COMMAND_PRIORITY_HIGH),
       // A drag-move's removal of its source (`deleteByDrag`), after the guards that narrow it and
       // ahead of Lexical's own. The drop's insertion is an input event of its own, so a refused
       // removal leaves the dragged text in both places rather than losing any. A composition's
       // removal is left alone, as composed text is.
-      editor.registerCommand(
+      register(
         REMOVE_TEXT_COMMAND,
         (event: InputEvent | null) =>
           event?.inputType !== "deleteByComposition" && $onSelectionRemoval(event),
