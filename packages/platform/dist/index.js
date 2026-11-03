@@ -21160,6 +21160,13 @@ function wO({ options: e } = {}) {
   }, [i.isOpen, f]), J(() => {
     if (!i.isOpen)
       return;
+    const d = () => {
+      f();
+    };
+    return globalThis.addEventListener("blur", d), () => globalThis.removeEventListener("blur", d);
+  }, [i.isOpen, f]), J(() => {
+    if (!i.isOpen)
+      return;
     const d = (p) => {
       if (p.isComposing || p.keyCode === 229)
         return;
