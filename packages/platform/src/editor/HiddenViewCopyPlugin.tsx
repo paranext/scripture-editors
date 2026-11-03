@@ -1,6 +1,10 @@
 import { $selectionShownText } from "./copyLimit/copyLimit.utils";
 import { $hiddenViewLexicalFlavor, $isLeftOutOfHiddenViewCopy } from "./hiddenViewCopy.utils";
-import { $writeCopyPayload } from "./markerEdit/whitespaceDisplay.plugin.utils";
+import {
+  $storedNbsps,
+  withStoredNbspsAsTildes,
+  $writeCopyPayload,
+} from "./markerEdit/whitespaceDisplay.plugin.utils";
 import { $getHtmlContent, LexicalClipboardData } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
@@ -20,29 +24,43 @@ import { useEffect } from "react";
  *
  * Writes three flavors:
  * - `text/plain`: the selection's text without what {@link $isLeftOutOfHiddenViewCopy} picks. A
- *   collapsed note's text stays in.
+ *   collapsed note's text stays in. Unless `allowInvisibleCharacters` is on, each no-break space
+ *   the text stores is written as `~`, as Paratext 9 copies one; one the view shows for its layout
+ *   stays as it is.
  * - `text/html`: Lexical's HTML export, which leaves out gutter glyphs and hidden constructs
- *   through their own `exportDOM`.
+ *   through their own `exportDOM`. It and the internal flavor keep U+00A0, since this editor's own
+ *   paste reads them, and a `~` would come back as a literal tilde.
  * - `application/x-lexical-editor`: {@link $hiddenViewLexicalFlavor}.
  *
  * A cut in a read-only editor copies but removes nothing (`$writeCopyPayload` owns that rule).
  *
- * `copyLimit` is `EditorOptions.copyLimit`; `CopyLimitPlugin` has already fitted the selection to
+ * `copyLimit` is `EditorOptions.copyLimit` and `allowInvisibleCharacters` is
+ * `ViewOptions.allowInvisibleCharacters`; `CopyLimitPlugin` has already fitted the selection to
  * it, and its own writer claims an over-limit copy before this one runs.
  *
  * Registered at `COMMAND_PRIORITY_NORMAL`: below `CopyLimitPlugin`'s fit, above the empty-copy guard
  * (LOW) and Lexical's own copy (EDITOR). Mount it only for `markerMode: "hidden"`, after
  * `CopyLimitPlugin`, so that plugin's same-priority over-limit writer runs first.
  */
-export function HiddenViewCopyPlugin({ copyLimit }: { copyLimit?: number }): null {
+export function HiddenViewCopyPlugin({
+  copyLimit,
+  allowInvisibleCharacters,
+}: {
+  copyLimit?: number;
+  allowInvisibleCharacters?: boolean;
+}): null {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
     const $copy = (event: ClipboardEvent | KeyboardEvent | null, isCut: boolean): boolean => {
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+      const shownText = $selectionShownText(selection, $isLeftOutOfHiddenViewCopy);
+      const plainText = allowInvisibleCharacters
+        ? undefined
+        : withStoredNbspsAsTildes(shownText, $storedNbsps(selection, $isLeftOutOfHiddenViewCopy));
       const data: LexicalClipboardData = {
-        "text/plain": $selectionShownText(selection, $isLeftOutOfHiddenViewCopy),
+        "text/plain": plainText ?? shownText,
         "text/html": $getHtmlContent(editor, selection),
       };
       const lexicalFlavor = $hiddenViewLexicalFlavor(editor, selection);
@@ -63,7 +81,7 @@ export function HiddenViewCopyPlugin({ copyLimit }: { copyLimit?: number }): nul
       editor.registerCommand(COPY_COMMAND, (event) => $copy(event, false), COMMAND_PRIORITY_NORMAL),
       editor.registerCommand(CUT_COMMAND, (event) => $copy(event, true), COMMAND_PRIORITY_NORMAL),
     );
-  }, [editor, copyLimit]);
+  }, [editor, copyLimit, allowInvisibleCharacters]);
 
   return null;
 }
