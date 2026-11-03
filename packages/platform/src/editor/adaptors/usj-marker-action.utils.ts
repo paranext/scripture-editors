@@ -38,6 +38,7 @@ import {
   $isVisibleMarkerNode,
   $liftOutOfCharStack,
   $normalizeSelectionOutOfGlyphText,
+  $placeCaretAtBoundary,
   $recordNewlyMarkedSpan,
   $setCharNodeMarker,
   authoredNbspState,
@@ -574,12 +575,20 @@ export function getUsjMarkerAction(
             }
           } else {
             const nextNode = nodeToInsert.getNextSibling();
-            if (nextNode) nextNode.selectStart();
-            // A verse marker ending its paragraph: selectStart() would put the caret BEFORE the
-            // number, in the previous verse. After it, EmptyVerseCaretGuardPlugin hosts the caret
-            // so typing starts the new verse.
-            else if ($isSomeVerseNode(nodeToInsert)) nodeToInsert.selectNext();
-            else nodeToInsert.selectStart();
+            if (nextNode) {
+              nextNode.selectStart();
+            } else if ($isSomeVerseNode(nodeToInsert)) {
+              // A verse marker ending its paragraph: selectStart() would put the caret BEFORE the
+              // number, in the previous verse. Park it where an empty verse's caret belongs, as
+              // $placeCaretAtVerseContentStart (ScriptureReferencePlugin) does: the end of an
+              // editable marker's own text, or the boundary after an immutable one, where
+              // EmptyVerseCaretGuardPlugin hosts it.
+              const parent = nodeToInsert.getParentOrThrow();
+              if ($isTextNode(nodeToInsert)) nodeToInsert.selectEnd();
+              else $placeCaretAtBoundary(parent, nodeToInsert.getIndexWithinParent() + 1);
+            } else {
+              nodeToInsert.selectStart();
+            }
           }
         }
       } else {
