@@ -20,12 +20,15 @@ export interface UnstorableTextRemoved {
    * What was removed or refused, each kind once, in the order first met. Never empty. A refused
    * deletion is always `["//"]`.
    */
-  readonly removed: UnstorableCharacter[];
+  readonly removed: readonly UnstorableCharacter[];
 }
 
 /**
  * Told once per paste, drop or refused keystroke that removed or refused unstorable text, and once
  * per refused deletion, so the host can tell the user why some of what they pasted, dropped or
  * typed is missing, or why a delete did nothing.
+ *
+ * Called synchronously from inside the editor command or update that made the edit: report the
+ * edit from here (show a notice, say) rather than change the editor.
  */
 export type UnstorableTextRemovedHandler = (event: UnstorableTextRemoved) => void;
