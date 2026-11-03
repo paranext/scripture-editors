@@ -59,8 +59,6 @@ import {
 } from "lexical";
 import {
   $createCharNode,
-  ATTRIBUTE_NBSP_SPELLING,
-  CategoryType,
   $createImmutableTypedTextNode,
   $createMarkerNode,
   $createParaNode,
@@ -70,7 +68,6 @@ import {
   $isSomeChapterNode,
   $isTypedMarkNode,
   $isUnknownNode,
-  MarkerType,
   NBSP,
   NBSP_STAND_IN,
   NoteNode,
@@ -1819,53 +1816,6 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
         expect(normalizePastedNbsp(`${NBSP}${NBSP}word`)).toBe("~~word");
         expect(normalizePastedNbsp(`a\n${NBSP}${NBSP}${NBSP}word`)).toBe("a\n~~~word");
         expect(normalizePastedNbsp(`${NBSP} word`, NBSP_STAND_IN)).toBe(`${NBSP_STAND_IN} word`);
-      });
-    });
-
-    describe("an attribute list's NBSP", () => {
-      const getMarker = (marker: string) => ({
-        category: CategoryType.CharacterStyling,
-        type: marker === "p" ? MarkerType.Paragraph : MarkerType.Character,
-        description: "",
-        hasEndMarker: marker !== "p",
-      });
-
-      it("is spelled as a value spells it, from the `|` to the span's closer", () => {
-        expect(
-          normalizePastedNbsp(`\\w a${NBSP}b|lemma="h${NBSP}i"\\w*${NBSP}c`, "~", getMarker),
-        ).toBe(`\\w a~b|lemma="h${ATTRIBUTE_NBSP_SPELLING}i"\\w*~c`);
-      });
-
-      it("is spelled as a value spells it in an attribute marker's content", () => {
-        expect(
-          normalizePastedNbsp(
-            `\\v 1 \\va 1${NBSP}a\\va*\\vp 2${NBSP}b\\vp* c${NBSP}d`,
-            "~",
-            getMarker,
-          ),
-        ).toBe(
-          `\\v 1 \\va 1${ATTRIBUTE_NBSP_SPELLING}a\\va*\\vp 2${ATTRIBUTE_NBSP_SPELLING}b\\vp* c~d`,
-        );
-      });
-
-      it("leaves a `~` in a value alone", () => {
-        expect(normalizePastedNbsp(`\\w a|lemma="h~i"\\w*`, "~", getMarker)).toBe(
-          `\\w a|lemma="h~i"\\w*`,
-        );
-      });
-
-      it("treats a `|` in a paragraph's text as body text", () => {
-        expect(normalizePastedNbsp(`\\p a | b${NBSP}c`, "~", getMarker)).toBe("\\p a | b~c");
-      });
-
-      it("treats a `|` outside any marker as body text", () => {
-        expect(normalizePastedNbsp(`a | b${NBSP}c`, "~", getMarker)).toBe("a | b~c");
-      });
-
-      it("reads an NBSP in a list after a nested span's closer as the list's", () => {
-        expect(
-          normalizePastedNbsp(`\\w a \\+nd b\\+nd* |lemma="h${NBSP}i"\\w*`, "~", getMarker),
-        ).toBe(`\\w a \\+nd b\\+nd* |lemma="h${ATTRIBUTE_NBSP_SPELLING}i"\\w*`);
       });
     });
 

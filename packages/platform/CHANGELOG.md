@@ -311,10 +311,10 @@ refused. The public surface grew substantially; nothing was removed.
   plain space. A `~` in an attribute value stays a `~` under either setting, as Paratext 9 keeps
   it: Paratext reads `~` as a no-break space only in body text. With the option off, a settle of
   the value's paragraph saved the author's `~` as U+00A0. Unformatted view's settle keeps both too.
-  A copy writes an attribute value's no-break space as U+00A0 under either setting, and a paste
-  keeps it a no-break space in the value under either setting, whether it arrives in a pasted span's
-  `|` list or is pasted with the caret inside the value. The bytes an unwrapped span leaves behind
-  are body text, and spell a no-break space as body text does.
+  A copy writes an attribute value's no-break space as U+00A0 under either setting; a paste reads
+  it the way it reads any pasted U+00A0, with the caret inside the value too, so with the option off
+  it comes back as `~`, as Paratext 9 pastes one. The bytes an unwrapped span leaves behind are body text, and spell a no-break space
+  as body text does.
 - An input method or dead key composing over a selection that crosses a char span's edge or a
   collapsed note, in a view that hides markers, now takes only the selected text, as typing does:
   the text after the selection stays where it was instead of landing in the span or the note.
@@ -561,6 +561,3 @@ refused. The public surface grew substantially; nothing was removed.
 - In the views that show a marker glyph on a blank line (`\b`), deleting the empty paragraph after
   it, with Delete or Backspace, leaves the blank line a `\b`. It had taken that paragraph's marker,
   so `\b`, `\q1`, `\p` saved as `\q1`, `\p`.
-- In Standard view with the invisible-characters setting off, copying and pasting a char span whose
-  attribute value holds a no-break space keeps that no-break space in the value. The paste spelled
-  it `~`, which a value keeps as a literal tilde (`lemma="h~i"`).

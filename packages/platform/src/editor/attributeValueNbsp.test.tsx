@@ -108,6 +108,11 @@ function pick(object: MarkerObject | undefined, names: string[]): { [name: strin
   return Object.fromEntries(names.map((name) => [name, record[name]]));
 }
 
+/** `value` with every U+00A0 in its strings, however deep, spelled `~`. */
+function withNbspAsTilde<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value).replaceAll(NBSP, "~"));
+}
+
 const SHAPES: Shape[] = [
   {
     name: "a character span's default attribute",
@@ -391,9 +396,11 @@ for (const { label, allow } of SETTINGS)
 
               const usj = mounted.ref.current?.getUsj();
               expectNoStandIn(usj);
-              // A U+00A0 in a pasted value stays a no-break space, whatever the setting: a value's
-              // `~` is an ordinary character, so `~` cannot spell the no-break space there.
-              expect(shape.values(withLastParaFirst(usj))).toEqual(shape.expected());
+              // A pasted U+00A0 is a stored no-break space where the project stores one as itself;
+              // otherwise a paste takes it as `~`, as Paratext 9 does, and in a value that is a `~`.
+              expect(shape.values(withLastParaFirst(usj))).toEqual(
+                allow ? shape.expected() : withNbspAsTilde(shape.expected()),
+              );
             });
       });
 
@@ -422,7 +429,9 @@ for (const { label, allow } of SETTINGS)
 
           const usj = mounted.ref.current?.getUsj();
           expectNoStandIn(usj);
-          expect(objectIn(paraContent(withLastParaFirst(usj)), "figure")).toEqual(FIGURE);
+          expect(objectIn(paraContent(withLastParaFirst(usj)), "figure")).toEqual(
+            allow ? FIGURE : withNbspAsTilde(FIGURE),
+          );
         });
     });
   });
@@ -451,7 +460,7 @@ describe("text entered into an attribute value", () => {
       const usj = mounted.ref.current?.getUsj();
       expectNoStandIn(usj);
       expect(pick(objectIn(paraContent(usj), "ms"), ["who"])).toEqual({
-        who: `Ap~q${NBSP}rB`,
+        who: allow ? `Ap~q${NBSP}rB` : "Ap~q~rB",
       });
     });
   }

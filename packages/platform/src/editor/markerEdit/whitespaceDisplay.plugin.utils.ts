@@ -44,7 +44,6 @@ import {
   $isUnknownNode,
   ATTRIBUTE_NBSP_SPELLING,
   GENERATOR_NOTE_CALLER,
-  isAttributeMarker,
   MarkerLookup,
   MarkerType,
   MARKER_TRAILING_SPACE_TEXT_TYPE,
@@ -464,58 +463,12 @@ const OPENING_MARKER_SEPARATOR_NBSP = new RegExp(
  * would lose the user's character. A pasted `~` is never touched: it is the display form already, or
  * an ordinary character.
  *
- * An NBSP inside a char span's attribute list (from the `|` that opens it to the span's closer), or
- * inside an attribute marker's content (`\va`, `\vp`, `\ca`, `\cp`, `\cat`), is
- * a stored no-break space in a value, which displays as `ATTRIBUTE_NBSP_SPELLING` in every project
- * (`~` is an ordinary character in a value), so it is spelled that way rather than as
- * `nbspSpelling`. Only a lookup of the markers lets this tell a char span or milestone, whose `|`
- * opens an attribute list, from a paragraph, whose `|` is body text; without one, no list is
- * recognized.
- *
  * @param text - The paste's resolved text.
  * @param nbspSpelling - What a stored NBSP displays as; `~` by default.
- * @param getMarker - Looks up a marker by name; marks which `|` open an attribute list.
  */
-export function normalizePastedNbsp(
-  text: string,
-  nbspSpelling = "~",
-  getMarker?: MarkerLookup,
-): string {
-  const separated = text.replace(OPENING_MARKER_SEPARATOR_NBSP, " ");
-  if (!getMarker || !separated.includes(NBSP)) return separated.replaceAll(NBSP, nbspSpelling);
-  // The open markers that can hold an attribute list, innermost last.
-  const open: boolean[] = [];
-  let inAttributeList = false;
-  return separated.replace(PASTE_NBSP_SCAN, (token) => {
-    if (token === NBSP) return inAttributeList ? ATTRIBUTE_NBSP_SPELLING : nbspSpelling;
-    if (token === "|") {
-      if (open[open.length - 1]) inAttributeList = true;
-      return token;
-    }
-    inAttributeList = false;
-    if (token.endsWith("*")) {
-      open.pop();
-      return token;
-    }
-    const name = token.replace(/^\\\+?/, "");
-    // An attribute marker's whole content is the value.
-    if (isAttributeMarker(name)) {
-      open.push(false);
-      inAttributeList = true;
-      return token;
-    }
-    const kind = getMarker(name)?.type;
-    if (kind === MarkerType.Paragraph) open.length = 0;
-    else open.push(kind === MarkerType.Character || kind === MarkerType.Milestone);
-    return token;
-  });
+export function normalizePastedNbsp(text: string, nbspSpelling = "~"): string {
+  return text.replace(OPENING_MARKER_SEPARATOR_NBSP, " ").replaceAll(NBSP, nbspSpelling);
 }
-
-/** A marker token (opening or closing, `\*` included), a `|`, or an NBSP, in the order met. */
-const PASTE_NBSP_SCAN = new RegExp(
-  String.raw`\\(?:\+?[${ENGINE_MARKER_NAME_BYTES}]+\*?|\*)|\||\u00A0`,
-  "g",
-);
 
 /** A `\c` chapter token ANYWHERE in a line: the marker, its separator, and the ONE
  * whitespace-delimited word the tokenizer reads as the chapter number (`getNextWord`,
@@ -762,18 +715,17 @@ function $insertPastedTextIntoAttributeContext(
 ): void {
   const valueBytes = $isSelectionWithinOneAttributeNode(selection);
   // A U+00A0 pasted into a value is held as the value's text, where display spacing would save as a
-  // space: it is spelled as a value spells a no-break space, whatever the body text's spelling.
+  // space: as Paratext 9 pastes one, it is itself with the setting on and `~` with it off.
   const resolved = valueBytes
     ? (isStructureProtected ? stripPastedBlockMarkers(text, getMarker) : text).replaceAll(
         NBSP,
-        ATTRIBUTE_NBSP_SPELLING,
+        nbspSpelling,
       )
     : normalizePastedNbsp(
         isStructureProtected
           ? stripPastedBlockMarkers(stripPastedChapterAndBookId(text), getMarker)
           : stripPastedChapterAndBookId(text),
         nbspSpelling,
-        getMarker,
       );
   // Nothing survived the strip, so there is nothing to replace the selection with — see
   // `$handlePasteForStandardView`.
@@ -1041,7 +993,6 @@ export function $insertPastedText(
       ? stripPastedBlockMarkers(withoutChapterOrBookId, getMarker)
       : withoutChapterOrBookId,
     nbspSpelling,
-    getMarker,
   );
   if (!normalized) return;
   const lines = normalized.split("\n");
