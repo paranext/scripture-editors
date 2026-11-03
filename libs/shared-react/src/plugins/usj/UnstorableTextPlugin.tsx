@@ -71,8 +71,9 @@ function reportRemoved(
 /**
  * Removes unstorable text (`\` and `//`, see {@link removeUnstorableText}) from nodes about to be
  * pasted or dropped at `selection`, and reports the removal once. For code that inserts pasted
- * nodes itself instead of through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, such as
- * `StructureKeyboardPlugin`'s protected-structure sanitizer.
+ * nodes itself instead of through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, and for
+ * `StructureKeyboardPlugin`'s protected-structure sanitizer: it inserts through that command, but
+ * for a drop as well as a paste, and only a filter given the source reports a drop as one.
  *
  * Mutating: call inside `editor.update()`.
  *
@@ -186,8 +187,9 @@ function joinLines(text: string): string {
  * Covers each route Lexical inserts by: a node copy from an editor of this namespace and html
  * (through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`), and plain text, pasted (`PASTE_COMMAND`) or
  * dropped (`CONTROLLED_TEXT_INSERTION_COMMAND` with an `insertFromDrop` event). Under `"protected"`
- * structure, `StructureKeyboardPlugin` inserts html pastes and drops itself; give it
- * {@link $filterUnstorablePastedNodes} as its `$filterPastedNodes` to cover those too.
+ * structure, `StructureKeyboardPlugin` takes html pastes and drops first and inserts them through
+ * that command too; give it {@link $filterUnstorablePastedNodes} as its `$filterPastedNodes` so a
+ * drop it inserts is reported as a drop.
  *
  * Html pasted or dropped loses every marker glyph element (`data-text-type="marker"`) before it is
  * parsed, as protected structure's sanitizer drops them: a glyph is presentation, and parsed back
