@@ -320,7 +320,9 @@ refused. The public surface grew substantially; nothing was removed.
   both places), and a paragraph join, including guarded structure's two-step join (refused at the
   first press) and a selected paragraph marker. The check reads what the file stores either side of
   what goes: through annotation marks, through a character span the delete empties, and through two
-  pieces of one span that a join makes one again. A `//` already in the text is left alone. Under
+  pieces of one span that a join makes one again. An optional line break, which the view shows as
+  nothing, counts as the `//` the file stores for it, so a `/` typed, pasted or brought by a delete
+  against one is treated as making `//` too. A `//` already in the text is left alone. Under
   `"protected"` structure a join is refused by the protection, as before. Standard view is
   unchanged.
 
@@ -606,8 +608,7 @@ refused. The public surface grew substantially; nothing was removed.
 - A multi-line plain-text paste or drop under `"protected"` structure in the views that hide markers
   stays in the paragraph at the caret, its lines joined by one space (a run of line breaks counts
   as one, a trailing one is dropped, and each tab in it becomes a space), as an html paste's
-  paragraphs are.
-  It made a new paragraph per line, which protected structure exists to prevent.
+  paragraphs are. It made a new paragraph per line, which protected structure exists to prevent.
 - In the views that hide markers, an edit that arrives with no keydown (an input method composing,
   macOS Ctrl+H) over a range holding a verse marker no longer bypasses structure protection. Under
   `"protected"` it is refused instead of removing the verse; under `"guarded"` a delete arms the

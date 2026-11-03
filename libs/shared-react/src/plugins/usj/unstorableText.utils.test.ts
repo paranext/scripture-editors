@@ -1,6 +1,7 @@
 // Should only be used on nodes that are initialized in the test environment.
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
+import { $createImmutableVerseNode } from "../../nodes/usj";
 import { baseTestEnvironment, sutUpdate, updateSelection } from "./react-test.utils";
 import { UnstorableCharacter } from "./unstorable-text.model";
 import {
@@ -27,6 +28,7 @@ import {
   $createGutterMarkerNode,
   $createImmutableTypedTextNode,
   $createImmutableUnmatchedNode,
+  $createNoteNode,
   $createParaNode,
   $createTypedMarkNode,
   $createUnknownNode,
@@ -327,6 +329,27 @@ describe("$textAroundSelection", () => {
 
     expect(around).toEqual({ before: "", after: "b" });
   });
+
+  it("reads an optional line break, which shows nothing, as the `/` the file stores", async () => {
+    let before: TextNode;
+    let after: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      before = $createTextNode("and");
+      after = $createTextNode("or");
+      $getRoot().append($createParaNode("p").append(before, $createUnknownNode("optbreak"), after));
+    });
+    const readAt = (node: TextNode, offset: number) => {
+      updateSelection(editor, node, offset);
+      return editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        return $textAroundSelection(selection);
+      });
+    };
+
+    expect(readAt(before!, 3)).toEqual({ before: "d", after: "/" });
+    expect(readAt(after!, 0)).toEqual({ before: "/", after: "o" });
+  });
 });
 
 describe("$deletionJoinsSlashes", () => {
@@ -524,6 +547,82 @@ describe("$deletionJoinsSlashes", () => {
         ([first, second]) => ({ kind: "join", first, second }),
       ),
     ).toBe(false);
+  });
+
+  it.each<[string, () => LexicalNode]>([
+    ["a verse", () => $createImmutableVerseNode("2")],
+    ["a note", () => $createNoteNode("f", "+").append($createTextNode("note text"))],
+  ])("keeps two `/` apart across %s that stays, and joins them when it goes", async (_, $atom) => {
+    expect(
+      await judge(
+        () => [[$createTextNode("a/x"), $atom(), $createTextNode("/c")]],
+        ([para]) => ({ kind: "character", caret: $at($text(para, "a/x"), 3), isBackward: true }),
+      ),
+    ).toBe(false);
+    expect(
+      await judge(
+        () => [[$createTextNode("a/"), $atom(), $createTextNode("/c")]],
+        ([para]) => ({ kind: "character", caret: $at($text(para, "/c"), 0), isBackward: true }),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps a note that a range starts or ends inside, so the `/` either side stay apart", async () => {
+    const $note = () => $createNoteNode("f", "+").append($createTextNode("note text"));
+    expect(
+      await judge(
+        () => [[$createTextNode("a/x"), $note(), $createTextNode("/c")]],
+        ([para]) => ({
+          kind: "range",
+          start: $at($text(para, "a/x"), 2),
+          end: $at($text(para, "note text"), 4),
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      await judge(
+        () => [[$createTextNode("a/"), $note(), $createTextNode("x/c")]],
+        ([para]) => ({
+          kind: "range",
+          start: $at($text(para, "note text"), 4),
+          end: $at($text(para, "x/c"), 1),
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("joins a `/` to an optional line break, which the file stores as a bare `//`", async () => {
+    // `a/ ///b` loads as `a/ `, an optional break, then `/b`: the view shows `a/ /b`. Deleting the
+    // space would save `a////b`, which reads back as two optional breaks.
+    expect(
+      await judge(
+        () => [[$createTextNode("a/ "), $createUnknownNode("optbreak"), $createTextNode("/b")]],
+        ([para]) => ({ kind: "character", caret: $at($text(para, "a/ "), 3), isBackward: true }),
+      ),
+    ).toBe(true);
+    // A `/` already against one is not joined by a delete elsewhere.
+    expect(
+      await judge(
+        () => [[$createTextNode("xa/"), $createUnknownNode("optbreak"), $createTextNode("b")]],
+        ([para]) => ({ kind: "character", caret: $at($text(para, "xa/"), 1), isBackward: true }),
+      ),
+    ).toBe(false);
+  });
+
+  it("judges a delete inside an expanded note's text within the note", async () => {
+    expect(
+      await judge(
+        () => [
+          [
+            $createTextNode("a"),
+            $createNoteNode("f", "+").append(
+              $createCharNode("ft").append($createTextNode("n/b/c")),
+            ),
+          ],
+        ],
+        ([para]) => ({ kind: "character", caret: $at($text(para, "n/b/c"), 3), isBackward: true }),
+      ),
+    ).toBe(true);
   });
 });
 
