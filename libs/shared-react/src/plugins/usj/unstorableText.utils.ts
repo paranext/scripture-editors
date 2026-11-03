@@ -107,6 +107,18 @@ function $isStoredText(node: LexicalNode | null | undefined): node is TextNode {
   return $isTextNode(node) && node.isSimpleText();
 }
 
+/** What the file stores for an optional line break, which a hidden-marker view does not show. */
+const OPTBREAK_TEXT = "//";
+
+/**
+ * Whether `node` is an optional line break (`\optbreak`). The file stores it as the bare text
+ * {@link OPTBREAK_TEXT}, so a `/` against it reads back as part of a `//`, though the view shows
+ * nothing there.
+ */
+function $isOptbreak(node: LexicalNode | null | undefined): boolean {
+  return $isUnknownNode(node) && node.getTag() === "optbreak";
+}
+
 /**
  * The first (or last) leaf of `nodes` that inserting them puts right at the insertion point.
  * Inserting merges a leading (or trailing) paragraph's content into the paragraph there, so the
@@ -221,6 +233,9 @@ function $holdsNoLeaf(node: LexicalNode): boolean {
  * {@link $removeUnstorableTextFromNodes}, say). Inserting such nodes over a selection would still
  * delete the selection.
  *
+ * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
+ * handler.
+ *
  * @param nodes - Nodes about to be pasted or dropped.
  */
 export function $insertsNothing(nodes: LexicalNode[]): boolean {
@@ -231,21 +246,27 @@ export function $insertsNothing(nodes: LexicalNode[]): boolean {
  * The node next to `node` on `side`, reading through annotation marks, which save as nothing: out
  * of one `node` is at the edge of, and into one beside it.
  */
-function $neighbourThroughMarks(node: LexicalNode, side: "before" | "after"): LexicalNode | null {
+function $neighbourThroughMarks(
+  node: LexicalNode,
+  side: "before" | "after",
+): LexicalNode | undefined {
   let current = node;
   let neighbour = side === "before" ? current.getPreviousSibling() : current.getNextSibling();
   while (!neighbour) {
     const parent = current.getParent();
-    if (!$isTypedMarkNode(parent)) return null;
+    if (!$isTypedMarkNode(parent)) return undefined;
     current = parent;
     neighbour = side === "before" ? current.getPreviousSibling() : current.getNextSibling();
   }
   while ($isTypedMarkNode(neighbour))
     neighbour = side === "before" ? neighbour.getLastChild() : neighbour.getFirstChild();
-  return neighbour;
+  return neighbour ?? undefined;
 }
 
-/** The stored-text character next to `point` on `side`, or `""` where there is none. */
+/**
+ * The stored-text character next to `point` on `side`, or `""` where there is none. An optional
+ * line break beside it reads as the `/` the file stores for it.
+ */
 function $characterBeside(point: PointType, side: "before" | "after"): string {
   if (point.type !== "text") return "";
   const node = point.getNode();
@@ -254,6 +275,7 @@ function $characterBeside(point: PointType, side: "before" | "after"): string {
   if (side === "before" && point.offset > 0) return text[point.offset - 1];
   if (side === "after" && point.offset < text.length) return text[point.offset];
   const sibling = $neighbourThroughMarks(node, side);
+  if ($isOptbreak(sibling)) return "/";
   if (!$isStoredText(sibling)) return "";
   const siblingText = sibling.getTextContent();
   return (side === "before" ? siblingText.at(-1) : siblingText[0]) ?? "";
@@ -262,7 +284,10 @@ function $characterBeside(point: PointType, side: "before" | "after"): string {
 /**
  * The document characters touching what `selection` would insert: the one before its start and
  * the one after its end. Read only from stored text, so `""` beside a glyph, a decorator or an
- * element point.
+ * element point; an optional line break reads as the `/` the file stores for it.
+ *
+ * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
+ * handler.
  *
  * @param selection - Where text is about to be inserted.
  */
@@ -289,7 +314,7 @@ export type JudgedDeletion =
   | { kind: "join"; first: ElementNode; second: ElementNode };
 
 /** Where a deletion starts or ends, or the caret a character deletion goes from. */
-interface Marker {
+interface Boundary {
   which: "start" | "end" | "caret";
   point: PointType;
   isPlaced?: boolean;
@@ -304,14 +329,15 @@ interface Span {
 /**
  * A stretch of a paragraph as the file stores it, in order: stored text, an edge of a character
  * span, an atom (anything else the file stores: a verse, a note, a hidden construct, a decorator),
- * or a marker. Annotation marks, gutter glyphs and cursor placeholders save as nothing, so they
- * leave no piece.
+ * or a boundary. Annotation marks, gutter glyphs and cursor placeholders save as nothing, so they
+ * leave no piece. An atom the file stores as bare text, an optional line break, carries that
+ * `text`: a delete takes it whole, but a `/` it is brought against still makes `///`.
  */
 type Piece =
   | { kind: "text"; text: string; isRemoved: boolean }
-  | { kind: "atom"; isRemoved: boolean }
+  | { kind: "atom"; text?: string; isRemoved: boolean }
   | { kind: "edge"; span: Span; isOpening: boolean; isInRange: boolean }
-  | { kind: "marker"; which: Marker["which"] };
+  | { kind: "boundary"; which: Boundary["which"] };
 
 /** The paragraph (or note) `point` is in, or `undefined` when it is in neither. */
 function $containerOf(point: PointType): ElementNode | undefined {
@@ -322,24 +348,24 @@ function $containerOf(point: PointType): ElementNode | undefined {
 }
 
 /**
- * `container`'s content as {@link Piece}s, with each of `markers` that falls in it placed among
- * them. Text and atoms between a `start` and an `end` marker are marked removed; `isInRange` says
+ * `container`'s content as {@link Piece}s, with each of `boundaries` that falls in it placed among
+ * them. Text and atoms between a `start` and an `end` boundary are marked removed; `isInRange` says
  * whether the read starts inside such a range (a range that began in the paragraph before).
  */
-function $readPieces(container: ElementNode, markers: Marker[], isInRange = false): Piece[] {
+function $readPieces(container: ElementNode, boundaries: Boundary[], isInRange = false): Piece[] {
   const pieces: Piece[] = [];
-  const place = (marker: Marker) => {
-    marker.isPlaced = true;
-    pieces.push({ kind: "marker", which: marker.which });
-    if (marker.which === "start") isInRange = true;
-    else if (marker.which === "end") isInRange = false;
+  const place = (boundary: Boundary) => {
+    boundary.isPlaced = true;
+    pieces.push({ kind: "boundary", which: boundary.which });
+    if (boundary.which === "start") isInRange = true;
+    else if (boundary.which === "end") isInRange = false;
   };
-  const placeWhere = (isHere: (marker: Marker) => boolean) => {
-    for (const marker of markers) if (!marker.isPlaced && isHere(marker)) place(marker);
+  const placeWhere = (isHere: (boundary: Boundary) => boolean) => {
+    for (const boundary of boundaries) if (!boundary.isPlaced && isHere(boundary)) place(boundary);
   };
   const isElementPoint =
     (element: ElementNode, index: number) =>
-    ({ point }: Marker) =>
+    ({ point }: Boundary) =>
       point.type === "element" && point.key === element.getKey() && point.offset === index;
   const visitChildren = (element: ElementNode) => {
     element.getChildren().forEach((child, index) => {
@@ -359,16 +385,16 @@ function $readPieces(container: ElementNode, markers: Marker[], isInRange = fals
     }
     if ($isStoredText(node)) {
       const text = node.getTextContent();
-      const here = markers
-        .filter((marker) => !marker.isPlaced && marker.point.key === node.getKey())
+      const here = boundaries
+        .filter((boundary) => !boundary.isPlaced && boundary.point.key === node.getKey())
         .sort((a, b) => a.point.offset - b.point.offset);
       let from = 0;
-      for (const marker of here) {
-        const to = Math.min(Math.max(marker.point.offset, from), text.length);
+      for (const boundary of here) {
+        const to = Math.min(Math.max(boundary.point.offset, from), text.length);
         if (to > from)
           pieces.push({ kind: "text", text: text.slice(from, to), isRemoved: isInRange });
         from = to;
-        place(marker);
+        place(boundary);
       }
       if (from < text.length)
         pieces.push({ kind: "text", text: text.slice(from), isRemoved: isInRange });
@@ -383,14 +409,20 @@ function $readPieces(container: ElementNode, markers: Marker[], isInRange = fals
     }
     // An atom goes whole or not at all. A range that ends inside one stops in front of it, and one
     // that starts inside one starts after it, so it stays.
-    const isInside = ({ point }: Marker) => {
+    const isInside = ({ point }: Boundary) => {
       const pointNode = point.getNode();
       return node.is(pointNode) || ($isElementNode(node) && node.isParentOf(pointNode));
     };
-    const isAtStart = ({ point }: Marker) =>
+    const isAtStart = ({ point }: Boundary) =>
       point.key === node.getKey() && point.type === "text" && point.offset === 0;
-    placeWhere((marker) => isAtStart(marker) || (isInside(marker) && marker.which === "end"));
-    pieces.push({ kind: "atom", isRemoved: isInRange });
+    placeWhere(
+      (boundary) => isAtStart(boundary) || (isInside(boundary) && boundary.which === "end"),
+    );
+    pieces.push({
+      kind: "atom",
+      ...($isOptbreak(node) ? { text: OPTBREAK_TEXT } : {}),
+      isRemoved: isInRange,
+    });
     placeWhere(isInside);
   };
   visitChildren(container);
@@ -449,7 +481,7 @@ function $joinsSlashes(pieces: Piece[]): boolean {
   const left: { piece: Piece; isAfterRemoved: boolean }[] = [];
   let isAfterRemoved = false;
   for (const piece of pieces) {
-    if (piece.kind === "marker") continue;
+    if (piece.kind === "boundary") continue;
     const isRemoved = piece.kind === "edge" ? piece.span.isRemoved : piece.isRemoved;
     if (isRemoved) {
       isAfterRemoved = true;
@@ -474,27 +506,38 @@ function $joinsSlashes(pieces: Piece[]): boolean {
     const previous = left[index - 1]?.piece;
     return (
       isJoined &&
-      previous?.kind === "text" &&
-      piece.kind === "text" &&
-      previous.text.endsWith("/") &&
-      piece.text.startsWith("/")
+      !!previous &&
+      storedTextOf(previous)?.endsWith("/") === true &&
+      storedTextOf(piece)?.startsWith("/") === true
     );
   });
 }
 
+/** The text the file stores for `piece` where that is bare text: a text, or an optional break. */
+function storedTextOf(piece: Piece): string | undefined {
+  if (piece.kind === "text") return piece.text;
+  return piece.kind === "atom" ? piece.text : undefined;
+}
+
+/**
+ * Segments text into user-perceived characters, where the runtime has `Intl.Segmenter`; where it
+ * does not, {@link edgeGrapheme} falls back to code points.
+ */
+const graphemeSegmenter: Intl.Segmenter | undefined =
+  typeof Intl !== "undefined" && "Segmenter" in Intl
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : undefined;
+
 /** The last (or first) user-perceived character of `text`. */
 function edgeGrapheme(text: string, edge: "first" | "last"): string {
-  const segments =
-    typeof Intl !== "undefined" && "Segmenter" in Intl
-      ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), (s) =>
-          String(s.segment),
-        )
-      : Array.from(text);
+  const segments = graphemeSegmenter
+    ? Array.from(graphemeSegmenter.segment(text), (s) => String(s.segment))
+    : Array.from(text);
   return (edge === "first" ? segments[0] : segments.at(-1)) ?? "";
 }
 
 /**
- * Marks removed the unit a character delete from the marker at `caretAt` takes: the nearest
+ * Marks removed the unit a character delete from the boundary at `caretAt` takes: the nearest
  * character or atom on that side, reading through span edges. Returns `false` when the paragraph
  * has none on that side.
  */
@@ -536,8 +579,9 @@ function $holdsSlash(...containers: ElementNode[]): boolean {
  * which goes with its last child; and through the edges of two pieces of one span that a join
  * brings back together, which `CharNodePlugin` makes one span again. Any other span edge that
  * stays keeps the two apart (its marker is between them in the file), and so does anything else
- * the file stores, such as a verse or a note. Two `/` already touching are not joined by anything,
- * so a delete beside a `//` already in the text is not counted.
+ * the file stores, such as a verse or a note, except an optional line break: the file stores it
+ * as a bare `//`, so a `/` brought against it joins it too. Two `/` already touching are not
+ * joined by anything, so a delete beside a `//` already in the text is not counted.
  *
  * Read-only: call inside `editor.update()`, `editor.read()` or a command handler, which have the
  * active editor it needs.
@@ -557,15 +601,15 @@ export function $deletionJoinsSlashes(deletion: JudgedDeletion): boolean {
     const first = $containerOf(deletion.start);
     const last = $containerOf(deletion.end);
     if (!first || !last || !$holdsSlash(first, last)) return false;
-    const markers: Marker[] = [
+    const boundaries: Boundary[] = [
       { which: "start", point: deletion.start },
       { which: "end", point: deletion.end },
     ];
-    if (first.is(last)) return $joinsSlashes($readPieces(first, markers));
+    if (first.is(last)) return $joinsSlashes($readPieces(first, boundaries));
     return $joinsSlashes([
-      ...$readPieces(first, markers),
+      ...$readPieces(first, boundaries),
       joinedBreak(),
-      ...$readPieces(last, markers, true),
+      ...$readPieces(last, boundaries, true),
     ]);
   }
   const container = $containerOf(deletion.caret);
@@ -575,7 +619,7 @@ export function $deletionJoinsSlashes(deletion: JudgedDeletion): boolean {
   const canJoin = $isParaLikeNode(container) && $isParaLikeNode(neighbour);
   if (!$holdsSlash(container, ...(canJoin ? [neighbour] : []))) return false;
   const pieces = $readPieces(container, [{ which: "caret", point: deletion.caret }]);
-  const caretAt = pieces.findIndex((piece) => piece.kind === "marker");
+  const caretAt = pieces.findIndex((piece) => piece.kind === "boundary");
   if (caretAt < 0) return false;
   if (removeUnitBeside(pieces, caretAt, isBackward)) return $joinsSlashes(pieces);
   if (!canJoin) return false;
