@@ -674,9 +674,9 @@ function preventAndClaim(event: Event | null): true {
  * plain text alone that is nothing but text the view cannot store (`\` and `//`), which
  * `UnstorableTextPlugin` removes, inserting nothing, after this plugin has run: judged, as it judges
  * it, against the document characters `around` the selection, so a lone `/` that would touch a `/`
- * there counts; or a marker view's copy of nothing but marker tokens ({@link withoutMarkerTokens}),
- * which that plugin and protected structure's sanitizer claim, changing nothing. Any other node copy
- * or html goes in as nodes, so it is asked about.
+ * there counts; or a marker-showing view's copy of nothing but marker tokens
+ * ({@link withoutMarkerTokens}), which that plugin and protected structure's sanitizer claim,
+ * changing nothing. Any other node copy or html goes in as nodes, so it is asked about.
  */
 function pasteInsertsNothing(
   event: PasteCommandType,

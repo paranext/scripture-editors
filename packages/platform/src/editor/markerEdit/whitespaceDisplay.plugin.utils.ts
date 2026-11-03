@@ -803,9 +803,10 @@ function $insertPastedTextIntoAttributeContext(
  * the `DataTransfer` `pasteSelection` (`clipboard.utils.ts`) rebuilds from `navigator.clipboard.
  * read()` can never contain it. Standard view's Ctrl+V and context-menu Paste read the clipboard
  * that way, so they — even a same-editor paste of the editor's own copy — ride
- * `text/html`/`text/plain` like any external source. Only a paste the browser runs itself, such
- * as a host menu's own Paste, can carry the node copy. A BLANKET
- * NBSP→`~` mapping would corrupt a same-editor paste of its own copy: every display-NBSP (the
+ * `text/html`/`text/plain` like any external source. A paste the browser runs itself, such as a
+ * host menu's own Paste, does carry the node copy, but in every view that shows markers
+ * `ClipboardPlugin`'s `pastesAsClipboardRead` (set by `Editor`) takes it away before this handler
+ * runs, so that paste rides the same flavors too. A BLANKET NBSP→`~` mapping would corrupt a same-editor paste of its own copy: every display-NBSP (the
  * separator after `\f`/`\fr`/`\ft`) would become a literal `~`, turning recognized markers into
  * unknown-marker soup, and a browser-hop `\nd …\nd*` paste would come back with an unmatched
  * closer. `normalizePastedNbsp` above uses a positional rule instead, so only genuine data-NBSPs
@@ -819,8 +820,9 @@ function $insertPastedTextIntoAttributeContext(
  * otherwise split it — the split has to happen here. A single-line payload is one `insertText`.
  *
  * Declines (returns `false`, lets Lexical's own paste handling run) when: the payload carries a
- * same-namespace Lexical flavor (the sync `ClipboardEvent` path — a null-payload dispatch or a
- * live native paste event that still has it — keeps the exact node-tree fast path); a
+ * same-namespace Lexical flavor, which keeps the exact node-tree fast path (no paste in the mounted
+ * `Editor` still carries it here, as `pastesAsClipboardRead` removes it first; a caller that does
+ * not set that option can deliver one); a
  * structure-protected document's selection is one `StructureKeyboardPlugin` refuses to replace
  * ({@link $shouldBlockSelectionReplacement} — a range spanning a paragraph boundary, or one
  * containing a verse marker, the mutable `VerseNode`'s own caret included); or no text can be
@@ -858,9 +860,9 @@ function $insertPastedTextIntoAttributeContext(
  * and (see `attributeContextPasteFidelity.test.tsx`'s "root cause" describe) merges the run, the
  * closing glyph, and even the FOLLOWING paragraph's own sibling text into one plain node: the
  * attribute display and the closing marker both vanish, and the pasted bytes end up loose in body
- * content. The suspension covers: (1) a live native paste event that still carries a
- * same-namespace `application/x-lexical-editor` flavor, which unlike the
- * reconstructed-`DataTransfer` path can still reach a handler; (2) a
+ * content. The suspension covers: (1) a paste that still carries a same-namespace
+ * `application/x-lexical-editor` flavor, which only a caller without `pastesAsClipboardRead` can
+ * deliver; (2) a
  * multi-line plain-text payload, which the ordinary external-paste pipeline below would split into
  * real paragraphs via `INSERT_PARAGRAPH_COMMAND` — inside an attribute run that is exactly as
  * destructive as the rich-paste shape; (3) a marker-bearing payload (`\c 5`) landing wholly INSIDE
@@ -1270,9 +1272,10 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
  */
 function $offsetInText(node: TextNode, point: PointType): number {
   const length = node.getTextContentSize();
-  if (point.type === "text")
+  if (point.type === "text") {
     if (point.key === node.getKey()) return point.offset;
-    else return point.getNode().isBefore(node) ? 0 : length;
+    return point.getNode().isBefore(node) ? 0 : length;
+  }
   return $liesBeforeElementPoint(node, point) ? length : 0;
 }
 
@@ -1362,7 +1365,7 @@ export function usfmToClipboardHtml(usfm: string): string {
  *
  * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
  */
-export function $selectionTouchesBookOrChapter(selection: RangeSelection): boolean {
+function $selectionTouchesBookOrChapter(selection: RangeSelection): boolean {
   return selection
     .getNodes()
     .some((node) =>

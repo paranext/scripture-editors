@@ -1684,7 +1684,7 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
-    it("does not ask about a marker view's copy of nothing but marker tokens", async () => {
+    it("does not ask about a marker-showing view's copy of nothing but marker tokens", async () => {
       const handler = answering("delete");
       const { editor } = await guardedEnvironment($init, handler);
       updateSelection(editor, before!, 3, after!, 2);
@@ -1697,7 +1697,7 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
-    it("asks about a marker view's copy that keeps some text once its marker tokens go", async () => {
+    it("asks about a marker-showing view's copy that keeps some text once its marker tokens go", async () => {
       const handler = answering("keep");
       const { editor } = await guardedEnvironment($init, handler);
       updateSelection(editor, before!, 3, after!, 2);
