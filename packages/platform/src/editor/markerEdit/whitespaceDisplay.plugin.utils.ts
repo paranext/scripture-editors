@@ -15,7 +15,6 @@
 import { $getLexicalContent, copyToClipboard, LexicalClipboardData } from "@lexical/clipboard";
 import { mergeRegister } from "@lexical/utils";
 import {
-  $getCharacterOffsets,
   $getEditor,
   $getSelection,
   $getState,
@@ -31,6 +30,7 @@ import {
   LexicalEditor,
   LexicalNode,
   PasteCommandType,
+  PointType,
   RangeSelection,
   TextNode,
 } from "lexical";
@@ -1213,13 +1213,25 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
   if (nodes.length === 0) return "";
   const firstNode = nodes[0];
   const lastNode = nodes[nodes.length - 1];
-  const { anchor, focus } = selection;
-  const isBefore = anchor.isBefore(focus);
-  const [anchorOffset, focusOffset] = $getCharacterOffsets(selection);
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
   let text = "";
   let prevWasElement = true;
-  for (const node of nodes) {
+  for (const [index, node] of nodes.entries()) {
+    if (end.type === "element" && $startsAtOrAfterElementPoint(node, end)) continue;
+    // A leaf other than text, which is sliced below, contributes nothing from before the start.
+    if (
+      start.type === "element" &&
+      !$isElementNode(node) &&
+      !$isTextNode(node) &&
+      $liesBeforeElementPoint(node, start)
+    )
+      continue;
     if ($isElementNode(node) && !node.isInline()) {
+      // For a range with an end on the root, `getNodes` can list a block after its own content,
+      // whose line has started already.
+      if (index > 0 && node.isParentOf(nodes[index - 1])) continue;
       if (!prevWasElement && $startsBlockLine(node)) text += "\n";
       prevWasElement = !node.isEmpty();
       continue;
@@ -1230,20 +1242,9 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
         text += (node === firstNode ? "" : " ") + $noteCallerText(node);
     } else if ($isTextNode(node)) {
       let nodeText = node.getTextContent();
-      if (node === firstNode) {
-        if (node === lastNode) {
-          if (
-            anchor.type !== "element" ||
-            focus.type !== "element" ||
-            focus.offset === anchor.offset
-          )
-            nodeText =
-              anchorOffset < focusOffset
-                ? nodeText.slice(anchorOffset, focusOffset)
-                : nodeText.slice(focusOffset, anchorOffset);
-        } else nodeText = isBefore ? nodeText.slice(anchorOffset) : nodeText.slice(focusOffset);
-      } else if (node === lastNode) {
-        nodeText = isBefore ? nodeText.slice(0, focusOffset) : nodeText.slice(0, anchorOffset);
+      if (node === firstNode || node === lastNode) {
+        const from = $offsetInText(node, start);
+        nodeText = nodeText.slice(from, Math.max(from, $offsetInText(node, end)));
       }
       text += $isNoteInternalDisplaySeparator(node)
         ? ""
@@ -1256,6 +1257,57 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
     }
   }
   return respellNbspToUsfm(text, nbspSpelling);
+}
+
+/**
+ * Where `point` falls in text node `node`, as an offset into its text: the point's own offset when
+ * it is a text point on `node`, otherwise 0 when it lies before `node` and the text's length when it
+ * lies after. An element point is placed by the child it stands before, where Lexical's
+ * `$getCharacterOffsets` answers 0 for any element point short of its element's end — so a range
+ * ending on the root between two paragraphs would read as taking none of the last one's text.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+function $offsetInText(node: TextNode, point: PointType): number {
+  const length = node.getTextContentSize();
+  if (point.type === "text")
+    if (point.key === node.getKey()) return point.offset;
+    else return point.getNode().isBefore(node) ? 0 : length;
+  return $liesBeforeElementPoint(node, point) ? length : 0;
+}
+
+/** Whether leaf `node` lies wholly before element point `point`. */
+function $liesBeforeElementPoint(node: LexicalNode, point: PointType): boolean {
+  const element = point.getNode();
+  if (!$isElementNode(element)) return false;
+  const after = element.getChildAtIndex(point.offset);
+  if (after === null) return element.isParentOf(node) || node.isBefore(element);
+  return (
+    after !== node && !($isElementNode(after) && after.isParentOf(node)) && node.isBefore(after)
+  );
+}
+
+/**
+ * Whether `node` starts at or after element point `point`. `RangeSelection.getNodes` reaches past
+ * an end on the root between two paragraphs into the next one, whose block and first child are no
+ * part of the range.
+ */
+function $startsAtOrAfterElementPoint(node: LexicalNode, point: PointType): boolean {
+  const element = point.getNode();
+  if (!$isElementNode(element)) return false;
+  const after = element.getChildAtIndex(point.offset);
+  if (after === null)
+    return (
+      node !== element &&
+      !element.isParentOf(node) &&
+      !($isElementNode(node) && node.isParentOf(element)) &&
+      element.isBefore(node)
+    );
+  return (
+    node === after ||
+    ($isElementNode(after) && after.isParentOf(node)) ||
+    (!($isElementNode(node) && node.isParentOf(after)) && after.isBefore(node))
+  );
 }
 
 /**

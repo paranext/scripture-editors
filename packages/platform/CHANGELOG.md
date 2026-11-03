@@ -351,6 +351,14 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- **A Standard-view copy whose selection ends on the editor root between two paragraphs copies
+  that last paragraph.** The copy walker (`$selectionToUsfmText`) took a boundary text node's
+  offset from Lexical's `$getCharacterOffsets`, which answers 0 for an element point short of its
+  element's end, so it wrote none of the last paragraph's text, and added a line break for the
+  paragraph after it, while a cut of the same selection removed that text: pasted back, the
+  paragraph came back empty. It now places each end by position. No gesture in Standard view is
+  known to end a selection there, since the browser's selection resolves into a paragraph; code
+  that sets a selection can.
 - **A paste the browser delivers itself pastes as Ctrl+V does in the views that show markers**
   (Standard, the Footnotes pane's row editor, Unformatted, Markers). macOS's Edit > Paste and
   Shift+Insert, and a `PASTE_COMMAND` carrying the editor's node copy
@@ -367,10 +375,13 @@ refused. The public surface grew substantially; nothing was removed.
   and every pasted note's `\cat`. No paste or drop there now inserts a book (`\id`) or chapter line,
   whether it comes from the node copy, html or, under `"protected"` structure, the sanitizer (which
   had put the book line's code and title into the paragraph); a cut, and a paste over a selection,
-  keep each book and chapter line the selection runs across and remove the rest. In chapter 1 a
-  copy's front matter (`\h`, `\mt1`, an introduction) goes in before the chapter line and its
-  Scripture text after it, and a paste with no front matter (plain text, another program's html)
-  goes after the chapter line. So Select All, cut, then paste back restores the document exactly,
+  keep each book and chapter line the selection runs across and remove the rest. A copy that held
+  a chapter line splits around the document's only when pasted over a selection that holds it or
+  from a caret right beside it (the start of the line after it, where a cut leaves the caret, or
+  the end of the line before it): chapter 1's front matter (`\h`, `\mt1`, an introduction) goes
+  before the chapter line and the Scripture text after it. Pasted anywhere else, the whole copy
+  goes in at the caret. A paste with no front matter (plain text, another program's html) over
+  such a selection goes after the chapter line. So Select All, cut, then paste back restores the document exactly,
   front matter included, and a paste over Select All of its own copy changes nothing. A delete,
   typed text, Enter or a drag-move over such a selection, which removed both lines and typed into
   the book line, keeps them too and replaces the rest (`BookAndChapterLinesPlugin`, which `Editor`
