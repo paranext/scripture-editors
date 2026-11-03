@@ -1,5 +1,6 @@
 import {
   $chapterLineToSplitAt,
+  $isFirstChapterLine,
   $pasteAroundChapterLine,
   $removeBookAndChapterLines,
   $removeTextKeepingBookAndChapterLines,
@@ -209,7 +210,8 @@ function joinLines(text: string): string {
  * carries both. Such a copy splits around the document's chapter line only over a selection that
  * held that line or from a caret right beside it ({@link $chapterLineToSplitAt}): what it held
  * before its chapter line, chapter 1's front matter, goes before the document's, and the rest after
- * ({@link $pasteAroundChapterLine}). Any other paste puts it all at the caret. A paste over a
+ * ({@link $pasteAroundChapterLine}); in a chapter other than chapter 1, that front matter goes after
+ * the chapter line with the rest. Any other paste puts it all at the caret. A paste over a
  * selection that runs across a book or chapter line keeps it, and replaces the rest of the
  * selection ({@link $removeTextKeepingBookAndChapterLines}), whichever flavor it inserts; what has
  * no front matter of its own (plain text, another program's html) goes after the chapter line.
@@ -591,7 +593,11 @@ export function UnstorableTextPlugin({
           if ($selectionSpansBookOrChapterLine(selection))
             $removeTextKeepingBookAndChapterLines(selection);
           if (chapter) {
-            const frontMatter = beforeChapter.filter((node) => nodes.includes(node));
+            // Only chapter 1 has lines before its chapter line; in any other chapter the copy's
+            // front matter is more text, and goes after the chapter line with the rest.
+            const frontMatter = $isFirstChapterLine(chapter)
+              ? beforeChapter.filter((node) => nodes.includes(node))
+              : [];
             if ($pasteAroundChapterLine(nodes, frontMatter, chapter, selection)) return true;
           }
           return false;
