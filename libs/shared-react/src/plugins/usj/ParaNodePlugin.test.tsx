@@ -1,6 +1,16 @@
 import { ParaNodePlugin } from "./ParaNodePlugin";
 import { baseTestEnvironment, pressEnterAtSelection, sutUpdate } from "./react-test.utils";
-import { $getRoot, $createTextNode, LexicalEditor, TextNode } from "lexical";
+import { $deletePara, DeleteIntent } from "./structureKeyboard.utils";
+import {
+  $createRangeSelection,
+  $createTextNode,
+  $getRoot,
+  $getSelection,
+  $isRangeSelection,
+  $setSelection,
+  LexicalEditor,
+  TextNode,
+} from "lexical";
 import {
   $createGutterMarkerNode,
   $createImmutableChapterNode,
@@ -167,7 +177,7 @@ describe("ParaNodePlugin", () => {
       expect(await markers(editor)).toEqual(["q1", "p"]);
     });
 
-    it("takes the paragraph's marker when an empty paragraph is joined by an edit", async () => {
+    it("keeps the blank line when an empty paragraph after it is removed by an edit", async () => {
       const { editor } = await testEnvironment(() => {
         $blankLineThenParagraphs();
         content.remove();
@@ -175,6 +185,39 @@ describe("ParaNodePlugin", () => {
 
       await sutUpdate(editor, () => {
         following.remove();
+      });
+
+      expect(await markers(editor)).toEqual(["b", "p"]);
+    });
+
+    it.each<DeleteIntent>(["deleteForward", "deleteBackward"])(
+      "keeps the blank line when a paragraph delete (%s) removes the empty paragraph after it",
+      async (intent) => {
+        const { editor } = await testEnvironment(() => {
+          $blankLineThenParagraphs();
+          content.remove();
+        });
+
+        await sutUpdate(editor, () => {
+          $deletePara(following, intent);
+        });
+
+        expect(await markers(editor)).toEqual(["b", "p"]);
+      },
+    );
+
+    it("takes the surviving paragraph's marker when a range across the break is typed over", async () => {
+      const { editor } = await testEnvironment($blankLineThenParagraphs);
+
+      await sutUpdate(editor, () => {
+        const selection = $createRangeSelection();
+        selection.anchor.set(blank.getKey(), 0, "element");
+        selection.focus.set(content.getKey(), 2, "text");
+        $setSelection(selection);
+      });
+      await sutUpdate(editor, () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertText("x");
       });
 
       expect(await markers(editor)).toEqual(["q1", "p"]);

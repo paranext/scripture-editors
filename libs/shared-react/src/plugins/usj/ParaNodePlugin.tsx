@@ -6,6 +6,7 @@ import {
   $isElementNode,
   $isRangeSelection,
   LexicalEditor,
+  LexicalNode,
 } from "lexical";
 import { useEffect } from "react";
 import {
@@ -71,7 +72,7 @@ function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
 
   const prevEditorState = editor.getEditorState();
   const isUserEdit = !getApplyingUpdateSource(editor);
-  const { wasEmpty, wasBlank, nextKey, nextPara } = prevEditorState.read(() => {
+  const { wasEmpty, wasBlank, nextKey, nextPara, nextHeldContent } = prevEditorState.read(() => {
     const prevNode = $getNodeByKey(node.getKey());
     const prevNext = prevNode?.getNextSibling();
     // A range selection from the blank line over other paragraphs joins the paragraph it ends in,
@@ -84,8 +85,12 @@ function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
       const endPara = end.getTopLevelElement();
       if ($isParaNode(endPara) && !endPara.is(prevNode)) survivor = endPara;
     }
+    const holdsText = (para: LexicalNode | null | undefined) =>
+      $isParaNode(para) && para.getChildren().some((child) => !$isVisibleMarkerNode(child));
     return {
       wasEmpty: $isParaNode(prevNode) && prevNode.isEmpty(),
+      // Whether a paragraph the edit takes away held anything beyond a marker glyph.
+      nextHeldContent: holdsText(prevNext) || holdsText(survivor),
       // Empty but for a marker glyph the view shows in front of it (a gutter or visible marker).
       wasBlank: $isParaNode(prevNode) && prevNode.getChildren().every($isVisibleMarkerNode),
       nextKey: prevNext?.getKey(),
@@ -102,11 +107,13 @@ function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
   // the way its HTML editor joins two blocks, keeping the second block.
   const next = nextKey === undefined ? undefined : ($getNodeByKey(nextKey) ?? undefined);
   if (nextKey !== undefined && (!next || !next.isAttached())) {
-    // An applied update that removes the paragraph without bringing any content into this one
-    // is not a join: the blank line keeps its marker. Every other removal is the user's own edit
-    // (Backspace, Delete, or a range typed over), and a join of an empty paragraph moves nothing.
+    // The blank line takes the marker only when content joined it: content now in the blank line,
+    // or, for the user's own edit (Backspace, Delete, or a range typed over), a paragraph that
+    // held content and was removed. Removing an empty paragraph moves nothing, so the blank line
+    // keeps its marker, as does an applied update that removes a paragraph without bringing any
+    // content in.
     const holdsContent = node.getChildren().some((child) => !$isVisibleMarkerNode(child));
-    const isJoin = holdsContent || !getApplyingUpdateSource(editor);
+    const isJoin = holdsContent || (isUserEdit && nextHeldContent);
     if (isJoin && nextPara) {
       $syncParaMarkerGlyph(node, nextPara.marker);
       node.setUnknownAttributes(nextPara.unknownAttributes);

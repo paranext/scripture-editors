@@ -558,3 +558,6 @@ refused. The public surface grew substantially; nothing was removed.
   macOS Ctrl+H) over a range holding a verse marker no longer bypasses structure protection. Under
   `"protected"` it is refused instead of removing the verse; under `"guarded"` a delete arms the
   two-step confirm, as Backspace does.
+- In the views that show a marker glyph on a blank line (`\b`), deleting the empty paragraph after
+  it, with Delete or Backspace, leaves the blank line a `\b`. It had taken that paragraph's marker,
+  so `\b`, `\q1`, `\p` saved as `\q1`, `\p`.
