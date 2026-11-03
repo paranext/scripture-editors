@@ -12,6 +12,7 @@ import {
   $hiddenRunAtCaret,
   $isInCaretContainer,
   $placeCaretPastHiddenRun,
+  $probeDeleteExtent,
   DeleteDirection,
   HiddenRun,
 } from "./hiddenContentDelete.utils";
@@ -736,20 +737,9 @@ function $deleteExtent(
   granularity: "word" | "line",
   from: RangeSelection = selection,
 ): DeleteExtent {
-  const domSelection = editor.getRootElement()?.ownerDocument.defaultView?.getSelection();
-  if (!domSelection || typeof domSelection.modify !== "function")
+  const probe = $probeDeleteExtent(editor, from, direction === "backward", granularity, selection);
+  if (!probe)
     return { hidden: granularity === "line" ? $hiddenNodesToParaEdge(from, direction) : [] };
-  const probe = from.clone();
-  // Dirty makes `modify` start from the probe's own points rather than the DOM's.
-  probe.dirty = true;
-  probe.modify(
-    "extend",
-    direction === "backward",
-    granularity === "line" ? "lineboundary" : "word",
-  );
-  // The probe moved the DOM selection; dirty makes the next `modify` (the native delete's own, when
-  // nothing is hidden) start from the live caret again rather than from the probe's extent.
-  selection.dirty = true;
   const measured = probe.isCollapsed() ? undefined : $rangeSnapshot(probe);
   if (!$isInCaretContainer(probe.focus, from))
     return { hidden: $hiddenNodesToParaEdge(from, direction), measured, leavesLine: true };
