@@ -1,5 +1,6 @@
 import { removeMarkerGlyphElements } from "./clipboard.utils";
 import { DeleteGranularity, deleteChordOf } from "./HiddenContentDeleteGuardPlugin";
+import { $probeDeleteExtent } from "./hiddenContentDelete.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
 import { $shouldBlockStructuralEdit, $shouldRefuseExtendedDelete } from "./structureKeyboard.utils";
 import {
@@ -369,28 +370,17 @@ export function UnstorableTextPlugin({
     };
 
     /**
-     * What a word or line delete from the caret `selection` would remove, measured as Lexical's own
-     * delete measures it, by extending a copy of the selection with the browser's
-     * `Selection.modify`; `undefined` where it reaches nothing or the browser cannot measure.
-     *
-     * Mutating: it moves the DOM selection and marks `selection` dirty, as
-     * `HiddenContentDeleteGuardPlugin` does measuring the same extent.
+     * What a word or line delete from the caret `selection` would remove (see
+     * {@link $probeDeleteExtent}); `undefined` where it reaches nothing or the browser cannot
+     * measure. Mutating, as that is.
      */
     const $measureExtent = (
       selection: RangeSelection,
       isBackward: boolean,
       granularity: "word" | "line",
     ): RangeSelection | undefined => {
-      const domSelection = editor.getRootElement()?.ownerDocument.defaultView?.getSelection();
-      if (!domSelection || typeof domSelection.modify !== "function") return undefined;
-      const probe = selection.clone();
-      // Dirty makes `modify` start from the probe's own points rather than the DOM's.
-      probe.dirty = true;
-      probe.modify("extend", isBackward, granularity === "line" ? "lineboundary" : "word");
-      // The probe moved the DOM selection; dirty makes the delete's own `modify` start from the
-      // live caret again.
-      selection.dirty = true;
-      return probe.isCollapsed() ? undefined : probe;
+      const probe = $probeDeleteExtent(editor, selection, isBackward, granularity);
+      return probe && !probe.isCollapsed() ? probe : undefined;
     };
 
     /**
