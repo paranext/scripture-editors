@@ -75,11 +75,12 @@ function convertUsxRecurse<T extends Usj | MarkerObject = Usj>(
     marker = attribs.style;
     delete attribs.style;
   }
-  // dropping because presence of vid in para elements is not consistent in USX
-  if (attribs.vid) delete attribs.vid;
+  // Dropped whatever their value, an empty one included: `vid` because its presence on para
+  // elements is not consistent in USX (ParatextData writes `vid=""` in every chapter after the
+  // first), `status` because it is nonstandard derived metadata that could get out of date.
+  delete attribs.vid;
+  delete attribs.status;
   // Not dropping `attribs.closed` for backwards compatibility.
-  // dropping because it is nonstandard derived metadata that could get out of date
-  if (attribs.status) delete attribs.status;
 
   let outObj: T = { type } as T;
   if (marker !== undefined) (outObj as MarkerObject).marker = marker;

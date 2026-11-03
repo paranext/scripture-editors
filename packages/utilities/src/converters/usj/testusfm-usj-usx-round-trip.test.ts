@@ -42,20 +42,16 @@ function readOracle(name: string): Usj {
 }
 
 /**
- * Drops EMPTY `sid`/`vid` attributes, recursively — exactly the two artifacts Paratext 9.5's USJ
- * carries (`sid: ""` on verses, `vid: ""` on paras). The serializer omits empty attributes from
- * USX and the parser additionally drops para `vid` as inconsistent derived metadata, so
- * `"" -> absent` is the converter pair's deliberate normalization for these two, not a loss —
- * they carry no document bytes. Deliberately NARROW: any OTHER attribute arriving empty and
- * getting dropped should turn this net red, so the drop is decided consciously rather than
- * silently absorbed here.
+ * Drops EMPTY `sid` attributes, recursively — the artifact Paratext 9.5's USJ carries on verses in
+ * a chapter after the first. The serializer omits empty attributes from USX, so `"" -> absent` is
+ * the converter pair's deliberate normalization, not a loss — it carries no document bytes.
+ * Deliberately NARROW: any OTHER attribute arriving empty and getting dropped should turn this net
+ * red, so the drop is decided consciously rather than silently absorbed here.
  */
 function withoutEmptyAttributes(content: MarkerContent[]): MarkerContent[] {
   return content.map((item) => {
     if (typeof item === "string") return item;
-    const entries = Object.entries(item).filter(
-      ([key, value]) => !((key === "sid" || key === "vid") && value === ""),
-    );
+    const entries = Object.entries(item).filter(([key, value]) => !(key === "sid" && value === ""));
     const cleaned = Object.fromEntries(entries) as MarkerObject;
     if (cleaned.content) cleaned.content = withoutEmptyAttributes(cleaned.content);
     return cleaned;

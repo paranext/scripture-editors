@@ -102,4 +102,20 @@ describe("USX to USJ Converter", () => {
       expect(usxStringToUsj(usx)).toEqual(usj);
     });
   });
+
+  // ParatextData writes `vid` on every paragraph that continues a verse, empty in a chapter after
+  // the first. A paragraph attribute the editor does not know keeps its typed markers from being
+  // read as markers, so the derived ones are dropped whatever their value.
+  it.each([
+    ["a filled vid", ' vid="GEN 1:1"'],
+    ["an empty vid", ' vid=""'],
+    ["a filled status", ' status="unknown"'],
+    ["an empty status", ' status=""'],
+  ])("drops %s from a paragraph", (_, attribute) => {
+    const usj = usxStringToUsj(
+      `<usx version="3.0"><book code="GEN" style="id" /><chapter number="2" style="c" sid="" />` +
+        `<para style="q2"${attribute}>continued</para></usx>`,
+    );
+    expect(usj.content[2]).toEqual({ type: "para", marker: "q2", content: ["continued"] });
+  });
 });
