@@ -103,12 +103,20 @@ describe("USJ to USX Converter", () => {
       expect(usx.startsWith(`<usx version="${USX_VERSION}">`)).toBe(true);
     });
 
-    it.each(["3.0", "3.1"])("should round-trip a version %s source USX exactly", (version) => {
-      const sourceUsx = removeXmlWhitespace(usxGen1v1).replace(
-        `<usx version="${USX_VERSION}">`,
-        `<usx version="${version}">`,
-      );
-      expect(usjToUsxString(usxStringToUsj(sourceUsx))).toEqual(sourceUsx);
+    it("should write a version that is not 3.x unchanged", () => {
+      const usx = usjToUsxString({ ...usjGen1v1, version: "2.5" });
+      expect(usx.startsWith('<usx version="2.5">')).toBe(true);
     });
+
+    it.each(["2.5", "3.0", "3.1"])(
+      "should round-trip a version %s source USX exactly",
+      (version) => {
+        const sourceUsx = removeXmlWhitespace(usxGen1v1).replace(
+          `<usx version="${USX_VERSION}">`,
+          `<usx version="${version}">`,
+        );
+        expect(usjToUsxString(usxStringToUsj(sourceUsx))).toEqual(sourceUsx);
+      },
+    );
   });
 });

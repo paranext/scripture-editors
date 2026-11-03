@@ -62,6 +62,12 @@ describe("USX to USJ Converter", () => {
       expect(usj.content).toEqual(usjGen1v1.content);
     });
 
+    it("should preserve a version that is not 3.x unchanged", () => {
+      const usj = usxStringToUsj(usxGen1v1.replace('<usx version="3.1">', '<usx version="2.5">'));
+      expect(usj.version).toBe("2.5");
+      expect(usj.content).toEqual(usjGen1v1.content);
+    });
+
     it("should use USJ_VERSION when the USX declares no version", () => {
       const usj = usxStringToUsj(usxGen1v1.replace('<usx version="3.1">', "<usx>"));
       expect(usj.version).toBe(USJ_VERSION);

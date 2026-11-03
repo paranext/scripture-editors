@@ -99,7 +99,9 @@ export interface Usj {
   type: typeof USJ_TYPE;
   /**
    * The USJ spec version of this document, e.g. `"3.0"` or `"3.1"` — the same numbering as USX
-   * and USFM. A document converted from USX keeps the version that USX declared.
+   * and USFM. A document converted from USX keeps the version that USX declared, and the USX
+   * converted back from it declares the same one. A version that is not 3.x is preserved
+   * unchanged: the converters neither validate nor upgrade it.
    * `USJ_VERSION` is the newest version this package targets, not the only one allowed.
    */
   version: string;
