@@ -1,7 +1,7 @@
-import { DOMImplementation as g, DOMParser as v } from "@xmldom/xmldom";
-const M = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+import { DOMImplementation as g, DOMParser as M } from "@xmldom/xmldom";
+const v = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
 function m(e) {
-  if (M.has(e))
+  if (v.has(e))
     throw new Error(`The key "${e}" is not allowed to avoid prototype pollution.`);
 }
 const p = "$", O = ".content[";
@@ -221,7 +221,7 @@ const B = [
   "XXG"
 ];
 function Y(e) {
-  const n = new v().parseFromString(e, "text/xml");
+  const n = new M().parseFromString(e, "text/xml");
   return H(n.documentElement);
 }
 function H(e) {
@@ -234,7 +234,7 @@ function b(e) {
   if (["row", "cell"].includes(n) && (n = "table:" + n), e.attributes)
     for (const s of Array.from(e.attributes))
       m(s.name), t[s.name] = s.value;
-  t.style !== void 0 && (r = t.style, delete t.style), t.vid && delete t.vid, t.status && delete t.status;
+  t.style !== void 0 && (r = t.style, delete t.style), delete t.vid, delete t.status;
   let i = { type: n };
   r !== void 0 && (i.marker = r), i = { ...i, ...t }, e.firstChild && e.firstChild.nodeType === e.firstChild.TEXT_NODE && e.firstChild.nodeValue && E(e.firstChild.nodeValue) && (o = e.firstChild.nodeValue);
   const a = Array.from(e.childNodes);
