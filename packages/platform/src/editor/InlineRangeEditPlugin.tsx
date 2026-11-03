@@ -15,6 +15,7 @@ import {
   COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   DELETE_CHARACTER_COMMAND,
+  $hasUpdateTag,
   ElementNode,
   LexicalNode,
   PASTE_COMMAND,
@@ -25,7 +26,13 @@ import {
   TextNode,
 } from "lexical";
 import { $isNoteNode, NBSP, NoteNode, ZWSP } from "shared";
-import { $isPlainProse } from "shared-react";
+import {
+  $isPlainProse,
+  $selectionContainsVerseMarker,
+  $shouldBlockSelectionReplacement,
+  CONFIRMED_DELETE_TAG,
+  StructureProtectionMode,
+} from "shared-react";
 import { useEffect } from "react";
 
 /**
@@ -53,8 +60,22 @@ import { useEffect } from "react";
  * typed text does not. Any other payload is inserted with `insertNodes`, which does not have this
  * problem. Plain text waits at `COMMAND_PRIORITY_LOW`, behind every handler that can refuse the paste,
  * so a refused paste has removed nothing.
+ *
+ * Mounted ahead of `StructureKeyboardPlugin`, so it claims these commands first. It therefore
+ * leaves a range that plugin judges to it, which is what keeps structure protection in force for
+ * edits that arrive with no keydown (an input method, macOS Ctrl+H): under `"protected"` a range
+ * that spans a paragraph boundary or holds a verse marker is left alone, and under `"guarded"` a
+ * delete of a range holding a verse marker is left alone until the user has confirmed it (the
+ * confirmed delete carries {@link CONFIRMED_DELETE_TAG}). Typing over such a range under
+ * `"guarded"` is not held back.
+ *
+ * @param structureProtectionMode - How the host protects document structure. Defaults to `"off"`.
  */
-export function InlineRangeEditPlugin(): null {
+export function InlineRangeEditPlugin({
+  structureProtectionMode = "off",
+}: {
+  structureProtectionMode?: StructureProtectionMode;
+}): null {
   const [editor] = useLexicalComposerContext();
   useEffect(
     () =>
@@ -67,15 +88,17 @@ export function InlineRangeEditPlugin(): null {
             if ($getEditor().isComposing())
               return (
                 COMPOSITION_PLACEHOLDERS.includes(text) &&
-                $replaceInlineRange(text, "compositionPlaceholder")
+                $replaceInlineRange(text, structureProtectionMode, "compositionPlaceholder")
               );
-            return $replaceInlineRange(text);
+            return $replaceInlineRange(text, structureProtectionMode);
           },
           COMMAND_PRIORITY_HIGH,
         ),
         editor.registerCommand(
           DELETE_CHARACTER_COMMAND,
-          () => !$getEditor().isComposing() && $replaceInlineRange(""),
+          () =>
+            !$getEditor().isComposing() &&
+            $replaceInlineRange("", structureProtectionMode, "delete"),
           COMMAND_PRIORITY_HIGH,
         ),
         editor.registerCommand(
@@ -83,19 +106,23 @@ export function InlineRangeEditPlugin(): null {
           ({ nodes }) =>
             nodes.length > 0 &&
             nodes.every($isPlainProse) &&
-            $replaceInlineRange(nodes.map((node) => node.getTextContent()).join("")),
+            $replaceInlineRange(
+              nodes.map((node) => node.getTextContent()).join(""),
+              structureProtectionMode,
+            ),
           COMMAND_PRIORITY_HIGH,
         ),
         editor.registerCommand(
           PASTE_COMMAND,
           (event) => {
-            if (isPlainTextPaste(event)) $replaceInlineRange("", "caretForPaste");
+            if (isPlainTextPaste(event))
+              $replaceInlineRange("", structureProtectionMode, "caretForPaste");
             return false;
           },
           COMMAND_PRIORITY_LOW,
         ),
       ),
-    [editor],
+    [editor, structureProtectionMode],
   );
   return null;
 }
@@ -123,6 +150,8 @@ function isPlainTextPaste(event: PasteCommandType): boolean {
  * What {@link $replaceInlineRange} is replacing the range for:
  *
  * - `edit`: `text` is the whole of the edit.
+ * - `delete`: a character delete; `text` is empty. It differs from `edit` only in that, under
+ *   `"guarded"`, a range holding a verse marker is left to the two-step confirm.
  * - `compositionPlaceholder`: `text` is the placeholder a composition starts with. Lexical has already
  *   put the composition on the range's anchor, which may be in another text, so it moves to the text
  *   holding the placeholder here: `TextNode.select` moves it only while the selection is still on
@@ -131,7 +160,7 @@ function isPlainTextPaste(event: PasteCommandType): boolean {
  * - `caretForPaste`: a paste is about to be inserted at the caret, in the same update, so the caret
  *   stays in the start text even if nothing is left of it.
  */
-type InlineRangeReplacement = "edit" | "compositionPlaceholder" | "caretForPaste";
+type InlineRangeReplacement = "edit" | "delete" | "compositionPlaceholder" | "caretForPaste";
 
 /** A text and an offset in it: one end of the range. */
 interface Edge {
@@ -203,11 +232,25 @@ function $removeIfEmptyInline(element: ElementNode | null): void {
  * Replace the selected range with `text`, when it is one {@link $inlineRangeEdges} takes.
  *
  * @param text - What goes in place of the range.
+ * @param structureProtectionMode - Decides which ranges are left to `StructureKeyboardPlugin`.
  * @param purpose - What the replacement is for.
  */
-function $replaceInlineRange(text: string, purpose: InlineRangeReplacement = "edit"): boolean {
+function $replaceInlineRange(
+  text: string,
+  structureProtectionMode: StructureProtectionMode,
+  purpose: InlineRangeReplacement = "edit",
+): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
+  if (structureProtectionMode === "protected" && $shouldBlockSelectionReplacement(selection))
+    return false;
+  if (
+    structureProtectionMode === "guarded" &&
+    purpose === "delete" &&
+    !$hasUpdateTag(CONFIRMED_DELETE_TAG) &&
+    $selectionContainsVerseMarker(selection)
+  )
+    return false;
   const edges = $inlineRangeEdges(selection);
   if (!edges) return false;
   const [start, end] = edges;
@@ -216,7 +259,7 @@ function $replaceInlineRange(text: string, purpose: InlineRangeReplacement = "ed
   // which deletes such a range correctly, places it. Typed text holds it in the start text.
   if (
     text === "" &&
-    purpose === "edit" &&
+    (purpose === "edit" || purpose === "delete") &&
     start.offset === 0 &&
     end.offset === end.node.getTextContentSize()
   )

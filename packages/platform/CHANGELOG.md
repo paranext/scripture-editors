@@ -554,3 +554,7 @@ refused. The public surface grew substantially; nothing was removed.
   — acts on the whole span. Lexical records that end as a child index on the span, which was read
   as a text offset, so `removeCharacterMarker()` over `\add God\add*` left `G\add od\add*`, and removing `\nd`
   from a span holding a nested one changed nothing.
+- In the views that hide markers, an edit that arrives with no keydown (an input method composing,
+  macOS Ctrl+H) over a range holding a verse marker no longer bypasses structure protection. Under
+  `"protected"` it is refused instead of removing the verse; under `"guarded"` a delete arms the
+  two-step confirm, as Backspace does.

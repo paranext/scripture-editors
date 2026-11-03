@@ -2129,7 +2129,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             onHiddenContentDelete={onHiddenContentDelete}
             logger={stableLogger}
           />
-          {viewOptions?.markerMode === "hidden" && <InlineRangeEditPlugin />}
+          {viewOptions?.markerMode === "hidden" && (
+            <InlineRangeEditPlugin structureProtectionMode={structureProtectionMode} />
+          )}
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects
               depend on it, so a host handing over a fresh-but-equivalent logger object each
               render would re-register their command listeners at the END of Lexical's
