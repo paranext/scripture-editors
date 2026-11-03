@@ -2125,14 +2125,16 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               the `\` marker menu consume it), so neither plugin here acts in Standard view. The
               hidden-marker views take a paste or drop with `\` or `//` in it, leaving those out,
               and refuse a typed `\` or `//` (UnstorableTextPlugin); the Markers view still
-              refuses typed or pasted `\` and `/` outright (CommandMenuPlugin). */}
-          {viewOptions?.markerMode === "hidden" && (
-            <UnstorableTextPlugin
-              structureProtectionMode={structureProtectionMode}
-              onRemoved={onUnstorableTextRemoved}
-              logger={stableLogger}
-            />
-          )}
+              refuses typed or pasted `\` and `/` outright (CommandMenuPlugin).
+              UnstorableTextPlugin is mounted in every view, acting only in one that hides
+              markers, so a view switch keeps its handlers ahead of the same-priority ones mounted
+              after it (ParaMarkerSelectionPlugin's among them). */}
+          <UnstorableTextPlugin
+            isEnabled={viewOptions?.markerMode === "hidden"}
+            structureProtectionMode={structureProtectionMode}
+            onRemoved={onUnstorableTextRemoved}
+            logger={stableLogger}
+          />
           {viewOptions?.markerMode === "visible" && <CommandMenuPlugin logger={stableLogger} />}
           <ContextMenuPlugin options={contextMenuOptions} />
           {/* Must mount before every plugin with a CRITICAL cut handler (MarkerEditPlugin,
