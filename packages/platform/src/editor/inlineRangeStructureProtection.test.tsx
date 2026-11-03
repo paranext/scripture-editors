@@ -8,6 +8,8 @@ import { EDITING_VIEWS, forEachView, mountInView } from "./editorViews.test-help
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
+  COMPOSITION_END_COMMAND,
+  COMPOSITION_START_COMMAND,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   DELETE_CHARACTER_COMMAND,
   LexicalEditor,
@@ -71,6 +73,26 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
 
       expect(verseNumbers(m.ref.current?.getUsj())).toEqual(['"number":"1"', '"number":"2"']);
       expect(JSON.stringify(m.ref.current?.getUsj())).not.toContain("axef");
+      m.unmount();
+    });
+
+    it("keeps both verses when an input method composes over the range", async () => {
+      const m = await mountWithRange("protected");
+
+      await act(async () => {
+        m.lexical.dispatchCommand(
+          COMPOSITION_START_COMMAND,
+          new CompositionEvent("compositionstart"),
+        );
+      });
+      await act(async () => {
+        m.lexical.dispatchCommand(
+          COMPOSITION_END_COMMAND,
+          new CompositionEvent("compositionend", { data: "x" }),
+        );
+      });
+
+      expect(verseNumbers(m.ref.current?.getUsj())).toEqual(['"number":"1"', '"number":"2"']);
       m.unmount();
     });
 
