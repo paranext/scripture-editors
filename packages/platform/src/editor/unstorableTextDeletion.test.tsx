@@ -497,6 +497,36 @@ describe("deleting a selected paragraph marker in the paragraph-structure view",
   );
 });
 
+describe("deleting a selected paragraph marker after the editor switches into paragraph-structure", () => {
+  it("is refused as in an editor mounted in that view", async () => {
+    const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+    const mounted = await mountInView(usjWith(["a/"], ["/c"]), editorView("standard"), {
+      structureProtectionMode: "off",
+      onUnstorableTextRemoved: onRemoved,
+    });
+    try {
+      await mounted.rerenderWithView(editorView("paragraph-structure"));
+      await act(async () =>
+        mounted.lexical.update(
+          () => {
+            const glyph = $getRoot().getChildren().filter($isParaNode)[1]?.getFirstChild();
+            if (!$isGutterMarkerNode(glyph)) throw new Error("no gutter glyph on the paragraph");
+            $selectParaMarker(glyph);
+          },
+          { discrete: true },
+        ),
+      );
+
+      await pressToDelete(mounted, "Backspace");
+
+      expect(savedParas(mounted)).toEqual(["a/", "/c"]);
+      expect(onRemoved.mock.calls).toEqual([[REFUSED]]);
+    } finally {
+      mounted.unmount();
+    }
+  });
+});
+
 describe("deleting in Standard view", () => {
   it("joins two `/` as asked, telling no one", async () => {
     const onRemoved = vi.fn<UnstorableTextRemovedHandler>();

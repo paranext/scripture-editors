@@ -510,8 +510,8 @@ export interface MountedEditor {
   rerenderWithStyleInfo: (styleInfo: StyleInfo | undefined) => Promise<void>;
   /** Re-render the same editor at a different scripture reference, the way a host navigates it. */
   rerenderWithScrRef: (scrRef: SerializedVerseRef) => Promise<void>;
-  /** Re-render the same editor with different view options, the way a host passes a project
-   * setting once it has loaded. */
+  /** Re-render the same editor with different view options, the way a host switches views or
+   * passes a project setting once it has loaded. */
   rerenderWithView: (view: ViewOptions) => Promise<void>;
 }
 
@@ -594,18 +594,19 @@ export async function mountInView(
         await Promise.resolve();
       });
     },
-    rerenderWithScrRef: async (nextScrRef) => {
-      currentScrRef = nextScrRef;
+    rerenderWithView: async (nextView) => {
+      currentView = nextView;
       await act(async () => {
         rerenderEditor(editorWith(currentStyleInfo));
         await Promise.resolve();
         await Promise.resolve();
       });
     },
-    rerenderWithView: async (nextView) => {
-      currentView = nextView;
+    rerenderWithScrRef: async (nextScrRef) => {
+      currentScrRef = nextScrRef;
       await act(async () => {
         rerenderEditor(editorWith(currentStyleInfo));
+        await Promise.resolve();
         await Promise.resolve();
       });
     },
