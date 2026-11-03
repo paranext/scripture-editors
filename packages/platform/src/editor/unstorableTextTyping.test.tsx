@@ -242,6 +242,23 @@ describe.each(["paragraph-structure", "formatted"])("typing into %s view", (view
     expect(onRemoved).toHaveBeenCalledWith({ source: "typing", removed: ["\\"] });
   });
 
+  it("lets a `\\` or a `/` an input method is composing through, telling no one", async () => {
+    const { mounted, onRemoved } = await mount(viewName, "a/b", 2);
+    const root = mounted.lexical.getRootElement();
+    if (!root) throw new Error("editor root not found");
+    const keydowns = ["\\", "/"].map(
+      (key) =>
+        new KeyboardEvent("keydown", { key, isComposing: true, bubbles: true, cancelable: true }),
+    );
+
+    await act(async () => {
+      for (const keydown of keydowns) root.dispatchEvent(keydown);
+    });
+
+    expect(keydowns.map((keydown) => keydown.defaultPrevented)).toEqual([false, false]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
   it("refuses a `\\` that arrives with no keydown, as from a virtual keyboard", async () => {
     const { mounted, onRemoved } = await mount(viewName, "ab", 1);
 
