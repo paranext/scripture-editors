@@ -12,6 +12,8 @@ import {
 import { $selectionToUsfmViaStandardView } from "../MarkersViewCopyPlugin";
 import {
   $selectionToUsfmText,
+  $storedNbsps,
+  withStoredNbspsAsTildes,
   $writeClipboardData,
 } from "../markerEdit/whitespaceDisplay.plugin.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -194,10 +196,17 @@ export function CopyLimitPlugin({
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
       const shouldRemove = isCut && editor.isEditable() && !$selectionHoldsStructure(selection);
+      const shownText = $selectionShownText(selection, $isInCollapsedNote);
+      // A view that hides markers copies a stored no-break space as `~`, as a copy that fits does.
+      const viewOptions = viewOptionsRef.current;
+      const plainText =
+        viewOptions?.markerMode === "hidden" && !viewOptions.allowInvisibleCharacters
+          ? withStoredNbspsAsTildes(shownText, $storedNbsps(selection, $isInCollapsedNote))
+          : undefined;
       return $writeClipboardData(
         event && typeof event === "object" && "clipboardData" in event ? event : null,
         editor,
-        { "text/plain": $selectionShownText(selection, $isInCollapsedNote) },
+        { "text/plain": plainText ?? shownText },
         shouldRemove ? () => selection.removeText() : undefined,
       );
     };

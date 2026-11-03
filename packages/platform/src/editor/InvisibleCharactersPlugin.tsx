@@ -1,5 +1,7 @@
 import {
   registerTypedTextRewrite,
+  $storedNbsps,
+  withStoredNbspsAsTildes,
   $writeClipboardData,
 } from "./markerEdit/whitespaceDisplay.plugin.utils";
 import {
@@ -11,12 +13,8 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { mergeRegister } from "@lexical/utils";
 import {
   $getSelection,
-  $getState,
-  $isElementNode,
   $isNodeSelection,
   $isRangeSelection,
-  $isTextNode,
-  BaseSelection,
   COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
@@ -27,7 +25,7 @@ import {
   PasteCommandType,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $isLoneNbspContent, NBSP, textTypeState } from "shared";
+import { NBSP } from "shared";
 import { hasStandardViewWhitespace, ViewOptions } from "shared-react";
 
 /**
@@ -147,58 +145,6 @@ function redispatchDropWithoutZeroWidthNoBreakSpaces(
   payload.preventDefault();
   editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, replay);
   return true;
-}
-
-const NBSP_PATTERN = /\u00A0/g;
-
-function countMatches(text: string, pattern: RegExp): number {
-  return text.match(pattern)?.length ?? 0;
-}
-
-/**
- * Whether each no-break space a copy of `selection` writes, in order, is one the text stores
- * rather than one the view shows for its layout: a gutter marker's (`\p `), an empty char span's
- * placeholder, a collapsed note's spacers ({@link $isLoneNbspContent} tells a lone one apart). In
- * the order the copy's plain text writes them: the selected leaves' text, the first and last text
- * cut to the selection as Lexical's copy cuts them.
- */
-function $storedNbsps(selection: BaseSelection): boolean[] {
-  const stored: boolean[] = [];
-  const range = $isRangeSelection(selection) ? selection : undefined;
-  const [start, end] = range?.isBackward()
-    ? [range.focus, range.anchor]
-    : [range?.anchor, range?.focus];
-  for (const node of selection.getNodes()) {
-    if ($isElementNode(node)) continue;
-    if (!$isTextNode(node)) {
-      // A leaf that is not text, such as a gutter marker, is layout.
-      stored.push(...Array<boolean>(countMatches(node.getTextContent(), NBSP_PATTERN)).fill(false));
-      continue;
-    }
-    const text = node.getTextContent();
-    const from = start?.type === "text" && start.key === node.getKey() ? start.offset : 0;
-    const to = end?.type === "text" && end.key === node.getKey() ? end.offset : text.length;
-    const isContent =
-      $getState(node, textTypeState) === undefined && (text !== NBSP || $isLoneNbspContent(node));
-    stored.push(
-      ...Array<boolean>(countMatches(text.slice(from, to), NBSP_PATTERN)).fill(isContent),
-    );
-  }
-  return stored;
-}
-
-/**
- * `text` with each no-break space `stored` marks as stored written as `~`; `undefined` when `text`
- * does not hold exactly as many as `stored` names, so which is which cannot be told.
- */
-function withStoredNbspsAsTildes(text: string, stored: boolean[]): string | undefined {
-  if (countMatches(text, NBSP_PATTERN) !== stored.length) return undefined;
-  let index = 0;
-  return text.replace(NBSP_PATTERN, (nbsp) => {
-    const isStored = stored[index];
-    index += 1;
-    return isStored ? "~" : nbsp;
-  });
 }
 
 /**
