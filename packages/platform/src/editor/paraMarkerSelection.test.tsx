@@ -23,13 +23,17 @@ import {
   $getSelectedParaMarker,
   $isGutterMarkerNode,
   $isParaNode,
-  $selectParaMarker,
   ImmutableTypedTextNode,
   LoggerBasic,
   NBSP,
   ParaNode,
 } from "shared";
-import { BLOCK_VERSE_VIEW_MODE, getViewOptions, PARAGRAPH_STRUCTURE_VIEW_MODE } from "shared-react";
+import {
+  $selectParaMarker,
+  BLOCK_VERSE_VIEW_MODE,
+  getViewOptions,
+  PARAGRAPH_STRUCTURE_VIEW_MODE,
+} from "shared-react";
 import { vi } from "vitest";
 
 // jsdom has no `Range.getBoundingClientRect`; Lexical's post-commit scroll-into-view reads one once

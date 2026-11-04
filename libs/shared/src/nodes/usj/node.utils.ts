@@ -3,10 +3,8 @@
 import { MARKER_OBJECT_PROPS, MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import { $findMatchingParent } from "@lexical/utils";
 import {
-  $createNodeSelection,
   $createTextNode,
   $getCommonAncestor,
-  $getEditor,
   $getSelection,
   $getState,
   $isElementNode,
@@ -14,7 +12,6 @@ import {
   $isNodeSelection,
   $isRangeSelection,
   $isTextNode,
-  $setSelection,
   $setState,
   BaseSelection,
   createState,
@@ -798,63 +795,6 @@ export function $getSelectableParaMarker(
   const glyph = node.getFirstChild();
   if (!$isGutterMarkerNode(glyph)) return undefined;
   return $findMatchingParent(node, $isUnknownNode) ? undefined : glyph;
-}
-
-/**
- * How many owners (`ParaMarkerSelectionPlugin`, shared-react) are mounted on each editor. A count
- * rather than a set so a remount that registers before the previous instance unregisters (React
- * strict mode, a re-keyed plugin) never leaves the editor looking unowned.
- */
-const paraMarkerSelectionOwnerCounts = new WeakMap<LexicalEditor, number>();
-
-/**
- * Records that `editor` has an owner for a selected paragraph marker — the plugin that handles
- * every key and command reaching it. {@link $selectParaMarker} selects only in an editor that has
- * one, so rich-text's default handling (Backspace deleting the glyph) never sees the selection.
- *
- * @param editor - The editor the owner is mounted on.
- * @returns a function that withdraws this registration.
- */
-export function registerParaMarkerSelectionOwner(editor: LexicalEditor): () => void {
-  paraMarkerSelectionOwnerCounts.set(editor, (paraMarkerSelectionOwnerCounts.get(editor) ?? 0) + 1);
-  return () => {
-    const count = (paraMarkerSelectionOwnerCounts.get(editor) ?? 1) - 1;
-    if (count > 0) paraMarkerSelectionOwnerCounts.set(editor, count);
-    else paraMarkerSelectionOwnerCounts.delete(editor);
-  };
-}
-
-/**
- * Whether the active editor may select a paragraph marker: it is editable, and an owner is
- * registered ({@link registerParaMarkerSelectionOwner}). A read-only editor never selects one:
- * there is nothing to change the marker to.
- *
- * Read-only, but needs an active editor: call inside `editor.update()` or a command handler (a
- * bare `editorState.read()` has no editor to ask).
- */
-export function $canSelectParaMarker(): boolean {
-  const editor = $getEditor();
-  return editor.isEditable() && (paraMarkerSelectionOwnerCounts.get(editor) ?? 0) > 0;
-}
-
-/**
- * Selects a paragraph's gutter marker glyph, replacing the current selection — see
- * {@link $getSelectedParaMarker} for what that selection means. The single gate for creating one:
- * it selects only a glyph {@link $getSelectableParaMarker} offers, in an editor that
- * {@link $canSelectParaMarker}.
- *
- * Mutating: call inside `editor.update()` (a command handler already runs inside one).
- *
- * @param glyph - The paragraph's gutter marker glyph.
- * @returns `true` if the glyph is now selected, `false` if it was refused (nothing changed).
- */
-export function $selectParaMarker(glyph: ImmutableTypedTextNode): boolean {
-  if (!$getSelectableParaMarker(glyph.getParent())?.is(glyph) || !$canSelectParaMarker())
-    return false;
-  const selection = $createNodeSelection();
-  selection.add(glyph.getKey());
-  $setSelection(selection);
-  return true;
 }
 
 /**
@@ -1704,15 +1644,18 @@ export function $getLogicalTextLocation(
   const parent = $getLogicalParent(textNode);
   if (!parent) return undefined;
 
-  const items = $getLogicalContentItems(parent, collapsesSpaceRuns);
-  for (let index = 0; index < items.length; index++) {
-    const item = items[index];
-    if (item.type !== "text") continue;
-
-    const segment = item.segments.find((segment) => segment.node.is(textNode));
-    if (segment) return { parent, index, offset: segmentLogicalOffset(segment, offset) };
-  }
-  return undefined;
+  // Item indexes depend only on the shapes, and measuring a text shape reads nothing but its own
+  // nodes, so only the shape holding `textNode` is measured.
+  const shapes = $getLogicalItemShapes(parent, collapsesSpaceRuns);
+  const index = shapes.findIndex(
+    (shape) => shape.type === "text" && shape.nodes.some((node) => node.is(textNode)),
+  );
+  const shape = shapes[index];
+  if (shape?.type !== "text") return undefined;
+  const segment = $measureTextItem(shape, collapsesSpaceRuns).segments.find((segment) =>
+    segment.node.is(textNode),
+  );
+  return segment && { parent, index, offset: segmentLogicalOffset(segment, offset) };
 }
 
 /**
@@ -1758,40 +1701,27 @@ export function $getLogicalPointFromElementPoint(
   elementOffset: number,
   collapsesSpaceRuns: boolean,
 ): LogicalPoint {
-  const child = parent.getChildAtIndex(elementOffset);
-  if ($isSplicedImpliedPara(parent)) {
-    const root = parent.getParentOrThrow();
-    // Past the implied paragraph's last child is the boundary in front of whatever follows it.
-    if (!child)
-      return $getLogicalPointFromElementPoint(
-        root,
-        parent.getIndexWithinParent() + 1,
-        collapsesSpaceRuns,
-      );
-    if (
-      $shouldIgnoreNodeForContentIndexes(child) ||
-      !$logicalItemWithin($getLogicalContentItems(root, collapsesSpaceRuns), child)
-    )
-      return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
-    return $logicalPointBefore(root, child, collapsesSpaceRuns);
+  const isSplicedImplied = $isSplicedImpliedPara(parent);
+  const container = isSplicedImplied ? parent.getParentOrThrow() : parent;
+  const items = $getLogicalContentItems(container, collapsesSpaceRuns);
+  for (let child = parent.getChildAtIndex(elementOffset); child; child = child.getNextSibling()) {
+    // Boundary before a presentation-only node: use the boundary before the next content child.
+    if ($shouldIgnoreNodeForContentIndexes(child)) continue;
+    // A child with no content items of its own — an implied paragraph the conversion splices away,
+    // an annotation mark left holding nothing USJ carries, or a text holding only spaces after a
+    // marker's separator, which the conversion drops whole — contributes no item to search for, so
+    // the boundary in front of it is the one in front of whatever follows it.
+    const point = $logicalPointBefore(items, child);
+    if (point) return point;
   }
-
-  const items = $getLogicalContentItems(parent, collapsesSpaceRuns);
-  if (!child) return { type: "index", index: items.length };
-
-  // Boundary before a presentation-only node: use the boundary before the next content child.
-  if ($shouldIgnoreNodeForContentIndexes(child))
-    return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
-
-  // A child with no content items of its own — an implied paragraph the conversion splices away,
-  // an annotation mark left holding nothing USJ carries, or a text holding only spaces after a
-  // marker's separator, which the conversion drops whole. It contributes no item to search for,
-  // so the boundary in front of it is the one in front of whatever follows it; falling through
-  // would report the END of the parent's content instead.
-  if (!$logicalItemWithin(items, child))
-    return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
-
-  return $logicalPointBefore(parent, child, collapsesSpaceRuns);
+  // Past the implied paragraph's last child is the boundary in front of whatever follows it.
+  if (isSplicedImplied)
+    return $getLogicalPointFromElementPoint(
+      container,
+      parent.getIndexWithinParent() + 1,
+      collapsesSpaceRuns,
+    );
+  return { type: "index", index: items.length };
 }
 
 /**
@@ -1811,29 +1741,16 @@ export function $getLogicalPointBeforeNode(
 ): { parent: ElementNode; point: LogicalPoint } | undefined {
   const parent = $getLogicalParent(node);
   if (!parent) return undefined;
-  if (!$logicalItemWithin($getLogicalContentItems(parent, collapsesSpaceRuns), node))
-    return undefined;
-  return { parent, point: $logicalPointBefore(parent, node, collapsesSpaceRuns) };
+  const point = $logicalPointBefore($getLogicalContentItems(parent, collapsesSpaceRuns), node);
+  return point && { parent, point };
 }
 
-/** Whether any of `items` is `node` or lies inside it. */
-function $logicalItemWithin(items: LogicalContentItem[], node: LexicalNode): boolean {
-  return items.some((item) =>
-    item.type === "element"
-      ? item.node.is(node) || $isDescendantOf(item.node, node.getKey())
-      : item.segments.some(
-          (segment) => segment.node.is(node) || $isDescendantOf(segment.node, node.getKey()),
-        ),
-  );
-}
-
-/** The logical point in front of `child`, which is `parent`'s logical content or holds some. */
+/** The logical point in front of `child` among `items`: the first item that is `child` or lies
+ * inside it. `undefined` when none does — `child` is not, and holds none of, the items' content. */
 function $logicalPointBefore(
-  parent: ElementNode,
+  items: LogicalContentItem[],
   child: LexicalNode,
-  collapsesSpaceRuns: boolean,
-): LogicalPoint {
-  const items = $getLogicalContentItems(parent, collapsesSpaceRuns);
+): LogicalPoint | undefined {
   for (let index = 0; index < items.length; index++) {
     const item = items[index];
     if (item.type === "element") {
@@ -1848,53 +1765,6 @@ function $logicalPointBefore(
           : { type: "text", index, offset: segment.start };
       }
     }
-  }
-  return { type: "index", index: items.length };
-}
-
-/**
- * Converts a logical boundary index to the earliest element point at that boundary (the inverse
- * of `$getLogicalPointFromElementPoint` for index points). A boundary among the items of the
- * root's implied paragraph lies inside that paragraph, so the point's element is not always
- * `parent`.
- * @param parent - The parent element node.
- * @param logicalIndex - The logical boundary index (0 = before the first item).
- * @param collapsesSpaceRuns - Whether this editor's serialization collapses space runs; see
- *   {@link $getLogicalContentItems}.
- * @returns the element holding the point and the child offset within it.
- */
-export function $getElementPointFromLogicalIndex(
-  parent: ElementNode,
-  logicalIndex: number,
-  collapsesSpaceRuns: boolean,
-): [ElementNode, number] {
-  if (logicalIndex <= 0) return [parent, 0];
-
-  const shapes = $getLogicalItemShapes(parent, collapsesSpaceRuns);
-  if (shapes.length === 0 || logicalIndex > shapes.length)
-    return [parent, parent.getChildrenSize()];
-
-  const previousShape = shapes[logicalIndex - 1];
-  const lastNode =
-    previousShape.type === "element"
-      ? previousShape.node
-      : previousShape.nodes[previousShape.nodes.length - 1];
-  const topLevelChild = lastNode ? $findChildOfParent(parent, lastNode) : undefined;
-  if (!topLevelChild) return [parent, parent.getChildrenSize()];
-  if ($isSplicedImpliedPara(topLevelChild)) {
-    const impliedChild = $findChildOfParent(topLevelChild, lastNode);
-    if (impliedChild) return [topLevelChild, impliedChild.getIndexWithinParent() + 1];
-  }
-  return [parent, topLevelChild.getIndexWithinParent() + 1];
-}
-
-/** Walks up from a descendant to the direct child of the given parent. */
-function $findChildOfParent(parent: ElementNode, descendant: LexicalNode): LexicalNode | undefined {
-  let current: LexicalNode | null = descendant;
-  while (current) {
-    const currentParent: ElementNode | null = current.getParent();
-    if (currentParent?.is(parent)) return current;
-    current = currentParent;
   }
   return undefined;
 }

@@ -15,6 +15,7 @@ import {
   $collapseParaMarkerSelection,
   ParaMarkerPrefixCursorGuardPlugin,
 } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { $selectParaMarker } from "./paraMarkerSelection.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
 import { PARA_MERGE_ARMED_CLASS_NAME, StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
@@ -62,7 +63,6 @@ import {
   $isGutterMarkerNode,
   $isImpliedParaNode,
   $isParaNode,
-  $selectParaMarker,
   createEmptyHistoryState,
   gutterMarkerState,
   ImmutableTypedTextNode,

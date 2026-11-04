@@ -1,5 +1,6 @@
 import { $createImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
 import { usjBlockVerseNodes } from "../../nodes/usj";
+import { $selectParaMarker } from "./paraMarkerSelection.utils";
 import { ParaMarkerSelectionPlugin } from "./ParaMarkerSelectionPlugin";
 import { baseTestEnvironment, sutUpdate, updateSelection } from "./react-test.utils";
 import { StateChangePlugin, StateChangeSnapshot } from "./StateChangePlugin";
@@ -12,7 +13,6 @@ import {
   $createVerseBlockNode,
   $isParaNode,
   $isVerseBlockNode,
-  $selectParaMarker,
   ImmutableTypedTextNode,
   NBSP,
 } from "shared";

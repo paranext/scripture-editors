@@ -37,7 +37,6 @@ import {
   $isBookNode,
   $isBookPrefixGlyph,
   $isGutterMarkerNode,
-  $selectParaMarker,
   BookNode,
   ImmutableTableCellNode,
   ImmutableTableNode,
@@ -67,6 +66,7 @@ import {
   ParaMarkerPrefixCursorGuardPlugin,
   registerParaMarkerPrefixCursorGuard,
 } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { $selectParaMarker } from "./paraMarkerSelection.utils";
 import { ParaMarkerSelectionPlugin } from "./ParaMarkerSelectionPlugin";
 import { $createBookLine, baseTestEnvironment, pressKey } from "./react-test.utils";
 

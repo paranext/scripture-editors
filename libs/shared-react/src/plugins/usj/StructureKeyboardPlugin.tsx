@@ -56,11 +56,11 @@ import {
   $getSelectedParaMarkerPara,
   $isBookNode,
   $isSomeParaNode,
-  $selectParaMarker,
   MARKER_TEXT_TYPE,
 } from "shared";
 import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { $selectParaMarker } from "./paraMarkerSelection.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
 
 /**

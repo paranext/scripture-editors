@@ -20,8 +20,6 @@ import {
   $createParaNode,
   $createVerseNode,
   $isCaretHost,
-  $selectParaMarker,
-  registerParaMarkerSelectionOwner,
   CharNode,
   ImmutableTypedTextNode,
   MarkerNode,
@@ -31,10 +29,12 @@ import {
 } from "shared";
 import {
   $createImmutableVerseNode,
+  $selectParaMarker,
   EmptyVerseCaretGuardPlugin,
   getViewOptions,
   ImmutableVerseNode,
   PARAGRAPH_STRUCTURE_VIEW_MODE,
+  registerParaMarkerSelectionOwner,
   SomeVerseNode,
 } from "shared-react";
 // Reaching inside only for tests.

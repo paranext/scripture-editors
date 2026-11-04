@@ -13,14 +13,13 @@ import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
 import { act, render } from "@testing-library/react";
 import { $getRoot, $getSelection, $isRangeSelection, LexicalEditor } from "lexical";
 import { createRef, RefObject } from "react";
+import { $isGutterMarkerNode, $isImpliedParaNode, $isParaNode, NBSP } from "shared";
 import {
-  $isGutterMarkerNode,
-  $isImpliedParaNode,
-  $isParaNode,
   $selectParaMarker,
-  NBSP,
-} from "shared";
-import { getEditorDelta, getViewOptions, PARAGRAPH_STRUCTURE_VIEW_MODE } from "shared-react";
+  getEditorDelta,
+  getViewOptions,
+  PARAGRAPH_STRUCTURE_VIEW_MODE,
+} from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { pressKeyThroughDom } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";

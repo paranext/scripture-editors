@@ -7,13 +7,8 @@
 import { $armCollapsedParaDeletion, $armWholeParaDeletion } from "./markerEditDeletion.utils";
 import { MarkerEditContext } from "./markerEditTier1.utils";
 import { $createTextNode, $getRoot, NodeKey } from "lexical";
-import {
-  $createGutterMarkerNode,
-  $createParaNode,
-  $selectParaMarker,
-  ImmutableTypedTextNode,
-  NBSP,
-} from "shared";
+import { $createGutterMarkerNode, $createParaNode, ImmutableTypedTextNode, NBSP } from "shared";
+import { $selectParaMarker } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { createBasicTestEnvironment } from "../../../../../libs/shared/src/nodes/usj/test.utils";

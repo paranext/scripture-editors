@@ -4,6 +4,7 @@ import {
   $placeCaretAtParaContentStart,
   REPAIR_PARA_MARKER_SELECTION_COMMAND,
 } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { $selectParaMarker, registerParaMarkerSelectionOwner } from "./paraMarkerSelection.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
 import {
   $canDeletePara,
@@ -52,9 +53,7 @@ import {
   $isGutterMarkerNode,
   $isSomeParaNode,
   $placeCaretAtBoundary,
-  $selectParaMarker,
   ParaNode,
-  registerParaMarkerSelectionOwner,
   SomeParaNode,
 } from "shared";
 

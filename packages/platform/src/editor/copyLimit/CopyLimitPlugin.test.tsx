@@ -26,15 +26,10 @@ import {
   TextNode,
 } from "lexical";
 import { useEffect, useState } from "react";
-import {
-  $createGutterMarkerNode,
-  $createParaNode,
-  $selectParaMarker,
-  ImmutableTypedTextNode,
-  NBSP,
-} from "shared";
+import { $createGutterMarkerNode, $createParaNode, ImmutableTypedTextNode, NBSP } from "shared";
 import {
   $createImmutableVerseNode,
+  $selectParaMarker,
   getDefaultViewOptions,
   ParaMarkerSelectionPlugin,
 } from "shared-react";

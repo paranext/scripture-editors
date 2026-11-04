@@ -84,6 +84,26 @@ function valueDiverges(actual: string | undefined, expected: string | undefined)
 }
 
 /**
+ * Whether the BYTE pieces of a run that should exist diverge from `expected`: its value's bytes
+ * differ ({@link valueDiverges}), or a glyph a glyph-bearing kind owes is missing. The divergence
+ * {@link $runDiverges} and {@link $runNeedsOnlyWrapMigration} share, so the wrap-migration slice
+ * cannot drift from the divergence it is a slice of.
+ */
+function runBytesDiverge(
+  descriptor: DisplayRunDescriptor,
+  pieces: ScannedRun,
+  expected: ExpectedRun,
+): boolean {
+  if (valueDiverges(pieces.value?.getTextContent(), expected.valueText)) return true;
+  // A closer-less kind (`closerSyntax: "none"` — a chapter's `\cp`) owes only its opener; every
+  // other glyph-bearing kind owes both glyphs.
+  return (
+    descriptor.byteFormat.glyphs !== "none" &&
+    (!pieces.opener || (descriptor.byteFormat.closerSyntax !== "none" && !pieces.closer))
+  );
+}
+
+/**
  * Whether `pieces` diverge from `expected`.
  *
  * A run that should not exist diverges the moment any piece survives. A run that should exist
@@ -100,14 +120,10 @@ export function $runDiverges(
   expected: ExpectedRun,
 ): boolean {
   if (!expected.wantsRun) return runHasPieces(pieces);
-  if (valueDiverges(pieces.value?.getTextContent(), expected.valueText)) return true;
-  // A closer-less kind (`closerSyntax: "none"` — a chapter's `\cp`) owes only its opener; every
-  // other glyph-bearing kind owes both glyphs.
-  if (descriptor.byteFormat.glyphs !== "none") {
-    if (!pieces.opener) return true;
-    if (descriptor.byteFormat.closerSyntax !== "none" && !pieces.closer) return true;
-  }
-  return descriptor.byteFormat.writer === "wrapper" && pieces.wrapper === undefined;
+  return (
+    runBytesDiverge(descriptor, pieces, expected) ||
+    (descriptor.byteFormat.writer === "wrapper" && pieces.wrapper === undefined)
+  );
 }
 
 /**
@@ -129,12 +145,7 @@ export function $runNeedsOnlyWrapMigration(
   const expected = descriptor.expectedPieces(owner);
   if (!expected.wantsRun) return false;
   const pieces = descriptor.scanPieces(owner);
-  if (valueDiverges(pieces.value?.getTextContent(), expected.valueText)) return false;
-  if (descriptor.byteFormat.glyphs !== "none") {
-    if (!pieces.opener) return false;
-    if (descriptor.byteFormat.closerSyntax !== "none" && !pieces.closer) return false;
-  }
-  return pieces.wrapper === undefined;
+  return !runBytesDiverge(descriptor, pieces, expected) && pieces.wrapper === undefined;
 }
 
 /** True when NO piece of `owner`'s run remains — the run was deleted outright, as opposed to a

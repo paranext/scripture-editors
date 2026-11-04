@@ -495,7 +495,7 @@ value too. The stand-in is never data, so the tokenizer reads it as U+00A0 in bo
 
 Two places stay body text, because they are body text to Paratext: a `\periph` line (its title and
 its attributes) keeps the body spelling, and the `|…` bytes a span leaves behind when it is
-unwrapped or emptied (`$unknownAttributesText`, `$removeCharKeepingAttributeBytes`) are written with
+unwrapped or emptied (`$charAttributeBytes`, which both paths share) are written with
 `$getNbspDisplaySpelling`, so with the setting off a `~` among them becomes a no-break space, as it
 does in Paratext 9's file. A `\vp` that is not folded into its verse is a char span, and its text is
 body text.

@@ -24,6 +24,7 @@ export * from "./NoteShellCaretGuardPlugin";
 export * from "./OnSelectionChangePlugin";
 export * from "./OpaqueBlockGuardPlugin";
 export * from "./ParaMarkerPrefixCursorGuardPlugin";
+export * from "./paraMarkerSelection.utils";
 export * from "./ParaMarkerSelectionPlugin";
 export * from "./ParaNodePlugin";
 export * from "./StateChangePlugin";

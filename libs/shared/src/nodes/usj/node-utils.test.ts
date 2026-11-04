@@ -10,7 +10,6 @@ import { $createImpliedParaNode, ImpliedParaNode } from "./ImpliedParaNode.js";
 import { usjBaseNodes } from "./index.js";
 import { $createNoteNode } from "./NoteNode.js";
 import {
-  $getElementPointFromLogicalIndex,
   $getLogicalContentItems,
   $getLogicalIndexOfChild,
   $getLogicalParent,
@@ -1728,7 +1727,7 @@ describe("Editor Node Utilities", () => {
     });
   });
 
-  describe("$getLogicalPointFromElementPoint / $getElementPointFromLogicalIndex", () => {
+  describe("$getLogicalPointFromElementPoint", () => {
     it("maps element boundaries around an annotated run", () => {
       const { editor } = createBasicTestEnvironment(nodes, () => {
         $getRoot().append(
@@ -1775,16 +1774,6 @@ describe("Editor Node Utilities", () => {
           type: "index",
           index: 3,
         });
-
-        // Inverse: earliest element point for each logical boundary.
-        const $pointAt = (index: number) => {
-          const [node, offset] = $getElementPointFromLogicalIndex(para, index, false);
-          return [node.getKey(), offset];
-        };
-        expect($pointAt(0)).toEqual([para.getKey(), 0]);
-        expect($pointAt(1)).toEqual([para.getKey(), 3]); // after " cc "
-        expect($pointAt(2)).toEqual([para.getKey(), 4]); // after Char
-        expect($pointAt(3)).toEqual([para.getKey(), 5]); // after "dd"
       });
     });
 
@@ -1854,7 +1843,7 @@ describe("a root-level implied paragraph", () => {
     });
   });
 
-  it("maps element points on and around it to root boundaries, and back", () => {
+  it("maps element points on and around it to root boundaries", () => {
     const { editor, implied } = build();
     editor.getEditorState().read(() => {
       const root = $getRoot();
@@ -1871,16 +1860,6 @@ describe("a root-level implied paragraph", () => {
         type: "index",
         index: 2,
       });
-
-      // A root boundary among the implied paragraph's items is expressed inside it.
-      const $pointAt = (index: number) => {
-        const [node, offset] = $getElementPointFromLogicalIndex(root, index, false);
-        return [node.getKey(), offset];
-      };
-      expect($pointAt(0)).toEqual([root.getKey(), 0]);
-      expect($pointAt(1)).toEqual([implied.getKey(), 1]);
-      expect($pointAt(2)).toEqual([implied.getKey(), 2]);
-      expect($pointAt(3)).toEqual([root.getKey(), 2]);
     });
   });
 

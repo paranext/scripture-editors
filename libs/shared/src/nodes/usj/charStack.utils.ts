@@ -154,25 +154,42 @@ function $ownsDisplayRun(char: CharNode): boolean {
 }
 
 /**
- * Remove `char`, leaving its attribute bytes behind as plain text after `contentEnd` when it has
- * any. Paratext 9 keeps an unwrapped span's attributes as literal bytes, and the span is the only
- * thing that carried them — dropping it silently would delete `|lemma="grace"` from the file.
- * Routed through {@link canonicalAttributeText}, the same one serializer `$unwrapCharNode` uses, so
- * the two paths cannot spell the same attributes differently: a lone default attribute collapses to
- * `|value`, anything else stays `|name="value" …`. The bytes are body text from here on, so a
- * value's no-break space is spelled as body text spells one.
+ * The canonical `|…` attribute bytes a span leaves behind when it is dropped — unwrapped or
+ * emptied — or `""` when it has none. Paratext 9 keeps a dropped span's attributes as literal
+ * bytes, and the span is the only thing that carried them. Routed through
+ * {@link canonicalAttributeText}, the one Paratext 9 serializer, so every path that drops a span
+ * spells the same attributes the same way, in the shape of the span's own display run: a lone
+ * default attribute collapses to `|value`, anything else stays `|name="value" …`. The bytes are
+ * body text from here on, as they are in Paratext 9's file, so a value's no-break space is spelled
+ * as body text spells one, and a `~` among them is read as a no-break space wherever body text
+ * reads `~` that way. `closed` is not among them: it is derived USJ metadata (ParatextData emits
+ * `closed="false"` on char spans with no explicit closing marker — extremely common on
+ * footnote-content chars like `\fr`/`\ft`), not user bytes, and paranext-core's USFM writer
+ * likewise never emits it as an attribute.
  *
- * Mutating: call inside `editor.update()`.
+ * Read-only: call inside `editor.update()`, a command or transform, or
+ * `editor.getEditorState().read(fn, { editor })` — the body-text spelling needs an active editor.
  */
-function $removeCharKeepingAttributeBytes(char: CharNode, contentEnd: LexicalNode): void {
+export function $charAttributeBytes(char: CharNode): string {
   const attributes = char.getUnknownAttributes();
-  const bytes = attributes
+  return attributes
     ? canonicalAttributeText(
         attributes,
         defaultMarkerAttribute(char.getMarker()),
         $getNbspDisplaySpelling(),
       )
     : "";
+}
+
+/**
+ * Remove `char`, leaving its attribute bytes ({@link $charAttributeBytes}) behind as plain text
+ * after `contentEnd` when it has any — dropping them silently would delete `|lemma="grace"` from
+ * the file.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $removeCharKeepingAttributeBytes(char: CharNode, contentEnd: LexicalNode): void {
+  const bytes = $charAttributeBytes(char);
   if (bytes !== "") contentEnd.insertAfter($createTextNode(bytes));
   char.remove();
 }

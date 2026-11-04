@@ -400,21 +400,24 @@ function $prefixSeparator(text: TextNode): void {
       point.set(point.key, point.offset + 1, "text");
 }
 
-/**
- * True when `char` has a separator gap the sync is deliberately leaving alone because the caret
- * sits at it (a just-deleted separator). The marker-edit engine pends such spans so caret
- * departure settles them.
- */
-export function $hasCaretHeldSeparatorGap(char: CharNode): boolean {
+/** Whether any of `char`'s opening glyphs has a separator gap that passes `test`. */
+function $someSeparatorGap(char: CharNode, test: (opener: MarkerNode) => boolean): boolean {
   if (!char.isAttached()) return false;
   return char
     .getChildren()
     .some(
       (child: LexicalNode) =>
-        $isMarkerNode(child) &&
-        $openerSeparatorGap(child, char) !== undefined &&
-        $isCaretAtOpenerBoundary(child, char),
+        $isMarkerNode(child) && $openerSeparatorGap(child, char) !== undefined && test(child),
     );
+}
+
+/**
+ * True when `char` has a separator gap the sync is deliberately leaving alone because the caret
+ * sits at it (a just-deleted separator). The marker-edit engine pends such spans so caret
+ * departure settles them.
+ */
+function $hasCaretHeldSeparatorGap(char: CharNode): boolean {
+  return $someSeparatorGap(char, (opener) => $isCaretAtOpenerBoundary(opener, char));
 }
 
 /**
@@ -427,15 +430,10 @@ export function $hasCaretHeldSeparatorGap(char: CharNode): boolean {
  * Read-only: call inside `editor.getEditorState().read(...)` or an update.
  */
 export function $hasUnsettledSeparatorGap(char: CharNode): boolean {
-  if (!char.isAttached()) return false;
-  return char
-    .getChildren()
-    .some(
-      (child: LexicalNode) =>
-        $isMarkerNode(child) &&
-        $openerSeparatorGap(child, char) !== undefined &&
-        ($isCaretAtOpenerBoundary(child, char) || $isRenamingGap(child)),
-    );
+  return $someSeparatorGap(
+    char,
+    (opener) => $isCaretAtOpenerBoundary(opener, char) || $isRenamingGap(opener),
+  );
 }
 
 /**
@@ -447,15 +445,7 @@ export function $hasUnsettledSeparatorGap(char: CharNode): boolean {
  * Read-only: call inside `editor.getEditorState().read(...)` or an update.
  */
 export function $hasRenamingSeparatorGap(char: CharNode): boolean {
-  if (!char.isAttached()) return false;
-  return char
-    .getChildren()
-    .some(
-      (child: LexicalNode) =>
-        $isMarkerNode(child) &&
-        $openerSeparatorGap(child, char) !== undefined &&
-        $isRenamingGap(child),
-    );
+  return $someSeparatorGap(char, $isRenamingGap);
 }
 
 /**
@@ -472,5 +462,7 @@ export function $hasCaretGracedSeparatorGap(char: CharNode): boolean {
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   const anchorNode = selection.anchor.getNode();
   const isCaretInSpan = anchorNode.is(char) || char.isParentOf(anchorNode);
-  return isCaretInSpan && $hasUnsettledSeparatorGap(char);
+  // No gap has the caret at its site (that returned above), so of the unsettled gaps only the
+  // renaming ones are left.
+  return isCaretInSpan && $hasRenamingSeparatorGap(char);
 }
