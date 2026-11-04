@@ -5,7 +5,8 @@
  * the number is an immutable decorator, and at the end of a paragraph the caret rests in the host
  * `EmptyVerseCaretGuardPlugin` puts after it.
  */
-import { mountViewEditor, requireViewOptions } from "./settledGetUsj.test-helpers";
+import { editorView } from "./editorViews.test-helpers";
+import { mountViewEditor } from "./settledGetUsj.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import { $findMatchingParent } from "@lexical/utils";
@@ -19,11 +20,7 @@ import {
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { $isCaretHost, $isNoteNode, $isParaNode, $isVerseNode } from "shared";
-import {
-  $isImmutableVerseNode,
-  PARAGRAPH_STRUCTURE_VIEW_MODE,
-  STANDARD_VIEW_MODE,
-} from "shared-react";
+import { $isImmutableVerseNode } from "shared-react";
 import { describe, expect, it } from "vitest";
 
 const scrRef = { book: "GEN", chapterNum: 1, verseNum: 1 };
@@ -75,13 +72,13 @@ const footnote: MarkerContent = {
 
 const wordSpan: MarkerContent = { type: "char", marker: "w", content: ["word"] };
 
-/** Mount `usj` under `viewMode` and insert a verse at the end of verse 1's "hello world" text. */
+/** Mount `usj` in the registry view `viewName`; insert a verse at the end of verse 1's "hello world". */
 async function insertVerseAtEndOfLastVerse(
-  viewMode: string,
+  viewName: string,
   onScrRefChange?: (scrRef: SerializedVerseRef) => void,
   usj: Usj = lastVerseUsj,
 ) {
-  const mounted = await mountViewEditor(usj, requireViewOptions(viewMode), {
+  const mounted = await mountViewEditor(usj, editorView(viewName), {
     scrRef,
     onScrRefChange,
   });
@@ -104,18 +101,18 @@ async function insertVerseAtEndOfLastVerse(
 
 describe("inserting a verse at the end of a paragraph", () => {
   it.each([
-    ["hidden (Simple)", PARAGRAPH_STRUCTURE_VIEW_MODE],
-    ["editable (Standard)", STANDARD_VIEW_MODE],
-  ])("reports the new verse as the current reference with markers %s", async (_label, viewMode) => {
+    ["hidden (Simple)", "paragraph-structure"],
+    ["editable (Standard)", "standard"],
+  ])("reports the new verse as the current reference with markers %s", async (_label, viewName) => {
     const reported: SerializedVerseRef[] = [];
-    await insertVerseAtEndOfLastVerse(viewMode, (changed) => reported.push(changed));
+    await insertVerseAtEndOfLastVerse(viewName, (changed) => reported.push(changed));
 
     // The caret is in the new verse, so the host's scroll group (and linked views) follow it.
     expect(reported.at(-1)).toMatchObject({ book: "GEN", chapterNum: 1, verseNum: 2 });
   });
 
   it("hosts the caret right after the new verse number when markers are hidden", async () => {
-    const { lexical } = await insertVerseAtEndOfLastVerse(PARAGRAPH_STRUCTURE_VIEW_MODE);
+    const { lexical } = await insertVerseAtEndOfLastVerse("paragraph-structure");
 
     lexical.getEditorState().read(() => {
       const para = $getRoot().getChildren().find($isParaNode);
@@ -133,7 +130,7 @@ describe("inserting a verse at the end of a paragraph", () => {
   });
 
   it("rests the caret at the end of the new verse's marker text when markers are editable", async () => {
-    const { lexical } = await insertVerseAtEndOfLastVerse(STANDARD_VIEW_MODE);
+    const { lexical } = await insertVerseAtEndOfLastVerse("standard");
 
     lexical.getEditorState().read(() => {
       const para = $getRoot().getChildren().find($isParaNode);
@@ -152,12 +149,12 @@ describe("inserting a verse at the end of a paragraph", () => {
   });
 
   it.each([
-    ["hidden (Simple)", PARAGRAPH_STRUCTURE_VIEW_MODE],
-    ["editable (Standard)", STANDARD_VIEW_MODE],
+    ["hidden (Simple)", "paragraph-structure"],
+    ["editable (Standard)", "standard"],
   ])(
     "puts typed text in the new verse with markers %s, leaving the previous verse alone",
-    async (_label, viewMode) => {
-      const { ref, lexical } = await insertVerseAtEndOfLastVerse(viewMode);
+    async (_label, viewName) => {
+      const { ref, lexical } = await insertVerseAtEndOfLastVerse(viewName);
 
       await act(async () => {
         lexical.update(() => {
@@ -185,15 +182,15 @@ describe("inserting a verse at the end of a paragraph", () => {
 
 describe("inserting a verse right before content the new verse opens with", () => {
   it.each([
-    ["a footnote", "hidden (Simple)", footnote, PARAGRAPH_STRUCTURE_VIEW_MODE],
-    ["a footnote", "editable (Standard)", footnote, STANDARD_VIEW_MODE],
-    ["a character span", "hidden (Simple)", wordSpan, PARAGRAPH_STRUCTURE_VIEW_MODE],
-    ["a character span", "editable (Standard)", wordSpan, STANDARD_VIEW_MODE],
+    ["a footnote", "hidden (Simple)", footnote, "paragraph-structure"],
+    ["a footnote", "editable (Standard)", footnote, "standard"],
+    ["a character span", "hidden (Simple)", wordSpan, "paragraph-structure"],
+    ["a character span", "editable (Standard)", wordSpan, "standard"],
   ])(
     "before %s with markers %s, keeps the caret in the new verse and out of any note",
-    async (_content, _view, following, viewMode) => {
+    async (_content, _view, following, viewName) => {
       const { ref, lexical } = await insertVerseAtEndOfLastVerse(
-        viewMode,
+        viewName,
         undefined,
         verseFollowedByUsj(following),
       );
