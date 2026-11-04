@@ -5,8 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this packa
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Entries under **Unreleased** describe changes that are committed but not yet published. Move them
-under a version heading when that version of this package is published. (No workflow automates
-this package's publish today — `Publish Scribe Package` publishes only `packages/scribe`.)
+under a version heading when that version of this package is released. (The `Publish` workflow
+tags the release but does not edit this file; see the README's "Releasing" section.)
 
 ## [Unreleased]
 
@@ -30,10 +30,7 @@ this package's publish today — `Publish Scribe Package` publishes only `packag
   reading 3.0 USX now get `version: "3.0"`.**
 - **`usjToUsxString` writes the USJ's own `version`** on the root `<usx>`, falling back to
   `USX_VERSION` only when the USJ has none. Previously it always wrote `USX_VERSION`. Together with
-  the change above, a USX → USJ → USX round trip now returns the version it started at. The
-  converters' round trip only: the Scribe editor (`packages/scribe`) does not carry the version
-  through yet — it still warns on a USJ whose version is not `USJ_VERSION` and hands back every
-  document as `USJ_VERSION`, so a round trip through it still ends at `USJ_VERSION` (follow-up).
+  the change above, a USX → USJ → USX round trip now returns the version it started at.
 - **`usxStringToUsj` keeps whitespace-only text.** A USX text node consisting only of whitespace is
   now retained as document text unless it contains a line break; previously any text that trimmed to
   the empty string was dropped (with a narrow exception for a single space between siblings). USFM
