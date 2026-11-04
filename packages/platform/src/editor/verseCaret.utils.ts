@@ -41,6 +41,8 @@ import { $isSomeVerseNode, SomeVerseNode } from "shared-react";
  *      depending on when the selection is next read, and which is the next verse's;
  *    - the verse ends its paragraph: nothing follows, so no host exists, and the marker's end is
  *      the one text point that belongs to this verse.
+ *
+ * Mutating (moves the selection): call inside `editor.update()`.
  */
 export function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   const para = verse.getParent();
