@@ -366,7 +366,9 @@ describe("UnstorableTextPlugin — paste", () => {
 
     await dispatch(editor, () => editor.dispatchCommand(PASTE_COMMAND, event));
 
-    expect(readParas(editor)).toEqual(["x\\ft y"]);
+    // The marker's name stays. Its `\\` goes all the same: the sanitizer inserts through
+    // `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, which this plugin filters.
+    expect(readParas(editor)).toEqual(["xft y"]);
   });
 
   describe.each(["off", "protected"] as StructureProtectionMode[])(
