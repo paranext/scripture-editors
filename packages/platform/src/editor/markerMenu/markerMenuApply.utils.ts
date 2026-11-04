@@ -20,7 +20,7 @@
 import { $insertNoteForMarker, getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
 import { $applyParaMarker } from "../markerEdit/applyParaMarker.utils";
 import { LITERAL_TRIGGER_PREFIX_REGEX } from "../markerEdit/markerName.pattern";
-import { $moveCaretOffChapterLine, $splitOnChapterLine } from "../markerEdit/chapterLine.utils";
+import { $splitOnChapterLine } from "../markerEdit/chapterLine.utils";
 import {
   $breakAndLiftCharStack,
   $outermostCharStackAncestor,
@@ -65,19 +65,12 @@ import {
   $orderedPoints,
   $selectCharContentStart,
   BookNode,
-  createMarkerLookup,
-  defaultStyleInfo,
   LoggerBasic,
   NoteNode,
   ParaNode,
   StyleInfo,
 } from "shared";
-import {
-  getDefaultViewOptions,
-  showParaMarkerPrefix,
-  UsjNodeOptions,
-  ViewOptions,
-} from "shared-react";
+import { showParaMarkerPrefix, UsjNodeOptions, ViewOptions } from "shared-react";
 import { MutableRefObject } from "react";
 
 /**
@@ -102,23 +95,6 @@ function $removeLiteralTriggerPrefix(): void {
   if (!match) return;
 
   anchorNode.spliceText(offset - match[0].length, match[0].length, "", true);
-}
-
-/**
- * Retags `para` in place: marker state AND the visible prefix glyph text change together,
- * content untouched — the PT9 reformat outcome for typing `\q1 `-style at a paragraph's
- * content start (committing the marker retags the paragraph itself; it does not create one).
- * `$applyParaMarker` owns the state/glyph agreement (including healing a paragraph whose
- * prefix went missing, when the marker mode is known).
- */
-function $retagParagraph(para: ParaNode, marker: string, viewOptions?: ViewOptions): void {
-  $applyParaMarker(para, marker, viewOptions);
-  // Place the caret at the content side of the retagged prefix. In editable marker mode a
-  // paragraph's children are laid out as [0] the marker-glyph node, [1] the trailing NBSP space,
-  // and [2] the first content node — so index 2 is the content (the same layout assumption as
-  // `$injectMarkerPrefix`). Element content (e.g. a red-letter `\wj` span first) and the
-  // no-content case get an element point at that boundary rather than jumping to paragraph end.
-  $selectParaContentStart(para);
 }
 
 /**
@@ -158,7 +134,11 @@ function $applyParagraphSelection(
   ) {
     // A line with no marker becomes a paragraph with the picked one, keeping its content.
     const target = $isImpliedParaNode(para) ? para.replace($createParaNode(marker), true) : para;
-    $retagParagraph(target, marker, viewOptions);
+    // Retag in place, caret to content start. `$applyParaMarker` changes the marker state and the
+    // visible prefix glyph together (healing a missing prefix when the marker mode is known),
+    // content untouched.
+    $applyParaMarker(target, marker, viewOptions);
+    $selectParaContentStart(target);
     return;
   }
   // No retag arm for the `\id` line: a book can never be retagged, so a pick there falls through
@@ -521,26 +501,8 @@ export function $applyMarkerMenuSelection(
   // TRUE Lexical key feeds the host's popover editing session directly, rather than having the
   // host re-derive it from delta-doc coordinates (getInsertedNodeKey) — a wrong key there makes
   // replaceEmbedUpdate silently no-op. Same reason EditorRef.insertMarker returns it.
-  if (NoteNode.isValidMarker(item.marker, deps.nodeOptions?.extraValidMarkers)) {
-    // A caret on an editable chapter line has no block to insert the note into; move it to where
-    // content after the chapter number goes (see `chapterLine.utils.ts`).
-    if (
-      !$moveCaretOffChapterLine({
-        viewOptions: deps.viewOptions ?? getDefaultViewOptions(),
-        getMarker: createMarkerLookup(deps.styleInfo ?? defaultStyleInfo),
-        logger: deps.logger,
-      })
-    )
-      return undefined;
-    return $insertNoteForMarker(
-      item.marker,
-      reference,
-      deps.expandedNoteKeyRef,
-      deps.viewOptions,
-      deps.nodeOptions,
-      deps.logger,
-    );
-  }
+  if (NoteNode.isValidMarker(item.marker, deps.nodeOptions?.extraValidMarkers))
+    return $insertNoteForMarker(item.marker, reference, deps.expandedNoteKeyRef, deps);
 
   const markerAction = getUsjMarkerAction(
     item.marker,

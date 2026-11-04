@@ -3,6 +3,7 @@ import {
   $storedNbsps,
   withStoredNbspsAsTildes,
   $writeClipboardData,
+  asClipboardEvent,
 } from "./markerEdit/whitespaceDisplay.plugin.utils";
 import {
   withoutZeroWidthNoBreakSpaces,
@@ -181,10 +182,5 @@ function $copyWithTildes(
     if ($isRangeSelection(selection)) selection.removeText();
     else if ($isNodeSelection(selection)) selection.getNodes().forEach((node) => node.remove());
   };
-  return $writeClipboardData(
-    event && "clipboardData" in event ? event : null,
-    editor,
-    data,
-    isCut ? $remove : undefined,
-  );
+  return $writeClipboardData(asClipboardEvent(event), editor, data, isCut ? $remove : undefined);
 }

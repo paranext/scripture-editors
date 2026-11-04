@@ -3,6 +3,7 @@ import usjEditorAdaptor from "./adaptors/usj-editor.adaptor";
 import {
   $selectionToUsfmText,
   $writeCopyPayload,
+  asClipboardEvent,
   usfmToClipboardHtml,
 } from "./markerEdit/whitespaceDisplay.plugin.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -157,11 +158,7 @@ export function MarkersViewCopyPlugin({
       const usfm = $selectionToUsfmViaStandardView(editor, viewOptions);
       if (usfm === undefined) return false;
       return $writeCopyPayload(
-        // COPY_COMMAND's payload is `ClipboardEvent | KeyboardEvent | null`, and jsdom (our test
-        // environment) has no `ClipboardEvent` for `instanceof` to narrow against, so this
-        // duck-checks the one property `$writeCopyPayload` needs. `in` throws on a non-object, so
-        // the type check comes first.
-        event && typeof event === "object" && "clipboardData" in event ? event : null,
+        asClipboardEvent(event),
         editor,
         selection,
         { "text/plain": usfm, "text/html": usfmToClipboardHtml(usfm) },

@@ -394,6 +394,23 @@ function isSameNamespaceLexicalPayload(lexicalString: string, namespace: string)
 }
 
 /**
+ * `event` as the browser clipboard event it is, or `null` for a clipboard command payload that is
+ * not one: a `KeyboardEvent`, an `InputEvent`, or a null-payload dispatch.
+ *
+ * The clipboard commands' payloads are unions (`COPY_COMMAND`/`CUT_COMMAND`: `ClipboardEvent |
+ * KeyboardEvent | null`; `PASTE_COMMAND`: `ClipboardEvent | InputEvent | KeyboardEvent`). A plain
+ * `event instanceof ClipboardEvent` narrows them correctly in real browsers, but jsdom (our test
+ * environment) doesn't implement `ClipboardEvent` at all — `instanceof` against the undefined
+ * global throws — so this duck-checks the one property the clipboard handlers need instead. `in`
+ * throws on a non-object, so the type check comes first.
+ */
+export function asClipboardEvent(
+  event: ClipboardEvent | InputEvent | KeyboardEvent | null | undefined,
+): ClipboardEvent | null {
+  return event && typeof event === "object" && "clipboardData" in event ? event : null;
+}
+
+/**
  * Pull the pasted text out of a `PASTE_COMMAND` payload. `undefined` when the payload carries no
  * clipboard at all (a KeyboardEvent-shaped dispatch, or an event whose data store is
  * inaccessible), which every claim reads as "not mine".
@@ -402,10 +419,9 @@ function isSameNamespaceLexicalPayload(lexicalString: string, namespace: string)
  * clipboard is one thing to one of them and another to the next: the in-note `\fp` claim at
  * CRITICAL, and the Standard-view external-paste claim and the char-stack line replay at HIGH
  * (`MarkerEditPlugin.tsx`). All three read the clipboard only through here: the jsdom-safe
- * duck-check (jsdom implements no `ClipboardEvent`, so `instanceof` against the undefined global
- * throws), the carrier choice below, and line-ending normalization BEFORE any caller tests for a
- * line break — so `\r\n` and bare-`\r` clipboards break correctly and no `\r` ever reaches content
- * on any path.
+ * duck-check ({@link asClipboardEvent}), the carrier choice below, and line-ending normalization
+ * BEFORE any caller tests for a line break — so `\r\n` and bare-`\r` clipboards break correctly
+ * and no `\r` ever reaches content on any path.
  *
  * Other handlers race on the same command without going through this, correctly: the LOW
  * paragraph-split arm (`MarkerEditPlugin.tsx`) only sets a flag and never looks at the payload,
@@ -417,10 +433,7 @@ export function getPastePayload(
   event: PasteCommandType | null | undefined,
   namespace: string,
 ): PastePayload | undefined {
-  const clipboardData =
-    event && typeof event === "object" && "clipboardData" in event
-      ? event.clipboardData
-      : undefined;
+  const clipboardData = asClipboardEvent(event)?.clipboardData;
   if (!clipboardData) return undefined;
   return getDataTransferPayload(clipboardData, namespace);
 }
@@ -1418,7 +1431,7 @@ export function $handleCopyForStandardView(
 ): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) {
-    const isNullPayloadDispatch = !event || !("clipboardData" in event);
+    const isNullPayloadDispatch = !asClipboardEvent(event);
     // The same predicate shared-react's guard uses, not a second spelling of it: the two layers
     // have to agree on what "nothing to copy" means — including that a node selection has real
     // content and is therefore declined here — and one shared function is what keeps them agreeing.
@@ -1500,7 +1513,8 @@ export function $writeClipboardData(
   // `nodes` array, which is still a non-empty string. Writing an empty payload would replace the
   // clipboard's real contents with an empty string and an empty `<p>`.
   const isEmptyPayload = !data["text/plain"];
-  if (!event || !("clipboardData" in event)) {
+  const clipboardEvent = asClipboardEvent(event);
+  if (!clipboardEvent) {
     // Null-payload dispatch (ClipboardPlugin / ContextMenuPlugin / EditorRef): write via
     // Lexical's execCommand mechanism with OUR pre-normalized payload. copyToClipboard(null)
     // without `data` would intercept its own synthesized event at COMMAND_PRIORITY_CRITICAL
@@ -1513,10 +1527,11 @@ export function $writeClipboardData(
   // in-flight native clipboard event whose data store isn't accessible — routing it into the
   // null-dispatch leg above would re-enter document.execCommand from inside that dispatch and
   // never preventDefault the original event.
-  if (event.clipboardData == null) return false;
-  event.preventDefault();
+  if (clipboardEvent.clipboardData == null) return false;
+  clipboardEvent.preventDefault();
   if (!isEmptyPayload)
-    for (const [mime, value] of Object.entries(data)) event.clipboardData.setData(mime, value);
+    for (const [mime, value] of Object.entries(data))
+      clipboardEvent.clipboardData.setData(mime, value);
   $remove?.();
   return true;
 }

@@ -41,6 +41,7 @@ import {
   registerTypedNbspSpelling,
   $handleDropForStandardView,
   $setStandardViewDragData,
+  asClipboardEvent,
   getDataTransferPayload,
   normalizePastedText,
   getPastePayload,
@@ -842,6 +843,17 @@ export function MarkerEditPlugin({
      */
     let blurredWhileSuspended = false;
     /**
+     * Whether the editor's root contains the active element of a document that itself has focus.
+     * `hasFocus()` as well as `activeElement`: a document keeps its `activeElement` after focus
+     * leaves the whole iframe, so containment alone still reports "focused" for an editor that no
+     * longer is.
+     */
+    const rootHoldsFocusedDocumentFocus = (): boolean => {
+      const root = editor.getRootElement();
+      const doc = root?.ownerDocument;
+      return !!root && !!doc && doc.hasFocus() && root.contains(doc.activeElement);
+    };
+    /**
      * The focus-then-wait lift, while one is pending. A mid-session focus is BRIEF — the host's
      * commit returns focus to apply an edit, and either a replacement surface retakes focus within
      * a few hundred milliseconds or the host resumes — so a focus that is still held when this
@@ -1151,12 +1163,7 @@ export function MarkerEditPlugin({
               COPY_COMMAND,
               (event) =>
                 $handleCopyForStandardView(
-                  // COPY_COMMAND's payload is `ClipboardEvent | KeyboardEvent | null`. A plain
-                  // `event instanceof ClipboardEvent` narrows this correctly in real browsers,
-                  // but jsdom (our test environment) doesn't implement `ClipboardEvent` at all —
-                  // `instanceof` against the undefined global throws — so this duck-checks the
-                  // one property `$handleCopyForStandardView` actually needs instead.
-                  event && typeof event === "object" && "clipboardData" in event ? event : null,
+                  asClipboardEvent(event),
                   editor,
                   false,
                   copyLimitRef.current,
@@ -1172,7 +1179,7 @@ export function MarkerEditPlugin({
                 // exactly that reason, so it has already had its turn by the time this claim runs
                 // and a selection reaching here is one it allowed.
                 $handleCopyForStandardView(
-                  event && typeof event === "object" && "clipboardData" in event ? event : null,
+                  asClipboardEvent(event),
                   editor,
                   true,
                   copyLimitRef.current,
@@ -1184,10 +1191,7 @@ export function MarkerEditPlugin({
               PASTE_COMMAND,
               (event) =>
                 $handlePasteForStandardView(
-                  // Same jsdom-safe duck-check as COPY above.
-                  event && typeof event === "object" && "clipboardData" in event
-                    ? (event as ClipboardEvent)
-                    : null,
+                  asClipboardEvent(event),
                   context.structureProtectionMode === "protected",
                   // Consumed by $paraMarkerDeletionTransform below, same as the
                   // INSERT_PARAGRAPH_COMMAND and LOW-priority PASTE_COMMAND handlers arm it for
@@ -1469,16 +1473,10 @@ export function MarkerEditPlugin({
               if (disposed || !markerSettleSuspendedRef.current) return;
               // Still focused after the whole window: nothing took focus back and the host never
               // resumed. Re-checked rather than assumed, because the window is long enough for
-              // focus to have moved without a BLUR this handler saw.
-              // `hasFocus()` as well as `activeElement`: a document keeps its `activeElement`
-              // after focus leaves the whole iframe, so containment alone still reports "focused"
-              // for an editor that no longer is — and the lift would fire on a suspension the host
-              // is still legitimately holding from another frame.
-              const root = editor.getRootElement();
-              const doc = root?.ownerDocument;
-              const active = doc?.activeElement;
-              if (!root || !doc?.hasFocus()) return;
-              if (!active || !(root === active || root.contains(active))) return;
+              // focus to have moved without a BLUR this handler saw. Through `hasFocus()` as well
+              // (see `rootHoldsFocusedDocumentFocus`): the lift would otherwise fire on a
+              // suspension the host is still legitimately holding from another frame.
+              if (!rootHoldsFocusedDocumentFocus()) return;
               context.logger?.warn(
                 "[MarkerEdit] marker settling has been suspended while the editor held focus for " +
                   `${SUSPENSION_LIFT_DELAY_MS}ms, so the suspension was lifted and held edits ` +
@@ -1513,12 +1511,8 @@ export function MarkerEditPlugin({
           // every app-placed caret, so a caret here is one the user placed: read it from the live
           // selection, falling back to `lastAnchorKey` when a cross-frame blur nulled the
           // selection (same fallback the BLUR handler uses).
-          const rootElement = editor.getRootElement();
-          const doc = rootElement?.ownerDocument;
-          const hasFocus =
-            !!rootElement && !!doc && doc.hasFocus() && rootElement.contains(doc.activeElement);
           let exceptKey: NodeKey | undefined;
-          if (hasFocus) {
+          if (rootHoldsFocusedDocumentFocus()) {
             const selection = $getSelection();
             // Focus, not anchor: the focus point is the caret's live end, so the exception is
             // the right node even when a range selection is extended backward.

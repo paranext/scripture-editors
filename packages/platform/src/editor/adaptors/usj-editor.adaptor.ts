@@ -533,6 +533,32 @@ function createImpliedPara(children: SerializedLexicalNode[]): SerializedImplied
   };
 }
 
+/**
+ * Appends a block's opening-marker prefix to `children`: in editable mode the marker and its NBSP
+ * separator token, in visible mode (or with gutter paragraph markers) one immutable glyph holding
+ * both. Paragraphs, table rows and table cells all display their marker bytes on these terms.
+ *
+ * @param marker - The marker the prefix displays.
+ * @param children - The block's children, appended to in place.
+ */
+function addBlockMarkerPrefix(marker: string, children: SerializedLexicalNode[]): void {
+  if (_viewOptions?.markerMode === "editable")
+    // The SERIALIZED twin of $createMarkerTrailingSeparator (node.utils.ts) — same tag, same
+    // token mode, and the doc there explains why. This is the only place the serialized form is
+    // built.
+    children.push(createMarker(marker), createText(NBSP, MARKER_TRAILING_SPACE_TEXT_TYPE, "token"));
+  else if (_viewOptions?.markerMode === "visible" || _viewOptions?.hasGutterParaMarkers)
+    // The gutter flag rides on the glyph, so whether this block's marker is an aid in the
+    // gutter or inline text stays legible from the node alone, wherever it is read later.
+    children.push(
+      createImmutableTypedText(
+        "marker",
+        openingMarkerText(marker) + NBSP,
+        _viewOptions?.hasGutterParaMarkers,
+      ),
+    );
+}
+
 function createPara(
   markerObject: MarkerObject,
   childNodes: SerializedLexicalNode[] = [],
@@ -547,26 +573,7 @@ function createPara(
   // note it edits in a marker-less para it never saves) opt out of the prefix entirely. Opting
   // out here rather than hiding the glyph downstream is what keeps the caret out of it: bytes
   // that are never built cannot be traversed.
-  if (showParaMarkerPrefix(_viewOptions)) {
-    if (_viewOptions?.markerMode === "editable")
-      // The SERIALIZED twin of $createMarkerTrailingSeparator (node.utils.ts) — same tag, same
-      // token mode, and the doc there explains why. This is the only place the serialized form is
-      // built.
-      children.push(
-        createMarker(marker),
-        createText(NBSP, MARKER_TRAILING_SPACE_TEXT_TYPE, "token"),
-      );
-    else if (_viewOptions?.markerMode === "visible" || _viewOptions?.hasGutterParaMarkers)
-      // The gutter flag rides on the glyph, so whether this paragraph's marker is an aid in the
-      // gutter or inline text stays legible from the node alone, wherever it is read later.
-      children.push(
-        createImmutableTypedText(
-          "marker",
-          openingMarkerText(marker) + NBSP,
-          _viewOptions?.hasGutterParaMarkers,
-        ),
-      );
-  }
+  if (showParaMarkerPrefix(_viewOptions)) addBlockMarkerPrefix(marker, children);
   children.push(...childNodes);
   if (isStandardView()) {
     // Paragraph-leading spaces display as NBSP so they stay visible and typable at the start of
@@ -635,19 +642,7 @@ function createTableRow(
   // below): the row marker is real USFM the document carries, and a row that renders none of it
   // leaves a typed `\tr` with nothing on screen — the paragraph splits, the rest of the sentence
   // moves into the row, and there is no glyph to delete to undo any of it.
-  if (_viewOptions?.markerMode === "editable")
-    children.push(
-      createMarker(rowMarker),
-      createText(NBSP, MARKER_TRAILING_SPACE_TEXT_TYPE, "token"),
-    );
-  else if (_viewOptions?.markerMode === "visible" || _viewOptions?.hasGutterParaMarkers)
-    children.push(
-      createImmutableTypedText(
-        "marker",
-        openingMarkerText(rowMarker) + NBSP,
-        _viewOptions?.hasGutterParaMarkers,
-      ),
-    );
+  addBlockMarkerPrefix(rowMarker, children);
   children.push(...childNodes);
   return removeUndefinedProperties({
     ...createBaseElement(),
@@ -670,19 +665,7 @@ function createTableCell(
   // name (`\thc3-4`), which the tokenizer trimmed off into `colspan` on the way in. Displaying
   // the bare marker would show — and copy, and re-tokenize as — a one-column cell.
   const displayMarker = tableCellMarkerWithSpan(cellMarker, colspan) ?? cellMarker;
-  if (_viewOptions?.markerMode === "editable")
-    children.push(
-      createMarker(displayMarker),
-      createText(NBSP, MARKER_TRAILING_SPACE_TEXT_TYPE, "token"),
-    );
-  else if (_viewOptions?.markerMode === "visible" || _viewOptions?.hasGutterParaMarkers)
-    children.push(
-      createImmutableTypedText(
-        "marker",
-        openingMarkerText(displayMarker) + NBSP,
-        _viewOptions?.hasGutterParaMarkers,
-      ),
-    );
+  addBlockMarkerPrefix(displayMarker, children);
   children.push(...childNodes);
   const unknownAttributes = getUnknownAttributes<ImmutableTableCellMarker>(
     markerObject,
@@ -999,6 +982,27 @@ function createAttributeRun(
   };
 }
 
+/**
+ * A value-carrying attribute run (`\va`, `\vp`, `\cat`, `\ca`, `\cp`): the marker's opening
+ * glyph, its NBSP-prefixed value as attribute text, and — unless `hasCloser` is false — its closing
+ * glyph, wrapped in ONE `attribute-run` node whose runKind is the marker's name.
+ *
+ * @param kind - The marker, which is also the run's kind.
+ * @param value - The attribute's stored value.
+ * @param hasCloser - Whether the run ends in a closing glyph (`\cp` has none).
+ */
+function createValueRun(
+  kind: "va" | "vp" | "cat" | "ca" | "cp",
+  value: string,
+  hasCloser = true,
+): SerializedAttributeRunNode {
+  return createAttributeRun(kind, [
+    createMarker(kind, "opening"),
+    createText(NBSP + nbspValueToDisplay(value, attributeNbspSpelling()), "attribute"),
+    ...(hasCloser ? [createMarker(kind, "closing")] : []),
+  ]);
+}
+
 function addOpeningMarker(marker: string, nodes: SerializedLexicalNode[], nested = false) {
   if (_viewOptions?.markerMode === "editable") {
     nodes.push(createMarker(marker, "opening", nested));
@@ -1125,13 +1129,7 @@ function addVerseAttributeRun(
   // `$writeRun` then fabricated a `\va \va*` run the document never showed, which the settle
   // wrote to the file.
   if (value === undefined) return;
-  nodes.push(
-    createAttributeRun(marker, [
-      createMarker(marker, "opening"),
-      createText(NBSP + nbspValueToDisplay(value, attributeNbspSpelling()), "attribute"),
-      createMarker(marker, "closing"),
-    ]),
-  );
+  nodes.push(createValueRun(marker, value));
 }
 
 function addVerseAttributes(markerObject: MarkerObject, nodes: SerializedLexicalNode[]) {
@@ -1147,13 +1145,7 @@ function addVerseAttributes(markerObject: MarkerObject, nodes: SerializedLexical
  * between `\cat` and its value, so Tier-2's NBSP→space flattening reproduces it exactly. */
 function addNoteCategoryRun(category: string | undefined, nodes: SerializedLexicalNode[]) {
   if (category === undefined) return;
-  nodes.push(
-    createAttributeRun("cat", [
-      createMarker("cat", "opening"),
-      createText(NBSP + nbspValueToDisplay(category, attributeNbspSpelling()), "attribute"),
-      createMarker("cat", "closing"),
-    ]),
-  );
+  nodes.push(createValueRun("cat", category));
 }
 
 /** Chapter attribute display: `\ca` (altnumber) then `\cp` (pubnumber), riding inside the
@@ -1166,21 +1158,8 @@ function addChapterAttributeRuns(
   pubnumber: string | undefined,
   nodes: SerializedLexicalNode[],
 ) {
-  if (altnumber !== undefined)
-    nodes.push(
-      createAttributeRun("ca", [
-        createMarker("ca", "opening"),
-        createText(NBSP + nbspValueToDisplay(altnumber, attributeNbspSpelling()), "attribute"),
-        createMarker("ca", "closing"),
-      ]),
-    );
-  if (pubnumber !== undefined)
-    nodes.push(
-      createAttributeRun("cp", [
-        createMarker("cp", "opening"),
-        createText(NBSP + nbspValueToDisplay(pubnumber, attributeNbspSpelling()), "attribute"),
-      ]),
-    );
+  if (altnumber !== undefined) nodes.push(createValueRun("ca", altnumber));
+  if (pubnumber !== undefined) nodes.push(createValueRun("cp", pubnumber, false));
 }
 
 function reIndex(indexes: number[], offset: number): number[] {

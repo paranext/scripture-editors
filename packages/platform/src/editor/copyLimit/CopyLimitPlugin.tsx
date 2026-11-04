@@ -15,6 +15,7 @@ import {
   $storedNbsps,
   withStoredNbspsAsTildes,
   $writeClipboardData,
+  asClipboardEvent,
 } from "../markerEdit/whitespaceDisplay.plugin.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
@@ -204,7 +205,7 @@ export function CopyLimitPlugin({
           ? withStoredNbspsAsTildes(shownText, $storedNbsps(selection, $isInCollapsedNote))
           : undefined;
       return $writeClipboardData(
-        event && typeof event === "object" && "clipboardData" in event ? event : null,
+        asClipboardEvent(event),
         editor,
         { "text/plain": plainText ?? shownText },
         shouldRemove ? () => selection.removeText() : undefined,

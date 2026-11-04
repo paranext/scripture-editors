@@ -3,6 +3,7 @@ import usjEditorAdaptor from "./adaptors/usj-editor.adaptor";
 import {
   $extendCharacterMarkerAtSelection,
   $removeCharacterMarkerAtSelection,
+  $rememberExpandedNote,
   $replaceCharacterMarkerAtSelection,
   getUsjMarkerAction,
   isCharacterMarkerSupported,
@@ -117,9 +118,9 @@ import {
 } from "react";
 import {
   $createParaNode,
+  $findFirstAncestorNoteNode,
   $getSelectedParaMarkerPara,
   $isBookNode,
-  $isNoteNode,
   $isParaNode,
   $lastLeaf,
   $orderedPoints,
@@ -212,6 +213,7 @@ import {
   TextDirectionPlugin,
   TextSpacingPlugin,
   TrailingNoteCaretGuardPlugin,
+  updateWithoutTakingFocus,
   usjBlockVerseNodes,
   UsjNodeOptions,
   UsjNodesMenuPlugin,
@@ -339,18 +341,6 @@ function UpdateListenerPlugin({
     [editor, listener],
   );
   return null;
-}
-
-/**
- * Records `noteNode`'s key in `expandedNoteKeyRef` when it is expanded, so `NoteNodePlugin` knows
- * to collapse that note once the caret leaves it. No-op for a collapsed note or no note at all.
- * Call inside `editor.update()`.
- */
-function $rememberExpandedNote(
-  noteNode: NoteNode | null | undefined,
-  expandedNoteKeyRef: React.MutableRefObject<string | undefined>,
-): void {
-  if (noteNode && !noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
 }
 
 /**
@@ -603,6 +593,22 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     loggerRef.current = logger;
   }
   const stableLogger = loggerRef.current;
+  // One binding for `insertMarker` and the legacy marker menu. Memoized because the menu's item
+  // list (`useUsfmMarkersForMenu`) is memoized on it: a fresh function per render would rebuild
+  // every item on every render.
+  const getMarkerAction = useCallback(
+    (marker: string) =>
+      getUsjMarkerAction(
+        marker,
+        expandedNoteKeyRef,
+        viewOptions,
+        nodeOptions,
+        stableLogger,
+        undefined,
+        styleInfo,
+      ),
+    [viewOptions, nodeOptions, stableLogger, styleInfo],
+  );
 
   // The block verse layout regroups each verse into its own element, splitting paragraphs that span
   // verses. That shape cannot be exported back to USJ, so the layout is read-only by construction
@@ -748,6 +754,34 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   function assertCharacterMarkerSupported(marker: string | undefined) {
     if (marker !== undefined && !isCharacterMarkerSupported(marker, nodeOptions.extraValidMarkers))
       throw new Error(`Unsupported character marker '${marker}'`);
+  }
+
+  /**
+   * The shell the character-marker `EditorRef` methods share: refuses in a read-only editor (before
+   * any marker is validated), checks each given marker with
+   * {@link assertCharacterMarkerSupported}, then runs `$act` on the range selection and returns
+   * what it reported.
+   *
+   * `discrete` so the update runs now rather than being deferred behind an in-progress one, which
+   * would leave the result reporting `false` for an action that did happen. Same reason
+   * `applyUpdate` uses it.
+   */
+  function runCharacterMarkerAction(
+    operation: string,
+    markers: readonly (string | undefined)[],
+    $act: (selection: RangeSelection) => boolean,
+  ): boolean {
+    if (effectiveIsReadonly) throw new Error(`Cannot ${operation} in readonly mode`);
+    markers.forEach((marker) => assertCharacterMarkerSupported(marker));
+    let didAct = false;
+    editorRef.current?.update(
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) didAct = $act(selection);
+      },
+      { discrete: true },
+    );
+    return didAct;
   }
 
   /**
@@ -1121,25 +1155,18 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // A host settles this editor on the user's way OUT of it (into a note editor elsewhere, say),
       // so the settle follows the same focus rule as `applyUpdate`: it must not write the DOM
       // selection, and with it focus, back into this editor.
-      const skipDomSelection = !holdsDomFocus();
-      const unregisterTagRelease = skipDomSelection
-        ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
-        : undefined;
-      // Discrete so the settle commits synchronously: the change listener then refreshes
-      // `editedUsjRef` before this method returns, letting callers read fresh USJ via
-      // `getUsj()` immediately (the host save path depends on this ordering).
-      editor.update(
-        () => {
-          if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
-          editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
-        },
-        { discrete: true },
-      );
-      // With nothing pending, `COMMIT_PENDING_MARKERS_COMMAND` finds no work and the update above
-      // commits nothing - disarm the listener rather than leave it to strip the tag off whatever
-      // commit happens next.
-      unregisterTagRelease?.();
-      if (skipDomSelection) clearStaleDomSelection(editor);
+      //
+      // The update is discrete, so the settle commits synchronously: the change listener then
+      // refreshes `editedUsjRef` before this method returns, letting callers read fresh USJ via
+      // `getUsj()` immediately (the host save path depends on this ordering). With nothing
+      // pending, `COMMIT_PENDING_MARKERS_COMMAND` finds no work and the update commits nothing,
+      // which `updateWithoutTakingFocus` disarms its tag release for.
+      if (
+        updateWithoutTakingFocus(editor, () =>
+          editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined),
+        )
+      )
+        clearStaleDomSelection(editor);
     },
     setMarkerSettleSuspended(suspended) {
       // Dispatched bare. Lexical opens an update around every command listener regardless
@@ -1469,73 +1496,28 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       );
     },
     removeCharacterMarker(marker) {
-      if (effectiveIsReadonly) throw new Error("Cannot remove character marker in readonly mode");
-      assertCharacterMarkerSupported(marker);
-
-      // `discrete` so the update runs now rather than being deferred behind an in-progress one,
-      // which would leave `didRemove` reporting `false` for a removal that did happen. Same reason
-      // `applyUpdate` above uses it.
-      let didRemove = false;
-      editorRef.current?.update(
-        () => {
-          const selection = $getSelection();
-          if ($isRangeSelection(selection))
-            didRemove = $removeCharacterMarkerAtSelection(selection, marker, viewOptions);
-        },
-        { discrete: true },
+      return runCharacterMarkerAction("remove character marker", [marker], (selection) =>
+        $removeCharacterMarkerAtSelection(selection, marker, viewOptions),
       );
-      return didRemove;
     },
     replaceCharacterMarker(toMarker, fromMarker) {
-      if (effectiveIsReadonly) throw new Error("Cannot replace character marker in readonly mode");
-      assertCharacterMarkerSupported(toMarker);
-      assertCharacterMarkerSupported(fromMarker);
-
       // No `viewOptions` argument, unlike removeCharacterMarker above: replacement changes no text
       // and strips no children, so it has nothing marker-mode-dependent to undo.
-      //
-      // `discrete` so the update runs now rather than being deferred behind an in-progress one,
-      // which would leave `didReplace` reporting `false` for a replacement that did happen. Same
-      // reason `removeCharacterMarker` above uses it.
-      let didReplace = false;
-      editorRef.current?.update(
-        () => {
-          const selection = $getSelection();
-          if ($isRangeSelection(selection))
-            didReplace = $replaceCharacterMarkerAtSelection(selection, toMarker, fromMarker);
-        },
-        { discrete: true },
+      return runCharacterMarkerAction(
+        "replace character marker",
+        [toMarker, fromMarker],
+        (selection) => $replaceCharacterMarkerAtSelection(selection, toMarker, fromMarker),
       );
-      return didReplace;
     },
     extendCharacterMarker(marker, conflictingMarkers) {
-      if (effectiveIsReadonly) throw new Error("Cannot extend character marker in readonly mode");
-      assertCharacterMarkerSupported(marker);
-      conflictingMarkers?.forEach((conflictingMarker) =>
-        assertCharacterMarkerSupported(conflictingMarker),
-      );
-
       // `viewOptions` is forwarded for the same reason `removeCharacterMarker` above needs it:
       // removing a conflicting marker has to strip that marker's synthesized content.
-      //
-      // `discrete` so the update runs now rather than being deferred behind an in-progress one,
-      // which would leave `didExtend` reporting `false` for an extension that did happen. Same
-      // reason `removeCharacterMarker` above uses it.
-      let didExtend = false;
-      editorRef.current?.update(
-        () => {
-          const selection = $getSelection();
-          if ($isRangeSelection(selection))
-            didExtend = $extendCharacterMarkerAtSelection(
-              selection,
-              marker,
-              conflictingMarkers,
-              viewOptions,
-            );
-        },
-        { discrete: true },
+      return runCharacterMarkerAction(
+        "extend character marker",
+        [marker, ...(conflictingMarkers ?? [])],
+        (selection) =>
+          $extendCharacterMarkerAtSelection(selection, marker, conflictingMarkers, viewOptions),
       );
-      return didExtend;
     },
     insertMarker(marker) {
       if (effectiveIsReadonly) throw new Error("Cannot insert marker in readonly mode");
@@ -1548,15 +1530,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // Every edit below is written for a caret; a selected paragraph marker counts as one at its
       // paragraph's content start, so collapse to there first rather than act on the glyph.
       editorRef.current.update($collapseParaMarkerSelection, { discrete: true });
-      const markerAction = getUsjMarkerAction(
-        marker,
-        expandedNoteKeyRef,
-        viewOptions,
-        nodeOptions,
-        stableLogger,
-        undefined,
-        styleInfo,
-      );
+      const markerAction = getMarkerAction(marker);
       markerAction.action({ editor: editorRef.current, reference: scrRef });
       // Read the note branch's captured key right after `action(...)` returns - Lexical's
       // `editor.update()` callback runs synchronously, so this is already populated. Gives the
@@ -1715,8 +1689,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       editor.update(() => {
         const [node, offset] = $getNodeFromLocation(live.start, viewOptions);
         if (!node || offset === undefined) return;
-        const note = $isNoteNode(node) ? node : $findMatchingParent(node, $isNoteNode);
-        if ($isNoteNode(note)) {
+        const note = $findFirstAncestorNoteNode(node);
+        if (note) {
           $selectNote(note, viewOptions);
           $rememberExpandedNote(note, expandedNoteKeyRef);
         } else if ($isTextNode(node)) node.select(offset, offset);
@@ -1731,21 +1705,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // write must still leave the parked caret as the one a later `focus()` lands on: a
       // selection-only commit does not retire its tag, and the stale DOM selection would be read
       // back over the parked one.
-      const skipDomSelection = !holdsDomFocus();
-      const unregisterTagRelease = skipDomSelection
-        ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
-        : undefined;
-      editor.update(
-        () => {
-          if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
-          const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
-          if (noteNode) $selectAfterNote(noteNode);
-        },
-        { discrete: true },
-      );
-      // A stale `noteKeyOrIndex` leaves nothing to select, and the update above then commits
-      // nothing - disarm rather than leave the listener armed for whatever commit happens next.
-      unregisterTagRelease?.();
+      //
+      // A stale `noteKeyOrIndex` leaves nothing to select, and the update then commits nothing,
+      // which `updateWithoutTakingFocus` disarms its tag release for.
+      const skipDomSelection = updateWithoutTakingFocus(editor, () => {
+        const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+        if (noteNode) $selectAfterNote(noteNode);
+      });
       if (skipDomSelection) {
         clearStaleDomSelection(editor);
         // With no DOM selectionchange to fire, SELECTION_CHANGE_COMMAND never dispatches on its
@@ -1758,18 +1724,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         // that correction's own DOM-selection reconcile would write a selection into this
         // unfocused root and, as an intrinsic browser side effect, focus it - the exact steal this
         // whole branch exists to avoid.
-        const unregisterDispatchTagRelease = releaseTagsAfterNextCommit(
+        updateWithoutTakingFocus(
           editor,
-          SKIP_DOM_SELECTION_TAG,
+          () => editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined),
+          true,
         );
-        editor.update(
-          () => {
-            $addUpdateTag(SKIP_DOM_SELECTION_TAG);
-            editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
-          },
-          { discrete: true },
-        );
-        unregisterDispatchTagRelease();
       }
     },
     selectNoteTextOffset(noteKeyOrIndex, utf16Offset, options) {
@@ -2065,17 +2024,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               trigger={markerMenuTrigger}
               scrRef={scrRef}
               contextMarker={contextMarker}
-              getMarkerAction={(marker) =>
-                getUsjMarkerAction(
-                  marker,
-                  expandedNoteKeyRef,
-                  viewOptions,
-                  nodeOptions,
-                  stableLogger,
-                  undefined,
-                  styleInfo,
-                )
-              }
+              getMarkerAction={getMarkerAction}
               editableHarness={editableMarkerMenuHarness}
             />
           )}

@@ -342,6 +342,56 @@ function $applyInPlaceRenames(scopes: SettleScopes, sites: Map<NodeKey, Serializ
     $applySettledCharOpenerRename(rename, sites);
 }
 
+/** A scope's serialized copy of `nodes`, the site of every live node in it, and every pending
+ * in-place rename applied to it ({@link $applyInPlaceRenames}). */
+function $serializedSites(
+  nodes: LexicalNode[],
+  scopes: SettleScopes,
+): { serialized: SerializedLexicalNode[]; sites: Map<NodeKey, SerializedSite> } {
+  const serialized = nodes.map((node) => $exportSubtree(node));
+  const sites = new Map<NodeKey, SerializedSite>();
+  $mapSerializedSites(nodes, serialized, sites);
+  $applyInPlaceRenames(scopes, sites);
+  return { serialized, sites };
+}
+
+/** `note`'s settle applied to the serialized copy `sites` maps — `false` when the settle refuses,
+ * leaving the copy as it was. */
+function $applyNoteScope(
+  note: NoteNode,
+  sites: Map<NodeKey, SerializedSite>,
+  scopes: SettleScopes,
+  context: SettledPositionContext,
+  transient: TransientLiteral | undefined,
+): boolean {
+  return $applySettledNoteScope(
+    note,
+    sites,
+    context.tier2,
+    scopes.huskKeys,
+    transient,
+    scopes.charOpenerRenames,
+  );
+}
+
+/** {@link $serializedSites}, then the settle of every note settling inside `nodes` (other than
+ * `except`) applied to the copy — renames first, then notes, mirroring the read-only settle's own
+ * notes-before-blocks order, so a block's rebuild over the copy carries each settled note rather
+ * than the pending one. */
+function $serializedSettleSites(
+  nodes: LexicalNode[],
+  scopes: SettleScopes,
+  context: SettledPositionContext,
+  transient: TransientLiteral | undefined,
+  except?: NoteNode,
+): { serialized: SerializedLexicalNode[]; sites: Map<NodeKey, SerializedSite> } {
+  const serializedSites = $serializedSites(nodes, scopes);
+  $subtreeNodesMatching(nodes, $isNoteNode)
+    .filter((note) => !note.is(except) && scopes.noteScopes.has(note.getKey()))
+    .forEach((note) => $applyNoteScope(note, serializedSites.sites, scopes, context, transient));
+  return serializedSites;
+}
+
 /** Whether `block` is in a paragraph or `\id` line scope of its own, whose plan carries the
  * settle of every note inside it. */
 function isInSettlingBlock(block: LexicalNode, scopes: SettleScopes): boolean {
@@ -388,33 +438,8 @@ function $planForClosedNote(
   if (!block || !path || !contentNodes || isInSettlingBlock(block, scopes)) return undefined;
   const following = note.getNextSiblings();
   const built = $buildNodesFragment([...contentNodes, ...following], getMarker, viewOptions);
-  const serialized = $exportSubtree(block);
-  const sites = new Map<NodeKey, SerializedSite>();
-  $mapSerializedSites([block], [serialized], sites);
-  $applyInPlaceRenames(scopes, sites);
-  $subtreeNodesMatching([block], $isNoteNode)
-    .filter((other) => !other.is(note) && scopes.noteScopes.has(other.getKey()))
-    .forEach((other) =>
-      $applySettledNoteScope(
-        other,
-        sites,
-        context.tier2,
-        scopes.huskKeys,
-        transient,
-        scopes.charOpenerRenames,
-      ),
-    );
-  if (
-    !$applySettledNoteScope(
-      note,
-      sites,
-      context.tier2,
-      scopes.huskKeys,
-      transient,
-      scopes.charOpenerRenames,
-    )
-  )
-    return undefined;
+  const { serialized, sites } = $serializedSettleSites([block], scopes, context, transient, note);
+  if (!$applyNoteScope(note, sites, scopes, context, transient)) return undefined;
   // The settle that closes the note at the typed closer is the one that drops its `closed`.
   const settled = sites.get(note.getKey())?.node;
   if (!isSerializedNoteNode(settled) || settled.unknownAttributes?.closed === "false")
@@ -426,7 +451,7 @@ function $planForClosedNote(
     [note, ...following],
     liveFragment,
     liveCut,
-    [serialized],
+    serialized,
     carried,
     context,
     () => {
@@ -524,25 +549,17 @@ function $planForNote(
   const closed = $planForClosedNote(note, scopes, context, transient);
   if (closed) return closed;
   const { liveFragment, liveCut } = $cutLiveFragment(built, transient);
-  const serialized = $exportSubtree(note);
-  const sites = new Map<NodeKey, SerializedSite>();
-  $mapSerializedSites([note], [serialized], sites);
-  $applyInPlaceRenames(scopes, sites);
+  const {
+    serialized: [serializedNote],
+    sites,
+  } = $serializedSites([note], scopes);
   // A refusal leaves the serialized note untouched, which is the settle saying this scope is
   // already what it settles to — no plan, so positions in it address the live tree directly.
-  if (
-    !$applySettledNoteScope(
-      note,
-      sites,
-      context.tier2,
-      scopes.huskKeys,
-      transient,
-      scopes.charOpenerRenames,
-    )
-  )
-    return undefined;
+  if (!$applyNoteScope(note, sites, scopes, context, transient)) return undefined;
   const carried = built && carriedPreservedRuns(built, sites, scopes.huskKeys);
-  return $planFrom("note", [note], liveFragment, liveCut, [serialized], carried, context);
+  // The note alone, in an array of its own: the scope's live side is just the note, and a settle
+  // that closes it at a typed closer splices what followed the closer into `serialized` after it.
+  return $planFrom("note", [note], liveFragment, liveCut, [serializedNote], carried, context);
 }
 
 /** The paragraph scope's plan. Any note settling INSIDE the scope is settled into the serialized
@@ -557,22 +574,7 @@ function $planForParas(
   transient: TransientLiteral | undefined,
 ): SettleScopePlan | undefined {
   const { liveFragment, liveCut } = $cutLiveFragment(built, transient);
-  const serialized = paras.map($exportSubtree);
-  const sites = new Map<NodeKey, SerializedSite>();
-  $mapSerializedSites(paras, serialized, sites);
-  $applyInPlaceRenames(scopes, sites);
-  $subtreeNodesMatching(paras, $isNoteNode)
-    .filter((note) => scopes.noteScopes.has(note.getKey()))
-    .forEach((note) =>
-      $applySettledNoteScope(
-        note,
-        sites,
-        context.tier2,
-        scopes.huskKeys,
-        transient,
-        scopes.charOpenerRenames,
-      ),
-    );
+  const { sites } = $serializedSettleSites(paras, scopes, context, transient);
   const rebuilt = $settledParaScope(
     paras,
     sites,
@@ -600,22 +602,7 @@ function $planForBook(
 ): SettleScopePlan | undefined {
   const { liveFragment, liveCut } = $cutLiveFragment(built, transient);
   const liveNodes = [book, ...trailingParas];
-  const serialized = liveNodes.map($exportSubtree);
-  const sites = new Map<NodeKey, SerializedSite>();
-  $mapSerializedSites(liveNodes, serialized, sites);
-  $applyInPlaceRenames(scopes, sites);
-  $subtreeNodesMatching(liveNodes, $isNoteNode)
-    .filter((note) => scopes.noteScopes.has(note.getKey()))
-    .forEach((note) =>
-      $applySettledNoteScope(
-        note,
-        sites,
-        context.tier2,
-        scopes.huskKeys,
-        transient,
-        scopes.charOpenerRenames,
-      ),
-    );
+  const { serialized, sites } = $serializedSettleSites(liveNodes, scopes, context, transient);
   if (
     !$applySettledBookScope(
       book,
@@ -694,22 +681,7 @@ function $planForHuskOnlyPara(
   context: SettledPositionContext,
   transient: TransientLiteral | undefined,
 ): SettleScopePlan | undefined {
-  const serialized = $exportSubtree(para);
-  const sites = new Map<NodeKey, SerializedSite>();
-  $mapSerializedSites([para], [serialized], sites);
-  $applyInPlaceRenames(scopes, sites);
-  $subtreeNodesMatching([para], $isNoteNode)
-    .filter((note) => scopes.noteScopes.has(note.getKey()))
-    .forEach((note) =>
-      $applySettledNoteScope(
-        note,
-        sites,
-        context.tier2,
-        scopes.huskKeys,
-        transient,
-        scopes.charOpenerRenames,
-      ),
-    );
+  const { serialized, sites } = $serializedSettleSites([para], scopes, context, transient);
   const splicedKeys = new Set<NodeKey>();
   for (const husk of husks) {
     const site = sites.get(husk.getKey());
@@ -721,7 +693,7 @@ function $planForHuskOnlyPara(
   }
   if (splicedKeys.size === 0) return undefined;
   const carried = liveFragment && carriedPreservedRuns(liveFragment, sites, splicedKeys);
-  return $planFrom("para", [para], liveFragment, undefined, [serialized], carried, context);
+  return $planFrom("para", [para], liveFragment, undefined, serialized, carried, context);
 }
 
 /** Whether any scope already planned covers `node` — its own key or an ancestor's. */

@@ -1,5 +1,6 @@
 import { mergeRegister } from "@lexical/utils";
 import {
+  $addUpdateTag,
   $createRangeSelectionFromDom,
   $getEditor,
   $getSelection,
@@ -8,6 +9,7 @@ import {
   CommandListenerPriority,
   LexicalCommand,
   LexicalEditor,
+  SKIP_DOM_SELECTION_TAG,
 } from "lexical";
 
 /**
@@ -68,6 +70,43 @@ export function releaseTagsAfterNextCommit(editor: LexicalEditor, ...tags: strin
     for (const tag of tags) commitTags.delete(tag);
   });
   return unregister;
+}
+
+/**
+ * Runs `$update` in a discrete update that, when `skip` is set, carries `SKIP_DOM_SELECTION_TAG`
+ * on its commit and on no later one - the focus rule of {@link editorHoldsDomFocus} for an
+ * imperative update to an editor the user may have left.
+ *
+ * The tag's release is armed ({@link releaseTagsAfterNextCommit}) before the update and disarmed
+ * right after it: the update is discrete, so its commit has really happened by then, and an update
+ * that found nothing to do commits nothing and would otherwise leave the listener armed to strip
+ * the tag off whatever unrelated commit happens next.
+ *
+ * Call it outside any update.
+ *
+ * @param editor - The editor to update.
+ * @param $update - The update's body, run inside it.
+ * @param skip - Whether the commit skips the DOM-selection write. Defaults to whether the editor
+ *   does NOT hold DOM focus, evaluated before the update runs.
+ * @returns `skip`, so a caller can follow a skipped write with {@link clearStaleDomSelection}.
+ */
+export function updateWithoutTakingFocus(
+  editor: LexicalEditor,
+  $update: () => void,
+  skip = !editorHoldsDomFocus(editor),
+): boolean {
+  const unregisterTagRelease = skip
+    ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
+    : undefined;
+  editor.update(
+    () => {
+      if (skip) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+      $update();
+    },
+    { discrete: true },
+  );
+  unregisterTagRelease?.();
+  return skip;
 }
 
 /**

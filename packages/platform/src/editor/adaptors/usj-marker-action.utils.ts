@@ -236,20 +236,56 @@ export function isCharacterMarkerSupported(
 }
 
 /**
+ * Records `noteNode`'s key in `expandedNoteKeyRef` when it is expanded, so `NoteNodePlugin` knows
+ * to collapse that note once the caret leaves it. No-op for a collapsed note or no note at all.
+ *
+ * Mutating (writes the ref, which is read on later commits): call inside `editor.update()`.
+ */
+export function $rememberExpandedNote(
+  noteNode: NoteNode | null | undefined,
+  expandedNoteKeyRef: React.MutableRefObject<string | undefined>,
+): void {
+  if (noteNode && !noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
+}
+
+/**
  * Inserts a note for `marker` at the current selection and returns the created NoteNode's TRUE
- * Lexical key (or undefined when insertion bailed). Call inside `editor.update()`. Shared by the
- * `getUsjMarkerAction` note action (which wraps it in its own update for the `insertMarker`
- * entry point) and `$applyMarkerMenuSelection` (already inside an update — a nested update would
- * be QUEUED, losing the key).
+ * Lexical key (or undefined when insertion bailed). Shared by the `getUsjMarkerAction` note action
+ * (which wraps it in its own update for the `insertMarker` entry point) and
+ * `$applyMarkerMenuSelection` (already inside an update — a nested update would be QUEUED, losing
+ * the key).
+ *
+ * A caret on an editable chapter line has no block to insert the note into, so it is first moved
+ * to where content after the chapter number goes (see `chapterLine.utils.ts`); when that refuses,
+ * nothing is inserted and the result is `undefined`.
+ *
+ * Mutating: call inside `editor.update()`.
  */
 export function $insertNoteForMarker(
   marker: string,
   reference: SerializedVerseRef,
   expandedNoteKeyRef: React.MutableRefObject<string | undefined>,
-  viewOptions?: ViewOptions,
-  nodeOptions?: UsjNodeOptions,
-  logger?: LoggerBasic,
+  {
+    viewOptions,
+    nodeOptions,
+    logger,
+    styleInfo,
+  }: {
+    viewOptions?: ViewOptions;
+    nodeOptions?: UsjNodeOptions;
+    logger?: LoggerBasic;
+    /** Project stylesheet; falls back to the bundled one. */
+    styleInfo?: StyleInfo;
+  } = {},
 ): string | undefined {
+  if (
+    !$moveCaretOffChapterLine({
+      viewOptions: viewOptions ?? getDefaultViewOptions(),
+      getMarker: createMarkerLookup(styleInfo ?? defaultStyleInfo),
+      logger,
+    })
+  )
+    return undefined;
   const noteNode = $insertNote(
     marker,
     undefined,
@@ -259,7 +295,7 @@ export function $insertNoteForMarker(
     nodeOptions ?? {},
     logger,
   );
-  if (noteNode && !noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
+  $rememberExpandedNote(noteNode, expandedNoteKeyRef);
   return noteNode?.getKey();
 }
 
@@ -291,16 +327,16 @@ export function getUsjMarkerAction(
     let insertedNoteKey: string | undefined;
     const action = (currentEditor: { editor: LexicalEditor; reference: SerializedVerseRef }) => {
       currentEditor.editor.update(() => {
-        // A caret on an editable chapter line has no block to insert the note into; move it to
-        // where content after the chapter number goes (see `chapterLine.utils.ts`).
-        if (!$moveCaretOffChapterLine(chapterLineContext)) return;
         insertedNoteKey = $insertNoteForMarker(
           marker,
           currentEditor.reference,
           expandedNoteKeyRef,
-          viewOptions,
-          nodeOptions,
-          logger,
+          {
+            viewOptions,
+            nodeOptions,
+            logger,
+            styleInfo,
+          },
         );
       }, editorUpdateOptions);
     };
@@ -479,19 +515,8 @@ export function getUsjMarkerAction(
               if ($isMarkerNode(child)) child.setNested(true);
             });
             // Caret INSIDE the new span at its content position — same convention as the
-            // generic char path below: typed text appends after the placeholder and
-            // CharNodePlugin strips the placeholder once real content exists.
-            const contentText = nodeToInsert
-              .getChildren()
-              .find((child) => $isTextNode(child) && !$isMarkerNode(child));
-            if (contentText && $isTextNode(contentText)) {
-              contentText.select(
-                contentText.getTextContentSize(),
-                contentText.getTextContentSize(),
-              );
-            } else {
-              nodeToInsert.selectEnd();
-            }
+            // generic char path below.
+            $selectCharContentEnd(nodeToInsert);
           }
         } else if (
           $isTextNode(node) &&
@@ -561,19 +586,7 @@ export function getUsjMarkerAction(
             // inserting `\wj ` you type the span's content). Both outside placements were wrong:
             // selectStart() descends to the opening glyph's offset 0, so typing edited the glyph
             // (Tier-1 rename); nextNode.selectStart() put typing after the whole span.
-            const contentText = nodeToInsert
-              .getChildren()
-              .find((child) => $isTextNode(child) && !$isMarkerNode(child));
-            if (contentText && $isTextNode(contentText)) {
-              // End of the empty-content placeholder: typed text appends after it and
-              // CharNodePlugin strips the placeholder prefix once real content exists.
-              contentText.select(
-                contentText.getTextContentSize(),
-                contentText.getTextContentSize(),
-              );
-            } else {
-              nodeToInsert.selectEnd();
-            }
+            $selectCharContentEnd(nodeToInsert);
           } else if ($isSomeVerseNode(nodeToInsert)) {
             // Typing after a new verse number starts that verse, so the caret goes to the start of
             // its content - the rule verse navigation uses. Selecting into whatever follows instead
@@ -612,6 +625,33 @@ function $collectSiblingsFromCaret(node: TextNode, offset: number): LexicalNode[
   else tailStart = node.splitText(offset)[1] ?? node.getNextSibling();
   if (!tailStart) return [];
   return [tailStart, ...tailStart.getNextSiblings()];
+}
+
+/**
+ * A char span's first content text node — the empty-content placeholder in a span just built — or
+ * `undefined` when it holds glyphs only.
+ *
+ * Read-only: safe in any read or update.
+ */
+function $charContentText(span: CharNode): TextNode | undefined {
+  return span
+    .getChildren()
+    .find((child): child is TextNode => $isTextNode(child) && !$isMarkerNode(child));
+}
+
+/**
+ * Puts the caret at the END of `span`'s content text ({@link $charContentText}), or at the span's
+ * end when it has none. For a span just built that is the end of the empty-content placeholder:
+ * typed text appends after it and CharNodePlugin strips the placeholder prefix once real content
+ * exists.
+ *
+ * Mutating (moves the selection): call inside `editor.update()`.
+ */
+function $selectCharContentEnd(span: CharNode): void {
+  const contentText = $charContentText(span);
+  if (contentText)
+    contentText.select(contentText.getTextContentSize(), contentText.getTextContentSize());
+  else span.selectEnd();
 }
 
 /**
@@ -727,19 +767,12 @@ function $applyNonNestInsideChar(
     liftTarget.insertBefore(newSpan);
     if ($isTextNode(liftTarget) && !liftTarget.getTextContent().startsWith(NBSP))
       liftTarget.setTextContent(NBSP + liftTarget.getTextContent());
-    const placeholder = newSpan
-      .getChildren()
-      .find((child) => $isTextNode(child) && !$isMarkerNode(child));
+    const placeholder = $charContentText(newSpan);
     if (placeholder) placeholder.replace(liftTarget);
     else newSpan.append(liftTarget);
   }
   // Caret inside the new span's content, so typing fills it.
-  const contentText = newSpan
-    .getChildren()
-    .find((child) => $isTextNode(child) && !$isMarkerNode(child));
-  if ($isTextNode(contentText))
-    contentText.select(contentText.getTextContentSize(), contentText.getTextContentSize());
-  else newSpan.selectEnd();
+  $selectCharContentEnd(newSpan);
 }
 
 /**
@@ -815,9 +848,7 @@ function $applyNonNestAcrossNodes(
   // The first piece becomes the span's content start and takes the structural NBSP separator;
   // the rest follow it in document order.
   if (!first.getTextContent().startsWith(NBSP)) first.setTextContent(NBSP + first.getTextContent());
-  const placeholder = newSpan
-    .getChildren()
-    .find((child) => $isTextNode(child) && !$isMarkerNode(child));
+  const placeholder = $charContentText(newSpan);
   if (placeholder) placeholder.replace(first);
   else newSpan.append(first);
   let previous: TextNode = first.getLatest();
@@ -1304,25 +1335,9 @@ export function $removeCharacterMarkerAtSelection(
   const targetNodes = $getTargetNodes(nodes, startOffset, endOffset);
   if (targetNodes.length === 0) return false;
 
-  // Belt-and-braces: no current path resolves two targetNodes to the same CharNode key, since
-  // `$splitCharNodeAroundTargets` reads the whole `targetNodes` array and unwrapping detaches the
-  // rest. Kept in case a future change reintroduces one.
-  const handledCharNodeKeys = new Set<string>();
-  let didRemove = false;
-  targetNodes.forEach((targetNode) => {
-    const charNode = $getMatchingCharNode(targetNode, marker);
-    if (!charNode || handledCharNodeKeys.has(charNode.getKey())) return;
-    handledCharNodeKeys.add(charNode.getKey());
-    // `undefined` means removal would have to affect unselected text — see
-    // `$splitCharNodeAroundTargets`. Leave this CharNode alone rather than over-remove.
-    // `$hasActionableCharNode` above has already established that at least one CharNode in the
-    // selection is *not* refused, so this cannot be the only outcome for the whole call.
-    const coveredCharNode = $splitCharNodeAroundTargets(charNode, targetNodes);
-    if (coveredCharNode) {
-      $removeCharNodeKeepingContent(coveredCharNode, viewOptions);
-      didRemove = true;
-    }
-  });
+  const didRemove = $forEachCoveredCharNode(targetNodes, marker, (covered) =>
+    $removeCharNodeKeepingContent(covered, viewOptions),
+  );
 
   $restoreRangeOverTargets(targetNodes, isBackward);
 
@@ -1330,6 +1345,53 @@ export function $removeCharacterMarkerAtSelection(
 }
 
 // #region Helper functions for $removeCharacterMarkerAtSelection
+
+/**
+ * The range half of {@link $removeCharacterMarkerAtSelection} and
+ * {@link $replaceCharacterMarkerAtSelection}: runs `$act` on each `CharNode` matching `marker` that
+ * the selection's `targetNodes` reach, after narrowing it with `$splitCharNodeAroundTargets` so
+ * uncovered text keeps its marker.
+ *
+ * Each `CharNode` is visited once. Belt-and-braces: no current path resolves two targetNodes to the
+ * same CharNode key, since `$splitCharNodeAroundTargets` reads the whole `targetNodes` array and
+ * unwrapping detaches the rest. Kept in case a future change reintroduces one. A `CharNode` that
+ * `skip` accepts is passed over.
+ *
+ * When the split returns `undefined`, acting would have to affect unselected text — see
+ * `$splitCharNodeAroundTargets` — so that CharNode is left alone rather than over-applied.
+ * `$hasActionableCharNode`, which both callers check first, has already established that at least
+ * one CharNode in the selection is *not* refused, so this cannot be the only outcome for the whole
+ * call.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @param targetNodes - The text nodes the selection covers (`$getTargetNodes`).
+ * @param marker - The character marker to match, or `undefined` for the innermost one.
+ * @param $act - What to do to each covered `CharNode`.
+ * @param skip - Passes over a matched `CharNode` before it is split.
+ * @returns `true` if `$act` ran at least once.
+ */
+function $forEachCoveredCharNode(
+  targetNodes: TextNode[],
+  marker: string | undefined,
+  $act: (covered: CharNode) => void,
+  skip?: (charNode: CharNode) => boolean,
+): boolean {
+  const handledCharNodeKeys = new Set<string>();
+  let didAct = false;
+  targetNodes.forEach((targetNode) => {
+    const charNode = $getMatchingCharNode(targetNode, marker);
+    if (!charNode || handledCharNodeKeys.has(charNode.getKey())) return;
+    handledCharNodeKeys.add(charNode.getKey());
+    if (skip?.(charNode)) return;
+    const coveredCharNode = $splitCharNodeAroundTargets(charNode, targetNodes);
+    if (coveredCharNode) {
+      $act(coveredCharNode);
+      didAct = true;
+    }
+  });
+  return didAct;
+}
 
 /**
  * Remove a `CharNode` but keep its text content in the parent.
@@ -1842,27 +1904,14 @@ export function $replaceCharacterMarkerAtSelection(
   // text lengths. Replacement changes no text and detaches no node carrying a selection point —
   // `$splitCharNodeAroundTargets` and `$charNodeTransform` both *move* existing child nodes — so
   // the original points stay valid.
-  const handledCharNodeKeys = new Set<string>();
-  let didReplace = false;
-  targetNodes.forEach((targetNode) => {
-    const charNode = $getMatchingCharNode(targetNode, fromMarker);
-    if (!charNode || handledCharNodeKeys.has(charNode.getKey())) return;
-    handledCharNodeKeys.add(charNode.getKey());
+  return $forEachCoveredCharNode(
+    targetNodes,
+    fromMarker,
+    (covered) => $setCharNodeMarker(covered, toMarker),
     // Re-checked per CharNode, not just in the pre-flight guard above: a selection can span one
     // CharNode that needs changing and another already carrying `toMarker`.
-    if (charNode.getMarker() === toMarker) return;
-    // `undefined` means the change would have to affect unselected text — see
-    // `$splitCharNodeAroundTargets`. Leave this CharNode alone rather than over-apply.
-    // `$hasActionableCharNode` above has already established that at least one CharNode in the
-    // selection is *not* refused, so this cannot be the only outcome for the whole call.
-    const coveredCharNode = $splitCharNodeAroundTargets(charNode, targetNodes);
-    if (coveredCharNode) {
-      $setCharNodeMarker(coveredCharNode, toMarker);
-      didReplace = true;
-    }
-  });
-
-  return didReplace;
+    (charNode) => charNode.getMarker() === toMarker,
+  );
 }
 
 /**

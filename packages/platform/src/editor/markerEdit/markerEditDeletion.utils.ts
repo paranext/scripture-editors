@@ -123,8 +123,8 @@ export function $injectMarkerPrefix(para: ParaNode): void {
  * `$paraMarkerDeletionTransform`'s no-prefix branches (merge into the previous paragraph, or
  * reset to `\p`) on the next transform pass. Callers own the "no prefix present" precondition
  * (freshly split paragraph, or its prefix was just deleted); a paragraph that still has its
- * prefix wants an in-place glyph rewrite instead (see `$retagParagraph`,
- * `../markerMenu/markerMenuApply.utils.ts`), since injecting again would double the prefix.
+ * prefix wants an in-place glyph rewrite instead (`$applyParaMarker`, as the marker menu's retag in
+ * `../markerMenu/markerMenuApply.utils.ts` does), since injecting again would double the prefix.
  *
  * Always parks the caret on the content side of the new prefix: retagging is a deliberate
  * "make THIS paragraph a `\q1`" act (palette apply, resetting an emptied last paragraph to `\p`),

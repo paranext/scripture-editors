@@ -574,36 +574,27 @@ function CommentsPanelList({
             if (alreadyActive) return;
             const markNodeKeys = markNodeMap.get(id);
             const activeElement = document.activeElement;
-            if (markNodeKeys !== undefined) {
-              // Move selection to the start of the mark, so that we
-              // update the UI with the selected thread.
-              editor.update(
-                () => {
+            // Read only when no mark holds the id.
+            const carrierKeys =
+              markNodeKeys === undefined ? displayIndex.keysFor(COMMENT_MARK_TYPE, id) : undefined;
+            if (carrierKeys?.size === 0) return;
+            editor.update(
+              () => {
+                if (carrierKeys) {
+                  $selectFirstCommentCarrier(id, carrierKeys);
+                } else if (markNodeKeys !== undefined) {
+                  // Move selection to the start of the mark, so that we
+                  // update the UI with the selected thread.
                   const markNodeKey = Array.from(markNodeKeys)[0];
                   const markNode = $getNodeByKey<TypedMarkNode>(markNodeKey);
                   if ($isTypedMarkNode(markNode)) {
                     markNode.selectStart();
                   }
-                },
-                {
-                  onUpdate() {
-                    // Restore selection to the previous element
-                    if (activeElement !== null) {
-                      (activeElement as HTMLElement).focus();
-                    }
-                  },
-                },
-              );
-              return;
-            }
-            const carrierKeys = displayIndex.keysFor(COMMENT_MARK_TYPE, id);
-            if (carrierKeys.size === 0) return;
-            editor.update(
-              () => {
-                $selectFirstCommentCarrier(id, carrierKeys);
+                }
               },
               {
                 onUpdate() {
+                  // Restore selection to the previous element
                   if (activeElement !== null) {
                     (activeElement as HTMLElement).focus();
                   }
