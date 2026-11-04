@@ -690,6 +690,9 @@ refused. The public surface grew substantially; nothing was removed.
   Paste and `EditorRef.paste()` read it from the html, and a native paste, which also carries the
   `application/x-lexical-editor` flavor, reads it from either. No host support is needed. A cut and
   paste back of a caption-less figure or an optional break restores it; the node copy left it out.
+  A pasted optional break against a `/`, in the document or in what is pasted, is left out and
+  reported through `onUnstorableTextRemoved` as a `//`: the file stores the break as a bare `//`,
+  so it would have saved `///`, which reads back differently. Two breaks together are kept.
   Html from another program is pasted as before.
 - A note pasted in the editor opens like the one copied: clicking its caller calls
   `nodes.noteCallerOnClick`. A caller rebuilt from the editor's own node copy had no click handler,
