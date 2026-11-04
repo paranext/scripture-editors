@@ -325,6 +325,9 @@ refused. The public surface grew substantially; nothing was removed.
   for example after the last verse of a chapter, typing used to extend the verse before it; right
   before a footnote, the caret went into the footnote, and in Standard view the typed text was lost
   from the saved document.
+- A caret after a verse marker that sits inside a character span (`\v 1 \wj \v 2\wj*`) now
+  counts as in that verse, not the one before, so the earlier verse's empty-verse ellipsis shows
+  instead of staying hidden.
 - In views that hide markers, an empty paragraph right after a chapter can now be deleted with
   Backspace or Delete. When it is the only paragraph in its chapter, it leaves a blank line with no
   marker, where a marker can be picked with the `\` menu or `formatPara`. A blank line left empty

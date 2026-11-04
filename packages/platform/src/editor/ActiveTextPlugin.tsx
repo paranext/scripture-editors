@@ -1,5 +1,5 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { mergeRegister } from "@lexical/utils";
+import { $dfs, mergeRegister } from "@lexical/utils";
 import {
   $getNearestNodeFromDOMNode,
   $getRoot,
@@ -13,6 +13,7 @@ import {
   COMMAND_PRIORITY_LOW,
   ElementNode,
   FOCUS_COMMAND,
+  LexicalEditor,
   LexicalNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
@@ -21,9 +22,12 @@ import {
   $isCaretHost,
   $isImmutableTypedTextNode,
   $isMarkerNode,
+  $isParaLikeNode,
+  ParaLikeNode,
   ZWSP,
 } from "shared";
 import { $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-react";
+import { OutlineRect, VerseOutlineInput } from "./verseOutlineGeometry";
 
 const ACTIVE_CLASS = "psc-active-text";
 export const EMPTY_CLASS = "psc-empty-text";
@@ -101,7 +105,6 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
       editor.registerUpdateListener(({ editorState }) => {
         const { newActiveKey, activeVerseKey, emptyKeys, nonEmptyKeys } = editorState.read(() => {
           const newActiveKey = $getActiveParaKey();
-          const activeVerseKey = $getActiveVerseKey();
           const emptyKeys: string[] = [];
           const nonEmptyKeys: string[] = [];
           $getRoot()
@@ -112,6 +115,9 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
               emptyKeys.push(...e);
               nonEmptyKeys.push(...n);
             });
+          // Only an empty verse's classes depend on the active verse, and only while focused.
+          const activeVerseKey =
+            emptyKeys.length > 0 && !isBlurredRef.current ? $getActiveVerseKey() : undefined;
           return { newActiveKey, activeVerseKey, emptyKeys, nonEmptyKeys };
         });
 
@@ -175,10 +181,78 @@ function $getActiveParaKey(): string | undefined {
  * Returns the key of the verse whose section currently contains the cursor — that is, the most
  * recent verse marker at or before the cursor's position within its paragraph. Returns undefined
  * when there is no range selection (a selected paragraph marker counts as the start of its
- * paragraph's content), the cursor sits in a non-verse paragraph, or the cursor is before the
- * first verse marker. Must run inside an editor read.
+ * paragraph's content), the cursor sits in a non-verse paragraph or a table, or the cursor is
+ * before the first verse marker. Must run inside an editor read.
  */
 export function $getActiveVerseKey(): string | undefined {
+  return $getActiveVerseSection()?.verseKey;
+}
+
+/** The stretch of a paragraph from one verse marker (or the paragraph's start) to the next. */
+export interface VerseSection {
+  /**
+   * The paragraph that holds the section. The keys below are its descendants, not necessarily its
+   * children: a verse marker can sit inside a char span.
+   */
+  paraKey: string;
+  /** The verse marker that opens the section; undefined for the intro before the first verse. */
+  verseKey: string | undefined;
+  /** The verse marker that closes the section; undefined when it runs to the paragraph's end. */
+  nextVerseKey: string | undefined;
+  /**
+   * The section's first node: the verse marker, or what the intro opens with after the paragraph's
+   * marker prefix — its first leaf, or the outermost span that leaf opens and that lies wholly in
+   * the intro (an expanded footnote, say). Undefined when the intro has no content, or only
+   * whitespace.
+   */
+  startKey: string | undefined;
+}
+
+/**
+ * The verse section the caret is in. Its `verseKey` is the verse {@link $getActiveVerseKey}
+ * reports. Verse markers are found anywhere in the paragraph, in document order, so a verse nested
+ * in a char span that crosses a verse break (`\wj "Come. \v 2 Follow me."\wj*`) still bounds its
+ * section. Returns undefined when there is no range selection (a selected paragraph marker counts
+ * as the start of its paragraph's content) or the caret is in a table, whose top-level element is a
+ * row of cells rather than a paragraph.
+ *
+ * The caret is read from the selection's anchor, as the toolbar's verse reference and paragraph
+ * style do, so a range selection's two ends don't pick different paragraphs. The section is not the
+ * toolbar's verse, though: a line that carries on the previous paragraph's verse (a `\q2` after a
+ * `\q1`) is this paragraph's intro here, while the toolbar names the verse it continues; and the
+ * toolbar looks only one char span deep for a nested verse.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ */
+export function $getActiveVerseSection(): VerseSection | undefined {
+  const caret = $locateCaret();
+  if (!caret) return undefined;
+  const { para, order, boundary } = caret;
+
+  let activeIndex = -1;
+  for (let i = 0; i < boundary; i++) if ($isSomeVerseNode(order[i])) activeIndex = i;
+  let nextIndex = activeIndex + 1;
+  while (nextIndex < order.length && !$isSomeVerseNode(order[nextIndex])) nextIndex++;
+
+  return {
+    paraKey: para.getKey(),
+    verseKey: activeIndex < 0 ? undefined : order[activeIndex].getKey(),
+    nextVerseKey: order.at(nextIndex)?.getKey(),
+    startKey: (activeIndex < 0
+      ? $introStart(para, order, nextIndex)
+      : order[activeIndex]
+    )?.getKey(),
+  };
+}
+
+/**
+ * Where the caret is within its paragraph: the paragraph's descendants in document order, and how
+ * many of them sit at or before the caret.
+ */
+function $locateCaret():
+  | { para: ParaLikeNode; order: LexicalNode[]; boundary: number }
+  | undefined {
   const selection = $getSelection();
   // A selected paragraph marker: the verse its content starts in — the verse a keystroke would
   // type into — is the active one, so its ellipsis stays hidden like a caret's would.
@@ -186,40 +260,205 @@ export function $getActiveVerseKey(): string | undefined {
   // way out, so the two cannot disagree about which verse the content starts in.
   const markerPara = $getSelectedParaMarkerPara(selection);
   if (markerPara) {
-    const prefix = markerPara.getChildren().slice(0, $paraContentStartIndex(markerPara));
-    return prefix.findLast($isSomeVerseNode)?.getKey();
+    const order = $descendantsInOrder(markerPara);
+    const contentStart = markerPara.getChildAtIndex($paraContentStartIndex(markerPara));
+    return {
+      para: markerPara,
+      order,
+      boundary: contentStart ? $indexIn(order, contentStart) : order.length,
+    };
   }
   if (!$isRangeSelection(selection)) return undefined;
 
   const anchor = selection.anchor;
   const anchorNode = anchor.getNode();
   const para = anchorNode.getTopLevelElement();
-  if (!$isElementNode(para)) return undefined;
+  if (!$isParaLikeNode(para)) return undefined;
+  const order = $descendantsInOrder(para);
 
-  // Translate the cursor into a boundary index within the paragraph's children. Verse markers at
-  // index < boundary sit at or before the cursor; the latest one is the active verse.
   let boundary: number;
-  if (anchorNode.is(para)) {
-    // Element selection on the para itself — offset is a child index, e.g. set by
-    // placeCursorAfterEmptyVerse via `para.select(verseIndex + 1, verseIndex + 1)`.
-    boundary = anchor.offset;
+  if (anchor.type === "element" && $isElementNode(anchorNode)) {
+    // An element point sits before the child at its offset (e.g. set by the empty-verse click
+    // handler above via `para.select(verseIndex + 1, verseIndex + 1)`), or after the element's
+    // last descendant.
+    const child = anchorNode.getChildAtIndex(anchor.offset);
+    if (child) boundary = $indexIn(order, child);
+    else if (anchorNode.is(para)) boundary = order.length;
+    else boundary = $indexIn(order, anchorNode.getLastDescendant() ?? anchorNode) + 1;
   } else {
-    // Selection inside a descendant — walk up to the direct paragraph child and treat the
-    // cursor as positioned just past that child's start (so the child itself counts).
-    let topChild: LexicalNode | undefined = anchorNode;
-    while (topChild && !topChild.getParent()?.is(para)) {
-      topChild = topChild.getParent() ?? undefined;
+    // A point in a text node or on a decorator: that node itself counts as before the caret.
+    boundary = $indexIn(order, anchorNode) + 1;
+  }
+  return { para, order, boundary };
+}
+
+/**
+ * The intro's first node (see {@link VerseSection.startKey}), or undefined when the intro — the
+ * nodes after the marker prefix and before `order[nextIndex]` — has nothing but whitespace.
+ */
+function $introStart(
+  para: ParaLikeNode,
+  order: LexicalNode[],
+  nextIndex: number,
+): LexicalNode | undefined {
+  const contentStart = para.getChildAtIndex($paraContentStartIndex(para)) ?? undefined;
+  const leaf = $isElementNode(contentStart)
+    ? (contentStart.getFirstDescendant() ?? contentStart)
+    : contentStart;
+  if (!leaf) return undefined;
+  // From the first leaf, so an intro whose char span opens with the first verse (`\wj \v 1 …`)
+  // counts as empty.
+  const leafIndex = $indexIn(order, leaf);
+  const intro = order.slice(leafIndex, nextIndex);
+  const hasContent = intro.some(
+    (node) =>
+      !$isElementNode(node) &&
+      !($isTextNode(node) && node.getTextContent().replaceAll(ZWSP, "").trim() === ""),
+  );
+  if (!hasContent) return undefined;
+
+  // Start before the outermost span the leaf opens, when it lies wholly in the intro, so the span's
+  // own box (an expanded footnote's padding) is measured with its text.
+  let start: LexicalNode = leaf;
+  for (;;) {
+    const parent = start.getParent();
+    if (!parent || parent.is(para) || start.getPreviousSibling()) break;
+    if ($indexIn(order, parent.getLastDescendant() ?? parent) >= nextIndex) break;
+    start = parent;
+  }
+  return start;
+}
+
+/** `node`'s descendants in document order, not including `node` itself. */
+function $descendantsInOrder(node: ElementNode): LexicalNode[] {
+  return $dfs(node)
+    .slice(1)
+    .map(({ node: descendant }) => descendant);
+}
+
+function $indexIn(order: LexicalNode[], node: LexicalNode): number {
+  return order.findIndex((candidate) => candidate.is(node));
+}
+
+/**
+ * Measures a verse section's layout for `computeVerseOutlineSegments`: the client rects of its text
+ * — from just before its first node to just before the next verse marker, or to the paragraph's
+ * end — with the paragraph's content box, direction and alignment and the next verse marker's box,
+ * all as plain objects. The range starts after the paragraph's marker prefix, so a gutter marker
+ * glyph is never measured.
+ *
+ * Returns undefined for a paragraph without verse markers and for an intro with nothing visible
+ * (no content, only whitespace, or only a milestone): the caller keeps outlining the whole
+ * paragraph there. Also undefined when the section's elements aren't rendered inside the paragraph
+ * or there is no layout engine (jsdom).
+ *
+ * Reads the DOM, so call it once the editor has committed the section and ActiveTextPlugin has set
+ * its empty-verse classes for it — they change verse numbers' widths — e.g. from an update listener
+ * registered after the plugin's, not from inside an update that may have changed it.
+ */
+export function measureVerseSection(
+  editor: LexicalEditor,
+  section: VerseSection,
+): VerseOutlineInput | undefined {
+  if (!section.startKey || (!section.verseKey && !section.nextVerseKey)) return undefined;
+  const paraEl = editor.getElementByKey(section.paraKey);
+  const startEl = editor.getElementByKey(section.startKey) ?? undefined;
+  const nextEl = section.nextVerseKey
+    ? (editor.getElementByKey(section.nextVerseKey) ?? undefined)
+    : undefined;
+  const view = paraEl?.ownerDocument.defaultView;
+  if (!paraEl || !view || !startEl || !paraEl.contains(startEl)) return undefined;
+  if (section.nextVerseKey && !(nextEl && paraEl.contains(nextEl))) return undefined;
+
+  const range = paraEl.ownerDocument.createRange();
+  range.setStartBefore(startEl);
+  if (nextEl) range.setEndBefore(nextEl);
+  else range.setEnd(paraEl, paraEl.childNodes.length);
+  if (typeof range.getClientRects !== "function") return undefined;
+
+  // Computed lengths are unzoomed CSS px; client rects already carry any CSS `zoom` around the
+  // editor.
+  const zoom = paraEl.currentCSSZoom || 1;
+  const px = (value: string) => (parseFloat(value) || 0) * zoom;
+  const style = view.getComputedStyle(paraEl);
+  const box = paraEl.getBoundingClientRect();
+  const direction = style.direction === "rtl" ? "rtl" : "ltr";
+  const hugLines = !isStartAligned(style.textAlign, direction);
+
+  let rects = Array.from(range.getClientRects(), toOutlineRect);
+  // Under `pre-wrap` the space a line wraps at hangs past its text as a rect of its own. Lines that
+  // run to the content box ignore it; hugged lines would be a space wider on one side, so drop it.
+  if (hugLines) {
+    const spaces = whitespaceRects(range);
+    rects = rects.filter((rect) => !spaces.some((space) => isSameRect(rect, space)));
+  }
+  if (!rects.some((rect) => rect.right > rect.left && rect.bottom > rect.top)) return undefined;
+
+  // A section that opens at its verse number takes in the number's margin box, so its margin sits
+  // inside the outline like the space before the next verse number does. Per fragment, so a verse
+  // number that wraps (an editable `\v 12 ` with a typed space) adds a box to each line it's on.
+  if (section.startKey === section.verseKey) {
+    const startStyle = view.getComputedStyle(startEl);
+    for (const fragment of Array.from(startEl.getClientRects())) {
+      rects.push({
+        left: fragment.left - px(startStyle.marginLeft),
+        right: fragment.right + px(startStyle.marginRight),
+        top: fragment.top,
+        bottom: fragment.bottom,
+      });
     }
-    if (!topChild) return undefined;
-    boundary = topChild.getIndexWithinParent() + 1;
   }
 
-  const children = para.getChildren();
-  let activeKey: string | undefined;
-  for (let i = 0; i < boundary && i < children.length; i++) {
-    if ($isSomeVerseNode(children[i])) activeKey = children[i].getKey();
+  return {
+    rects,
+    contentBox: {
+      left: box.left + px(style.borderLeftWidth) + px(style.paddingLeft),
+      right: box.right - px(style.borderRightWidth) - px(style.paddingRight),
+    },
+    following: nextEl ? toOutlineRect(nextEl.getBoundingClientRect()) : undefined,
+    direction,
+    hugLines,
+  };
+}
+
+/** Copies a `DOMRect`, whose sides are prototype getters that spreading or `toEqual` don't see. */
+function toOutlineRect({ left, right, top, bottom }: OutlineRect): OutlineRect {
+  return { left, right, top, bottom };
+}
+
+function isSameRect(a: OutlineRect, b: OutlineRect): boolean {
+  return (
+    Math.abs(a.left - b.left) < 0.5 &&
+    Math.abs(a.right - b.right) < 0.5 &&
+    Math.abs(a.top - b.top) < 0.5 &&
+    Math.abs(a.bottom - b.bottom) < 0.5
+  );
+}
+
+/** The client rects of every run of whitespace in the text nodes `range` holds. */
+function whitespaceRects(range: Range): OutlineRect[] {
+  const doc = range.commonAncestorContainer.ownerDocument;
+  if (!doc) return [];
+  const rects: OutlineRect[] = [];
+  const walker = doc.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!range.intersectsNode(node)) continue;
+    for (const match of (node.textContent ?? "").matchAll(/\s+/g)) {
+      const space = doc.createRange();
+      space.setStart(node, match.index);
+      space.setEnd(node, match.index + match[0].length);
+      rects.push(...Array.from(space.getClientRects(), toOutlineRect));
+    }
   }
-  return activeKey;
+  return rects;
+}
+
+/** Whether lines of this `text-align` run from the inline-start edge (or edge to edge). */
+function isStartAligned(textAlign: string, direction: "ltr" | "rtl"): boolean {
+  // Chromium reports the `-webkit-` alignments as written.
+  const align = textAlign.replace(/^-webkit-/, "");
+  if (align === "" || align === "start" || align === "justify") return true;
+  return align === (direction === "rtl" ? "right" : "left");
 }
 
 /**
