@@ -296,6 +296,21 @@ function EditableMarkerMenu({
   );
 
   useEffect(() => {
+    /** Opens a new menu session: every opening, whichever key, starts with a fresh session id. */
+    const openSession = (
+      sessionTrigger: MenuState["trigger"],
+      hasTextSelection: boolean,
+      items: MarkerMenuItemLike[],
+    ) => {
+      sessionCounterRef.current += 1;
+      setMenuState({
+        trigger: sessionTrigger,
+        hasTextSelection,
+        items,
+        session: sessionCounterRef.current,
+      });
+    };
+
     return mergeRegister(
       editor.registerCommand(
         KEY_DOWN_COMMAND,
@@ -369,17 +384,13 @@ function EditableMarkerMenu({
               $onUpdate(() => {
                 const reopenContext = harness.getContext();
                 filterRef.current = { query: "", options: [] };
-                sessionCounterRef.current += 1;
-                setMenuState(
-                  reopenContext
-                    ? {
-                        trigger: "backslash",
-                        hasTextSelection: reopenContext.hasTextSelection,
-                        items: harness.getItems(reopenContext),
-                        session: sessionCounterRef.current,
-                      }
-                    : undefined,
-                );
+                if (reopenContext)
+                  openSession(
+                    "backslash",
+                    reopenContext.hasTextSelection,
+                    harness.getItems(reopenContext),
+                  );
+                else setMenuState(undefined);
               });
               return true;
             }
@@ -414,13 +425,7 @@ function EditableMarkerMenu({
           // filters the palette, not the document.
           event.preventDefault();
           filterRef.current = { query: "", options: [] };
-          sessionCounterRef.current += 1;
-          setMenuState({
-            trigger: "backslash",
-            hasTextSelection: context.hasTextSelection,
-            items: harness.getItems(context),
-            session: sessionCounterRef.current,
-          });
+          openSession("backslash", context.hasTextSelection, harness.getItems(context));
           return true;
         },
         COMMAND_PRIORITY_HIGH,
@@ -446,13 +451,7 @@ function EditableMarkerMenu({
           // preventDefault it would have issued — so without this the browser's native
           // contenteditable Enter still splits the DOM behind the menu.
           event.preventDefault();
-          sessionCounterRef.current += 1;
-          setMenuState({
-            trigger: "enter",
-            hasTextSelection: false,
-            items: harness.getEnterItems(context),
-            session: sessionCounterRef.current,
-          });
+          openSession("enter", false, harness.getEnterItems(context));
           return true; // suppress the split - Escape below cancels outright (it never happened)
         },
         COMMAND_PRIORITY_NORMAL,

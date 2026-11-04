@@ -1,3 +1,4 @@
+import { registerCommands } from "./editorUpdate.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -547,14 +548,17 @@ export function NoteShellCaretGuardPlugin(): null {
         return $guardCollapsedDeletion(editor, selection, isBackward, granularity);
       };
     return mergeRegister(
-      editor.registerCommand(
-        CONTROLLED_TEXT_INSERTION_COMMAND,
+      registerCommands(
+        editor,
+        [
+          CONTROLLED_TEXT_INSERTION_COMMAND,
+          PASTE_COMMAND,
+          INSERT_PARAGRAPH_COMMAND,
+          INSERT_LINE_BREAK_COMMAND,
+        ],
         insertion,
         COMMAND_PRIORITY_CRITICAL,
       ),
-      editor.registerCommand(PASTE_COMMAND, insertion, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(INSERT_PARAGRAPH_COMMAND, insertion, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(INSERT_LINE_BREAK_COMMAND, insertion, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(
         DELETE_CHARACTER_COMMAND,
         collapsedDeletion("character"),
@@ -570,8 +574,12 @@ export function NoteShellCaretGuardPlugin(): null {
         collapsedDeletion("line"),
         COMMAND_PRIORITY_CRITICAL,
       ),
-      editor.registerCommand(REMOVE_TEXT_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(CUT_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
+      registerCommands(
+        editor,
+        [REMOVE_TEXT_COMMAND, CUT_COMMAND],
+        deletion,
+        COMMAND_PRIORITY_CRITICAL,
+      ),
     );
   }, [editor]);
 

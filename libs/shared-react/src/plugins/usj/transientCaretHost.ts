@@ -1,4 +1,5 @@
 import { $selectElementPoint } from "../../nodes/usj/note.utils";
+import { createPerEditorResource } from "./editorUpdate.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -14,7 +15,6 @@ import {
   COMMAND_PRIORITY_EDITOR,
   FOCUS_COMMAND,
   HISTORY_MERGE_TAG,
-  LexicalEditor,
   LexicalNode,
   NodeKey,
   SELECTION_CHANGE_COMMAND,
@@ -71,50 +71,29 @@ export type CaretHostRepair = (target: LexicalNode | undefined) => void;
  */
 export const CARET_HOST_ATTRIBUTE = "data-caret-host";
 
-/** Per editor, the one host-attribute listener its guards share, and how many guards hold it. */
-const hostAttributeSyncs = new WeakMap<
-  LexicalEditor,
-  { holders: number; unregister: () => void }
->();
-
 /**
- * Keeps {@link CARET_HOST_ATTRIBUTE} on each bare host's DOM element in `editor`, and returns the
- * release. The DOM Lexical renders for a text node carries none of its state, so the mark is copied
- * onto it whenever a text node is created or changes. Every guard on an editor asks for this, and
- * one listener serves them all, so each commit is walked once.
+ * Keeps {@link CARET_HOST_ATTRIBUTE} on each bare host's DOM element in an editor while held. The
+ * DOM Lexical renders for a text node carries none of its state, so the mark is copied onto it
+ * whenever a text node is created or changes. Every guard on an editor asks for this, and one
+ * listener serves them all, so each commit is walked once.
  */
-function retainHostAttributeSync(editor: LexicalEditor): () => void {
-  let sync = hostAttributeSyncs.get(editor);
-  if (!sync) {
-    const unregister = editor.registerMutationListener(
-      TextNode,
-      (mutations) => {
-        editor.getEditorState().read(() => {
-          for (const [key, mutation] of mutations) {
-            if (mutation === "destroyed") continue;
-            editor
-              .getElementByKey(key)
-              ?.toggleAttribute(CARET_HOST_ATTRIBUTE, $isCaretHost($getNodeByKey(key)));
-          }
-        });
-      },
-      { skipInitialization: true },
-    );
-    sync = { holders: 0, unregister };
-    hostAttributeSyncs.set(editor, sync);
-  }
-  sync.holders++;
-  const held = sync;
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    held.holders--;
-    if (held.holders > 0) return;
-    held.unregister();
-    if (hostAttributeSyncs.get(editor) === held) hostAttributeSyncs.delete(editor);
-  };
-}
+const acquireHostAttributeSync = createPerEditorResource((editor) => ({
+  value: undefined,
+  dispose: editor.registerMutationListener(
+    TextNode,
+    (mutations) => {
+      editor.getEditorState().read(() => {
+        for (const [key, mutation] of mutations) {
+          if (mutation === "destroyed") continue;
+          editor
+            .getElementByKey(key)
+            ?.toggleAttribute(CARET_HOST_ATTRIBUTE, $isCaretHost($getNodeByKey(key)));
+        }
+      });
+    },
+    { skipInitialization: true },
+  ),
+}));
 
 /**
  * The key of the text node a collapsed caret rests in, or `undefined`. Any range — even one inside
@@ -373,7 +352,7 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
         COMMAND_PRIORITY_EDITOR,
       ),
       editor.registerNodeTransform(TextNode, $stripPlaceholderOnEdit),
-      retainHostAttributeSync(editor),
+      acquireHostAttributeSync(editor).release,
     );
     // Drop the tracked key when the editor changes so it can't resolve into a different editor.
     return () => {

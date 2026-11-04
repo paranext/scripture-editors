@@ -14,10 +14,10 @@ import {
   $isParaNode,
   $isVisibleMarkerNode,
   $orderedPoints,
+  $syncParaMarkerGlyph,
   getApplyingUpdateSource,
   ParaNode,
 } from "shared";
-import { $syncParaMarkerGlyph } from "./collab/delta-apply-update.utils";
 
 export function ParaNodePlugin(): null {
   const [editor] = useLexicalComposerContext();

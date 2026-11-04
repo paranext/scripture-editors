@@ -1,4 +1,5 @@
 import { $isImmutableNoteCallerNode } from "../../nodes/usj";
+import { registerPrimaryPointerPress } from "./editorUpdate.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $createRangeSelectionFromDom,
@@ -265,18 +266,12 @@ export function DecoratorBoundarySelectionPlugin(): null {
 
   useEffect(() => {
     // Only the PRIMARY button starts a drag Chromium will extend a selection from, and only a
-    // press that starts one may set this flag: a secondary-button press can open the platform's
-    // NATIVE context menu (`ContextMenuPlugin` deliberately lets it through for some targets),
-    // which on Windows and Linux grabs the mouse so the page never sees the matching `pointerup`.
-    // The flag would then stay set with no drag in flight, and every later arrival — a click, a
-    // Shift+Arrow extend — would be treated as one, leaving the DOM selection stranded on points
-    // Lexical cannot resolve. The button is duck-typed rather than read through `instanceof
-    // PointerEvent`: not every host defines that global (jsdom before 27 has none), and a press that
-    // carries no button at all still counts as a primary one.
-    const markDown = (event: Event) => {
-      if ("button" in event && event.button !== 0) return;
-      isPointerDown.current = true;
-    };
+    // press that starts one may set this flag (`registerPrimaryPointerPress` hears no other): a
+    // secondary-button press can open the platform's NATIVE context menu, whose matching
+    // `pointerup` the page may never see. The flag would then stay set with no drag in flight, and
+    // every later arrival — a click, a Shift+Arrow extend — would be treated as one, leaving the
+    // DOM selection stranded on points Lexical cannot resolve.
+    //
     // BOTH ends are listened for on the DOCUMENT in the capture phase, and the release on
     // `pointercancel` as well as `pointerup`: a drag that starts in the editor can finish anywhere,
     // and a flag that fails to clear would leave every later keyboard move reading as a drag and the
@@ -306,19 +301,15 @@ export function DecoratorBoundarySelectionPlugin(): null {
         if ($isRangeSelection(selection)) selection.dirty = true;
       });
     };
-    // One listener does both the wiring and the unwiring: Lexical calls it with the current root at
-    // registration, with each replacement root on a swap, and with `(null, previous)` on teardown.
-    return editor.registerRootListener((rootElement, prevRootElement) => {
-      const previousDocument = prevRootElement?.ownerDocument;
-      previousDocument?.removeEventListener("pointerdown", markDown, true);
-      previousDocument?.removeEventListener("pointerup", release, true);
-      previousDocument?.removeEventListener("pointercancel", release, true);
-      isPointerDown.current = false;
-      isMaterializePending.current = false;
-      const currentDocument = rootElement?.ownerDocument;
-      currentDocument?.addEventListener("pointerdown", markDown, true);
-      currentDocument?.addEventListener("pointerup", release, true);
-      currentDocument?.addEventListener("pointercancel", release, true);
+    return registerPrimaryPointerPress(editor, {
+      onPress: () => {
+        isPointerDown.current = true;
+      },
+      onRelease: release,
+      onRootChange: () => {
+        isPointerDown.current = false;
+        isMaterializePending.current = false;
+      },
     });
   }, [editor]);
 

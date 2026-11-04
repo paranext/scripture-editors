@@ -8,8 +8,8 @@
  * reimplement it.
  */
 import { $setParaMarkerWithPrefix } from "./markerEditDeletion.utils";
-import { $isMarkerNode, ParaNode } from "shared";
-import { $syncParaMarkerGlyph, showParaMarkerPrefix, ViewOptions } from "shared-react";
+import { $isMarkerNode, $syncParaMarkerGlyph, ParaNode } from "shared";
+import { showParaMarkerPrefix, ViewOptions } from "shared-react";
 
 /**
  * Sets `para`'s marker, keeping the visible prefix in agreement. Call inside `editor.update()`.

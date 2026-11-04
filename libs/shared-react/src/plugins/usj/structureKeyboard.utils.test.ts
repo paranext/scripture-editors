@@ -5,7 +5,6 @@ import { baseTestEnvironment, sutUpdate, updateSelection } from "./react-test.ut
 import { $createImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
 import {
   $adjacentVerseMarker,
-  $caretAdjacentToVerseMarker,
   $caretAtParaEnd,
   $caretAtParaStart,
   $isArmedSelection,
@@ -199,21 +198,6 @@ describe("structureKeyboard.utils", () => {
       const sel = $getSelection()!;
       expect($caretAtParaStart(sel)).toBe(true);
       expect($caretAtParaEnd(sel)).toBe(true);
-    });
-  });
-
-  it("$caretAdjacentToVerseMarker backward: true when caret immediately follows a verse", async () => {
-    let para: ParaNode;
-    let t1: TextNode;
-    const { editor } = await baseTestEnvironment(() => {
-      para = $createParaNode("p");
-      t1 = $createTextNode("text");
-      $getRoot().append(para.append($createImmutableVerseNode("1"), t1));
-    });
-    updateSelection(editor, t1!, 0);
-    editor.getEditorState().read(() => {
-      expect($caretAdjacentToVerseMarker($getSelection()!, "backward")).toBe(true);
-      expect($caretAdjacentToVerseMarker($getSelection()!, "forward")).toBe(false);
     });
   });
 });

@@ -1,4 +1,8 @@
-import { getDomSelectionInRoot } from "./editorUpdate.utils";
+import {
+  getDomSelectionInRoot,
+  registerCommands,
+  registerPrimaryPointerPress,
+} from "./editorUpdate.utils";
 import { isEditingKey } from "./OpaqueBlockGuardPlugin";
 import {
   $advancePastParaPrefixes,
@@ -424,29 +428,6 @@ export function ParaMarkerSelectionPlugin({
       return false;
     };
 
-    // As `DecoratorBoundarySelectionPlugin` and `NoteShellCaretGuardPlugin` track theirs: only a
-    // primary-button press counts (a secondary one can open a native context menu that swallows the
-    // release), it is heard on the document (a press just outside the root still places a caret
-    // inside), and `pointercancel` ends it as `pointerup` does (a drag, or a touch that turns into a
-    // scroll, never sends `pointerup`).
-    const handlePointerDown = (event: Event) => {
-      if ("button" in event && event.button !== 0) return;
-      isPointerPressed = true;
-    };
-    const handlePointerUp = () => {
-      isPointerPressed = false;
-    };
-    const addPointerListeners = (document: Document) => {
-      document.addEventListener("pointerdown", handlePointerDown, true);
-      document.addEventListener("pointerup", handlePointerUp, true);
-      document.addEventListener("pointercancel", handlePointerUp, true);
-    };
-    const removePointerListeners = (document: Document) => {
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-      document.removeEventListener("pointerup", handlePointerUp, true);
-      document.removeEventListener("pointercancel", handlePointerUp, true);
-    };
-
     /**
      * Collapses a marker selection whose paragraph a remote edit removed (or whose glyph stopped
      * being selectable). Run when the user next acts rather than in the update that orphaned it:
@@ -499,13 +480,18 @@ export function ParaMarkerSelectionPlugin({
     const unregister = mergeRegister(
       registerParaMarkerSelectionOwner(editor),
       editor.registerEditableListener(() => syncHighlight(readSelectedKeys())),
-      editor.registerRootListener((root, previousRoot) => {
-        if (previousRoot) removePointerListeners(previousRoot.ownerDocument);
-        if (root) addPointerListeners(root.ownerDocument);
+      // Tracked as `DecoratorBoundarySelectionPlugin` tracks its own drag: see
+      // `registerPrimaryPointerPress` for which presses count and where they are heard.
+      registerPrimaryPointerPress(editor, {
+        onPress: () => {
+          isPointerPressed = true;
+        },
+        onRelease: () => {
+          isPointerPressed = false;
+        },
       }),
       () => {
         const document = editor.getRootElement()?.ownerDocument;
-        if (document) removePointerListeners(document);
         if (focusTimer !== undefined) document?.defaultView?.clearTimeout(focusTimer);
       },
       editor.registerCommand(CLICK_COMMAND, $handleClick, COMMAND_PRIORITY_CRITICAL),
@@ -517,13 +503,9 @@ export function ParaMarkerSelectionPlugin({
         COMMAND_PRIORITY_CRITICAL,
       ),
       editor.registerCommand(BEFORE_INPUT_COMMAND, $handleBeforeInput, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(
-        COMPOSITION_START_COMMAND,
-        $handleTextInsertion,
-        COMMAND_PRIORITY_CRITICAL,
-      ),
-      editor.registerCommand(
-        CONTROLLED_TEXT_INSERTION_COMMAND,
+      registerCommands(
+        editor,
+        [COMPOSITION_START_COMMAND, CONTROLLED_TEXT_INSERTION_COMMAND],
         $handleTextInsertion,
         COMMAND_PRIORITY_CRITICAL,
       ),

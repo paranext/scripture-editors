@@ -237,9 +237,10 @@ function useArrowKeys(editor: LexicalEditor, viewOptions: ViewOptions | undefine
         !event.metaKey
       ) {
         const textDirection = getEditorTextDirection(rootElement);
-        const isHandled = $extendOneVisibleStop(
+        const isHandled = $applyOneVisibleStop(
           selection,
           isMovingForward(textDirection, event.key) ? "next" : "previous",
+          "extend",
         );
         if (isHandled) event.preventDefault();
         return isHandled;
@@ -266,13 +267,15 @@ function useArrowKeys(editor: LexicalEditor, viewOptions: ViewOptions | undefine
           (!hasModifier && $crossOpaqueConstruct(selection, "next")) ||
           (!hasModifier && $handleForwardFpNavigation(selection)) ||
           $handleForwardNavigation(selection) ||
-          (!hasModifier && normalizesStops && $moveOneVisibleStop(selection, "next"));
+          (!hasModifier && normalizesStops && $applyOneVisibleStop(selection, "next", "collapse"));
       } else if (isMovingBackward(direction, event.key)) {
         isHandled =
           (!hasModifier && $crossOpaqueConstruct(selection, "previous")) ||
           (!hasModifier && $handleBackwardFpNavigation(selection)) ||
           $handleBackwardNavigation(selection, viewOptions) ||
-          (!hasModifier && normalizesStops && $moveOneVisibleStop(selection, "previous"));
+          (!hasModifier &&
+            normalizesStops &&
+            $applyOneVisibleStop(selection, "previous", "collapse"));
       }
 
       if (isHandled) event.preventDefault();
@@ -739,16 +742,6 @@ function $applyOneVisibleStop(
   }
   selection.focus.set(landing.node.getKey(), landing.offset, landing.kind);
   return true;
-}
-
-/** Moves the caret one visible stop in `direction`; `false` leaves the press to other handling. */
-function $moveOneVisibleStop(selection: RangeSelection, direction: TraversalDirection): boolean {
-  return $applyOneVisibleStop(selection, direction, "collapse");
-}
-
-/** Extends the selection's focus one visible stop, leaving its anchor where it is. */
-function $extendOneVisibleStop(selection: RangeSelection, direction: TraversalDirection): boolean {
-  return $applyOneVisibleStop(selection, direction, "extend");
 }
 
 // --- Crossing a read-only construct whole ---

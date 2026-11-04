@@ -51,6 +51,7 @@ import {
   ParaLikeNode,
 } from "shared";
 import { $isImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
+import { registerCommands } from "./editorUpdate.utils";
 
 /**
  * Whether `node` is the `\id` line's own immutable `\id GEN ` prefix — the book's first child,
@@ -330,18 +331,9 @@ export function ParaMarkerPrefixCursorGuardPlugin(): null {
 
   useEffect(() => {
     return mergeRegister(
-      editor.registerCommand<boolean>(
-        DELETE_CHARACTER_COMMAND,
-        $shouldRefuseBookPrefixDeletion,
-        COMMAND_PRIORITY_HIGH,
-      ),
-      editor.registerCommand<boolean>(
-        DELETE_WORD_COMMAND,
-        $shouldRefuseBookPrefixDeletion,
-        COMMAND_PRIORITY_HIGH,
-      ),
-      editor.registerCommand<boolean>(
-        DELETE_LINE_COMMAND,
+      registerCommands(
+        editor,
+        [DELETE_CHARACTER_COMMAND, DELETE_WORD_COMMAND, DELETE_LINE_COMMAND],
         $shouldRefuseBookPrefixDeletion,
         COMMAND_PRIORITY_HIGH,
       ),
@@ -360,22 +352,13 @@ export function ParaMarkerPrefixCursorGuardPlugin(): null {
       // not control. Always returns `false` (never claims the command), so running before or after
       // another CRITICAL handler that also returns `false` changes nothing either way; it only
       // matters relative to a handler that would itself remove the prefix.
-      editor.registerCommand(
-        CONTROLLED_TEXT_INSERTION_COMMAND,
-        $narrowSelectionBeforeCommand,
-        COMMAND_PRIORITY_CRITICAL,
-      ),
-      editor.registerCommand(
-        PASTE_COMMAND,
-        $narrowSelectionBeforeCommand,
-        COMMAND_PRIORITY_CRITICAL,
-      ),
-      editor.registerCommand(CUT_COMMAND, $narrowSelectionBeforeCommand, COMMAND_PRIORITY_CRITICAL),
+      //
       // REMOVE_TEXT_COMMAND is how drag-move deletion and composition-driven deletes reach a
       // non-collapsed selection — neither goes through DELETE_CHARACTER_COMMAND — so it needs the
-      // same narrowing the other three selection-replacing commands get above.
-      editor.registerCommand(
-        REMOVE_TEXT_COMMAND,
+      // same narrowing the other three selection-replacing commands get.
+      registerCommands(
+        editor,
+        [CONTROLLED_TEXT_INSERTION_COMMAND, PASTE_COMMAND, CUT_COMMAND, REMOVE_TEXT_COMMAND],
         $narrowSelectionBeforeCommand,
         COMMAND_PRIORITY_CRITICAL,
       ),

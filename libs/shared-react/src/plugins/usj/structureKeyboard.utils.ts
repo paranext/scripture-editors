@@ -298,22 +298,7 @@ export function $caretAtParaEnd(selection: BaseSelection): boolean {
 }
 
 /**
- * True when the node immediately before/after a collapsed caret is a verse marker.
- *
- * @param selection - The current selection; only a collapsed RangeSelection can be adjacent.
- * @param direction - `"backward"` checks the node before the caret; `"forward"` the node after.
- * @returns Whether a verse marker sits immediately in that direction.
- */
-export function $caretAdjacentToVerseMarker(
-  selection: BaseSelection,
-  direction: "backward" | "forward",
-): boolean {
-  return !!$adjacentVerseMarker(selection, direction);
-}
-
-/**
  * The verse marker immediately before/after a collapsed caret, or undefined.
- * Node-returning sibling of `$caretAdjacentToVerseMarker`.
  *
  * A caret anywhere in a bare caret host (transientCaretHost.ts) is next to both of the host's
  * neighbors: the host holds only a zero-width placeholder, so both of its offsets are the same
@@ -380,9 +365,7 @@ export function $shouldBlockSelectionReplacement(selection: BaseSelection): bool
  * @returns Whether the edit should be blocked in a structure-protected document.
  */
 export function $shouldBlockStructuralEdit(selection: BaseSelection, intent: EditIntent): boolean {
-  if ($selectionContainsVerseMarker(selection) || $selectionSpansBlockBoundary(selection)) {
-    return true;
-  }
+  if ($shouldBlockSelectionReplacement(selection)) return true;
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   switch (intent) {
     case "insertParagraph":
@@ -393,7 +376,7 @@ export function $shouldBlockStructuralEdit(selection: BaseSelection, intent: Edi
       return (
         !!$getGutterParaWithCaretAtStart(selection) ||
         ($caretAtParaStart(selection) && $hasNeighborBlock(selection, "backward")) ||
-        $caretAdjacentToVerseMarker(selection, "backward")
+        !!$adjacentVerseMarker(selection, "backward")
       );
     case "deleteForward": {
       // In front of a line's gutter glyph a forward delete runs from just past it
@@ -405,7 +388,7 @@ export function $shouldBlockStructuralEdit(selection: BaseSelection, intent: Edi
       $moveCaretPastGutterGlyph(from);
       return (
         ($caretAtParaEnd(from) && $hasNeighborBlock(from, "forward")) ||
-        $caretAdjacentToVerseMarker(from, "forward")
+        !!$adjacentVerseMarker(from, "forward")
       );
     }
     case "insertText":

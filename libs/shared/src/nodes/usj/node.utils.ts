@@ -971,6 +971,86 @@ function $retargetSynthesizedMarkers(charNode: CharNode, toMarker: string): void
 }
 
 /**
+ * Sets a paragraph's marker and rewrites its visible marker-glyph prefix to match, when one is
+ * present. In editable marker mode a paragraph carries its marker as an editable `MarkerNode`
+ * first child (`\q1`); in visible marker mode and gutter para-marker rendering it carries an
+ * immutable typed-text first child instead (`\q1` glyph + NBSP separator in one node). Either
+ * way, marker state and glyph text must change together: a stale editable glyph re-tokenizes
+ * as a DIFFERENT marker than the paragraph claims on the next serialization, and a stale
+ * typed-text glyph keeps displaying the old marker. Purely structural — trees whose paragraphs
+ * carry no glyph prefix (hidden marker rendering) get the bare marker state change, and a
+ * missing prefix is never injected. The glyph text is restored unconditionally so drifted
+ * glyph text (an abandoned in-glyph rename literal) canonicalizes even when the marker value
+ * itself is unchanged.
+ *
+ * @param para - The paragraph to retag. Must be called inside `editor.update()`.
+ * @param marker - The new paragraph marker (e.g. `"q1"`).
+ *
+ * @public
+ */
+export function $syncParaMarkerGlyph(para: ParaNode, marker: string): void {
+  para.setMarker(marker);
+  const glyph = para.getFirstChild();
+  if ($isMarkerNode(glyph)) {
+    glyph.setMarker(marker);
+    glyph.setTextContent(openingMarkerText(marker));
+  } else if ($isImmutableTypedTextNode(glyph) && glyph.getTextType() === "marker") {
+    // Keep in sync with the adaptor's visible/gutter para-prefix shape in `createPara`
+    // (usj-editor.adaptor.ts): opening marker text + NBSP.
+    glyph.setTextContent(openingMarkerText(marker) + NBSP);
+  }
+}
+
+/**
+ * Sets a char span's marker and rewrites its own opening/closing marker glyphs to match, when
+ * present. In editable marker mode a char span carries its `\wj`…`\wj*` glyph pair as
+ * `MarkerNode` children; renaming the span without rewriting the pair leaves glyph text that
+ * re-tokenizes as a different span than the node claims. In visible marker mode the pair is
+ * immutable typed-text nodes instead (bare `\wj` opener and `\wj*` closer, as the USJ adaptor
+ * and `$addOpeningMarker`/`$addClosingMarker` build them); their display text still names the
+ * marker, so it is rewritten too. Only DIRECT children matching the span's OLD marker are
+ * rewritten: glyphs that an ancestor span carries for a nested child (the delta-materialized
+ * flattened shape) name the nested span's marker, not this one's, and are deliberately left
+ * alone — the marker-edit engine's in-place rename refuses that shape for the same reason.
+ * Glyph-less trees (hidden marker mode) get the bare marker state change only, and a missing
+ * glyph (e.g. an unclosed span's absent closer) is never injected.
+ *
+ * @param char - The char span to retag. Must be called inside `editor.update()`.
+ * @param marker - The new char marker (e.g. `"nd"`).
+ *
+ * @public
+ */
+export function $syncCharMarkerGlyphs(char: CharNode, marker: string): void {
+  const oldMarker = char.getMarker();
+  char.setMarker(marker);
+  if (marker === oldMarker) return;
+  char.getChildren().forEach((child) => {
+    if ($isMarkerNode(child) && child.getMarker() === oldMarker) child.setMarker(marker);
+  });
+  // Visible-mode typed-text pair: the span's own opener/closer are its first/last children
+  // (a flattened nested child's glyphs sit between them). Matching the OLD marker's exact
+  // glyph text keeps this to the span's own pair, like the MarkerNode path above. A span nested
+  // inside another char renders `\+marker`, so match and rewrite the nested-aware text.
+  const nested = $isCharNode(char.getParent());
+  const opener = char.getFirstChild();
+  if (
+    $isImmutableTypedTextNode(opener) &&
+    opener.getTextType() === "marker" &&
+    opener.getTextContent() === openingMarkerText(oldMarker, nested)
+  ) {
+    opener.setTextContent(openingMarkerText(marker, nested));
+  }
+  const closer = char.getLastChild();
+  if (
+    $isImmutableTypedTextNode(closer) &&
+    closer.getTextType() === "marker" &&
+    closer.getTextContent() === closingMarkerText(oldMarker, nested)
+  ) {
+    closer.setTextContent(closingMarkerText(marker, nested));
+  }
+}
+
+/**
  * Remove all known properties of the `markerObject`.
  * @param markerObject - Scripture marker and its contents.
  * @param markerObjectProps - List of known properties to remove. Defaults to `MARKER_OBJECT_PROPS`.

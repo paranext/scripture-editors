@@ -332,28 +332,26 @@ export function StructureKeyboardPlugin({
       return true;
     };
 
-    const $handlePaste = (event: ClipboardEvent): boolean => {
+    // A paste or drop: refused over a selection Rule 1 protects, otherwise sanitized and inserted.
+    // `readHtml` is called only once the refusal check has passed.
+    const $guardTransfer = (event: Event, readHtml: () => string | undefined): boolean => {
       if (structureProtectionMode !== "protected") return false;
       const selection = $getSelection();
       if (selection && $shouldBlockSelectionReplacement(selection)) {
         event.preventDefault();
         return true;
       }
-      return $sanitizeAndInsert(event.clipboardData?.getData("text/html"), event);
+      return $sanitizeAndInsert(readHtml(), event);
     };
 
-    const $handleDrop = (event: DragEvent): boolean => {
-      if (structureProtectionMode !== "protected") return false;
-      const selection = $getSelection();
-      if (selection && $shouldBlockSelectionReplacement(selection)) {
-        event.preventDefault();
-        return true;
-      }
-      // With no range to land at, `$sanitizeAndInsert` inserts nothing but still claims the drop:
-      // the default handler would let the browser insert the payload itself, structure and all.
-      // (A selected paragraph marker has already moved the selection to the drop point.)
-      return $sanitizeAndInsert(event.dataTransfer?.getData("text/html"), event);
-    };
+    const $handlePaste = (event: ClipboardEvent): boolean =>
+      $guardTransfer(event, () => event.clipboardData?.getData("text/html"));
+
+    // With no range to land at, `$sanitizeAndInsert` inserts nothing but still claims the drop:
+    // the default handler would let the browser insert the payload itself, structure and all.
+    // (A selected paragraph marker has already moved the selection to the drop point.)
+    const $handleDrop = (event: DragEvent): boolean =>
+      $guardTransfer(event, () => event.dataTransfer?.getData("text/html"));
 
     // A delete that arrives with no Backspace/Delete keydown (macOS Ctrl+H / Ctrl+D map to none,
     // and a programmatic dispatch has none) gets the answer that keydown would have: refused under

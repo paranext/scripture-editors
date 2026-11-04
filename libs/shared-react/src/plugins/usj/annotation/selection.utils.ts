@@ -968,11 +968,7 @@ function $precedingTextLocation(
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation | undefined {
   // An annotation mark around the run is transparent: step out of it to find what precedes.
-  let start: LexicalNode = node;
-  for (let mark = start.getParent(); !start.getPreviousSibling() && $isTypedMarkNode(mark); ) {
-    start = mark;
-    mark = start.getParent();
-  }
+  const start = $outerNodeThroughMarks(node, "start");
   // Walk back over text that would only defer to its neighbor — the deferral points forward, at
   // this run, so taking it would cycle. Stepping strictly backwards through siblings terminates.
   let previous = start.getPreviousSibling();
@@ -1781,13 +1777,7 @@ function $locationOfFirstByteAfter(
   node: LexicalNode,
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation | undefined {
-  let current = node;
-  for (
-    let mark = current.getParent();
-    !current.getNextSibling() && $isTypedMarkNode(mark);
-    mark = current.getParent()
-  )
-    current = mark;
+  const current = $outerNodeThroughMarks(node, "end");
   const next = current.getNextSibling();
   if (!next) {
     const parent = current.getParent();
@@ -1821,14 +1811,27 @@ function $nextLineStart(node: LexicalNode): ReturnType<typeof $pointBeside> | un
 
 /** Whether nothing follows `node` in its line, looking through annotation marks. */
 function $endsItsLine(node: LexicalNode): boolean {
+  return !$outerNodeThroughMarks(node, "end").getNextSibling();
+}
+
+/**
+ * `node`, or the outermost annotation mark it stands at the `edge` of: climbs through each
+ * enclosing `TypedMarkNode` while what it has reached is that mark's first (`"start"`) or last
+ * (`"end"`) child. A mark is transparent in USJ, so what lies beyond that edge is what lies beyond
+ * `node`.
+ *
+ * Read-only: safe in any read.
+ */
+function $outerNodeThroughMarks(node: LexicalNode, edge: "start" | "end"): LexicalNode {
   let current = node;
   for (
     let mark = current.getParent();
-    !current.getNextSibling() && $isTypedMarkNode(mark);
+    !(edge === "start" ? current.getPreviousSibling() : current.getNextSibling()) &&
+    $isTypedMarkNode(mark);
     mark = current.getParent()
   )
     current = mark;
-  return !current.getNextSibling();
+  return current;
 }
 
 /** The node carrying the first display byte at `child`'s front: `child` itself, or the first piece

@@ -1,8 +1,12 @@
+import { mergeRegister } from "@lexical/utils";
 import {
   $createRangeSelectionFromDom,
   $getEditor,
   $getSelection,
   $isRangeSelection,
+  CommandListener,
+  CommandListenerPriority,
+  LexicalCommand,
   LexicalEditor,
 } from "lexical";
 
@@ -143,4 +147,113 @@ export function readLatest<T>(editor: LexicalEditor, readFn: () => T): T {
     // Not inside any read or update.
   }
   return activeEditor === editor ? readFn() : editor.read(readFn);
+}
+
+/**
+ * Registers one `listener` at one `priority` for each of `commands`, in list order: among each
+ * command's other listeners at that priority it runs where a `registerCommand` call made at the
+ * same point would. Every command gets what `listener` returns.
+ *
+ * @param editor - The editor to register on.
+ * @param commands - The commands to listen to.
+ * @param listener - The handler every command shares.
+ * @param priority - The priority of every registration.
+ * @returns A function that removes every registration made here.
+ */
+export function registerCommands<P>(
+  editor: LexicalEditor,
+  commands: readonly LexicalCommand<P>[],
+  listener: CommandListener<P>,
+  priority: CommandListenerPriority,
+): () => void {
+  return mergeRegister(
+    ...commands.map((command) => editor.registerCommand(command, listener, priority)),
+  );
+}
+
+/**
+ * Hears primary-button pointer presses and their release anywhere in the document holding
+ * `editor`'s root, following the root when it changes.
+ *
+ * Only the PRIMARY button counts: a secondary-button press can open the platform's NATIVE context
+ * menu (`ContextMenuPlugin` deliberately lets it through for some targets), which on Windows and
+ * Linux grabs the mouse so the page never sees the matching `pointerup`. The button is duck-typed
+ * rather than read through `instanceof PointerEvent`: not every host defines that global (jsdom
+ * before 27 has none), and a press that carries no button at all still counts as a primary one.
+ *
+ * Both ends are heard on the DOCUMENT in the capture phase, so a press just outside the root - which
+ * still places a caret inside it - and a release anywhere are both heard. `pointercancel` is a
+ * release as `pointerup` is: a drag, or a touch that turns into a scroll, never sends `pointerup`.
+ *
+ * @param editor - The editor whose root's document to listen on.
+ * @param handlers - `onPress` runs on a primary-button `pointerdown`; `onRelease` on every
+ *   `pointerup` and `pointercancel`; `onRootChange`, when given, each time Lexical reports the root -
+ *   at registration, on each swap and on teardown - after the previous document's listeners are
+ *   removed and before the new one's are added.
+ * @returns A function that removes the listeners.
+ */
+export function registerPrimaryPointerPress(
+  editor: LexicalEditor,
+  {
+    onPress,
+    onRelease,
+    onRootChange,
+  }: { onPress: () => void; onRelease: () => void; onRootChange?: () => void },
+): () => void {
+  const handlePointerDown = (event: Event) => {
+    if ("button" in event && event.button !== 0) return;
+    onPress();
+  };
+  // One listener does both the wiring and the unwiring: Lexical calls it with the current root at
+  // registration, with each replacement root on a swap, and with `(null, previous)` on teardown.
+  return editor.registerRootListener((root, previousRoot) => {
+    const previousDocument = previousRoot?.ownerDocument;
+    previousDocument?.removeEventListener("pointerdown", handlePointerDown, true);
+    previousDocument?.removeEventListener("pointerup", onRelease, true);
+    previousDocument?.removeEventListener("pointercancel", onRelease, true);
+    onRootChange?.();
+    const currentDocument = root?.ownerDocument;
+    currentDocument?.addEventListener("pointerdown", handlePointerDown, true);
+    currentDocument?.addEventListener("pointerup", onRelease, true);
+    currentDocument?.addEventListener("pointercancel", onRelease, true);
+  });
+}
+
+/**
+ * Makes a resource each editor has at most one of, shared by everything on that editor that holds
+ * it: the first `acquire` for an editor creates it, and the release of its last holder disposes of
+ * it. Each holder's `release` counts once, however often it is called.
+ *
+ * @param create - Makes an editor's resource: its value, and how to dispose of it.
+ * @returns `acquire`, which hands out the editor's resource with that holder's release.
+ */
+export function createPerEditorResource<T>(
+  create: (editor: LexicalEditor) => { value: T; dispose: () => void },
+): (editor: LexicalEditor) => { value: T; release: () => void } {
+  const resources = new WeakMap<
+    LexicalEditor,
+    { value: T; dispose: () => void; holders: number }
+  >();
+  return (editor) => {
+    let resource = resources.get(editor);
+    if (!resource) {
+      resource = { ...create(editor), holders: 0 };
+      resources.set(editor, resource);
+    }
+    resource.holders++;
+    const held = resource;
+    let released = false;
+    return {
+      value: held.value,
+      release: () => {
+        if (released) return;
+        released = true;
+        held.holders--;
+        if (held.holders > 0) return;
+        held.dispose();
+        // Only the entry this holder held: a later one for the same editor belongs to others.
+        if (resources.get(editor) === held) resources.delete(editor);
+      },
+    };
+  };
 }

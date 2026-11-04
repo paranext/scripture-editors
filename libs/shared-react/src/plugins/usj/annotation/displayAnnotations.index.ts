@@ -18,6 +18,7 @@ import {
   rangeOverText,
 } from "./annotationHighlights";
 import { $paintIntervalsOf, $paintText, leafPaint, PaintIntervals } from "./annotationPaint.utils";
+import { createPerEditorResource } from "../editorUpdate.utils";
 import { addClassNamesToElement, mergeRegister, removeClassNamesFromElement } from "@lexical/utils";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import {
@@ -121,15 +122,10 @@ function $stripDisplayAnnotations(node: LexicalNode): void {
   if ($isElementNode(node)) node.getChildren().forEach($stripDisplayAnnotations);
 }
 
-interface Entry {
-  index: DisplayAnnotationIndex;
-  references: number;
-  unregister: () => void;
-}
-
-const entries = new WeakMap<LexicalEditor, Entry>();
-
-function createIndex(editor: LexicalEditor): Entry {
+function createIndex(editor: LexicalEditor): {
+  value: DisplayAnnotationIndex;
+  dispose: () => void;
+} {
   setDecoratorBytesReader({
     holdableText: $readDecoratorHoldableText,
     renderedOffset: $renderedOffsetOf,
@@ -724,7 +720,7 @@ function createIndex(editor: LexicalEditor): Entry {
   );
 
   return {
-    index: {
+    value: {
       keysFor: (type, id) => keysByAnnotation.get(typedMarkIdKey(type, id)) ?? EMPTY,
       noteSet,
       noteReported: hear,
@@ -735,34 +731,18 @@ function createIndex(editor: LexicalEditor): Entry {
       setStateClass,
       rangesFor,
     },
-    references: 0,
-    unregister,
+    dispose: unregister,
   };
 }
+
+const acquireIndex = createPerEditorResource(createIndex);
 
 export function acquireDisplayAnnotationIndex(editor: LexicalEditor): {
   index: DisplayAnnotationIndex;
   release: () => void;
 } {
-  let entry = entries.get(editor);
-  if (!entry) {
-    entry = createIndex(editor);
-    entries.set(editor, entry);
-  }
-  entry.references++;
-  const acquired = entry;
-  let released = false;
-  return {
-    index: acquired.index,
-    release: () => {
-      if (released) return;
-      released = true;
-      acquired.references--;
-      if (acquired.references > 0) return;
-      acquired.unregister();
-      entries.delete(editor);
-    },
-  };
+  const { value, release } = acquireIndex(editor);
+  return { index: value, release };
 }
 
 /**

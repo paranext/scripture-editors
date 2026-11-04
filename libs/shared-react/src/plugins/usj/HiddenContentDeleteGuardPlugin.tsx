@@ -1,4 +1,5 @@
 import { hasCommandCharacter } from "./CommandMenuPlugin";
+import { registerCommands } from "./editorUpdate.utils";
 import {
   HiddenContentDeleteAction,
   HiddenContentDeleteDecision,
@@ -598,9 +599,9 @@ export function HiddenContentDeleteGuardPlugin({
         onBreakOverSelection(INSERT_LINE_BREAK_COMMAND),
         COMMAND_PRIORITY_CRITICAL,
       ),
-      editor.registerCommand(DRAGSTART_COMMAND, $refuseRemovalOfHidden, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(
-        REMOVE_TEXT_COMMAND,
+      registerCommands(
+        editor,
+        [DRAGSTART_COMMAND, REMOVE_TEXT_COMMAND],
         $refuseRemovalOfHidden,
         COMMAND_PRIORITY_CRITICAL,
       ),

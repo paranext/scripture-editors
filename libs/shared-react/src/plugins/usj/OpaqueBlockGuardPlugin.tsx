@@ -1,3 +1,4 @@
+import { registerCommands } from "./editorUpdate.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
@@ -78,9 +79,9 @@ export function OpaqueBlockGuardPlugin(): null {
     };
 
     return mergeRegister(
-      editor.registerCommand(KEY_DOWN_COMMAND, $refuseEditInsideOpaqueBlock, COMMAND_PRIORITY_HIGH),
-      editor.registerCommand(
-        CONTROLLED_TEXT_INSERTION_COMMAND,
+      registerCommands(
+        editor,
+        [KEY_DOWN_COMMAND, CONTROLLED_TEXT_INSERTION_COMMAND],
         $refuseEditInsideOpaqueBlock,
         COMMAND_PRIORITY_HIGH,
       ),
@@ -90,12 +91,12 @@ export function OpaqueBlockGuardPlugin(): null {
       // refuses, not tie with it. The engine's own CRITICAL cut arm, which records what a cut would
       // cover, TIES with this refusal, so it consults `$selectionReachesIntoOpaqueBlock` itself
       // rather than relying on order: an arm this refusal leaves behind would outlive the gesture.
-      editor.registerCommand(
-        PASTE_COMMAND,
+      registerCommands(
+        editor,
+        [PASTE_COMMAND, CUT_COMMAND],
         $refuseEditInsideOpaqueBlock,
         COMMAND_PRIORITY_CRITICAL,
       ),
-      editor.registerCommand(CUT_COMMAND, $refuseEditInsideOpaqueBlock, COMMAND_PRIORITY_CRITICAL),
       // DROP is judged by the drop TARGET, not the live selection: Lexical dispatches
       // DROP_COMMAND straight from the DOM handler with no selection update, so at drop time
       // `$getSelection()` still holds whatever was selected when the drag STARTED. Testing that
@@ -112,18 +113,9 @@ export function OpaqueBlockGuardPlugin(): null {
         },
         COMMAND_PRIORITY_HIGH,
       ),
-      editor.registerCommand(
-        DELETE_CHARACTER_COMMAND,
-        $refuseEditInsideOpaqueBlock,
-        COMMAND_PRIORITY_HIGH,
-      ),
-      editor.registerCommand(
-        DELETE_WORD_COMMAND,
-        $refuseEditInsideOpaqueBlock,
-        COMMAND_PRIORITY_HIGH,
-      ),
-      editor.registerCommand(
-        DELETE_LINE_COMMAND,
+      registerCommands(
+        editor,
+        [DELETE_CHARACTER_COMMAND, DELETE_WORD_COMMAND, DELETE_LINE_COMMAND],
         $refuseEditInsideOpaqueBlock,
         COMMAND_PRIORITY_HIGH,
       ),
