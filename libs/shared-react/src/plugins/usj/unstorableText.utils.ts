@@ -1,5 +1,6 @@
 import { UnstorableCharacter } from "./unstorable-text.model";
 import {
+  $createRangeSelection,
   $getState,
   $isElementNode,
   $isRootNode,
@@ -612,13 +613,25 @@ export function $deletionJoinsSlashes(deletion: JudgedDeletion): boolean {
       ...$readPieces(last, boundaries, true),
     ]);
   }
-  const container = $containerOf(deletion.caret);
+  return $characterDeletionJoinsSlashes(deletion.caret, deletion.isBackward, true);
+}
+
+/**
+ * Whether deleting the unit beside `caret` (see {@link JudgedDeletion}'s `character`) would join
+ * two `/`, as {@link $deletionJoinsSlashes} judges it. At the edge of a paragraph the delete joins
+ * it to the paragraph on that side when `mayJoinParagraphs` is set, and removes nothing otherwise.
+ */
+function $characterDeletionJoinsSlashes(
+  caret: PointType,
+  isBackward: boolean,
+  mayJoinParagraphs: boolean,
+): boolean {
+  const container = $containerOf(caret);
   if (!container) return false;
-  const { isBackward } = deletion;
   const neighbour = isBackward ? container.getPreviousSibling() : container.getNextSibling();
-  const canJoin = $isParaLikeNode(container) && $isParaLikeNode(neighbour);
+  const canJoin = mayJoinParagraphs && $isParaLikeNode(container) && $isParaLikeNode(neighbour);
   if (!$holdsSlash(container, ...(canJoin ? [neighbour] : []))) return false;
-  const pieces = $readPieces(container, [{ which: "caret", point: deletion.caret }]);
+  const pieces = $readPieces(container, [{ which: "caret", point: caret }]);
   const caretAt = pieces.findIndex((piece) => piece.kind === "boundary");
   if (caretAt < 0) return false;
   if (removeUnitBeside(pieces, caretAt, isBackward)) return $joinsSlashes(pieces);
@@ -626,5 +639,57 @@ export function $deletionJoinsSlashes(deletion: JudgedDeletion): boolean {
   const beside = $readPieces(neighbour, []);
   return $joinsSlashes(
     isBackward ? [...beside, joinedBreak(), ...pieces] : [...pieces, joinedBreak(), ...beside],
+  );
+}
+
+/** The point `offset` characters into the text node `point` is in. */
+function $textPointAt(point: PointType, offset: number): PointType {
+  const { anchor } = $createRangeSelection();
+  anchor.set(point.key, offset, "text");
+  return anchor;
+}
+
+/**
+ * The carets whose two neighbouring characters a transpose at `selection` may swap. The browser
+ * (macOS Ctrl+T, a `beforeinput` `insertTranspose`) swaps the characters either side of a caret,
+ * or at the end of a paragraph the two before it; it selects the two before it asks, so a
+ * selection of two characters stands for the caret between them. An optional line break shows
+ * nothing, so a caret before one at the end of a paragraph may be at its end in the browser's
+ * eyes: both readings are kept for a caret at the end of its text.
+ */
+function $transposeCarets(selection: RangeSelection): PointType[] {
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  if (!selection.isCollapsed())
+    return start.type === "text" && start.key === end.key && end.offset - start.offset === 2
+      ? [$textPointAt(start, start.offset + 1)]
+      : [];
+  if (start.type !== "text" || start.offset === 0) return [start];
+  return start.offset === start.getNode().getTextContentSize()
+    ? [start, $textPointAt(start, start.offset - 1)]
+    : [start];
+}
+
+/**
+ * Whether transposing at `selection` (see {@link $transposeCarets}) would put a `/` against a `/`
+ * it was not already touching, which a hidden-marker view must not save: `//` is USFM's optional
+ * line break, which those views hide.
+ *
+ * Swapping the characters either side of a caret makes two new neighbours: the one before the
+ * caret's left character with its right character, and the left character with the one after the
+ * right character. Those are exactly the neighbours a Backspace and a Delete at that caret would
+ * make within the paragraph, so each is judged as one (see {@link $deletionJoinsSlashes}), reading
+ * what the file stores the same way: an optional line break as the `//` the file stores, and a
+ * character span's edge as keeping the two apart. A transpose never joins paragraphs, so a caret
+ * at a paragraph's edge judges nothing across it.
+ *
+ * Read-only: call inside `editor.update()`, `editor.read()` or a command handler.
+ *
+ * @param selection - The selection the transpose is asked at.
+ */
+export function $transposeJoinsSlashes(selection: RangeSelection): boolean {
+  return $transposeCarets(selection).some((caret) =>
+    [true, false].some((isBackward) => $characterDeletionJoinsSlashes(caret, isBackward, false)),
   );
 }

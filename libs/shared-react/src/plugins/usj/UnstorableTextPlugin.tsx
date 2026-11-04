@@ -13,6 +13,7 @@ import {
   $insertsNothing,
   $removeUnstorableTextFromNodes,
   $textAroundSelection,
+  $transposeJoinsSlashes,
   JudgedDeletion,
   removeUnstorableText,
 } from "./unstorableText.utils";
@@ -25,6 +26,7 @@ import {
   $getSelection,
   $isNodeSelection,
   $isRangeSelection,
+  $setSelection,
   BaseSelection,
   CommandListener,
   CommandListenerPriority,
@@ -204,7 +206,9 @@ function joinLines(text: string): string {
  * event), or a `beforeinput` `insertText` the browser would apply to the DOM itself, which is
  * claimed in the capture phase ahead of Lexical's own listener and inserted through the command.
  * Text that loses a character still puts in the rest, and is reported once. Text being composed by
- * an input method is not filtered, so a `\` or `//` an IME commits goes in.
+ * an input method is not filtered, so a `\` or `//` an IME commits goes in. A transpose (macOS
+ * Ctrl+T, a `beforeinput` `insertTranspose`) that would put a `/` against a `/` is refused, and
+ * reported as typing.
  *
  * Under `"protected"` structure a plain-text paste or drop goes into the paragraph at the caret,
  * its lines joined by one space each, as protected structure's html route joins paragraphs:
@@ -227,8 +231,8 @@ function joinLines(text: string): string {
  * @param isEnabled - Whether it acts: only in a view that hides markers, since a view that shows
  *   them needs a typed or pasted `\`. Asked on each command and event. Defaults to `true`.
  * @param structureProtectionMode - The editor's structure protection.
- * @param onRemoved - Told once per paste, drop or keystroke that lost or refused unstorable text,
- *   and once per refused delete.
+ * @param onRemoved - Told once per paste, drop or keystroke that lost or refused unstorable text
+ *   (a refused transpose among them), and once per refused delete.
  * @param logger - Where each removal is logged, at `info`.
  * @returns `null`. This plugin has no DOM presence.
  */
@@ -292,10 +296,33 @@ export function UnstorableTextPlugin({
       return true;
     };
 
+    /**
+     * Refuses a transpose (macOS Ctrl+T) that would put a `/` against a `/` (see
+     * {@link $transposeJoinsSlashes}), and reports it as a refused keystroke. The browser selects
+     * the two characters before it asks, so the caret is put back where it was.
+     */
+    const onTranspose = (event: InputEvent) => {
+      const caret = editor.read(() => {
+        const selection = $getSelection();
+        return $isRangeSelection(selection) && $transposeJoinsSlashes(selection)
+          ? selection.clone()
+          : undefined;
+      });
+      if (!caret) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      editor.update(() => $setSelection(caret));
+      reportRemoved({ source: "typing", removed: ["//"] }, onRemovedRef.current, loggerRef.current);
+    };
+
     /** A `beforeinput` the browser would apply itself, without telling Lexical in a command. */
     const onBeforeInput = (event: InputEvent) => {
-      if (!isEnabledRef.current) return;
-      if (event.inputType !== "insertText" || !editor.isEditable() || editor.isComposing()) return;
+      if (!isEnabledRef.current || !editor.isEditable() || editor.isComposing()) return;
+      if (event.inputType === "insertTranspose") {
+        onTranspose(event);
+        return;
+      }
+      if (event.inputType !== "insertText") return;
       const text = event.data ?? event.dataTransfer?.getData("text/plain");
       // The test comes first because `editor.read` commits pending updates, which ordinary typing
       // should not pay for on every keystroke.

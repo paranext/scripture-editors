@@ -12,6 +12,7 @@ import {
   $getRoot,
   $getSelection,
   $isRangeSelection,
+  $isTextNode,
   $setSelection,
   CONTROLLED_TEXT_INSERTION_COMMAND,
 } from "lexical";
@@ -130,6 +131,56 @@ async function inputWithoutKeydown(mounted: MountedEditor, data: string): Promis
   await act(async () => {
     syncDomSelection(mounted);
     root.dispatchEvent(beforeInput);
+  });
+  return beforeInput;
+}
+
+/**
+ * Dispatches the `beforeinput` of a transpose (macOS Ctrl+T) at a caret, and unless that was
+ * refused, makes the swap the browser would: the characters either side of the caret, or at the
+ * end of the text the two before it. With `isSelectingFirst`, the two characters are selected in
+ * the DOM before the event, and a `selectionchange` follows it, as Chromium selects them before it
+ * asks. Returns the event.
+ */
+async function transpose(
+  mounted: MountedEditor,
+  { isSelectingFirst = false }: { isSelectingFirst?: boolean } = {},
+): Promise<InputEvent> {
+  const root = mounted.lexical.getRootElement();
+  if (!root) throw new Error("editor root not found");
+  const beforeInput = new InputEvent("beforeinput", {
+    inputType: "insertTranspose",
+    bubbles: true,
+    cancelable: true,
+  });
+  await act(async () => {
+    syncDomSelection(mounted);
+    const domSelection = document.getSelection();
+    const caretNode = domSelection?.anchorNode;
+    if (isSelectingFirst && domSelection && caretNode) {
+      const at = domSelection.anchorOffset;
+      const end = at === caretNode.textContent?.length ? at : at + 1;
+      domSelection.setBaseAndExtent(caretNode, end - 2, caretNode, end);
+    }
+    root.dispatchEvent(beforeInput);
+    if (isSelectingFirst) {
+      await Promise.resolve();
+      document.dispatchEvent(new Event("selectionchange"));
+    }
+    if (beforeInput.defaultPrevented) return;
+    mounted.lexical.update(
+      () => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+        const node = selection.anchor.getNode();
+        if (!$isTextNode(node)) return;
+        const text = node.getTextContent();
+        const at =
+          selection.anchor.offset === text.length ? text.length - 1 : selection.anchor.offset;
+        node.setTextContent(text.slice(0, at - 1) + text[at] + text[at - 1] + text.slice(at + 1));
+      },
+      { discrete: true },
+    );
   });
   return beforeInput;
 }
@@ -325,6 +376,78 @@ describe.each(["paragraph-structure", "formatted"])("typing into %s view", (view
     expect(savedParas(mounted)).toEqual(["axyb"]);
     expect(onRemoved).toHaveBeenCalledTimes(1);
     expect(onRemoved).toHaveBeenCalledWith({ source: "typing", removed: ["\\"] });
+  });
+});
+
+describe.each(["paragraph-structure", "formatted"])("transposing in %s view", (viewName) => {
+  it("refuses a transpose that would make `//`, keeping the caret, and says so once", async () => {
+    const { mounted, onRemoved } = await mount(viewName, "/x/", 2);
+
+    const beforeInput = await transpose(mounted, { isSelectingFirst: true });
+
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(savedParas(mounted)).toEqual(["/x/"]);
+    expect(
+      mounted.lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return undefined;
+        return [selection.isCollapsed(), selection.anchor.getNode().getTextContent()];
+      }),
+    ).toEqual([true, "/x/"]);
+    expect(document.getSelection()?.isCollapsed).toBe(true);
+    expect(onRemoved).toHaveBeenCalledTimes(1);
+    expect(onRemoved).toHaveBeenCalledWith({ source: "typing", removed: ["//"] });
+  });
+
+  it("refuses a transpose that would bring a `/` against a hidden optional line break", async () => {
+    const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+    const usj = usjWith("x/");
+    const para = usj.content[2] as MarkerObject;
+    para.content = [{ type: "verse", marker: "v", number: "1" }, { type: "optbreak" }, "x/"];
+    const mounted = await mountInView(usj, editorView(viewName), {
+      onUnstorableTextRemoved: onRemoved,
+    });
+    await act(async () =>
+      mounted.lexical.update(
+        () => {
+          const node = $getRoot()
+            .getAllTextNodes()
+            .find((text) => text.getType() === "text" && text.getTextContent() === "x/");
+          if (!node) throw new Error("verse text not found");
+          node.select(1, 1);
+        },
+        { discrete: true },
+      ),
+    );
+
+    const beforeInput = await transpose(mounted);
+
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(onRemoved).toHaveBeenCalledWith({ source: "typing", removed: ["//"] });
+  });
+
+  it.each([
+    ["ab", 1, "ba"],
+    ["and/or", 4, "ando/r"],
+  ])("lets an ordinary transpose in %j through, telling no one", async (text, offset, swapped) => {
+    const { mounted, onRemoved } = await mount(viewName, text, offset);
+
+    const beforeInput = await transpose(mounted);
+
+    expect(beforeInput.defaultPrevented).toBe(false);
+    expect(savedParas(mounted)).toEqual([swapped]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+});
+
+describe.each(["standard", "visible"])("transposing in the %s view", (viewName) => {
+  it("lets a transpose that makes `//` through, telling no one", async () => {
+    const { mounted, onRemoved } = await mount(viewName, "/x/", 2);
+
+    const beforeInput = await transpose(mounted);
+
+    expect(beforeInput.defaultPrevented).toBe(false);
+    expect(onRemoved).not.toHaveBeenCalled();
   });
 });
 

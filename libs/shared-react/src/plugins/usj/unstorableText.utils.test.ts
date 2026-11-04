@@ -8,6 +8,7 @@ import {
   $deletionJoinsSlashes,
   $removeUnstorableTextFromNodes,
   $textAroundSelection,
+  $transposeJoinsSlashes,
   JudgedDeletion,
   removeUnstorableText,
 } from "./unstorableText.utils";
@@ -623,6 +624,112 @@ describe("$deletionJoinsSlashes", () => {
         ([para]) => ({ kind: "character", caret: $at($text(para, "n/b/c"), 3), isBackward: true }),
       ),
     ).toBe(true);
+  });
+});
+
+describe("$transposeJoinsSlashes", () => {
+  /**
+   * Builds one paragraph of `children`, selects from `anchor` to `focus` (a caret when `focus` is
+   * left out) in its text node holding `text`, and judges a transpose there.
+   */
+  async function judge(
+    $children: () => LexicalNode[],
+    text: string,
+    anchor: number,
+    focus = anchor,
+  ): Promise<boolean> {
+    let node: TextNode | undefined;
+    const { editor } = await baseTestEnvironment(() => {
+      const children = $children();
+      $getRoot().append($createParaNode("p").append(...children));
+      node = $getRoot()
+        .getAllTextNodes()
+        .find((candidate) => candidate.getTextContent() === text);
+    });
+    if (!node) throw new Error(`no text ${text}`);
+    updateSelection(editor, node, anchor, node, focus);
+    return editor.read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection");
+      return $transposeJoinsSlashes(selection);
+    });
+  }
+
+  it.each<[string, number, boolean]>([
+    // Swapping `x` and the second `/` would save `//x`.
+    ["/x/", 2, true],
+    // Swapping the first `/` and `x` brings that `/` against the second.
+    ["/x/", 1, true],
+    ["ab", 1, false],
+    ["and/or", 4, false],
+    ["and/or", 3, false],
+    ["a/b", 2, false],
+    // At the end of a paragraph the two characters before the caret swap: `/x/` → `//x`.
+    ["/x/", 3, true],
+    ["a/b", 3, false],
+    // Two `/` swapped with each other change nothing.
+    ["a//", 2, false],
+  ])("a caret in %j at %d → %s", async (text, offset, expected) => {
+    expect(await judge(() => [$createTextNode(text)], text, offset)).toBe(expected);
+  });
+
+  it.each<[string, number, number, boolean]>([
+    ["/x/", 1, 3, true],
+    ["/x/", 0, 2, true],
+    ["abc", 0, 2, false],
+    // Not two characters: no transpose to judge.
+    ["/x/y", 1, 4, false],
+  ])(
+    "the two characters the browser selects in %j, %d to %d → %s",
+    async (text, anchor, focus, expected) => {
+      expect(await judge(() => [$createTextNode(text)], text, anchor, focus)).toBe(expected);
+    },
+  );
+
+  it("reads an optional line break as the `//` the file stores", async () => {
+    // The break, then `x/`: swapping `x` and `/` puts that `/` against the break.
+    expect(
+      await judge(() => [$createUnknownNode("optbreak"), $createTextNode("x/")], "x/", 1),
+    ).toBe(true);
+    // `/x`, then the break, the caret at the end of the text: the browser swaps `/` and `x`, which
+    // brings the `/` against the break.
+    expect(
+      await judge(() => [$createTextNode("/x"), $createUnknownNode("optbreak")], "/x", 2),
+    ).toBe(true);
+    expect(
+      await judge(() => [$createUnknownNode("optbreak"), $createTextNode("ab")], "ab", 1),
+    ).toBe(false);
+  });
+
+  it("judges nothing across a paragraph's edge, which a transpose never joins", async () => {
+    let first: TextNode | undefined;
+    const { editor } = await baseTestEnvironment(() => {
+      first = $createTextNode("a/");
+      $getRoot().append(
+        $createParaNode("p").append(first),
+        $createParaNode("p").append($createTextNode("/b")),
+      );
+    });
+    if (!first) throw new Error("no text");
+    updateSelection(editor, first, 2);
+
+    expect(
+      editor.read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        return $transposeJoinsSlashes(selection);
+      }),
+    ).toBe(false);
+  });
+
+  it("does not join a `/` to one a character span keeps apart", async () => {
+    expect(
+      await judge(
+        () => [$createTextNode("a/"), $createCharNode("nd").append($createTextNode("x/"))],
+        "x/",
+        1,
+      ),
+    ).toBe(false);
   });
 });
 

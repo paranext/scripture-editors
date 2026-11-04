@@ -326,6 +326,13 @@ refused. The public surface grew substantially; nothing was removed.
   against one is treated as making `//` too. A `//` already in the text is left alone. Under
   `"protected"` structure a join is refused by the protection, as before. Standard view is
   unchanged.
+- **The views that hide markers refuse a transpose that would join two `/` into `//`.** macOS
+  Ctrl+T swaps the characters either side of the caret (at the end of a line, the two before it),
+  so in `/x/` with the caret before the second `/` it would have saved `//x`, an optional line
+  break. Such a transpose (a `beforeinput` `insertTranspose`) now does nothing, keeps the caret
+  where it was, and `onUnstorableTextRemoved` is told once with `source: "typing"`. It is judged as
+  the Backspace and Delete at that caret would be, so an optional line break counts as the `//` the
+  file stores, and a character span's marker keeps two `/` apart. Any other transpose goes ahead.
 
 ### Fixed
 
