@@ -7,6 +7,7 @@ import {
   $isTextNode,
   ElementNode,
   LexicalNode,
+  NodeKey,
   PointType,
   RangeSelection,
   TextNode,
@@ -172,29 +173,40 @@ function $storedTextRuns(siblings: LexicalNode[]): TextNode[][] {
 }
 
 /**
- * Removes unstorable text (see {@link removeUnstorableText}) from nodes about to be pasted or
- * dropped, in place. Text in adjacent nodes is read as one string, so `a/` then `/b` is a `//`.
- * Leaves alone an unmatched marker's glyph, decorators, display text (token or segmented text,
- * such as a note caller) and the content of constructs the view hides. A text node left empty is
- * removed: from `nodes` when it is listed there, and from its parent when it has one.
- *
- * Mutating: call inside `editor.update()`.
- *
- * @param nodes - The nodes to be inserted, in order.
- * @param before - The document text just before the insertion point; only its last character
- *   matters.
- * @param after - The document text just after the insertion point; only its first character
- *   matters.
- * @returns What was removed: each kind once, in the order first met.
+ * Each node of `nodes` and everything inside them, numbered in document order, so what is removed
+ * can be ordered by where it was met however the nodes have changed since.
  */
-export function $removeUnstorableTextFromNodes(
+function $documentOrder(nodes: LexicalNode[]): Map<NodeKey, number> {
+  const order = new Map<NodeKey, number>();
+  const visit = (node: LexicalNode) => {
+    order.set(node.getKey(), order.size);
+    if ($isElementNode(node)) node.getChildren().forEach(visit);
+  };
+  nodes.forEach(visit);
+  return order;
+}
+
+/** Removes `node` from `nodes` when it is listed there, and from its parent when it has one. */
+function $removeFromNodes(nodes: LexicalNode[], node: LexicalNode): void {
+  // A listed node can still be a child too: the protected-structure sanitizer lists a paragraph's
+  // children without detaching them, and inserts whatever stays listed.
+  const listedAt = nodes.indexOf(node);
+  if (listedAt >= 0) nodes.splice(listedAt, 1);
+  if (node.getParent()) node.remove();
+}
+
+/**
+ * Removes unstorable text from each run of stored text in `nodes` (see
+ * {@link $removeUnstorableTextFromNodes}), telling `meet` of each removed character.
+ */
+function $removeUnstorableTextFromRuns(
   nodes: LexicalNode[],
-  before?: string,
-  after?: string,
-): UnstorableCharacter[] {
+  before: string | undefined,
+  after: string | undefined,
+  meet: (character: UnstorableCharacter, node: LexicalNode) => void,
+): void {
   const firstLeaf = $leafAtInsertionEdge(nodes, "first");
   const lastLeaf = $leafAtInsertionEdge(nodes, "last");
-  const removed: UnstorableCharacter[] = [];
   for (const run of $storedTextRuns(nodes)) {
     const texts = run.map((node) => node.getTextContent());
     const mask = unstorableTextMask(
@@ -202,25 +214,110 @@ export function $removeUnstorableTextFromNodes(
       run[0] === firstLeaf ? before : undefined,
       run.at(-1) === lastLeaf ? after : undefined,
     );
-    for (const character of mask.removed) if (!removed.includes(character)) removed.push(character);
     let start = 0;
     run.forEach((node, index) => {
       const characters = Array.from(texts[index]);
+      characters.forEach((character, offset) => {
+        if (!mask.keep[start + offset]) meet(character === "\\" ? "\\" : "//", node);
+      });
       const kept = keptText(characters, mask.keep, start);
       start += characters.length;
       if (kept === texts[index]) return;
-      if (kept) {
-        node.setTextContent(kept);
-        return;
-      }
-      // A listed node can still be a child too: the protected-structure sanitizer lists a
-      // paragraph's children without detaching them, and inserts whatever stays listed.
-      const listedAt = nodes.indexOf(node);
-      if (listedAt >= 0) nodes.splice(listedAt, 1);
-      if (node.getParent()) node.remove();
+      if (kept) node.setTextContent(kept);
+      else $removeFromNodes(nodes, node);
     });
   }
-  return removed;
+}
+
+/** Whether `text` ends with a `/` that is not part of a `//`: an optional line break's `//`
+ * against it would make `///`. */
+function endsWithLoneSlash(text: string): boolean {
+  return /(?:^|[^/])\/$/.test(text);
+}
+
+/** Whether `text` starts with a `/` that is not part of a `//` (see {@link endsWithLoneSlash}). */
+function startsWithLoneSlash(text: string): boolean {
+  return /^\/(?:[^/]|$)/.test(text);
+}
+
+/**
+ * Each optional line break among `siblings` and their descendants, as {@link $storedTextRuns}
+ * reads them, that a lone `/` touches: in the stored text beside it, or, for a break at the
+ * insertion point, in the document's text there. Another optional break beside it is no `/`: two
+ * together store as `////`, which reads back as the same two breaks.
+ */
+function $optbreaksBesideSlash(
+  siblings: LexicalNode[],
+  edges: { firstLeaf?: LexicalNode; lastLeaf?: LexicalNode; before: string; after: string },
+): LexicalNode[] {
+  const nodes = $withoutMarks(siblings);
+  return nodes.flatMap((node, index) => {
+    if (!$isOptbreak(node))
+      return $isElementNode(node) && !$isUnknownNode(node)
+        ? $optbreaksBesideSlash(node.getChildren(), edges)
+        : [];
+    const textBeside = (neighbour: LexicalNode | undefined, edgeText: string, isEdge: boolean) => {
+      if (neighbour) return $isStoredText(neighbour) ? neighbour.getTextContent() : "";
+      return isEdge ? edgeText : "";
+    };
+    const textBefore = textBeside(nodes[index - 1], edges.before, node === edges.firstLeaf);
+    const textAfter = textBeside(nodes[index + 1], edges.after, node === edges.lastLeaf);
+    return endsWithLoneSlash(textBefore) || startsWithLoneSlash(textAfter) ? [node] : [];
+  });
+}
+
+/**
+ * Removes unstorable text (see {@link removeUnstorableText}) from nodes about to be pasted or
+ * dropped, in place. Text in adjacent nodes is read as one string, so `a/` then `/b` is a `//`.
+ * Leaves alone an unmatched marker's glyph, decorators, display text (token or segmented text,
+ * such as a note caller) and the content of constructs the view hides. A text node left empty is
+ * removed: from `nodes` when it is listed there, and from its parent when it has one.
+ *
+ * Also removes an optional line break that a `/` touches, in the pasted text beside it or in the
+ * document's at the insertion point, since the file stores it as a bare `//`, which would make
+ * `///` there; it is reported as a `//`. The text is filtered first, so a break goes only against a
+ * `/` that stays, and filtered again after, since a break that goes can leave a `/` against a `/`.
+ * Two breaks together are kept.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @param nodes - The nodes to be inserted, in order.
+ * @param before - The document text just before the insertion point: its last character, or `//`
+ *   where it is an optional line break (as {@link $textAroundSelection} reads it).
+ * @param after - The document text just after the insertion point: its first character, or `//`
+ *   where it is an optional line break.
+ * @returns What was removed: each kind once, in the order first met.
+ */
+export function $removeUnstorableTextFromNodes(
+  nodes: LexicalNode[],
+  before?: string,
+  after?: string,
+): UnstorableCharacter[] {
+  const order = $documentOrder(nodes);
+  // Where each kind was first met: the place in document order of the node it was met in. Within
+  // one node, the kind met first is recorded first, and the sort below is stable.
+  const firstMet = new Map<UnstorableCharacter, number>();
+  const meet = (character: UnstorableCharacter, node: LexicalNode) => {
+    const at = order.get(node.getKey()) ?? order.size;
+    const known = firstMet.get(character);
+    if (known === undefined || at < known) firstMet.set(character, at);
+  };
+  // Each round removes at least one break, so this ends.
+  for (;;) {
+    $removeUnstorableTextFromRuns(nodes, before, after, meet);
+    const optbreaks = $optbreaksBesideSlash(nodes, {
+      firstLeaf: $leafAtInsertionEdge(nodes, "first"),
+      lastLeaf: $leafAtInsertionEdge(nodes, "last"),
+      before: before ?? "",
+      after: after ?? "",
+    });
+    if (optbreaks.length === 0) break;
+    for (const optbreak of optbreaks) {
+      meet("//", optbreak);
+      $removeFromNodes(nodes, optbreak);
+    }
+  }
+  return [...firstMet].sort(([, a], [, b]) => a - b).map(([character]) => character);
 }
 
 /** Whether `node` holds nothing to insert: an element with no leaf anywhere inside it. */
@@ -266,7 +363,7 @@ function $neighbourThroughMarks(
 
 /**
  * The stored-text character next to `point` on `side`, or `""` where there is none. An optional
- * line break beside it reads as the `/` the file stores for it.
+ * line break beside it reads as the `//` the file stores for it.
  */
 function $characterBeside(point: PointType, side: "before" | "after"): string {
   if (point.type !== "text") return "";
@@ -276,7 +373,7 @@ function $characterBeside(point: PointType, side: "before" | "after"): string {
   if (side === "before" && point.offset > 0) return text[point.offset - 1];
   if (side === "after" && point.offset < text.length) return text[point.offset];
   const sibling = $neighbourThroughMarks(node, side);
-  if ($isOptbreak(sibling)) return "/";
+  if ($isOptbreak(sibling)) return OPTBREAK_TEXT;
   if (!$isStoredText(sibling)) return "";
   const siblingText = sibling.getTextContent();
   return (side === "before" ? siblingText.at(-1) : siblingText[0]) ?? "";
@@ -285,7 +382,7 @@ function $characterBeside(point: PointType, side: "before" | "after"): string {
 /**
  * The document characters touching what `selection` would insert: the one before its start and
  * the one after its end. Read only from stored text, so `""` beside a glyph, a decorator or an
- * element point; an optional line break reads as the `/` the file stores for it.
+ * element point; an optional line break reads as the `//` the file stores for it.
  *
  * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
  * handler.

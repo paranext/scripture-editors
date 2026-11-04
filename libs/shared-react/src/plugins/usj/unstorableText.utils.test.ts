@@ -17,6 +17,7 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   ElementNode,
   LexicalEditor,
@@ -34,6 +35,7 @@ import {
   $createParaNode,
   $createTypedMarkNode,
   $createUnknownNode,
+  $isUnknownNode,
 } from "shared";
 
 describe("removeUnstorableText", () => {
@@ -229,6 +231,168 @@ describe("$removeUnstorableTextFromNodes — listed children", () => {
   });
 });
 
+/**
+ * The file stores an optional line break as a bare `//`, so one against a `/` saves `///`, which
+ * reads back differently. A pasted break goes there, and stays anywhere else.
+ */
+describe("$removeUnstorableTextFromNodes — optional line breaks", () => {
+  const $optbreak = () => $createUnknownNode("optbreak");
+  /** What is left of `nodes`: `|` for an optional break, `[…]` for an element, else the text. */
+  const shapeOf = (nodes: LexicalNode[]): string[] =>
+    nodes.map((node) =>
+      $isUnknownNode(node) && node.getTag() === "optbreak"
+        ? "|"
+        : $isElementNode(node)
+          ? `[${shapeOf(node.getChildren()).join(",")}]`
+          : node.getTextContent(),
+    );
+
+  async function filtered(
+    $nodes: () => LexicalNode[],
+    before?: string,
+    after?: string,
+  ): Promise<{ shape: string[]; removed: UnstorableCharacter[] }> {
+    const { editor } = await baseTestEnvironment();
+    let result: { shape: string[]; removed: UnstorableCharacter[] } | undefined;
+    await sutUpdate(editor, () => {
+      const nodes = $nodes();
+      const removed = $removeUnstorableTextFromNodes(nodes, before, after);
+      result = { shape: shapeOf(nodes), removed };
+    });
+    return result!;
+  }
+
+  it.each<[string, () => LexicalNode[], string | undefined, string | undefined, string[]]>([
+    ["after the document's `a/`", () => [$optbreak()], "a/", undefined, []],
+    ["before the document's `/b`", () => [$optbreak()], undefined, "/b", []],
+    [
+      "between pasted `x/` and `y`",
+      () => [$createTextNode("x/"), $optbreak(), $createTextNode("y")],
+      undefined,
+      undefined,
+      ["x/", "y"],
+    ],
+    [
+      "between pasted `x` and `/y`",
+      () => [$createTextNode("x"), $optbreak(), $createTextNode("/y")],
+      undefined,
+      undefined,
+      ["x", "/y"],
+    ],
+    [
+      "in a pasted paragraph, after the document's `/`",
+      () => [$createParaNode("p").append($optbreak(), $createTextNode("y"))],
+      "/",
+      undefined,
+      ["[y]"],
+    ],
+    [
+      "across an annotation mark from a pasted `/`",
+      () => [$createTypedMarkNode().append($createTextNode("x/")), $optbreak()],
+      undefined,
+      undefined,
+      ["[x/]"],
+    ],
+  ])(
+    "removes a pasted optional break %s, reporting `//`",
+    async (_, $nodes, before, after, shape) => {
+      expect(await filtered($nodes, before, after)).toEqual({ shape, removed: ["//"] });
+    },
+  );
+
+  it.each<[string, () => LexicalNode[], string | undefined, string | undefined, string[]]>([
+    [
+      "beside plain text",
+      () => [$createTextNode("x"), $optbreak(), $createTextNode("y")],
+      "a",
+      "b",
+      ["x", "|", "y"],
+    ],
+    ["at the insertion point, between plain text", () => [$optbreak()], "a", "b", ["|"]],
+    [
+      "beside another pasted break",
+      () => [$createTextNode("x"), $optbreak(), $optbreak(), $createTextNode("y")],
+      undefined,
+      undefined,
+      ["x", "|", "|", "y"],
+    ],
+    [
+      "at the end of a pasted paragraph that another follows",
+      () => [
+        $createParaNode("p").append($createTextNode("x"), $optbreak()),
+        $createParaNode("p").append($createTextNode("y")),
+      ],
+      undefined,
+      "/",
+      ["[x,|]", "[y]"],
+    ],
+    // The document reads an optional break beside the insertion point as the `//` it stores.
+    ["beside the document's break", () => [$optbreak()], "//", "//", ["|"]],
+    [
+      "across a character span's edge from a `/`",
+      () => [$createCharNode("nd").append($createTextNode("x/")), $optbreak()],
+      undefined,
+      undefined,
+      ["[x/]", "|"],
+    ],
+    [
+      "inside a character span, at the insertion point",
+      () => [$createCharNode("nd").append($optbreak(), $createTextNode("y"))],
+      "/",
+      undefined,
+      ["[|,y]"],
+    ],
+  ])("keeps a pasted optional break %s", async (_, $nodes, before, after, shape) => {
+    expect(await filtered($nodes, before, after)).toEqual({ shape, removed: [] });
+  });
+
+  it("keeps the content of a hidden construct the paste carries", async () => {
+    expect(
+      await filtered(() => [
+        $createUnknownNode("sidebar", "esb").append(
+          $createParaNode("p").append($createTextNode("x/"), $optbreak()),
+        ),
+      ]),
+    ).toEqual({ shape: ["[[x/,|]]"], removed: [] });
+  });
+
+  it("keeps a break that the removal of a pasted `//` leaves beside plain text", async () => {
+    expect(
+      await filtered(() => [$createTextNode("x//"), $optbreak(), $createTextNode("y")]),
+    ).toEqual({ shape: ["x", "|", "y"], removed: ["//"] });
+  });
+
+  it("then filters a pasted `/` that a removed break left against the document's `/`", async () => {
+    expect(await filtered(() => [$optbreak(), $createTextNode("/y")], "a/")).toEqual({
+      shape: ["y"],
+      removed: ["//"],
+    });
+  });
+
+  it("removes each of two breaks that a `/` reaches in turn", async () => {
+    expect(await filtered(() => [$optbreak(), $optbreak(), $createTextNode("y")], "/")).toEqual({
+      shape: ["y"],
+      removed: ["//"],
+    });
+  });
+
+  it("orders what it removed by where it was first met", async () => {
+    expect(await filtered(() => [$optbreak(), $createTextNode("a\\b")], "/")).toEqual({
+      shape: ["ab"],
+      removed: ["//", "\\"],
+    });
+    expect(await filtered(() => [$createTextNode("a\\b/"), $optbreak()])).toEqual({
+      shape: ["ab/"],
+      removed: ["\\", "//"],
+    });
+    for (const [text, removed] of [
+      ["a\\b//c", ["\\", "//"]],
+      ["a//b\\c", ["//", "\\"]],
+    ] as const)
+      expect(await filtered(() => [$createTextNode(text)])).toEqual({ shape: ["abc"], removed });
+  });
+});
+
 describe("$textAroundSelection", () => {
   it("reads one character either side of a caret in text", async () => {
     let text: TextNode;
@@ -332,7 +496,7 @@ describe("$textAroundSelection", () => {
     expect(around).toEqual({ before: "", after: "b" });
   });
 
-  it("reads an optional line break, which shows nothing, as the `/` the file stores", async () => {
+  it("reads an optional line break, which shows nothing, as the `//` the file stores", async () => {
     let before: TextNode;
     let after: TextNode;
     const { editor } = await baseTestEnvironment(() => {
@@ -349,8 +513,8 @@ describe("$textAroundSelection", () => {
       });
     };
 
-    expect(readAt(before!, 3)).toEqual({ before: "d", after: "/" });
-    expect(readAt(after!, 0)).toEqual({ before: "/", after: "o" });
+    expect(readAt(before!, 3)).toEqual({ before: "d", after: "//" });
+    expect(readAt(after!, 0)).toEqual({ before: "//", after: "o" });
   });
 });
 
