@@ -233,8 +233,16 @@ export function $restoreCanonicalMarkerText(node: MarkerNode): void {
  * constructor and every setter, so `__text` always reflects (marker, syntax, nested) — keeping
  * the cached text honest is therefore exactly the job of keeping `nested` honest, which
  * `$syncNestedGlyphs` (nestedGlyphs.utils.ts) does from tree position.
+ *
+ * Exported for readers of SERIALIZED glyphs (the marker-edit settle), whose `markerSyntax` is a
+ * plain string field that may be absent: they re-derive a glyph's text with this same writer, so
+ * the two spellings cannot drift.
  */
-function getMarkerText(marker: string, markerSyntax: MarkerSyntax, nested = false) {
+export function getMarkerText(
+  marker: string,
+  markerSyntax: MarkerSyntax | string | undefined,
+  nested = false,
+): string {
   // The self-closing form is a milestone terminator (`\*`); milestones never nest inside a char
   // span, so the `+` prefix does not apply to it.
   if (markerSyntax === "closing") return closingMarkerText(marker, nested);

@@ -42,9 +42,7 @@ import {
   $handleDropForStandardView,
   $setStandardViewDragData,
   getDataTransferPayload,
-  normalizePastedNbsp,
-  stripPastedBlockMarkers,
-  stripPastedChapterAndBookId,
+  normalizePastedText,
   getPastePayload,
 } from "./whitespaceDisplay.plugin.utils";
 import { registerNbspStandInFont } from "./nbspStandInFont";
@@ -445,9 +443,9 @@ function registerPasteNormalization(
         // below can introduce a line break, so a payload with none stays single-line through both
         // and the claim declines either way.
         if (!payload.text.includes("\n")) return false;
-        // Standard view: every pasted NBSP is normalized POSITIONALLY here, via the same
-        // `normalizePastedNbsp` the Standard-view external-paste handler uses
-        // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`, a
+        // Standard view: every pasted NBSP is normalized POSITIONALLY here, by the same
+        // `normalizePastedNbsp` the Standard-view external-paste handler uses (the last step of
+        // `normalizePastedText`, whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`, a
         // note's inter-child spacer) settles to a space exactly as it would outside a note, and
         // only genuine data survives, as the display spelling (`~` or `NBSP_STAND_IN`). Inserted
         // raw an NBSP is indistinguishable from a display-NBSP (a plain space in a run), so
@@ -463,18 +461,18 @@ function registerPasteNormalization(
         // anything: a payload the strip reduces to one line, or to nothing, is not a multi-line
         // paste, and is left to the Standard-view claim exactly as that line pasted on its own
         // would be — which, for nothing at all, keeps the selection.
-        const withoutChapterOrBookId = isStandardView
-          ? stripPastedChapterAndBookId(payload.text)
-          : payload.text;
+        //
         // Under structure protection a note, like anywhere else, gains no structure marker from a
-        // paste that it could not gain from typing.
-        const withoutStructure =
-          isStandardView && context.structureProtectionMode === "protected"
-            ? stripPastedBlockMarkers(withoutChapterOrBookId, context.getMarker)
-            : withoutChapterOrBookId;
+        // paste that it could not gain from typing. All three steps are the Standard-view
+        // handler's own pipeline (`normalizePastedText`), so the two cannot diverge.
         const noteText = isStandardView
-          ? normalizePastedNbsp(withoutStructure, getNbspSpelling(context.viewOptions))
-          : withoutStructure;
+          ? normalizePastedText(
+              payload.text,
+              context.structureProtectionMode === "protected",
+              context.getMarker,
+              getNbspSpelling(context.viewOptions),
+            )
+          : payload.text;
         if (noteText.includes("\n")) {
           const lines = noteText.split("\n");
           let outcome = $handlePasteLinesInNote(lines, context.getMarker);
@@ -561,7 +559,6 @@ function registerPasteNormalization(
         const lines = payload.text.split("\n");
         if (lines.length < 2) return false;
         if (!$isSelectionInParagraphCharStack()) return false;
-        const selection = $getSelection();
         // The one place the Standard-view handler declines is the one place this claim must decline
         // too. Both register at HIGH and this one is registered LATER within the same
         // `mergeRegister`, so a protected paste the Standard-view handler stands aside from
@@ -570,12 +567,8 @@ function registerPasteNormalization(
         // check the line replay below would `removeText()` and split the paragraph — deleting the
         // very verse marker or paragraph boundary structure protection had just refused to let a
         // paste replace.
-        if (
-          context.structureProtectionMode === "protected" &&
-          $isRangeSelection(selection) &&
-          $shouldBlockSelectionReplacement(selection)
-        )
-          return false;
+        if ($isRefusedByStructureProtection(context)) return false;
+        const selection = $getSelection();
         event?.preventDefault();
         if ($isRangeSelection(selection) && !selection.isCollapsed()) selection.removeText();
         lines.forEach((line, index) => {

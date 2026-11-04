@@ -18,6 +18,7 @@ import {
 import { useEffect } from "react";
 import {
   $arrivedTogetherFromClipboard,
+  $collapsedCaretOffsetIn,
   $hasAllSameCharAttributes,
   $isCharNode,
   $isMarkerNode,
@@ -452,13 +453,8 @@ function $keepRemainingNbsp(node: TextNode): void {
  * front of a placeholder that way is lost and the placeholder kept (`b~`).
  */
 function $placeholderIndex(node: TextNode, text: string): number | undefined {
-  const selection = $getSelection();
-  if (
-    $isRangeSelection(selection) &&
-    selection.isCollapsed() &&
-    selection.anchor.key === node.getKey()
-  ) {
-    const { offset } = selection.anchor;
+  const offset = $collapsedCaretOffsetIn(node);
+  if (offset !== undefined) {
     // Typed behind the placeholder: the caret ends at the text's end and the placeholder leads.
     if (offset === text.length && text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT)) return 0;
     // Typed in front of it: the placeholder is the byte right after the caret.

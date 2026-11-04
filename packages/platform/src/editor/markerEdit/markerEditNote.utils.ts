@@ -15,8 +15,8 @@ import {
   ElementNode,
   LexicalEditor,
   RangeSelection,
-  TextNode,
 } from "lexical";
+import { $insertAtTextOffset } from "./charFormatting.utils";
 import { LINE_LEADING_MARKER_REGEX } from "./markerName.pattern";
 import {
   $createCharNode,
@@ -282,12 +282,7 @@ function $startFpAtCaret(): boolean {
   // outer span's text after a nested span stayed on the wrong side of the break and the nested
   // styles were dropped entirely.
   if (textAnchor && !anchorIsNoteChild) {
-    if (offset <= 0) textAnchor.insertBefore(fp);
-    else if (offset >= size) textAnchor.insertAfter(fp);
-    else {
-      const [, tail] = textAnchor.splitText(offset) as [TextNode, TextNode];
-      tail.insertBefore(fp);
-    }
+    $insertAtTextOffset(textAnchor, offset, fp);
     // No `closeImplicitSpans`: the `\fp` is itself what ends an implicitly-closed note-content
     // span, so no closing marker is emitted for it.
     $liftOutOfCharStack(fp, { renderGlyphs: true });

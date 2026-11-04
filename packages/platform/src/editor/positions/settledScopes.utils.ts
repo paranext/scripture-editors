@@ -23,7 +23,6 @@ import {
   $subtreeNodesMatching,
   joinSerializedLeadingLineToPreviousParagraph,
   cutFragment,
-  serializedMarkerGlyphText,
   FragmentAccumulator,
   Tier2Context,
   withoutDroppedSentinels,
@@ -80,6 +79,7 @@ import {
   $isParaNode,
   $noteOpeningGlyphCount,
   ChapterNode,
+  getMarkerText,
   isSerializedNoteNode,
   ImpliedParaNode,
   LoggerBasic,
@@ -1007,7 +1007,7 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
     if (closer)
       renamedClosers.set(closer.getKey(), {
         live: closer.getTextContent(),
-        settled: serializedMarkerGlyphText(newMarker, "closing", closer.getNested()),
+        settled: getMarkerText(newMarker, "closing", closer.getNested()),
       });
   if (byFirstLiveKey.size === 0)
     return identityPrepared(context.tier2.viewOptions, context.tier2.logger, renamedClosers);

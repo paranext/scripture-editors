@@ -61,6 +61,19 @@ function $firstContentTextFrom(node: LexicalNode | null): TextNode | undefined {
 }
 
 /**
+ * Put `node` at `offset` in `text`: in front of it at its start, after it at its end, and between
+ * the two halves of a split anywhere else. The way a fresh node is parked at a caret before it is
+ * lifted out of the character-style stack (`$liftOutOfCharStack`).
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+export function $insertAtTextOffset(text: TextNode, offset: number, node: LexicalNode): void {
+  if (offset <= 0) text.insertBefore(node);
+  else if (offset >= text.getTextContentSize()) text.insertAfter(node);
+  else text.splitText(offset)[1].insertBefore(node);
+}
+
+/**
  * Strips character formatting from the current selection — the Ctrl+Space apply (PT9
  * `KeyPressEditHandler.HandleCtrlSpace`'s blank character style).
  *
@@ -92,12 +105,7 @@ export function $removeCharFormattingFromSelection(): boolean {
       // is a space belonging to no character style. Splitting only the innermost span left the
       // "unformatted" space still carrying every outer marker.
       const space = $createTextNode(" ");
-      if (offset <= 0) anchorNode.insertBefore(space);
-      else if (offset >= anchorNode.getTextContentSize()) anchorNode.insertAfter(space);
-      else {
-        const [left] = anchorNode.splitText(offset);
-        left.insertAfter(space);
-      }
+      $insertAtTextOffset(anchorNode, offset, space);
       $liftOutOfCharStack(space, { renderGlyphs: true, closeImplicitSpans: true });
       // PT9 (HandleCtrlSpace) inserts-and-clears exactly ONE space: when a space already sits
       // one character ahead it is REUSED as the unformatted separator rather than supplemented.
@@ -280,12 +288,7 @@ export function $breakAndLiftCharStack(point: PointType): CharStackBreak {
   const node = point.getNode();
   const offset = point.offset;
   if ($isTextNode(node)) {
-    if (offset <= 0) node.insertBefore(breakPoint);
-    else if (offset >= node.getTextContentSize()) node.insertAfter(breakPoint);
-    else {
-      const [, tail] = node.splitText(offset) as [TextNode, TextNode];
-      tail.insertBefore(breakPoint);
-    }
+    $insertAtTextOffset(node, offset, breakPoint);
   } else {
     // An ELEMENT point's offset is a CHILD INDEX, and a caret parked on a glyph belongs outside
     // it: both cut before the node the point names, or at the container's end when it names none.

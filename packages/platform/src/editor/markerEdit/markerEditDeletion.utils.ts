@@ -7,7 +7,7 @@
 import { $requestTier2ForNode } from "./tier2Rebuild.utils";
 import { MarkerEditContext } from "./markerEditTier1.utils";
 import { isParaKindMarker } from "./markerKind.utils";
-import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
+import { OPENER_NAME_REGEX } from "./markerName.pattern";
 import { $dfs } from "@lexical/utils";
 import {
   $createTextNode,
@@ -322,26 +322,22 @@ export function $prepareReplaceSelection(context: MarkerEditContext): void {
 }
 
 /**
- * A paragraph-marker OPENER literal at the very start of a text run: a backslash, an optional `+`,
- * a marker name, and then either the marker's own separator or the end of the run. End-of-run is
- * what makes `\b` — a blank-line marker, which carries no content at all — count, and the reason a
- * CLOSER cannot: `\zbold*` has a `*` where a separator or the run's end would have to be.
- */
-const LEADING_PARA_MARKER_LITERAL = new RegExp(
-  String.raw`^\\\+?([${ENGINE_MARKER_NAME_BYTES}]+)(?:[ \u00A0]|$)`,
-);
-
-/**
  * Whether `para`'s own text already opens with the paragraph marker it wants — the shape every
  * line of a multi-line paste has, since a whole-paragraph copy carries its paragraph's own marker
  * literal (`$selectionToUsfmText`, whitespaceDisplay.plugin.utils.ts).
  *
+ * The opener is read by {@link OPENER_NAME_REGEX}: a backslash, an optional `+`, a marker name, and
+ * then either the marker's own separator or the end of the run. End-of-run is what makes `\b` — a
+ * blank-line marker, which carries no content at all — count, and the reason a CLOSER cannot:
+ * `\zbold*` has a `*` where a separator or the run's end would have to be.
+ *
  * Unknown markers count as paragraph-kind, the same classification the rest of the engine applies
- * ({@link isParaKindMarker}), so a custom.sty `\zmyPara` is recognized as readily as `\q1`.
+ * ({@link isParaKindMarker}, which also reads past the `+`), so a custom.sty `\zmyPara` is
+ * recognized as readily as `\q1`.
  */
 function $suppliesOwnParaMarker(para: ParaNode, getMarkerFn: MarkerLookup): boolean {
-  const match = LEADING_PARA_MARKER_LITERAL.exec(para.getTextContent());
-  return !!match && isParaKindMarker(match[1], getMarkerFn);
+  const name = OPENER_NAME_REGEX.exec(para.getTextContent())?.[1];
+  return name !== undefined && isParaKindMarker(name, getMarkerFn);
 }
 
 /**

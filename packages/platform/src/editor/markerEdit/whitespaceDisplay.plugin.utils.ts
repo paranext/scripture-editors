@@ -654,6 +654,34 @@ export function stripPastedBlockMarkers(text: string, getMarker: MarkerLookup): 
 }
 
 /**
+ * The Standard-view paste byte pipeline, in its one order: `\c`/`\id` tokens dropped
+ * ({@link stripPastedChapterAndBookId}), then — in a structure-protected document — its structure
+ * markers ({@link stripPastedBlockMarkers}), then NBSPs normalized positionally
+ * ({@link normalizePastedNbsp}). Shared by every paste claim that puts body bytes into the document
+ * (`$insertPastedText`, the attribute-context paste's body branch, and the in-note line-break claim
+ * in `MarkerEditPlugin.tsx`), so the claims cannot diverge.
+ *
+ * @param text - The paste's resolved text.
+ * @param isStructureProtected - Whether the document is structure-protected.
+ * @param getMarker - The editor's stylesheet lookup, which says which pasted markers are structure.
+ * @param nbspSpelling - What a stored NBSP displays as (`getNbspSpelling`).
+ */
+export function normalizePastedText(
+  text: string,
+  isStructureProtected: boolean,
+  getMarker: MarkerLookup,
+  nbspSpelling: string,
+): string {
+  const withoutChapterOrBookId = stripPastedChapterAndBookId(text);
+  return normalizePastedNbsp(
+    isStructureProtected
+      ? stripPastedBlockMarkers(withoutChapterOrBookId, getMarker)
+      : withoutChapterOrBookId,
+    nbspSpelling,
+  );
+}
+
+/**
  * True when `node` is part of an attribute display run: a TextNode tagged textType "attribute"
  * (a char span's bare `|…` run, a verse's `\va`/`\vp` value, or a milestone's attribute text — all
  * three share this one tag), or `node` itself / one of its ancestors is an `AttributeRunNode` — the
@@ -778,12 +806,7 @@ function $insertPastedTextIntoAttributeContext(
         NBSP,
         nbspSpelling,
       )
-    : normalizePastedNbsp(
-        isStructureProtected
-          ? stripPastedBlockMarkers(stripPastedChapterAndBookId(text), getMarker)
-          : stripPastedChapterAndBookId(text),
-        nbspSpelling,
-      );
+    : normalizePastedText(text, isStructureProtected, getMarker, nbspSpelling);
   // Nothing survived the strip, so there is nothing to replace the selection with — see
   // `$handlePasteForStandardView`.
   if (resolved) selection.insertText(resolved.replace(/\n/g, " "));
@@ -1044,13 +1067,7 @@ export function $insertPastedText(
   getMarker: MarkerLookup,
   nbspSpelling: string,
 ): void {
-  const withoutChapterOrBookId = stripPastedChapterAndBookId(text);
-  const normalized = normalizePastedNbsp(
-    isStructureProtected
-      ? stripPastedBlockMarkers(withoutChapterOrBookId, getMarker)
-      : withoutChapterOrBookId,
-    nbspSpelling,
-  );
+  const normalized = normalizePastedText(text, isStructureProtected, getMarker, nbspSpelling);
   if (!normalized) return;
   const lines = normalized.split("\n");
   // A protected document never gains a paragraph from a paste: each newline becomes a single space

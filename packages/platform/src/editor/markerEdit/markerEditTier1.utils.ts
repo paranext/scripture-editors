@@ -29,12 +29,15 @@ import {
   $isRangeSelection,
   $isRootOrShadowRoot,
   $isTextNode,
+  ElementNode,
   LexicalNode,
   NodeKey,
   TextNode,
 } from "lexical";
 import {
   $caretHoldsRunSite,
+  $collapsedCaret,
+  $collapsedCaretOffsetIn,
   $createMarkerNode,
   $hasRenamingSeparatorGap,
   $isAttributeRunNode,
@@ -48,10 +51,6 @@ import {
   $isNoteNode,
   $isParaNode,
   $isVerseNode,
-  $chapterAltnumberRunPieces,
-  $chapterPubnumberRunPieces,
-  $isChapterNode,
-  $milestoneAttributeRunPieces,
   $noteCategoryRunPieces,
   $noteOpeningGlyphCount,
   $openerSeparatorGapFollowingBytes,
@@ -65,7 +64,6 @@ import {
   $runNeedsOnlyWrapMigration,
   $syncDisplayRun,
   $syncOpenerSeparators,
-  $verseAttributeRunPieces,
   AttributeRunNode,
   BookNode,
   ChapterNode,
@@ -295,12 +293,10 @@ function markerNameSpan(text: string): { start: number; end: number } | undefine
  * the glyph — the offset is measured against the bytes the user is looking at.
  */
 function $caretOffsetInMarkerName(node: MarkerNode): number | undefined {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
-  if (selection.anchor.key !== node.getKey()) return undefined;
+  const offset = $collapsedCaretOffsetIn(node);
+  if (offset === undefined) return undefined;
   const span = markerNameSpan(node.getTextContent());
   if (!span) return undefined;
-  const { offset } = selection.anchor;
   if (offset < span.start || offset > span.end) return undefined;
   return offset - span.start;
 }
@@ -317,9 +313,7 @@ function $caretOffsetInMarkerName(node: MarkerNode): number | undefined {
  * Mutating: call inside `editor.update()`.
  */
 function $moveCaretPastMarker(node: MarkerNode): void {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
-  if (selection.anchor.key !== node.getKey()) return;
+  if ($collapsedCaretOffsetIn(node) === undefined) return;
   const next = node.getNextSibling();
   // A NOTE opener's next sibling is the editable caller text (space + caller + NBSP) — a control
   // slot, not content: a caret anywhere in that node routes the next keystroke into the caller
@@ -467,11 +461,7 @@ export function $applyOpenerRename(
       return $requestTier2ForNode(node, context);
     }
     parent.setMarker(clean);
-    const closer = parent
-      .getChildren()
-      .filter($isMarkerNode)
-      .filter((child) => child.getMarkerSyntax() === "closing" && child.getMarker() === oldMarker)
-      .at(-1);
+    const closer = $lastClosingGlyphNamed(parent, oldMarker);
     if (closer) {
       // A nested span's closer is `\+marker*`; clamp to the nested-aware length so the `+` is
       // counted (`setMarker` below re-derives the closer text from its own stored nesting).
@@ -533,13 +523,22 @@ export function $pendingCharOpenerRename(
   const newMarker = typedMarker.replace(/^\+/, "");
   if (!$renamesTheMarkerName(oldMarker, newMarker)) return undefined;
   if ($hasRenamingSeparatorGap(char)) return undefined;
-  return { char, glyph: node, closer: $charCloserOf(char, oldMarker), newMarker };
+  return { char, glyph: node, closer: $lastClosingGlyphNamed(char, oldMarker), newMarker };
 }
 
-/** The LAST closing glyph among `char`'s children named `marker` — the closer an opener rename
- * rewrites. */
-function $charCloserOf(char: CharNode, marker: string): MarkerNode | undefined {
-  return char
+/**
+ * The LAST closing glyph among `parent`'s children named `marker` — the closer an opener rename
+ * rewrites (a char span's or a note's). Shared by the mutating rename ({@link $applyOpenerRename})
+ * and the read-only settle's mirror of it (`$applySettledNoteGlyphRename`, virtualSettle.utils.ts),
+ * so the two always rewrite the same closer.
+ *
+ * Read-only: call inside a read or an update.
+ */
+export function $lastClosingGlyphNamed(
+  parent: ElementNode,
+  marker: string,
+): MarkerNode | undefined {
+  return parent
     .getChildren()
     .filter($isMarkerNode)
     .filter((child) => child.getMarkerSyntax() === "closing" && child.getMarker() === marker)
@@ -637,13 +636,7 @@ function $moveOuterGlyphSpaceOut(glyph: MarkerNode): boolean {
     glyph.setTextContent(text);
     return false;
   }
-  const selection = $getSelection();
-  const caret =
-    $isRangeSelection(selection) &&
-    selection.isCollapsed() &&
-    selection.anchor.key === glyph.getKey()
-      ? selection.anchor.offset
-      : undefined;
+  const caret = $collapsedCaretOffsetIn(glyph);
   if (isCloser) {
     holder.setTextContent(space + holder.getTextContent());
     if (caret !== undefined && caret > kept.length) {
@@ -756,18 +749,7 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
       text.startsWith(canonical) &&
       text.length > canonical.length
     ) {
-      const selection = $getSelection();
-      const caretOffset =
-        $isRangeSelection(selection) &&
-        selection.isCollapsed() &&
-        selection.anchor.key === node.getKey() &&
-        selection.anchor.offset > canonical.length
-          ? selection.anchor.offset - canonical.length
-          : undefined;
-      const rest = $createTextNode(text.slice(canonical.length));
-      node.setTextContent(canonical);
-      parent.insertAfter(rest);
-      if (caretOffset !== undefined) rest.select(caretOffset, caretOffset);
+      $splitOffBytesPast(node, canonical, parent);
       context.pendingKeys.delete(node.getKey());
       return;
     }
@@ -816,19 +798,27 @@ function $splitTextTypedAfterMilestone(glyph: MarkerNode): boolean {
   if ($isAttributeRunNode(wrapper) && !wrapper.getLastChild()?.is(glyph)) return false;
   const block = runEnd.getParent();
   if (!block || $isRootOrShadowRoot(block)) return false;
-  const selection = $getSelection();
-  const caretOffset =
-    $isRangeSelection(selection) &&
-    selection.isCollapsed() &&
-    selection.anchor.key === glyph.getKey() &&
-    selection.anchor.offset > canonical.length
-      ? selection.anchor.offset - canonical.length
-      : undefined;
-  const rest = $createTextNode(text.slice(canonical.length));
-  glyph.setTextContent(canonical);
-  runEnd.insertAfter(rest);
-  if (caretOffset !== undefined) rest.select(caretOffset, caretOffset);
+  $splitOffBytesPast(glyph, canonical, runEnd);
   return true;
+}
+
+/**
+ * Split the bytes typed into `glyph` past its `canonical` spelling off into a plain text right
+ * after `after` (the span, note or milestone run the glyph ends), resetting the glyph to
+ * `canonical`. A caret past `canonical` in the glyph moves with its byte; any other caret is left
+ * where it is. The callers decide whether the split applies
+ * ({@link $markerNodeTransform}'s closer arm, {@link $splitTextTypedAfterMilestone}).
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $splitOffBytesPast(glyph: MarkerNode, canonical: string, after: LexicalNode): void {
+  const caret = $collapsedCaretOffsetIn(glyph);
+  const caretOffset =
+    caret !== undefined && caret > canonical.length ? caret - canonical.length : undefined;
+  const rest = $createTextNode(glyph.getTextContent().slice(canonical.length));
+  glyph.setTextContent(canonical);
+  after.insertAfter(rest);
+  if (caretOffset !== undefined) rest.select(caretOffset, caretOffset);
 }
 
 /**
@@ -936,12 +926,7 @@ function $insertRestAfterGlyph(
   caretOffsetInRest: number | undefined,
 ): TextNode {
   const next = node.getNextSibling();
-  if (
-    $isTextNode(next) &&
-    next.getType() === TextNode.getType() &&
-    next.getMode() === "normal" &&
-    $getState(next, textTypeState) !== "attribute"
-  ) {
+  if ($isPlainContentText(next)) {
     next.setTextContent(rest + next.getTextContent());
     if (caretOffsetInRest !== undefined) next.select(caretOffsetInRest, caretOffsetInRest);
     return next;
@@ -1007,13 +992,7 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
       // just typed: a caret inside the rest maps to its same character in the extracted node;
       // a caret elsewhere (or none — a programmatic edit) is left untouched.
       const [, prefix, numberToken, rest] = markerRest;
-      const selection = $getSelection();
-      const caretOffset =
-        $isRangeSelection(selection) &&
-        selection.isCollapsed() &&
-        selection.anchor.key === node.getKey()
-          ? selection.anchor.offset
-          : undefined;
+      const caretOffset = $collapsedCaretOffsetIn(node);
       context.pendingKeys.delete(node.getKey());
       node.setNumber(numberToken); // PT9 GetNextWord: whole word, valid or not
       node.setTextContent(getVisibleOpenMarkerText("v", numberToken));
@@ -1070,13 +1049,7 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
   // text and the last space is the glyph's. That run stays with the glyph rather than moving into
   // the text, where the next keystroke would land in front of it (`t ext`). Whitespace in a
   // separator run never reaches the file, so nothing the file gets is lost.
-  const selection = $getSelection();
-  const caretOffset =
-    $isRangeSelection(selection) &&
-    selection.isCollapsed() &&
-    selection.anchor.key === node.getKey()
-      ? selection.anchor.offset
-      : undefined;
+  const caretOffset = $collapsedCaretOffsetIn(node);
   const restText = rest ?? "";
   const restStart = text.length - restText.length;
   const caretInRest =
@@ -1212,15 +1185,8 @@ export function $moveLeadingSpaceOntoLeadingAttribute(node: TextNode): boolean {
   const isProtectedCaller =
     $isTextNode(previous) && previous.getMode() === "token" && !!$noteOfCallerText(previous);
   if (!$isTextNode(previous) || !($isVerseNode(previous) || isProtectedCaller)) return false;
-  const selection = $getSelection();
-  if (
-    !$isRangeSelection(selection) ||
-    !selection.isCollapsed() ||
-    selection.anchor.key !== node.getKey() ||
-    selection.anchor.offset > space.length
-  )
-    return false;
-  const caret = selection.anchor.offset;
+  const caret = $collapsedCaretOffsetIn(node);
+  if (caret === undefined || caret > space.length) return false;
   const rest = text.slice(space.length);
   const end = previous.getTextContentSize();
   if (previous.getMode() === "token") previous.select(end, end);
@@ -1247,13 +1213,7 @@ function $retagNoteCaller(node: TextNode, note: NoteNode, word: string, rest: st
   const text = node.getTextContent();
   const restStart = text.length - rest.length;
   const leadingRun = /^[ \u00A0]*/.exec(text)?.[0].length ?? 0;
-  const selection = $getSelection();
-  const caret =
-    $isRangeSelection(selection) &&
-    selection.isCollapsed() &&
-    selection.anchor.key === node.getKey()
-      ? selection.anchor.offset
-      : undefined;
+  const caret = $collapsedCaretOffsetIn(node);
   if (note.getCaller() !== word) note.setCaller(word); // PT9 GetNextWord: whole word, valid or not
   node.setTextContent(getEditableCallerText(word));
   const content = rest ? $prependNoteContent(note, node, rest.replaceAll(NBSP, " ")) : undefined;
@@ -1284,10 +1244,8 @@ function $retagNoteCaller(node: TextNode, note: NoteNode, word: string, rest: st
  * @returns Whether the bytes moved.
  */
 function $movePushedNameIntoNoteGlyph(callerNode: TextNode, caller: string): boolean {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const { anchor } = selection;
-  if (anchor.key !== callerNode.getKey() || anchor.type !== "text") return false;
+  const anchor = $collapsedCaret();
+  if (anchor?.key !== callerNode.getKey() || anchor.type !== "text") return false;
   const text = callerNode.getTextContent();
   const pushed = text.slice(0, anchor.offset);
   if (text.slice(anchor.offset) !== getEditableCallerText(caller)) return false;
@@ -1316,11 +1274,8 @@ function $movePushedNameIntoNoteGlyph(callerNode: TextNode, caller: string): boo
 function $moveNoteGlyphTailToCaller(glyph: MarkerNode): boolean {
   const note = glyph.getParent();
   if (!$isNoteNode(note) || note.getIsCollapsed() !== false) return false;
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   const text = glyph.getTextContent();
-  const { anchor } = selection;
-  if (anchor.key !== glyph.getKey() || anchor.offset !== text.length) return false;
+  if ($collapsedCaretOffsetIn(glyph) !== text.length) return false;
   const spelled = openingMarkerText(glyph.getMarker());
   const tail = text.slice(spelled.length);
   if (!text.startsWith(spelled) || !/^[|\\\s]+$/.test(tail)) return false;
@@ -1360,13 +1315,7 @@ function $settleNoteCallerText(node: TextNode, note: NoteNode): void {
   const text = node.getTextContent();
   const { start: movedStart } = typedCallerRange(text, caller);
   const moved = typedCallerBytes(text, caller);
-  const selection = $getSelection();
-  const caret =
-    $isRangeSelection(selection) &&
-    selection.isCollapsed() &&
-    selection.anchor.key === node.getKey()
-      ? selection.anchor.offset
-      : undefined;
+  const caret = $collapsedCaretOffsetIn(node);
   node.setTextContent(getEditableCallerText(caller));
   const content = moved ? $prependNoteContent(note, node, moved) : undefined;
   if (caret === undefined) return;
@@ -1425,13 +1374,7 @@ function $noteContentStart(note: NoteNode, callerNode: TextNode): LexicalNode | 
 
 /** Whether `node` is plain content text a typed byte can join. */
 function $isPlainNoteText(node: LexicalNode | null): node is TextNode {
-  return (
-    $isTextNode(node) &&
-    node.getType() === TextNode.getType() &&
-    node.getMode() === "normal" &&
-    !node.isUnmergeable() &&
-    $getState(node, textTypeState) !== "attribute"
-  );
+  return $isPlainContentText(node) && !node.isUnmergeable();
 }
 
 /** Put `bytes` at the start of the note's content — joining a plain text that starts it, or as
@@ -1599,35 +1542,17 @@ export function $chapterNodeTransform(node: ChapterNode): void {
  * and/or `\vp` wrapper, a milestone's single wrapper, a note's `\cat` wrapper, or a chapter's
  * `\ca`/`\cp` wrappers) — every piece of that wrapper's run was deleted, leaving a transient
  * husk with nothing left to display (see {@link AttributeRunNode}'s own doc comment). A verse or
- * a chapter can carry up to two independent husks; a milestone or note at most one.
+ * a chapter can carry up to two independent husks; a milestone or note at most one. Found through
+ * the registry scanner of each kind that writes its run into a wrapper (`byteFormat.writer` is
+ * `"wrapper"`, the only kinds that can leave a husk), in registry order, so a new wrapper-bearing
+ * kind is covered as soon as it is registered and no other kind's scanner runs for nothing.
  */
 function $emptyAttributeRunWrappers(node: LexicalNode): AttributeRunNode[] {
-  if ($isMilestoneNode(node)) {
-    const { wrapper } = $milestoneAttributeRunPieces(node);
+  return displayRunDescriptors.flatMap((descriptor) => {
+    if (descriptor.byteFormat.writer !== "wrapper" || !descriptor.ownerPredicate(node)) return [];
+    const { wrapper } = descriptor.scanPieces(node);
     return wrapper && wrapper.getChildrenSize() === 0 ? [wrapper] : [];
-  }
-  if ($isNoteNode(node)) {
-    const { wrapper } = $noteCategoryRunPieces(node);
-    return wrapper && wrapper.getChildrenSize() === 0 ? [wrapper] : [];
-  }
-  if ($isChapterNode(node)) {
-    const husks: AttributeRunNode[] = [];
-    const ca = $chapterAltnumberRunPieces(node);
-    if (ca.wrapper && ca.wrapper.getChildrenSize() === 0) husks.push(ca.wrapper);
-    const cp = $chapterPubnumberRunPieces(node);
-    if (cp.wrapper && cp.wrapper.getChildrenSize() === 0) husks.push(cp.wrapper);
-    return husks;
-  }
-  if ($isVerseNode(node)) {
-    const husks: AttributeRunNode[] = [];
-    const vaPieces = $verseAttributeRunPieces(node, "va");
-    if (vaPieces.wrapper && vaPieces.wrapper.getChildrenSize() === 0) husks.push(vaPieces.wrapper);
-    const afterVa = vaPieces.wrapper ?? vaPieces.closer ?? node;
-    const vpPieces = $verseAttributeRunPieces(afterVa, "vp");
-    if (vpPieces.wrapper && vpPieces.wrapper.getChildrenSize() === 0) husks.push(vpPieces.wrapper);
-    return husks;
-  }
-  return [];
+  });
 }
 
 /**
@@ -1825,7 +1750,7 @@ export function $settlePendedDisplayOwner(
 /** Whether `node` is ordinary plain content text — the kind a mid-typing literal run is made of:
  * exact TextNode (glyph subclasses excluded), normal mode (the token para-prefix separator
  * excluded), and not an attribute-run value. */
-function $isPlainContentText(node: LexicalNode): node is TextNode {
+function $isPlainContentText(node: LexicalNode | null | undefined): node is TextNode {
   return (
     $isTextNode(node) &&
     node.getType() === TextNode.getType() &&

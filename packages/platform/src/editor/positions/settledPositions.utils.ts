@@ -21,6 +21,7 @@ import {
   $buildNoteFragment,
   $caretSpanByteAnchor,
   $isClosingMarkerSpan,
+  $isWithin,
   $pointAfterClosingSpan,
   $resolveFragmentByteAnchor,
   CaretByteAnchor,
@@ -1140,13 +1141,6 @@ function $renamedCloserLocation(
     };
   }
   return undefined;
-}
-
-/** Whether `node` is one of `scope` or inside one. */
-function $isWithin(node: LexicalNode, scope: readonly LexicalNode[]): boolean {
-  for (let current: LexicalNode | null = node; current; current = current.getParent())
-    if (scope.some((member) => member.is(current))) return true;
-  return false;
 }
 
 /** Every caret position in front of `node`'s `offset`, nearest first: the earlier offsets of a

@@ -206,11 +206,12 @@ function flagGlyphs(
 }
 
 /**
- * `contextMarker` is the enclosing paragraph's or note's marker, or `undefined` where PT9 finds
- * neither (the `\id` line) and so checks nothing but whether the marker is known.
+ * Flag a char span (or a verse, checked as marker `v`) that is unknown, or invalid under
+ * `contextMarker`. `contextMarker` is the enclosing paragraph's or note's marker, or `undefined`
+ * where PT9 finds neither (the `\id` line) and so checks nothing but whether the marker is known.
  */
 function checkChar(
-  node: ElementNode,
+  node: LexicalNode,
   marker: string,
   contextMarker: string | undefined,
   styleInfo: StyleInfo,
@@ -241,15 +242,7 @@ function $validateInline(
       // Nested chars keep validating against the PARA/NOTE marker (PT9 ancestor::para[1]).
       $validateInline(child, contextMarker, styleInfo, out, insideXq || marker === "xq");
     } else if ($isSomeVerseNode(child)) {
-      if (insideXq) continue;
-      const entry = getMarkerStyleInfo(styleInfo, "v");
-      if (!entry) out.set(child.getKey(), "unknown");
-      else if (
-        contextMarker !== undefined &&
-        (entry.occursUnder ?? []).length > 0 &&
-        !(entry.occursUnder ?? []).includes(contextMarker)
-      )
-        out.set(child.getKey(), "invalid");
+      if (!insideXq) checkChar(child, "v", contextMarker, styleInfo, out);
     } else if ($isNoteNode(child)) {
       // The note element itself is not context-validated (PT9 excludes //note);
       // its content validates against the NOTE's marker.

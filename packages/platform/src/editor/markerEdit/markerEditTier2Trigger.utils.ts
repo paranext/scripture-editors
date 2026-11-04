@@ -40,19 +40,12 @@ import {
   $noteOfCallerText,
   MarkerEditContext,
 } from "./markerEditTier1.utils";
-import {
-  $getRoot,
-  $getSelection,
-  $getState,
-  $isElementNode,
-  $isRangeSelection,
-  $isTextNode,
-  LexicalNode,
-  TextNode,
-} from "lexical";
+import { $getRoot, $getState, $isElementNode, $isTextNode, LexicalNode, TextNode } from "lexical";
 import {
   $caretHoldsRunSite,
   $charClosingGlyph,
+  $collapsedCaret,
+  $collapsedCaretOffsetIn,
   $hasUnsettledSeparatorGap,
   $isAttributeRunNode,
   $isCanonicalMarkerNode,
@@ -157,10 +150,8 @@ function $spanOfContentText(node: LexicalNode): CharNode | undefined {
  * @returns Whether the bytes moved.
  */
 function $movePushedNameIntoGlyph(node: TextNode, span: CharNode): boolean {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const { anchor } = selection;
-  if (anchor.key !== node.getKey() || anchor.type !== "text") return false;
+  const anchor = $collapsedCaret();
+  if (anchor?.key !== node.getKey() || anchor.type !== "text") return false;
   const glyph = span.getFirstChild();
   if (!$isMarkerNode(glyph) || glyph.getMarkerSyntax() !== "opening") return false;
   let afterGlyph = glyph.getNextSibling();
@@ -328,13 +319,8 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
   // been "just typed". Non-anchor nodes (paste normalization, programmatic edits, remote
   // deltas) keep the whole-text check; an unterminated run left before the caret still resolves
   // via Enter/blur/caret departure.
-  const selection = $getSelection();
-  const terminationText =
-    $isRangeSelection(selection) &&
-    selection.isCollapsed() &&
-    selection.anchor.key === node.getKey()
-      ? text.slice(0, selection.anchor.offset)
-      : text;
+  const caret = $collapsedCaretOffsetIn(node);
+  const terminationText = caret !== undefined ? text.slice(0, caret) : text;
   if (TERMINATED_MARKER_IN_TEXT_REGEX.test(terminationText)) {
     // A milestone rebuild that EJECTS content waits for the settle. Every other terminated marker
     // takes effect where it stands, which is why the immediate arm exists — but ejection MOVES
@@ -525,8 +511,9 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
       // the owner's grace pre-pass, so a caret sitting IN the husk (where deleting a run's last
       // byte leaves it) defers it to the caret's departure. Pending is right either way — it is the
       // departure settle this scan exists to arm. That arm is
-      // keyed off the OWNING verse/milestone, not the wrapper itself ($emptyAttributeRunWrappers
-      // only recognizes a VerseNode/MilestoneNode), so the owner — found by `$ownerOfRunPiece`
+      // keyed off the OWNING verse/milestone/note/chapter, not the wrapper itself
+      // ($emptyAttributeRunWrappers finds a husk only through its owner's display-run descriptor),
+      // so the owner — found by `$ownerOfRunPiece`
       // (shared's displayRunOwner.utils.ts), the same walk MarkerEditPlugin's live
       // AttributeRunNode transform delegates to — is what gets pended here, not the wrapper's own
       // key. Its verse/milestone descriptors' walk-back recognizes this shape directly, and

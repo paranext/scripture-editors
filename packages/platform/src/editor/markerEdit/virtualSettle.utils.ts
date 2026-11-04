@@ -33,6 +33,7 @@ import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
 import { TransientInput } from "../editor.model";
 import { BARE_OPENER_REGEX, UNTERMINATED_MARKER_TAIL } from "./markerName.pattern";
 import {
+  $lastClosingGlyphNamed,
   $pendingCharOpenerRename,
   $unknownSplitRejoinScope,
   CharOpenerRename,
@@ -59,7 +60,9 @@ import {
   $opensNamelessParagraph,
   $settleScopeForNode,
   $signatureOf,
+  $snapshotVerseSids,
   $subtreeKeys,
+  carryVerseSids,
   countSentinels,
   countSerializedSentinels,
   cutFragment,
@@ -68,7 +71,6 @@ import {
   FragmentSpan,
   joinSerializedLeadingLineToPreviousParagraph,
   serializedChildren,
-  serializedMarkerGlyphText,
   serializedSignatureOf,
   serializedText,
   serializedType,
@@ -107,10 +109,10 @@ import {
   $isNoteNode,
   $isParaNode,
   $isUnknownNode,
-  $isVerseNode,
   BookNode,
   ChapterNode,
   CharNode,
+  getMarkerText,
   MarkerLookup,
   MarkerNode,
   isSerializedCaretHost,
@@ -618,13 +620,16 @@ export function $settledParaScope(
   // content, which is exactly what this mirror exists to prevent. Pair the old and new verses
   // positionally in document order and copy the old sid wherever the verse NUMBER is unchanged.
   // A preserved (sentinel) verse re-serializes with its own sid, so the copy is a no-op for it,
-  // and a renumbered verse gets no sid synthesized — both matching the mutating side.
-  const oldVerseSids = $collectLiveVerseSids(paras);
+  // and a renumbered verse gets no sid synthesized — both matching the mutating side. An undefined
+  // sid is not written, so no explicit `sid: undefined` key lands in the JSON.
   const newVerses = collectSerializedVerses(rebuilt);
-  for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
-    if (oldVerseSids[i].sid !== undefined && newVerses[i].number === oldVerseSids[i].number)
-      newVerses[i].sid = oldVerseSids[i].sid;
-  }
+  carryVerseSids(
+    $snapshotVerseSids(paras),
+    newVerses.map((verse) => verse.number),
+    (index, sid) => {
+      if (sid !== undefined) newVerses[index].sid = sid;
+    },
+  );
   // Annotation marks, mirroring `$rebuildParas`' carry.
   const carried = $carryMarksIntoSerialized(
     paras,
@@ -669,20 +674,6 @@ function spaceVersesAfterChars(nodes: SerializedLexicalNode[]): SerializedLexica
     index += 1;
   }
   return nodes;
-}
-
-/**
- * Live-side verse (number, sid) pairs in document order — this settle's half of the snapshot
- * `$rebuildParas` takes before its own splice for the sid carry-over.
- */
-function $collectLiveVerseSids(nodes: LexicalNode[]): { number: string; sid?: string }[] {
-  const out: { number: string; sid?: string }[] = [];
-  const visit = (node: LexicalNode): void => {
-    if ($isVerseNode(node)) out.push({ number: node.getNumber(), sid: node.getSid() });
-    else if ($isElementNode(node)) node.getChildren().forEach(visit);
-  };
-  nodes.forEach(visit);
-  return out;
 }
 
 /** Serialized verse nodes in document order — the JSON-side half of the same pairing. */
@@ -983,7 +974,7 @@ function rewriteSettledGlyphMarker(json: SerializedLexicalNode, marker: string):
     text?: string;
   };
   glyph.marker = marker;
-  glyph.text = serializedMarkerGlyphText(marker, glyph.markerSyntax, glyph.nested);
+  glyph.text = getMarkerText(marker, glyph.markerSyntax, glyph.nested);
 }
 
 /**
@@ -1022,14 +1013,10 @@ export function $applySettledNoteGlyphRename(
   const glyphSite = sites.get(glyph.getKey());
   if (glyphSite) rewriteSettledGlyphMarker(glyphSite.node, newMarker);
 
-  // Mirrors $applyOpenerRename's own closer lookup exactly: the LAST closing-syntax MarkerNode
-  // child whose marker still matches the opener's OLD marker. An unclosed note (no closing glyph
-  // at all) simply has no match here, same as the real branch's own `if (closer)` no-op.
-  const closer = note
-    .getChildren()
-    .filter($isMarkerNode)
-    .filter((child) => child.getMarkerSyntax() === "closing" && child.getMarker() === oldMarker)
-    .at(-1);
+  // $applyOpenerRename's own closer lookup: the LAST closing-syntax MarkerNode child whose marker
+  // still matches the opener's OLD marker. An unclosed note (no closing glyph at all) simply has
+  // no match here, same as the real branch's own `if (closer)` no-op.
+  const closer = $lastClosingGlyphNamed(note, oldMarker);
   const closerSite = closer && sites.get(closer.getKey());
   if (closerSite) rewriteSettledGlyphMarker(closerSite.node, newMarker);
 }
@@ -1130,7 +1117,7 @@ export function $fragmentWithCharOpenerRenames(
       result = replaceSpanBytes(
         result,
         closer.getKey(),
-        toFragmentText(serializedMarkerGlyphText(newMarker, "closing", closer.getNested())),
+        toFragmentText(getMarkerText(newMarker, "closing", closer.getNested())),
       );
   }
   return result;
@@ -1244,12 +1231,14 @@ function $settledBookLine(
   // Sid carry-over, mirroring `$rebuildBook`/`$settledParaScope` — see the latter's own comment
   // for the rationale (the tokenizer never derives a sid from visible bytes, so without this a
   // `getUsj()` taken mid-pend disagrees with `commitPendingMarkerEdits()` then `getUsj()`).
-  const oldVerseSids = $collectLiveVerseSids([...contentNodes, ...trailingParas]);
   const newVerses = collectSerializedVerses([...rebuilt, ...followingBlocks]);
-  for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
-    if (oldVerseSids[i].sid !== undefined && newVerses[i].number === oldVerseSids[i].number)
-      newVerses[i].sid = oldVerseSids[i].sid;
-  }
+  carryVerseSids(
+    $snapshotVerseSids([...contentNodes, ...trailingParas]),
+    newVerses.map((verse) => verse.number),
+    (index, sid) => {
+      if (sid !== undefined) newVerses[index].sid = sid;
+    },
+  );
   // Annotation marks, mirroring `$rebuildBook`'s carry: the line's content is carried inside a
   // copy of the book, with the following blocks after it, so its bytes read back as the line's.
   const lineHolder: SerializedBookNode = { ...book.exportJSON(), children: rebuilt };

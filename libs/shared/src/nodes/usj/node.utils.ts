@@ -419,6 +419,14 @@ export function $collapsedCaret(): PointType | undefined {
   return $isRangeSelection(selection) && selection.isCollapsed() ? selection.anchor : undefined;
 }
 
+/** The caret's offset in `node`: the {@link $collapsedCaret}'s offset when it is anchored on
+ * `node`, else undefined.
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update. */
+export function $collapsedCaretOffsetIn(node: LexicalNode): number | undefined {
+  const caret = $collapsedCaret();
+  return caret?.key === node.getKey() ? caret.offset : undefined;
+}
+
 /**
  * Type guard to check if a node is para-like. Para-like nodes have an OT length of 1 that is
  * counted on its close (rather than its open).

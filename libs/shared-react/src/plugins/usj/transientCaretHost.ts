@@ -24,6 +24,7 @@ import {
 import { useCallback, useEffect, useRef } from "react";
 import {
   $caretHostAtBoundary,
+  $collapsedCaretOffsetIn,
   $createCaretHostNode,
   $isCaretHost,
   $isCursorPlaceholderOnlyText,
@@ -121,13 +122,7 @@ function $removeHostPlaceholder(node: TextNode): void {
   const previous = $getPreviousSelection();
   if (!$isRangeSelection(previous) || !previous.isCollapsed()) return;
   const text = node.getTextContent();
-  const selection = $getSelection();
-  const caretOffset =
-    $isRangeSelection(selection) &&
-    selection.isCollapsed() &&
-    selection.anchor.key === node.getKey()
-      ? selection.anchor.offset
-      : undefined;
+  const caretOffset = $collapsedCaretOffsetIn(node);
   let index: number | undefined;
   // From offset 0 the key is not checked: a placeholder right at the caret is the host's own, and
   // a caret that arrived from another node has a previous anchor elsewhere.

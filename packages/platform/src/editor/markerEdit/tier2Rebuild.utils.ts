@@ -107,13 +107,12 @@ import {
   $displayAnnotationsOf,
   $wrapSelectionInTypedMarkNode,
   ATTRIBUTE_NBSP_SPELLING,
-  closingMarkerText,
   getDisplayAnnotationRegistration,
   getEditableCallerText,
   getMarker as bundledGetMarker,
+  getMarkerText,
   isAttributeMarker,
   isMilestoneHeuristicName,
-  openingMarkerText,
   BookNode,
   ChapterNode,
   CharNode,
@@ -364,7 +363,7 @@ export function contentFragmentText(
  * ({@link tokenizeFragment}). Either way a value's `~` stays an ordinary character, as Paratext
  * keeps it, whatever the body text's spelling.
  */
-export function attributeFragmentText(text: string, viewOptions: ViewOptions | undefined): string {
+function attributeFragmentText(text: string, viewOptions: ViewOptions | undefined): string {
   if (hasStandardViewWhitespace(viewOptions)) return toFragmentText(text);
   const hasLead = text.startsWith(NBSP);
   const body = hasLead ? text.slice(1) : text;
@@ -541,10 +540,7 @@ function verseNeedsSentinel(node: VerseNode): boolean {
  * valid per `MilestoneNode.isValidMarker` but not a stylesheet-declared milestone name) would
  * tokenize back as something else entirely — such a marker must stay atomic.
  */
-// Exported for the read-only settle's serialized-side signature mirror (virtualSettle.utils.ts) —
-// classifying a freshly-tokenized milestone's re-tokenizability must use the exact same rule on
-// both the live and the JSON side.
-export function $isReTokenizableMilestone(marker: string, getMarkerFn: MarkerLookup): boolean {
+function $isReTokenizableMilestone(marker: string, getMarkerFn: MarkerLookup): boolean {
   const kind = getMarkerFn(marker)?.type;
   return kind === MarkerType.Milestone || (kind === undefined && isMilestoneHeuristicName(marker));
 }
@@ -714,13 +710,13 @@ function $isVerseLineBreak(lineBreak: LexicalNode): boolean {
 /**
  * Delimiter (never present in scripture text) opening a structural element's span inside a
  * signature string ({@link $signatureOf}), so a structural change is always visible in the
- * signature even when the flattened text is unchanged. Exported for the read-only settle's
- * serialized-side signature mirror (virtualSettle.utils.ts), which must compose signatures
- * byte-identically or the two fixed-point refusal checks would disagree.
+ * signature even when the flattened text is unchanged. Shared with the serialized-side signature
+ * mirror ({@link serializedSignatureOf}), which must compose signatures byte-identically or the
+ * two fixed-point refusal checks would disagree.
  */
-export const SIGNATURE_OPEN = String.fromCharCode(1);
+const SIGNATURE_OPEN = String.fromCharCode(1);
 /** Closing counterpart of {@link SIGNATURE_OPEN}. */
-export const SIGNATURE_CLOSE = String.fromCharCode(2);
+const SIGNATURE_CLOSE = String.fromCharCode(2);
 
 /**
  * Flattens any `AttributeRunNode`(s) in `run` into their own children, so a wrapped run's
@@ -1021,18 +1017,6 @@ export function serializedType(node: SerializedLexicalNode): string {
   return (node as { type?: string }).type ?? "";
 }
 
-/** A serialized MarkerNode's canonical glyph text, re-derived from `marker`/`markerSyntax`/
- * `nested` — the exact mirror of `MarkerNode.ts`'s own (unexported) `getMarkerText`. */
-export function serializedMarkerGlyphText(
-  marker: string,
-  markerSyntax: string | undefined,
-  nested: boolean | undefined,
-): string {
-  if (markerSyntax === "closing") return closingMarkerText(marker, nested);
-  if (markerSyntax === "selfClosing") return closingMarkerText("");
-  return openingMarkerText(marker, nested);
-}
-
 /**
  * The children of an `attribute-run` wrapper sibling at `nodes[index]`, or `undefined` when that
  * slot is not one. `usjEditorAdaptor.serializeEditorState` (usj-editor.adaptor.ts, editable mode)
@@ -1040,7 +1024,7 @@ export function serializedMarkerGlyphText(
  * (`addVerseAttributeRun`/`addMilestoneAttributeRun`) — `rebuilt` below is exactly that adaptor's
  * own canonical output, so a loose, unwrapped run never appears in it.
  */
-export function serializedRunWrapperChildren(
+function serializedRunWrapperChildren(
   nodes: SerializedLexicalNode[],
   index: number,
 ): SerializedLexicalNode[] | undefined {
@@ -1205,14 +1189,12 @@ function appendSerializedSignature(
       // builds this JSON directly (never through a live `MarkerNode`, whose `getTextContent()` is
       // itself computed from `marker`/`markerSyntax`/`nested`, never stored independently — see
       // `MarkerNode.ts`'s `getMarkerText`), and leaves `.text` empty; re-derive the SAME canonical
-      // glyph text here instead, exactly as `MarkerNode`'s own `getMarkerText` would.
+      // glyph text here instead, with `MarkerNode`'s own `getMarkerText`.
       const marker = node as { marker?: string; markerSyntax?: string; nested?: boolean };
       out.push(
         SIGNATURE_OPEN,
         "marker",
-        toFragmentText(
-          serializedMarkerGlyphText(marker.marker ?? "", marker.markerSyntax, marker.nested),
-        ),
+        toFragmentText(getMarkerText(marker.marker ?? "", marker.markerSyntax, marker.nested)),
         SIGNATURE_CLOSE,
       );
       continue;
@@ -1544,12 +1526,7 @@ export function $buildSettledRootFragment(
     if ($isParaNode(node)) {
       const fragment = $buildParaFragment(node, getMarkerFn, viewOptions);
       if (!fragment) return undefined;
-      const base = combined.text.length;
-      fragment.spans.forEach((span) =>
-        combined.spans.push({ ...span, start: span.start + base, end: span.end + base }),
-      );
-      combined.sentinels.push(...fragment.sentinels);
-      combined.text += fragment.text;
+      appendFragment(combined, fragment);
     } else if ($isChapterNode(node))
       $appendNodesFragment(node.getChildren(), combined, getMarkerFn, viewOptions);
     else $appendNodesFragment([node], combined, getMarkerFn, viewOptions);
@@ -1582,14 +1559,20 @@ export function $appendParaFragments(
     const fragment = $buildParaFragment(para, getMarkerFn, viewOptions);
     if (!fragment) return false;
     if (combined.text.length > 0) combined.text += " ";
-    const base = combined.text.length;
-    fragment.spans.forEach((span) =>
-      combined.spans.push({ ...span, start: span.start + base, end: span.end + base }),
-    );
-    combined.sentinels.push(...fragment.sentinels);
-    combined.text += fragment.text;
+    appendFragment(combined, fragment);
   }
   return true;
+}
+
+/** Append `fragment` to the end of `combined`: its text, its sentinels, and its spans shifted by
+ * where its text lands. */
+function appendFragment(combined: FragmentAccumulator, fragment: FragmentAccumulator): void {
+  const base = combined.text.length;
+  fragment.spans.forEach((span) =>
+    combined.spans.push({ ...span, start: span.start + base, end: span.end + base }),
+  );
+  combined.sentinels.push(...fragment.sentinels);
+  combined.text += fragment.text;
 }
 
 /** Replace each U+FFFC in the rebuilt tree with the next preserved node run. */
@@ -1624,6 +1607,36 @@ function $replaceSentinels(roots: LexicalNode[], originals: LexicalNode[][]): vo
     }
   };
   roots.forEach(visit);
+}
+
+/**
+ * Remove a content-region rebuild's old `contentNodes` (a note's content, the `\id` line's) once
+ * {@link $replaceSentinels} has moved each preserved run in `sentinels` into the rebuilt content.
+ * Unlike `$rebuildParas` (which removes container PARAGRAPHS the preserved nodes were already moved
+ * out of), the old content list here contains the preserved sentinel nodes THEMSELVES —
+ * `$replaceSentinels` just moved them into the rebuilt content, so removing them here would
+ * silently delete them from their new home. They are skipped.
+ *
+ * Mutating: call inside `editor.update()`, right after `$replaceSentinels`.
+ */
+function $removeReplacedContent(
+  contentNodes: readonly LexicalNode[],
+  sentinels: readonly LexicalNode[][],
+): void {
+  const preservedKeys = new Set(sentinels.flat().map((node) => node.getKey()));
+  contentNodes.forEach((node) => {
+    if (preservedKeys.has(node.getKey())) return;
+    // An annotation wrapping the region's content is one of the shell's own children, so it is
+    // removed DIRECTLY here — and `TypedMarkNode.remove` reports a direct removal to the host as a
+    // destroyed annotation. The annotation is not destroyed: `$restoreMarkByteRanges` re-wraps it
+    // over the rebuilt bytes. Suppress the notification the way every other re-creation of a mark
+    // node does (AnnotationPlugin's nested-element resolver, `TypedMarkNode`'s own sibling
+    // merges). A mark nested DEEPER needs nothing: a detached subtree is garbage-collected without
+    // `remove()` ever running on it, which is why the paragraph rebuild (whole paragraphs removed,
+    // marks always inside them) stays quiet.
+    if ($isTypedMarkNode(node)) node.getWritable().__suppressOnRemoveCallbacks = true;
+    node.remove();
+  });
 }
 
 /** U+FFFC occurrences across a parsed node tree — must equal the preserved-run count. */
@@ -2113,6 +2126,49 @@ export function $subtreeNodesMatching<T extends LexicalNode>(
   return nodes
     .flatMap((node) => $dfs(node).map(({ node: descendant }) => descendant))
     .filter(guard);
+}
+
+/** One verse's number and sid, read out of a settle scope before the splice. */
+export interface VerseSid {
+  number: string;
+  sid?: string;
+}
+
+/**
+ * The (number, sid) pair of every verse under `nodes`, in document order, as plain data — the OLD
+ * side of a settle's sid carry-over ({@link carryVerseSids}), read before the splice moves or
+ * destroys the old nodes (a removed node's fields are not safe to read afterward). Depth-first, so
+ * a verse nested inside a char span that crosses it (USFM ≤3.0 — see the crossing-span fixed-point
+ * test in tier2Rebuild.utils.test.tsx) is paired too.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ */
+export function $snapshotVerseSids(nodes: readonly LexicalNode[]): VerseSid[] {
+  return $subtreeNodesMatching(nodes, $isVerseNode).map((verse) => ({
+    number: verse.getNumber(),
+    sid: verse.getSid(),
+  }));
+}
+
+/**
+ * Sid carry-over, shared by the mutating settles and the read-only one so the two clocks pair
+ * verses the same way: a freshly re-tokenized verse never has a sid — the tokenizer cannot derive
+ * one from visible bytes — so the old and new verses are paired positionally in document order,
+ * and `apply(index, sid)` is called for the new verse at `index` wherever its NUMBER is unchanged.
+ * A renumbered verse gets no sid synthesized; a sentinel verse is the same verse on both sides, so
+ * the carry is a no-op for it.
+ *
+ * @param old - The old side, from {@link $snapshotVerseSids}.
+ * @param newNumbers - The new side's verse numbers, in document order.
+ * @param apply - Writes `sid` onto the new verse at `index`; each side writes it its own way.
+ */
+export function carryVerseSids(
+  old: readonly VerseSid[],
+  newNumbers: readonly string[],
+  apply: (index: number, sid: string | undefined) => void,
+): void {
+  for (let i = 0; i < old.length && i < newNumbers.length; i++)
+    if (newNumbers[i] === old[i].number) apply(i, old[i].sid);
 }
 
 /**
@@ -2634,7 +2690,7 @@ export function $settledChapterScopeFragment(
 /** What a read-only settle's rebuilt nodes stand in for: whole paragraphs, a chapter and its
  * adjacent region, a note's content, or the `\id` line (the book holding the line's content, then
  * the blocks after it) — which decides how their bytes are read back. */
-export type SettledScopeKind = "paras" | "chapter" | "noteContent" | "bookLine";
+type SettledScopeKind = "paras" | "chapter" | "noteContent" | "bookLine";
 
 /**
  * `rebuilt` — the serialized nodes a read-only settle turns `scope` into — with the annotation
@@ -2821,6 +2877,37 @@ function $captureCaret(fragment: FragmentAccumulator, point: PointType): Capture
 }
 
 /**
+ * Whether `node` is one of `scope` or inside one.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ */
+export function $isWithin(node: LexicalNode, scope: readonly LexicalNode[]): boolean {
+  for (let current: LexicalNode | null = node; current; current = current.getParent())
+    if (scope.some((member) => member.is(current))) return true;
+  return false;
+}
+
+/**
+ * A settle's caret prologue: whether the selection's anchor is inside `scope` at all (vs. parked
+ * elsewhere), and the collapsed caret captured over `fragment`, the scope's live bytes
+ * ({@link $captureCaret}).
+ *
+ * Read-only: call inside `editor.update()`, before the splice.
+ */
+function $captureScopeCaret(
+  scope: readonly LexicalNode[],
+  fragment: FragmentAccumulator,
+): { caret?: CapturedCaret; anchorInScope: boolean } {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return { anchorInScope: false };
+  const anchorInScope = $isWithin(selection.anchor.getNode(), scope);
+  return {
+    caret: selection.isCollapsed() ? $captureCaret(fragment, selection.anchor) : undefined,
+    anchorInScope,
+  };
+}
+
+/**
  * Put a caret {@link $captureCaret} lifted out back over `fragment`, the rebuilt scope's bytes,
  * through the byte alignment `pairRuns` lines the two sides up with:
  *
@@ -2981,17 +3068,7 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
 
   // Capture the caret as a fragment byte anchor before mutating anything, and note whether
   // the anchor was actually inside the paragraphs being rebuilt (vs. parked elsewhere).
-  let caret: CapturedCaret | undefined;
-  let anchorInParas = false;
-  const selection = $getSelection();
-  if ($isRangeSelection(selection)) {
-    for (let node: LexicalNode | null = selection.anchor.getNode(); node; node = node.getParent())
-      if (paras.some((para) => para.is(node))) {
-        anchorInParas = true;
-        break;
-      }
-    if (selection.isCollapsed()) caret = $captureCaret(combined, selection.anchor);
-  }
+  const { caret, anchorInScope: anchorInParas } = $captureScopeCaret(paras, combined);
   // Annotation marks anchor the same way, two points each — they live on nodes the splice
   // destroys and are transparent to re-tokenization, so nothing else would bring them back.
   const markRanges = $captureMarkByteRanges(paras, combined, undefined, $getEditor());
@@ -3059,35 +3136,27 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
     return false;
   }
 
-  // Snapshot the old paragraphs' verse number/sid pairs, in document order, as plain data —
-  // BEFORE the splice below moves or destroys the old paragraphs (a removed node's fields are
-  // not safe to read afterward). Sid carry-over (below) pairs this against the freshly
-  // re-tokenized tree's verses once the splice has settled.
-  // Depth-first, so a verse nested inside a char span that crosses it (USFM ≤3.0 — see the
-  // crossing-span fixed-point test in tier2Rebuild.utils.test.tsx) is paired too.
-  const oldVerseSids = $subtreeNodesMatching(paras, $isVerseNode).map((verse) => ({
-    number: verse.getNumber(),
-    sid: verse.getSid(),
-  }));
+  // Snapshot the old paragraphs' verse number/sid pairs BEFORE the splice below moves or destroys
+  // the old paragraphs. Sid carry-over (below) pairs this against the freshly re-tokenized tree's
+  // verses once the splice has settled.
+  const oldVerseSids = $snapshotVerseSids(paras);
 
   const firstPara = paras[0];
   newNodes.forEach((node) => firstPara.insertBefore(node));
   // Move originals BEFORE removing the old paragraphs (removal destroys leftovers).
   $replaceSentinels(newNodes, combined.sentinels);
   paras.forEach((para) => para.remove());
-  // Sid carry-over: a freshly re-tokenized verse never has a sid — the tokenizer cannot derive
-  // one from visible bytes — so pair the old and new
-  // verses positionally in document order and copy the old sid onto its partner wherever the
-  // verse NUMBER is unchanged. A renumbered verse (the pair's numbers disagree) gets no sid
-  // synthesized; a sentinel verse (unknownAttributes) is the SAME instance on both sides of the
-  // pairing, so this is a harmless no-op for it. Runs strictly AFTER the fixed-point check above,
-  // which deliberately never looks at sid (see the `$appendSignature` verse branch) — sid is
-  // reconciled here, once, only when a rebuild is already happening for some other reason.
+  // Sid carry-over ({@link carryVerseSids}). A sentinel verse (unknownAttributes) is the SAME
+  // instance on both sides of the pairing, so this is a harmless no-op for it. Runs strictly AFTER
+  // the fixed-point check above, which deliberately never looks at sid (see the `$appendSignature`
+  // verse branch) — sid is reconciled here, once, only when a rebuild is already happening for
+  // some other reason.
   const newVerses = $subtreeNodesMatching(newNodes, $isVerseNode);
-  for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
-    if (newVerses[i].getNumber() === oldVerseSids[i].number)
-      newVerses[i].setSid(oldVerseSids[i].sid);
-  }
+  carryVerseSids(
+    oldVerseSids,
+    newVerses.map((verse) => verse.getNumber()),
+    (index, sid) => newVerses[index].setSid(sid),
+  );
   // Before the caret restore, so the caret resolves against the final tree: re-wrapping splits
   // the text nodes it covers.
   $restoreMarkByteRanges(markRanges, () => $spansForNodes(newNodes, getMarkerFn, viewOptions));
@@ -3233,17 +3302,7 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
 
   // Capture the caret as a fragment byte anchor before mutating, noting whether the anchor
   // was actually inside this note (vs. parked elsewhere) — mirror `$rebuildParas`.
-  let caret: CapturedCaret | undefined;
-  let anchorInNote = false;
-  const selection = $getSelection();
-  if ($isRangeSelection(selection)) {
-    for (let node: LexicalNode | null = selection.anchor.getNode(); node; node = node.getParent())
-      if (note.is(node)) {
-        anchorInNote = true;
-        break;
-      }
-    if (selection.isCollapsed()) caret = $captureCaret(out, selection.anchor);
-  }
+  const { caret, anchorInScope: anchorInNote } = $captureScopeCaret([note], out);
   // Annotations inside the note's content anchor the same way — mirror `$rebuildParas`. A
   // note's content is reachable by USJ location, so `setAnnotation` can put a mark in an
   // expanded note exactly as it can in a paragraph.
@@ -3376,24 +3435,7 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
     newNodes.forEach((node) => (closing ? closing.insertBefore(node) : note.append(node)));
   }
   $replaceSentinels(newNodes, out.sentinels);
-  // Unlike `$rebuildParas` (which removes container PARAGRAPHS the preserved nodes were
-  // already moved out of), the old content list here contains the preserved sentinel nodes
-  // THEMSELVES — `$replaceSentinels` just moved them into the rebuilt content, so removing
-  // them here would silently delete them from their new home. Skip them.
-  const preservedKeys = new Set(out.sentinels.flat().map((node) => node.getKey()));
-  contentNodes.forEach((node) => {
-    if (preservedKeys.has(node.getKey())) return;
-    // An annotation wrapping note content is one of the note's own children, so it is removed
-    // DIRECTLY here — and `TypedMarkNode.remove` reports a direct removal to the host as a
-    // destroyed annotation. The annotation is not destroyed: `$restoreMarkByteRanges` below
-    // re-wraps it over the rebuilt bytes. Suppress the notification the way every other
-    // re-creation of a mark node does (AnnotationPlugin's nested-element resolver,
-    // `TypedMarkNode`'s own sibling merges). A mark nested DEEPER needs nothing: a detached
-    // subtree is garbage-collected without `remove()` ever running on it, which is why the
-    // paragraph rebuild (whole paragraphs removed, marks always inside them) stays quiet.
-    if ($isTypedMarkNode(node)) node.getWritable().__suppressOnRemoveCallbacks = true;
-    node.remove();
-  });
+  $removeReplacedContent(contentNodes, out.sentinels);
   // Before the caret restore, so the caret resolves against the final tree — mirror
   // `$rebuildParas`. Both re-read the note's CURRENT content rather than reuse `newNodes`:
   // moving a preserved run into place and re-wrapping a mark both split direct text children of
@@ -3601,17 +3643,7 @@ export function $rebuildBook(
 
   // Capture the caret as a fragment byte anchor before mutating, noting whether the anchor was
   // actually inside this scope (vs. parked elsewhere) — mirror `$rebuildNoteContent`.
-  let caret: CapturedCaret | undefined;
-  let anchorInScope = false;
-  const selection = $getSelection();
-  if ($isRangeSelection(selection)) {
-    for (let node: LexicalNode | null = selection.anchor.getNode(); node; node = node.getParent())
-      if (scopes.some((scope) => scope.is(node))) {
-        anchorInScope = true;
-        break;
-      }
-    if (selection.isCollapsed()) caret = $captureCaret(out, selection.anchor);
-  }
+  const { caret, anchorInScope } = $captureScopeCaret(scopes, out);
   // Annotations on the line's text, and in the widened paragraphs, anchor the same way — mirror
   // `$rebuildParas` and `$rebuildNoteContent`.
   const markRanges = $captureMarkByteRanges(
@@ -3674,16 +3706,10 @@ export function $rebuildBook(
     return false;
   }
 
-  // Snapshot the old content's verse number/sid pairs, in document order, as plain data — BEFORE
-  // the splice below moves or destroys the old content nodes (a removed node's fields are not safe
-  // to read afterward). Sid carry-over (below) pairs this against the freshly re-tokenized line's
-  // verses once the splice has settled — mirrors `$rebuildParas`.
-  const oldVerseSids = $subtreeNodesMatching([...contentNodes, ...trailingParas], $isVerseNode).map(
-    (verse) => ({
-      number: verse.getNumber(),
-      sid: verse.getSid(),
-    }),
-  );
+  // Snapshot the old content's verse number/sid pairs BEFORE the splice below moves or destroys
+  // the old content nodes. Sid carry-over (below) pairs this against the freshly re-tokenized
+  // line's verses once the splice has settled — mirrors `$rebuildParas`.
+  const oldVerseSids = $snapshotVerseSids([...contentNodes, ...trailingParas]);
 
   // Splice: insert the new content before the first old content node (or at the line's end when it
   // had none) and the new blocks directly after the book, move preserved sentinel runs into place,
@@ -3695,15 +3721,7 @@ export function $rebuildBook(
   else newContent.forEach((node) => book.append(node));
   newBlocks.reduce<LexicalNode>((previous, block) => previous.insertAfter(block), book);
   $replaceSentinels(newNodes, out.sentinels);
-  const preservedKeys = new Set(out.sentinels.flat().map((node) => node.getKey()));
-  contentNodes.forEach((node) => {
-    if (preservedKeys.has(node.getKey())) return;
-    // An annotation on the line's text is one of the book's own children, removed directly here,
-    // and it is not destroyed: `$restoreMarkByteRanges` below re-wraps it over the rebuilt bytes.
-    // Its removal notification is suppressed for the reason `$rebuildNoteContent` gives.
-    if ($isTypedMarkNode(node)) node.getWritable().__suppressOnRemoveCallbacks = true;
-    node.remove();
-  });
+  $removeReplacedContent(contentNodes, out.sentinels);
   trailingParas.forEach((para) => para.remove());
   // Before the content is re-read for the sid carry-over and the caret restore, since re-wrapping
   // a mark splits and re-parents the book's direct text children.
@@ -3725,10 +3743,11 @@ export function $rebuildBook(
   // (above) splices each preserved sentinel run into the live tree, so a sentinel verse is missing
   // from `newNodes` and every sid pairing after it shifts by one.
   const newVerses = $subtreeNodesMatching(liveContentNodes, $isVerseNode);
-  for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
-    if (newVerses[i].getNumber() === oldVerseSids[i].number)
-      newVerses[i].setSid(oldVerseSids[i].sid);
-  }
+  carryVerseSids(
+    oldVerseSids,
+    newVerses.map((verse) => verse.getNumber()),
+    (index, sid) => newVerses[index].setSid(sid),
+  );
   $restoreSelectionInContentRegion(
     liveContentNodes,
     caret,
@@ -4126,17 +4145,7 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
   // anchor check spans the whole region: an edit inside an adjacent first-class char (the fold's
   // primary trigger) holds its caret in the CHAR, not the chapter, and must be restored into
   // the rebuilt output the same way.
-  let caret: CapturedCaret | undefined;
-  let anchorInRegion = false;
-  const selection = $getSelection();
-  if ($isRangeSelection(selection)) {
-    for (let node: LexicalNode | null = selection.anchor.getNode(); node; node = node.getParent())
-      if (region.some((member) => member.is(node))) {
-        anchorInRegion = true;
-        break;
-      }
-    if (selection.isCollapsed()) caret = $captureCaret(out, selection.anchor);
-  }
+  const { caret, anchorInScope: anchorInRegion } = $captureScopeCaret(region, out);
 
   // The adjacent spans and `\cp` paragraph hold content a mark can cover, and the splice below
   // destroys them — carried the way `$rebuildParas` carries a paragraph's.
@@ -4399,17 +4408,7 @@ export function $idleSettleWouldDiscardCaretHeldBytes(
   if (!$isParaLikeNode(scope)) return false;
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  let caretInScope = false;
-  for (
-    let current: LexicalNode | null = selection.anchor.getNode();
-    current;
-    current = current.getParent()
-  )
-    if (scope.is(current)) {
-      caretInScope = true;
-      break;
-    }
-  if (!caretInScope) return false;
+  if (!$isWithin(selection.anchor.getNode(), [scope])) return false;
   const fragment = $isBookNode(scope)
     ? $buildBookFragment(scope, getMarkerFn, viewOptions).out
     : $buildParaFragment(scope, getMarkerFn, viewOptions);
