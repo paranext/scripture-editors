@@ -12,6 +12,8 @@ import {
 import { $selectionToUsfmViaStandardView } from "../MarkersViewCopyPlugin";
 import {
   $selectionToUsfmText,
+  $storedNbsps,
+  withStoredNbspsAsTildes,
   $writeClipboardData,
 } from "../markerEdit/whitespaceDisplay.plugin.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -34,7 +36,7 @@ import {
   SELECT_ALL_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { NBSP } from "shared";
+import { NBSP, NBSP_STAND_IN } from "shared";
 import { hasStandardViewWhitespace, ViewOptions } from "shared-react";
 
 /**
@@ -100,10 +102,12 @@ export function CopyLimitPlugin({
       // Always claim the event — otherwise the browser copies the full selection natively. When
       // nothing is left to write (a limit of 0, or a selection with no text), nothing is written,
       // so the clipboard keeps what it held before, not an empty string; anything an earlier guard
-      // wrote is cleared. No-break spaces are written as spaces, as the browser's own copy does.
+      // wrote is cleared. No-break spaces are written as spaces, as the browser's own copy does, and
+      // Standard view's internal stand-in for a stored no-break space as the U+00A0 it stands for.
       event.preventDefault();
       const text = sliceToCopyLimit(
-        claimedEarlier ?? domSelection.toString().replaceAll(NBSP, " "),
+        claimedEarlier ??
+          domSelection.toString().replaceAll(NBSP, " ").replaceAll(NBSP_STAND_IN, NBSP),
         currentLimit,
       );
       guardedCopies.set(event, text);
@@ -192,10 +196,17 @@ export function CopyLimitPlugin({
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
       const shouldRemove = isCut && editor.isEditable() && !$selectionHoldsStructure(selection);
+      const shownText = $selectionShownText(selection, $isInCollapsedNote);
+      // A view that hides markers copies a stored no-break space as `~`, as a copy that fits does.
+      const viewOptions = viewOptionsRef.current;
+      const plainText =
+        viewOptions?.markerMode === "hidden" && !viewOptions.allowInvisibleCharacters
+          ? withStoredNbspsAsTildes(shownText, $storedNbsps(selection, $isInCollapsedNote))
+          : undefined;
       return $writeClipboardData(
         event && typeof event === "object" && "clipboardData" in event ? event : null,
         editor,
-        { "text/plain": $selectionShownText(selection, $isInCollapsedNote) },
+        { "text/plain": plainText ?? shownText },
         shouldRemove ? () => selection.removeText() : undefined,
       );
     };

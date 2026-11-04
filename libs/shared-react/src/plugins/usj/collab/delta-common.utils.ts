@@ -22,6 +22,7 @@ import {
   $isCharNode,
   $isDescendantOf,
   $isImmutableUnmatchedNode,
+  $isLoneNbspContent,
   $isMilestoneNode,
   $isNoteNode,
   $isParaLikeNode,
@@ -291,6 +292,26 @@ export function $getOTPositionOfNode(
 
   // Node not found
   return undefined;
+}
+
+/**
+ * The OT length of `node` and everything in it, in `"apply"` coordinates (see
+ * {@link OTCoordinateSystem}): what a `delete` of `$applyUpdate` has to span to remove it. Each
+ * leaf counts what {@link $getNodeOTContribution} gives it in `"apply"` coordinates, and a
+ * para-like node adds its closing unit.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ *
+ * @param node - The node to measure.
+ * @returns Its length.
+ */
+export function $getApplyLength(node: LexicalNode): number {
+  if ($isEmbedNode(node) || !$isElementNode(node)) return $getNodeOTContribution(node, "apply");
+  const contentLength = node
+    .getChildren()
+    .reduce((total, child) => total + $getApplyLength(child), 0);
+  return $isParaLikeNode(node) ? contentLength + 1 : contentLength;
 }
 
 /**
@@ -570,14 +591,17 @@ export function $hasAttributeRunAncestor(node: LexicalNode): boolean {
 
 /**
  * Mirror of editor-delta.adaptor.ts's empty-char-placeholder skip, in delta-doc coordinates: the
- * lone stand-in text of an otherwise childless char span, which the ops stream never emits.
+ * lone stand-in text of an otherwise childless char span, which the ops stream never emits. An
+ * author's `~` as a span's whole text has the same bytes; the ops stream emits it, so it counts
+ * here too ({@link $isLoneNbspContent} tells the two apart on both sides).
  */
 function $isEmptyCharPlaceholderText(node: TextNode): boolean {
   const parent = node.getParent();
   return (
     $isCharNode(parent) &&
     node.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT &&
-    parent.getChildrenSize() === 1
+    parent.getChildrenSize() === 1 &&
+    !$isLoneNbspContent(node)
   );
 }
 

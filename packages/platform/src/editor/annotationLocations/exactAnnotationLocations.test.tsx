@@ -20,6 +20,7 @@ import {
   ORACLE_VIEWS,
   richUsj,
 } from "./annotationLocations.test-helpers";
+import { enabledViews, itInView, rowsInEnabledViews } from "../editorViews.test-helpers";
 import { copyEvent, pasteEvent } from "../markerEdit/markerEdit.test-helpers";
 import {
   displayAnnotated,
@@ -232,7 +233,8 @@ describe("an annotation inside a figure caption", () => {
 
   it.each<[string, string]>([
     ["standard", "[immutable-typed-text]c"],
-    ["formatted", "c"],
+    ["preview", "c"],
+    ["paragraph-structure", "c"],
   ])("leaves the caption in the figure (%s)", async (name, expectedHeld) => {
     const mounted = await mountInView(richUsj, oracleView(name));
     const before = mounted.ref.current?.getUsj();
@@ -247,27 +249,30 @@ describe("an annotation inside a figure caption", () => {
     expect(held).toBe(expectedHeld);
   });
 
-  it.each(["standard", "formatted"])("survives undo and redo (%s)", async (name) => {
-    const mounted = await mountInView(richUsj, oracleView(name));
-    const before = mounted.ref.current?.getUsj();
+  it.each(enabledViews(["standard", "formatted", "paragraph-structure"]))(
+    "survives undo and redo (%s)",
+    async (name) => {
+      const mounted = await mountInView(richUsj, oracleView(name));
+      const before = mounted.ref.current?.getUsj();
 
-    await act(async () => {
-      mounted.ref.current?.setAnnotation(intoCaptionRange, ORACLE_TYPE, "cap");
-      await Promise.resolve();
-    });
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(intoCaptionRange, ORACLE_TYPE, "cap");
+        await Promise.resolve();
+      });
 
-    await act(async () => {
-      mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined);
-    });
-    expect(mounted.ref.current?.getUsj()).toEqual(before);
+      await act(async () => {
+        mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
 
-    await act(async () => {
-      mounted.lexical.dispatchCommand(REDO_COMMAND, undefined);
-    });
-    expect(mounted.ref.current?.getUsj()).toEqual(before);
-  });
+      await act(async () => {
+        mounted.lexical.dispatchCommand(REDO_COMMAND, undefined);
+      });
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
+    },
+  );
 
-  it.each(["standard", "formatted"])(
+  it.each(enabledViews(["standard", "formatted", "paragraph-structure"]))(
     "keeps the caption when a comment is made inside it (%s)",
     async (name) => {
       const mounted = await mountInView(richUsj, oracleView(name));
@@ -300,7 +305,7 @@ describe("an annotation over a no-break space the text itself contains", () => {
     end: { jsonPath: "$.content[2].content[0]", offset: 6 },
   };
 
-  it.each(["unformatted", "visible", "visible+collapsed"])(
+  it.each(enabledViews(["unformatted", "visible", "visible+collapsed"]))(
     "holds it and saves it unchanged (%s)",
     async (name) => {
       const mounted = await mountInView(tildeUsj, oracleView(name));
@@ -316,53 +321,55 @@ describe("an annotation over a no-break space the text itself contains", () => {
     },
   );
 
-  it.each(["unformatted", "visible", "formatted", "hidden+expanded"])(
-    "holds one inside a char span and saves it unchanged (%s)",
-    async (name) => {
-      const wordUsj = twoParaUsj([
-        "In ",
-        { type: "char", marker: "w", content: [`a${NBSP}b`] },
-        " end",
-      ]);
-      const mounted = await mountInView(wordUsj, oracleView(name));
-      const before = mounted.ref.current?.getUsj();
-
-      await act(async () => {
-        mounted.ref.current?.setAnnotation(
-          {
-            start: { jsonPath: "$.content[2].content[1].content[0]", offset: 1 },
-            end: { jsonPath: "$.content[2].content[1].content[0]", offset: 2 },
-          },
-          ORACLE_TYPE,
-          "nb",
-        );
-        await Promise.resolve();
-      });
-
-      expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "nb"))).toBe(NBSP);
-      expect(mounted.ref.current?.getUsj()).toEqual(before);
-    },
-  );
-
-  it("never makes an empty span's placeholder content (hidden+expanded)", async () => {
-    const emptyUsj = twoParaUsj(["x ", { type: "char", marker: "wj", content: [] }, " y"]);
-    const mounted = await mountInView(emptyUsj, oracleView("hidden+expanded"));
+  it.each(
+    enabledViews(["unformatted", "visible", "preview", "paragraph-structure", "hidden+expanded"]),
+  )("holds one inside a char span and saves it unchanged (%s)", async (name) => {
+    const wordUsj = twoParaUsj([
+      "In ",
+      { type: "char", marker: "w", content: [`a${NBSP}b`] },
+      " end",
+    ]);
+    const mounted = await mountInView(wordUsj, oracleView(name));
     const before = mounted.ref.current?.getUsj();
 
     await act(async () => {
       mounted.ref.current?.setAnnotation(
         {
-          start: { jsonPath: "$.content[2].content[0]", offset: 1 },
-          end: { jsonPath: "$.content[2].content[2]", offset: 1 },
+          start: { jsonPath: "$.content[2].content[1].content[0]", offset: 1 },
+          end: { jsonPath: "$.content[2].content[1].content[0]", offset: 2 },
         },
         ORACLE_TYPE,
-        "ph",
+        "nb",
       );
       await Promise.resolve();
     });
 
+    expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "nb"))).toBe(NBSP);
     expect(mounted.ref.current?.getUsj()).toEqual(before);
   });
+
+  it.each(enabledViews(["preview", "hidden+expanded"]))(
+    "never makes an empty span's placeholder content (%s)",
+    async (name) => {
+      const emptyUsj = twoParaUsj(["x ", { type: "char", marker: "wj", content: [] }, " y"]);
+      const mounted = await mountInView(emptyUsj, oracleView(name));
+      const before = mounted.ref.current?.getUsj();
+
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(
+          {
+            start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+            end: { jsonPath: "$.content[2].content[2]", offset: 1 },
+          },
+          ORACLE_TYPE,
+          "ph",
+        );
+        await Promise.resolve();
+      });
+
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
+    },
+  );
 
   /** `\p In \w ~b\w* end`: the span's content starts with a no-break space of its own. */
   const leadingNbspUsj: Usj = twoParaUsj([
@@ -396,14 +403,14 @@ describe("an annotation over a no-break space the text itself contains", () => {
   ];
 
   it.each(
-    [
+    enabledViews([
       "standard",
       "unformatted",
       "visible",
-      "formatted",
+      "preview",
       "paragraph-structure",
       "hidden+expanded",
-    ].flatMap((view) => leadingNbspRanges.map((row) => ({ ...row, view }))),
+    ]).flatMap((view) => leadingNbspRanges.map((row) => ({ ...row, view }))),
   )(
     "keeps one leading a char span's content when $name is set and removed ($view)",
     async ({ view, range }) => {
@@ -424,7 +431,7 @@ describe("an annotation over a no-break space the text itself contains", () => {
     },
   );
 
-  it.each(["formatted", "paragraph-structure", "hidden+expanded"])(
+  it.each(enabledViews(["formatted", "paragraph-structure", "hidden+expanded"]))(
     "keeps one leading a char span's content when that text is typed into (%s)",
     async (name) => {
       const mounted = await mountInView(leadingNbspUsj, oracleView(name));
@@ -450,13 +457,13 @@ describe("an annotation over a no-break space the text itself contains", () => {
   /** `\p x \wj \wj* y`: an empty span, which every view but the editable ones shows as a lone
    * placeholder NBSP between read-only glyphs, or alone. */
   const emptySpanUsj: Usj = twoParaUsj(["x ", { type: "char", marker: "wj", content: [] }, " y"]);
-  const placeholderViews = [
+  const placeholderViews = enabledViews([
     "visible",
     "visible+collapsed",
     "formatted",
     "paragraph-structure",
     "hidden+expanded",
-  ];
+  ]);
 
   /** The empty span's placeholder text. Call inside a read or update. */
   function $placeholder(): LexicalNode {
@@ -635,7 +642,7 @@ describe("an annotation over a no-break space the text itself contains", () => {
     },
   );
 
-  it.each(["standard", "unformatted", ...placeholderViews])(
+  it.each([...enabledViews(["standard", "unformatted"]), ...placeholderViews])(
     "never saves the placeholder a span emptied by a delete shows (%s)",
     async (name) => {
       const mounted = await mountInView(
@@ -657,24 +664,91 @@ describe("an annotation over a no-break space the text itself contains", () => {
     },
   );
 
-  it("keeps it through a settle elsewhere in the paragraph (unformatted)", async () => {
-    const mounted = await mountInView(tildeUsj, oracleView("unformatted"));
-    await act(async () => {
-      mounted.ref.current?.setAnnotation(tildeRange, ORACLE_TYPE, "nb");
-      await Promise.resolve();
-    });
+  it.each(placeholderViews)(
+    "leaves no NBSP behind when text typed into an empty span is deleted (%s)",
+    async (name) => {
+      const mounted = await mountInView(emptySpanUsj, oracleView(name));
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const placeholder = $placeholder();
+          if (!$isTextNode(placeholder)) throw new Error("expected text");
+          placeholder.select(1, 1).insertText("a");
+        });
+        await Promise.resolve();
+      });
+      expect(savedSpanContent(mounted)).toEqual(["a"]);
 
-    await typeOver(mounted.lexical, "should be", "should be \\bd x\\bd*");
-    settleByBlurAndCommit(mounted);
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const text = $onlyCharNode()
+            .getChildren()
+            .find((child) => $isTextNode(child) && child.getTextContent() === "a");
+          if (!$isTextNode(text)) throw new Error("expected the typed text");
+          text.select(0, 1).removeText();
+        });
+        await Promise.resolve();
+      });
 
-    const para = mounted.ref.current?.getUsj()?.content?.[2];
-    if (!para || typeof para === "string") throw new Error("expected a paragraph");
-    expect(para.content?.[0]).toBe(`Tilde${NBSP}should be `);
-    expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
-    expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "nb"))).toBe(NBSP);
-  });
+      const para = mounted.ref.current?.getUsj()?.content?.[2];
+      expect(JSON.stringify(para)).not.toContain(NBSP);
+    },
+  );
 
-  it.each(["unformatted", "visible"])(
+  /** `\p x \wj ~\wj* y`: a span whose whole content is the author's own no-break space. */
+  const tildeSpanUsj: Usj = twoParaUsj([
+    "x ",
+    { type: "char", marker: "wj", content: [NBSP] },
+    " y",
+  ]);
+
+  it.each([...enabledViews(["standard", "unformatted", "preview"]), ...placeholderViews])(
+    "keeps a span whose whole content is `~` (%s)",
+    async (name) => {
+      const mounted = await mountInView(tildeSpanUsj, oracleView(name));
+
+      expect(savedSpanContent(mounted)).toEqual([NBSP]);
+    },
+  );
+
+  it.each(placeholderViews)(
+    "keeps a span's whole-content `~` when text is typed after it (%s)",
+    async (name) => {
+      const mounted = await mountInView(tildeSpanUsj, oracleView(name));
+
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const tilde = $placeholder();
+          if (!$isTextNode(tilde)) throw new Error("expected text");
+          tilde.select(1, 1).insertText("a");
+        });
+        await Promise.resolve();
+      });
+
+      expect(savedSpanContent(mounted)).toEqual([`${NBSP}a`]);
+    },
+  );
+
+  itInView("unformatted")(
+    "keeps it through a settle elsewhere in the paragraph (unformatted)",
+    async () => {
+      const mounted = await mountInView(tildeUsj, oracleView("unformatted"));
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(tildeRange, ORACLE_TYPE, "nb");
+        await Promise.resolve();
+      });
+
+      await typeOver(mounted.lexical, "should be", "should be \\bd x\\bd*");
+      settleByBlurAndCommit(mounted);
+
+      const para = mounted.ref.current?.getUsj()?.content?.[2];
+      if (!para || typeof para === "string") throw new Error("expected a paragraph");
+      expect(para.content?.[0]).toBe(`Tilde${NBSP}should be `);
+      expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
+      expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "nb"))).toBe(NBSP);
+    },
+  );
+
+  it.each(enabledViews(["unformatted", "visible"]))(
     "keeps it inside a comment through a save (%s)",
     async (name) => {
       const mounted = await mountInView(tildeUsj, oracleView(name));
@@ -774,30 +848,33 @@ describe("an annotation beside a no-break space the text itself contains", () =>
     expect(mounted.ref.current?.getUsj()).toEqual(before);
   });
 
-  it("keeps it through a settle elsewhere in the paragraph (unformatted)", async () => {
-    const mounted = await mountInView(
-      twoParaUsj([`a${NBSP}b should be`]),
-      oracleView("unformatted"),
-    );
-    await act(async () => {
-      mounted.ref.current?.setAnnotation(at(0, 1), ORACLE_TYPE, "a");
-      mounted.ref.current?.setAnnotation(at(2, 3), ORACLE_TYPE, "b");
-      await Promise.resolve();
-    });
+  itInView("unformatted")(
+    "keeps it through a settle elsewhere in the paragraph (unformatted)",
+    async () => {
+      const mounted = await mountInView(
+        twoParaUsj([`a${NBSP}b should be`]),
+        oracleView("unformatted"),
+      );
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(at(0, 1), ORACLE_TYPE, "a");
+        mounted.ref.current?.setAnnotation(at(2, 3), ORACLE_TYPE, "b");
+        await Promise.resolve();
+      });
 
-    // The text after the mark over `b` is ` should be`, its own node.
-    await typeOver(mounted.lexical, "should be", " should be \\bd x\\bd*");
-    settleByBlurAndCommit(mounted);
+      // The text after the mark over `b` is ` should be`, its own node.
+      await typeOver(mounted.lexical, "should be", " should be \\bd x\\bd*");
+      settleByBlurAndCommit(mounted);
 
-    const para = mounted.ref.current?.getUsj()?.content?.[2];
-    if (!para || typeof para === "string") throw new Error("expected a paragraph");
-    expect(para.content?.[0]).toBe(`a${NBSP}b should be `);
-    expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
-    mounted.lexical.getEditorState().read(() => {
-      expect($heldBytes(HELD_TYPE, "a")).toBe("a");
-      expect($heldBytes(HELD_TYPE, "b")).toBe("b");
-    });
-  });
+      const para = mounted.ref.current?.getUsj()?.content?.[2];
+      if (!para || typeof para === "string") throw new Error("expected a paragraph");
+      expect(para.content?.[0]).toBe(`a${NBSP}b should be `);
+      expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
+      mounted.lexical.getEditorState().read(() => {
+        expect($heldBytes(HELD_TYPE, "a")).toBe("a");
+        expect($heldBytes(HELD_TYPE, "b")).toBe("b");
+      });
+    },
+  );
 });
 
 /** The text of every mark holding `type`/`id`, in document order. Call inside a read. */
@@ -1003,30 +1080,29 @@ describe("the labels around a mark on a note's text between its spans", () => {
     return $byteNodes().map(([node, offset]) => locKey($byteLoc(node, offset, false, view)));
   }
 
-  it.each(["standard", "visible", "visible+collapsed", "formatted"])(
-    "stay where they were when a range ends at that text's end (%s)",
-    async (name) => {
-      const mounted = await mountInView(crossrefUsj, oracleView(name));
-      const before = mounted.lexical.getEditorState().read(() => $labels(name));
+  it.each(
+    enabledViews(["standard", "visible", "visible+collapsed", "preview", "paragraph-structure"]),
+  )("stay where they were when a range ends at that text's end (%s)", async (name) => {
+    const mounted = await mountInView(crossrefUsj, oracleView(name));
+    const before = mounted.lexical.getEditorState().read(() => $labels(name));
 
-      await act(async () => {
-        mounted.ref.current?.setAnnotation(
-          {
-            start: { jsonPath: "$.content[2].content[0]", offset: 4 },
-            end: { jsonPath: "$.content[2].content[1].content[1]", offset: 1 },
-          },
-          ORACLE_TYPE,
-          "lab",
-        );
-        await Promise.resolve();
-      });
-
-      expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "lab"))).toContain(
-        "crossref",
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[2].content[0]", offset: 4 },
+          end: { jsonPath: "$.content[2].content[1].content[1]", offset: 1 },
+        },
+        ORACLE_TYPE,
+        "lab",
       );
-      expect(mounted.lexical.getEditorState().read(() => $labels(name))).toEqual(before);
-    },
-  );
+      await Promise.resolve();
+    });
+
+    expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "lab"))).toContain(
+      "crossref",
+    );
+    expect(mounted.lexical.getEditorState().read(() => $labels(name))).toEqual(before);
+  });
 });
 
 describe("a note's own content text", () => {
@@ -1125,53 +1201,59 @@ describe("a note's own content text", () => {
     expect(mounted.ref.current?.getUsj()).toEqual(before);
   });
 
-  it("types after a span the marker menu inserts into a note without saving its separator", async () => {
-    const formatted = oracleView("formatted");
-    const mounted = await mountInView(crossRefUsj, formatted);
-    const $lastNoteChild = () => {
-      const note = $noteIn($getRoot());
-      const last = note?.getLastChild();
-      if (!$isTextNode(last)) throw new Error("expected the note to end in its separator");
-      return last;
-    };
+  itInView("formatted")(
+    "types after a span the marker menu inserts into a note without saving its separator",
+    async () => {
+      const formatted = oracleView("formatted");
+      const mounted = await mountInView(crossRefUsj, formatted);
+      const $lastNoteChild = () => {
+        const note = $noteIn($getRoot());
+        const last = note?.getLastChild();
+        if (!$isTextNode(last)) throw new Error("expected the note to end in its separator");
+        return last;
+      };
 
-    // The caret on the note's own last separator, where the marker menu inserts after it.
-    await act(async () => {
-      mounted.lexical.update(() => $lastNoteChild().select(1, 1), { discrete: true });
-    });
-    getUsjMarkerAction("xk", { current: undefined }, formatted, undefined, undefined, {
-      discrete: true,
-    }).action({ editor: mounted.lexical, reference: { book: "GEN", chapterNum: 1, verseNum: 1 } });
-    // Type at the end of the separator that follows the new span.
-    await act(async () => {
-      mounted.lexical.update(() => {
-        $lastNoteChild().select(1, 1);
-        const selection = $getSelection();
-        if (!$isRangeSelection(selection)) throw new Error("no range selection");
-        selection.insertText("a");
+      // The caret on the note's own last separator, where the marker menu inserts after it.
+      await act(async () => {
+        mounted.lexical.update(() => $lastNoteChild().select(1, 1), { discrete: true });
       });
-      await Promise.resolve();
-    });
+      getUsjMarkerAction("xk", { current: undefined }, formatted, undefined, undefined, {
+        discrete: true,
+      }).action({
+        editor: mounted.lexical,
+        reference: { book: "GEN", chapterNum: 1, verseNum: 1 },
+      });
+      // Type at the end of the separator that follows the new span.
+      await act(async () => {
+        mounted.lexical.update(() => {
+          $lastNoteChild().select(1, 1);
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("no range selection");
+          selection.insertText("a");
+        });
+        await Promise.resolve();
+      });
 
-    expect(JSON.stringify(mounted.ref.current?.getUsj())).not.toContain(NBSP);
-    const note = settledPara(mounted.ref.current?.getUsj(), 2).content?.[1];
-    if (!note || typeof note === "string") throw new Error("expected the note");
-    expect(note.content?.at(-1)).toBe("a");
-    mounted.lexical.getEditorState().read(() => {
-      const keyword = $noteIn($getRoot())
-        ?.getChildren()
-        .find((child) => $isCharNode(child) && child.getMarker() === "xk");
-      const separator = keyword?.getNextSibling();
-      expect($isMarkerTrailingSeparator(separator)).toBe(true);
-      expect(separator?.getTextContent()).toBe(NBSP);
-      expect(separator?.getNextSibling()?.getTextContent()).toBe("a");
-    });
-  });
+      expect(JSON.stringify(mounted.ref.current?.getUsj())).not.toContain(NBSP);
+      const note = settledPara(mounted.ref.current?.getUsj(), 2).content?.[1];
+      if (!note || typeof note === "string") throw new Error("expected the note");
+      expect(note.content?.at(-1)).toBe("a");
+      mounted.lexical.getEditorState().read(() => {
+        const keyword = $noteIn($getRoot())
+          ?.getChildren()
+          .find((child) => $isCharNode(child) && child.getMarker() === "xk");
+        const separator = keyword?.getNextSibling();
+        expect($isMarkerTrailingSeparator(separator)).toBe(true);
+        expect(separator?.getTextContent()).toBe(NBSP);
+        expect(separator?.getNextSibling()?.getTextContent()).toBe("a");
+      });
+    },
+  );
 });
 
 describe("display bytes the design holds whole", () => {
   it("holds a chapter decorator a range passes over, in the views without editable markers", async () => {
-    const mounted = await mountInView(richUsj, oracleView("formatted"));
+    const mounted = await mountInView(richUsj, oracleView("preview"));
 
     await act(async () => {
       mounted.ref.current?.setAnnotation(
@@ -1282,71 +1364,83 @@ describe("inbound resolution for annotations", () => {
     range: AnnotationRange;
     held: string;
     decorators?: string[];
-  }>([
-    {
-      name: "a milestone's closer, which the view does not display",
-      view: "formatted",
-      usj: richUsj,
-      range: {
-        start: { jsonPath: "$.content[3].content[2]['who']", propertyOffset: 5 },
-        end: { jsonPath: "$.content[3].content[2]", closingMarkerOffset: 0 },
+  }>(
+    rowsInEnabledViews([
+      {
+        name: "a milestone's closer, which the view does not display",
+        view: "preview",
+        usj: richUsj,
+        range: {
+          start: { jsonPath: "$.content[3].content[2]['who']", propertyOffset: 5 },
+          end: { jsonPath: "$.content[3].content[2]", closingMarkerOffset: 0 },
+        },
+        held: "",
       },
-      held: "",
-    },
-    {
-      name: "a milestone's closer, over the glyphs the view displays for it",
-      view: "visible",
-      usj: richUsj,
-      range: {
-        start: { jsonPath: "$.content[3].content[1]", offset: 4 },
-        end: { jsonPath: "$.content[3].content[2]", closingMarkerOffset: 0 },
+      {
+        name: "a milestone's closer, over the glyphs the view displays for it",
+        view: "visible",
+        usj: richUsj,
+        range: {
+          start: { jsonPath: "$.content[3].content[1]", offset: 4 },
+          end: { jsonPath: "$.content[3].content[2]", closingMarkerOffset: 0 },
+        },
+        held: " [immutable-typed-text][immutable-typed-text]",
+        // The opening glyph and the attribute display, never the `\*` closer the range ends at.
+        decorators: ["\\qt-s", `${NBSP}|sid="q1" who="Pilate"`],
       },
-      held: " [immutable-typed-text][immutable-typed-text]",
-      // The opening glyph and the attribute display, never the `\*` closer the range ends at.
-      decorators: ["\\qt-s", `${NBSP}|sid="q1" who="Pilate"`],
-    },
-    {
-      name: "a default attribute's unspelled key through its value's start",
-      view: "standard",
-      usj: lemmaUsj,
-      range: {
-        start: { jsonPath: "$.content[2].content[1]", keyName: "lemma", keyOffset: 0 },
-        end: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 0 },
+      {
+        name: "a default attribute's unspelled key through its value's start",
+        view: "standard",
+        usj: lemmaUsj,
+        range: {
+          start: { jsonPath: "$.content[2].content[1]", keyName: "lemma", keyOffset: 0 },
+          end: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 0 },
+        },
+        held: "",
       },
-      held: "",
-    },
-    {
-      name: "an undisplayed attribute key through its undisplayed value",
-      view: "formatted",
-      usj: lemmaUsj,
-      range: {
-        start: { jsonPath: "$.content[2].content[1]", keyName: "lemma", keyOffset: 4 },
-        end: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 0 },
+      {
+        name: "an undisplayed attribute key through its undisplayed value",
+        view: "preview",
+        usj: lemmaUsj,
+        range: {
+          start: { jsonPath: "$.content[2].content[1]", keyName: "lemma", keyOffset: 4 },
+          end: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 0 },
+        },
+        held: "",
       },
-      held: "",
-    },
-    {
-      name: "a paragraph's marker through the backslash a verse decorator displays",
-      view: "hidden+expanded",
-      usj: richUsj,
-      range: {
-        start: { jsonPath: "$.content[2]['marker']", propertyOffset: 0 },
-        end: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 0 },
+      {
+        name: "a paragraph's marker through the backslash a verse decorator displays",
+        view: "preview",
+        usj: richUsj,
+        range: {
+          start: { jsonPath: "$.content[2]['marker']", propertyOffset: 0 },
+          end: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 0 },
+        },
+        held: "[immutable-verse]",
       },
-      held: "[immutable-verse]",
-    },
-    {
-      name: "a verse's trailing separator through the backslash of the span after it",
-      view: "visible",
-      usj: edgesUsj,
-      range: {
-        start: { jsonPath: "$.content[1].content[0]['number']", propertyOffset: 1 },
-        end: { jsonPath: "$.content[1].content[1]['marker']", propertyOffset: 0 },
+      {
+        name: "a paragraph's marker through the backslash a verse decorator displays",
+        view: "hidden+expanded",
+        usj: richUsj,
+        range: {
+          start: { jsonPath: "$.content[2]['marker']", propertyOffset: 0 },
+          end: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 0 },
+        },
+        held: "[immutable-verse]",
       },
-      // The verse's own bytes end before the range starts: only the `\wj` glyph is named.
-      held: "[immutable-typed-text]",
-    },
-  ])("resolves $name ($view)", async ({ view, usj, range, held, decorators }) => {
+      {
+        name: "a verse's trailing separator through the backslash of the span after it",
+        view: "visible",
+        usj: edgesUsj,
+        range: {
+          start: { jsonPath: "$.content[1].content[0]['number']", propertyOffset: 1 },
+          end: { jsonPath: "$.content[1].content[1]['marker']", propertyOffset: 0 },
+        },
+        // The verse's own bytes end before the range starts: only the `\wj` glyph is named.
+        held: "[immutable-typed-text]",
+      },
+    ]),
+  )("resolves $name ($view)", async ({ view, usj, range, held, decorators }) => {
     const result = await annotateInView(usj, view, range);
 
     expect(result.logs.filter((log) => log.includes("Failed to find"))).toEqual([]);
@@ -1375,107 +1469,109 @@ describe("inbound resolution for annotations", () => {
   // An undisplayed category names nothing, as Paratext 9 never anchors an annotation to `\cat`:
   // only a range naming the caller's own bytes holds the caller, whatever category bytes it also
   // names, and a location inside the category resolves behind the caller.
-  it.each<{ name: string; view: string; range: AnnotationRange; held: string }>([
-    {
-      name: "inside the category value",
-      view: "visible",
-      range: {
-        start: { jsonPath: `${notePath}['category']`, propertyOffset: 3 },
-        end: { jsonPath: `${notePath}['category']`, propertyOffset: 4 },
+  it.each<{ name: string; view: string; range: AnnotationRange; held: string }>(
+    rowsInEnabledViews([
+      {
+        name: "inside the category value",
+        view: "visible",
+        range: {
+          start: { jsonPath: `${notePath}['category']`, propertyOffset: 3 },
+          end: { jsonPath: `${notePath}['category']`, propertyOffset: 4 },
+        },
+        held: "",
       },
-      held: "",
-    },
-    {
-      name: "inside the category value",
-      view: "standard",
-      range: {
-        start: { jsonPath: `${notePath}['category']`, propertyOffset: 4 },
-        end: { jsonPath: `${notePath}['category']`, propertyOffset: 5 },
+      {
+        name: "inside the category value",
+        view: "standard",
+        range: {
+          start: { jsonPath: `${notePath}['category']`, propertyOffset: 4 },
+          end: { jsonPath: `${notePath}['category']`, propertyOffset: 5 },
+        },
+        held: "",
       },
-      held: "",
-    },
-    {
-      name: "the `\\cat` backslash",
-      view: "standard",
-      range: {
-        start: { jsonPath: notePath, keyName: "category" },
-        end: { jsonPath: notePath, keyName: "category", keyOffset: 0 },
+      {
+        name: "the `\\cat` backslash",
+        view: "standard",
+        range: {
+          start: { jsonPath: notePath, keyName: "category" },
+          end: { jsonPath: notePath, keyName: "category", keyOffset: 0 },
+        },
+        held: "",
       },
-      held: "",
-    },
-    {
-      name: "the note's undisplayed marker name through the `\\cat` backslash",
-      view: "formatted",
-      range: {
-        start: { jsonPath: `${notePath}['marker']`, propertyOffset: 1 },
-        end: { jsonPath: notePath, keyName: "category" },
+      {
+        name: "the note's undisplayed marker name through the `\\cat` backslash",
+        view: "preview",
+        range: {
+          start: { jsonPath: `${notePath}['marker']`, propertyOffset: 1 },
+          end: { jsonPath: notePath, keyName: "category" },
+        },
+        held: "[immutable-note-caller]",
       },
-      held: "[immutable-note-caller]",
-    },
-    {
-      name: "the `\\cat*` closer through the note's content",
-      view: "visible",
-      range: {
-        start: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 3 },
-        end: { jsonPath: `${notePath}.content[0]` },
+      {
+        name: "the `\\cat*` closer through the note's content",
+        view: "visible",
+        range: {
+          start: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 3 },
+          end: { jsonPath: `${notePath}.content[0]` },
+        },
+        held: "",
       },
-      held: "",
-    },
-    {
-      name: "the caller's end through the `\\cat` backslash's front",
-      view: "standard",
-      range: {
-        start: { jsonPath: `${notePath}['caller']`, propertyOffset: 1 },
-        end: { jsonPath: notePath, keyName: "category" },
+      {
+        name: "the caller's end through the `\\cat` backslash's front",
+        view: "standard",
+        range: {
+          start: { jsonPath: `${notePath}['caller']`, propertyOffset: 1 },
+          end: { jsonPath: notePath, keyName: "category" },
+        },
+        held: "",
       },
-      held: "",
-    },
-    {
-      name: "the caller's end through the category key",
-      view: "standard",
-      range: {
-        start: { jsonPath: `${notePath}['caller']`, propertyOffset: 1 },
-        end: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
+      {
+        name: "the caller's end through the category key",
+        view: "standard",
+        range: {
+          start: { jsonPath: `${notePath}['caller']`, propertyOffset: 1 },
+          end: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
+        },
+        held: "",
       },
-      held: "",
-    },
-    {
-      name: "the caller through the category key",
-      view: "standard",
-      range: {
-        start: { jsonPath: `${notePath}['caller']`, propertyOffset: 0 },
-        end: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
+      {
+        name: "the caller through the category key",
+        view: "standard",
+        range: {
+          start: { jsonPath: `${notePath}['caller']`, propertyOffset: 0 },
+          end: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
+        },
+        held: "[immutable-note-caller]",
       },
-      held: "[immutable-note-caller]",
-    },
-    {
-      name: "the text before the note into the category value",
-      view: "formatted",
-      range: {
-        start: { jsonPath: "$.content[2].content[0]", offset: 2 },
-        end: { jsonPath: `${notePath}['category']`, propertyOffset: 3 },
+      {
+        name: "the text before the note into the category value",
+        view: "preview",
+        range: {
+          start: { jsonPath: "$.content[2].content[0]", offset: 2 },
+          end: { jsonPath: `${notePath}['category']`, propertyOffset: 3 },
+        },
+        held: "xt[immutable-note-caller]",
       },
-      held: "xt[immutable-note-caller]",
-    },
-    {
-      name: "the category value into the note's text",
-      view: "formatted",
-      range: {
-        start: { jsonPath: `${notePath}['category']`, propertyOffset: 3 },
-        end: { jsonPath: `${notePath}.content[1].content[0]`, offset: 4 },
+      {
+        name: "the category value into the note's text",
+        view: "preview",
+        range: {
+          start: { jsonPath: `${notePath}['category']`, propertyOffset: 3 },
+          end: { jsonPath: `${notePath}.content[1].content[0]`, offset: 4 },
+        },
+        held: "1:12 Some",
       },
-      held: "1:12 Some",
-    },
-    {
-      name: "the category key into the note's text",
-      view: "visible",
-      range: {
-        start: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
-        end: { jsonPath: `${notePath}.content[0].content[0]`, offset: 4 },
+      {
+        name: "the category key into the note's text",
+        view: "visible",
+        range: {
+          start: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
+          end: { jsonPath: `${notePath}.content[0].content[0]`, offset: 4 },
+        },
+        held: "[immutable-typed-text]1:12",
       },
-      held: "[immutable-typed-text]1:12",
-    },
-  ])("holds an undisplayed category as nothing: $name ($view)", async ({ view, range, held }) => {
+    ]),
+  )("holds an undisplayed category as nothing: $name ($view)", async ({ view, range, held }) => {
     const result = await annotateInView(categoryNoteUsj, view, range);
 
     expect(result.logs.filter((log) => log.includes("Failed to find"))).toEqual([]);
@@ -1541,8 +1637,8 @@ describe("inbound resolution for annotations", () => {
     },
   ];
   it.each(
-    ["standard", "formatted", "paragraph-structure", "visible+collapsed"].flatMap((view) =>
-      collapsedContentRanges.map((row) => ({ ...row, view })),
+    enabledViews(["standard", "preview", "paragraph-structure", "visible+collapsed"]).flatMap(
+      (view) => collapsedContentRanges.map((row) => ({ ...row, view })),
     ),
   )(
     "keeps an annotation on $name off the collapsed note's caller ($view)",
@@ -1554,23 +1650,25 @@ describe("inbound resolution for annotations", () => {
     },
   );
 
-  it.each<{ name: string; view: string; location: UsjDocumentLocation }>([
-    {
-      name: "a category key",
-      view: "standard",
-      location: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
-    },
-    {
-      name: "a category value",
-      view: "formatted",
-      location: { jsonPath: `${notePath}['category']`, propertyOffset: 2 },
-    },
-    {
-      name: "a category closer",
-      view: "visible",
-      location: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 2 },
-    },
-  ])(
+  it.each<{ name: string; view: string; location: UsjDocumentLocation }>(
+    rowsInEnabledViews([
+      {
+        name: "a category key",
+        view: "standard",
+        location: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
+      },
+      {
+        name: "a category value",
+        view: "preview",
+        location: { jsonPath: `${notePath}['category']`, propertyOffset: 2 },
+      },
+      {
+        name: "a category closer",
+        view: "visible",
+        location: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 2 },
+      },
+    ]),
+  )(
     "puts a caret at $name the view does not display behind the caller ($view)",
     async ({ view, location }) => {
       const mounted = await mountInView(categoryNoteUsj, oracleView(view));
@@ -1614,76 +1712,81 @@ describe("inbound resolution for annotations", () => {
   // The opening glyph of an empty span stands for the span's undisplayed attributes, which USFM
   // spells between it and the closer: a range naming any of their bytes holds the glyph whole. The
   // views without glyphs show only the span's placeholder, which no attribute byte names.
-  it.each<{ name: string; view: string; range: AnnotationRange; held: string }>([
-    {
-      name: "inside the attribute value",
-      view: "visible",
-      range: {
-        start: { jsonPath: hrefPath, propertyOffset: 5 },
-        end: { jsonPath: hrefPath, propertyOffset: 6 },
+  it.each<{ name: string; view: string; range: AnnotationRange; held: string }>(
+    rowsInEnabledViews([
+      {
+        name: "inside the attribute value",
+        view: "visible",
+        range: {
+          start: { jsonPath: hrefPath, propertyOffset: 5 },
+          end: { jsonPath: hrefPath, propertyOffset: 6 },
+        },
+        held: "[immutable-typed-text]",
       },
-      held: "[immutable-typed-text]",
-    },
-    {
-      name: "inside the attribute value through the closer",
-      view: "visible+collapsed",
-      range: {
-        start: { jsonPath: hrefPath, propertyOffset: 5 },
-        end: { jsonPath: jumpPath, closingMarkerOffset: 0 },
+      {
+        name: "inside the attribute value through the closer",
+        view: "visible+collapsed",
+        range: {
+          start: { jsonPath: hrefPath, propertyOffset: 5 },
+          end: { jsonPath: jumpPath, closingMarkerOffset: 0 },
+        },
+        held: "[immutable-typed-text]",
       },
-      held: "[immutable-typed-text]",
-    },
-    {
-      name: "the marker name's end through the value's start, over the `|`",
-      view: "visible",
-      range: {
-        start: { jsonPath: `${jumpPath}['marker']`, propertyOffset: 3 },
-        end: { jsonPath: hrefPath, propertyOffset: 0 },
+      {
+        name: "the marker name's end through the value's start, over the `|`",
+        view: "visible",
+        range: {
+          start: { jsonPath: `${jumpPath}['marker']`, propertyOffset: 3 },
+          end: { jsonPath: hrefPath, propertyOffset: 0 },
+        },
+        held: "[immutable-typed-text]",
       },
-      held: "[immutable-typed-text]",
-    },
-    {
-      name: "the value's end through the closer, which names nothing",
-      view: "visible",
-      range: {
-        start: { jsonPath: hrefPath, propertyOffset: 7 },
-        end: { jsonPath: jumpPath, closingMarkerOffset: 0 },
+      {
+        name: "the value's end through the closer, which names nothing",
+        view: "visible",
+        range: {
+          start: { jsonPath: hrefPath, propertyOffset: 7 },
+          end: { jsonPath: jumpPath, closingMarkerOffset: 0 },
+        },
+        held: "",
       },
-      held: "",
-    },
-    {
-      name: "the undisplayed marker name into the undisplayed value",
-      view: "formatted",
-      range: {
-        start: { jsonPath: `${jumpPath}['marker']`, propertyOffset: 2 },
-        end: { jsonPath: hrefPath, propertyOffset: 1 },
+      {
+        name: "the undisplayed marker name into the undisplayed value",
+        view: "preview",
+        range: {
+          start: { jsonPath: `${jumpPath}['marker']`, propertyOffset: 2 },
+          end: { jsonPath: hrefPath, propertyOffset: 1 },
+        },
+        held: "",
       },
-      held: "",
-    },
-    {
-      name: "the undisplayed marker name into the undisplayed value",
-      view: "hidden+expanded",
-      range: {
-        start: { jsonPath: `${jumpPath}['marker']`, propertyOffset: 2 },
-        end: { jsonPath: hrefPath, propertyOffset: 1 },
+      {
+        name: "the undisplayed marker name into the undisplayed value",
+        view: "hidden+expanded",
+        range: {
+          start: { jsonPath: `${jumpPath}['marker']`, propertyOffset: 2 },
+          end: { jsonPath: hrefPath, propertyOffset: 1 },
+        },
+        held: "",
       },
-      held: "",
-    },
-  ])("resolves an empty span's attribute: $name ($view)", async ({ view, range, held }) => {
+    ]),
+  )("resolves an empty span's attribute: $name ($view)", async ({ view, range, held }) => {
     const result = await annotateInView(emptyJumpUsj, view, range);
 
     expect(result.held).toBe(held);
     if (held) expect(result.decorators).toEqual(["\\jmp"]);
   });
 
-  it("holds nothing for a range inside a span's undisplayed attribute when the span has content (visible)", async () => {
-    const result = await annotateInView(lemmaUsj, "visible", {
-      start: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 1 },
-      end: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 3 },
-    });
+  itInView("visible")(
+    "holds nothing for a range inside a span's undisplayed attribute when the span has content (visible)",
+    async () => {
+      const result = await annotateInView(lemmaUsj, "visible", {
+        start: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 1 },
+        end: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 3 },
+      });
 
-    expect(result.held).toBe("");
-  });
+      expect(result.held).toBe("");
+    },
+  );
 
   it.each<{
     name: string;
@@ -1691,22 +1794,45 @@ describe("inbound resolution for annotations", () => {
     location: UsjDocumentLocation;
     type: string;
     after: boolean;
-  }>([
-    {
-      name: "a milestone's undisplayed attribute key in front of the milestone",
-      view: "formatted",
-      location: { jsonPath: "$.content[3].content[2]", keyName: "who", keyOffset: 0 },
-      type: "ms",
-      after: false,
-    },
-    {
-      name: "a caller offset past what a collapsed caller shows behind the caller",
-      view: "visible+collapsed",
-      location: { jsonPath: "$.content[3].content[6]['caller']", propertyOffset: 2 },
-      type: "immutable-note-caller",
-      after: true,
-    },
-  ])("puts a caret at $name ($view)", async ({ view, location, type, after }) => {
+  }>(
+    rowsInEnabledViews([
+      {
+        name: "a milestone's undisplayed attribute key in front of the milestone",
+        view: "preview",
+        location: { jsonPath: "$.content[3].content[2]", keyName: "who", keyOffset: 0 },
+        type: "ms",
+        after: false,
+      },
+      {
+        name: "a caller offset past what a collapsed caller shows behind the caller",
+        view: "standard",
+        location: { jsonPath: "$.content[3].content[6]['caller']", propertyOffset: 2 },
+        type: "immutable-note-caller",
+        after: true,
+      },
+      {
+        name: "a caller offset past what a collapsed caller shows behind the caller",
+        view: "preview",
+        location: { jsonPath: "$.content[3].content[6]['caller']", propertyOffset: 2 },
+        type: "immutable-note-caller",
+        after: true,
+      },
+      {
+        name: "a caller offset past what a collapsed caller shows behind the caller",
+        view: "paragraph-structure",
+        location: { jsonPath: "$.content[3].content[6]['caller']", propertyOffset: 2 },
+        type: "immutable-note-caller",
+        after: true,
+      },
+      {
+        name: "a caller offset past what a collapsed caller shows behind the caller",
+        view: "visible+collapsed",
+        location: { jsonPath: "$.content[3].content[6]['caller']", propertyOffset: 2 },
+        type: "immutable-note-caller",
+        after: true,
+      },
+    ]),
+  )("puts a caret at $name ($view)", async ({ view, location, type, after }) => {
     const mounted = await mountInView(richUsj, oracleView(view));
 
     await act(async () => {
@@ -1737,7 +1863,7 @@ describe("inbound resolution for annotations", () => {
   });
 
   it("puts a caret at a paragraph's marker at the paragraph's start", async () => {
-    const mounted = await mountInView(lemmaUsj, oracleView("formatted"));
+    const mounted = await mountInView(lemmaUsj, oracleView("preview"));
 
     await act(async () => {
       mounted.ref.current?.setSelection({
@@ -1758,26 +1884,29 @@ describe("inbound resolution for annotations", () => {
     });
   });
 
-  it("puts a caret inside a verse decorator's bytes in front of it", async () => {
-    const mounted = await mountInView(richUsj, oracleView("hidden+expanded"));
+  it.each(enabledViews(["preview", "hidden+expanded"]))(
+    "puts a caret inside a verse decorator's bytes in front of it (%s)",
+    async (name) => {
+      const mounted = await mountInView(richUsj, oracleView(name));
 
-    await act(async () => {
-      mounted.ref.current?.setSelection({
-        start: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 0 },
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 0 },
+        });
+        await Promise.resolve();
       });
-      await Promise.resolve();
-    });
 
-    mounted.lexical.getEditorState().read(() => {
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection)) throw new Error("no range selection");
-      expect(selection.isCollapsed()).toBe(true);
-      const verse = $firstOfType($getRoot(), $isImmutableVerseNode);
-      if (!verse) throw new Error("expected a verse decorator");
-      expect(selection.anchor.getNode().is(verse.getParent())).toBe(true);
-      expect(selection.anchor.offset).toBe(verse.getIndexWithinParent());
-    });
-  });
+      mounted.lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        expect(selection.isCollapsed()).toBe(true);
+        const verse = $firstOfType($getRoot(), $isImmutableVerseNode);
+        if (!verse) throw new Error("expected a verse decorator");
+        expect(selection.anchor.getNode().is(verse.getParent())).toBe(true);
+        expect(selection.anchor.offset).toBe(verse.getIndexWithinParent());
+      });
+    },
+  );
 });
 
 describe("removal is reported by what holds the annotation now", () => {

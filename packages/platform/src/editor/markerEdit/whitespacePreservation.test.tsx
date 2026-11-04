@@ -112,9 +112,9 @@ async function mountCollabParas(): Promise<{ editor: LexicalEditor }> {
   return { editor };
 }
 
-function currentUsj(editor: LexicalEditor) {
+function currentUsj(editor: LexicalEditor, version?: string) {
   initializeDeserialize(undefined);
-  return deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
+  return deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions, version);
 }
 
 /** The text a root block shows after its marker glyph and separator, NBSPs read as spaces. */
@@ -176,7 +176,7 @@ describe("source whitespace preservation (rebuild / collab apply / paste)", () =
     // An unedited rebuild refuses as a fixed point, and nothing — rebuild or the transforms it
     // dirtied — moved a byte.
     expect(changed).toBe(false);
-    expect(currentUsj(editor)).toEqual(usj);
+    expect(currentUsj(editor, usj.version)).toEqual(usj);
   });
 
   it("keeps a transmitted trailing space through a remote apply", async () => {

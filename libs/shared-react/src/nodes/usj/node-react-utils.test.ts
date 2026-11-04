@@ -375,6 +375,27 @@ describe("$removeLeadingSpace()", () => {
     });
   });
 
+  it.each([
+    ["a no-break space", "\u00A0"],
+    ["an ideographic space", "\u3000"],
+    ["a zero-width no-break space", "\uFEFF"],
+  ])("stops at %s, which Paratext 9 keeps after a paragraph marker", (_label, kept) => {
+    const { editor } = createBasicTestEnvironment([ParaNode]);
+    editor.update(
+      () => {
+        const text = $createTextNode(` \t${kept} text`);
+        $getRoot().append($createParaNode().append(text));
+
+        $removeLeadingSpace(text);
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toBe(`${kept} text`);
+    });
+  });
+
   it("keeps a caret inside the removed space at the start of the text", () => {
     const { editor } = createBasicTestEnvironment([ParaNode]);
     editor.update(

@@ -1031,3 +1031,93 @@ describe("CopyLimitPlugin with a selected paragraph marker", () => {
     expect(rootText(editor)).toBe(`\\p${NBSP}efghij`);
   });
 });
+
+// A view that hides markers writes a stored no-break space as `~` in a copy's plain text, and an
+// over-limit copy is no different from one that fits.
+describe("CopyLimitPlugin with a stored no-break space", () => {
+  const hiddenMarkers = (allowInvisibleCharacters: boolean) => ({
+    ...getDefaultViewOptions(),
+    markerMode: "hidden" as const,
+    allowInvisibleCharacters,
+  });
+
+  /** Mounts a paragraph of `content` with all of it selected, under a `limit` and view options. */
+  async function mountParagraph(
+    limit: number,
+    allowInvisibleCharacters: boolean,
+    content: unknown[],
+  ) {
+    initializeSerialize(undefined, undefined);
+    reset();
+    const usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [{ type: "para", marker: "p", content }],
+    } as unknown as Usj;
+    const viewOptions = hiddenMarkers(allowInvisibleCharacters);
+    const state = usjEditorAdaptor.serializeEditorState(usj, viewOptions);
+    const { editor } = await baseTestEnvironment(
+      JSON.stringify({ root: state.root }),
+      <CopyLimitPlugin limit={limit} viewOptions={viewOptions} />,
+    );
+    await act(async () =>
+      editor.update(() => {
+        const root = $getRoot();
+        root.select(0, root.getChildrenSize());
+      }),
+    );
+    document.getSelection()?.removeAllRanges();
+    return editor;
+  }
+
+  const note = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "ft", content: [`Secret${NBSP}note text.`] }],
+  };
+
+  async function copyOrCut(editor: LexicalEditor, type: "copy" | "cut") {
+    const { event, getData } = clipboardEvent(type);
+    await act(async () => {
+      editor.dispatchCommand(type === "copy" ? COPY_COMMAND : CUT_COMMAND, event);
+    });
+    return { plain: getData("text/plain"), html: getData("text/html") };
+  }
+
+  it.each([
+    [false, "ab~cd"],
+    [true, `ab${NBSP}cd`],
+  ] as const)(
+    "copies an over-limit selection with allowInvisibleCharacters %s as %j",
+    async (allow, expected) => {
+      const editor = await mountParagraph(5, allow, [`ab${NBSP}cdefghij`]);
+      expect(await copyOrCut(editor, "copy")).toEqual({ plain: expected, html: "" });
+    },
+  );
+
+  it.each([
+    [false, "ab~cd"],
+    [true, `ab${NBSP}cd`],
+  ] as const)(
+    "cuts an over-limit selection with allowInvisibleCharacters %s as %j, removing what it copies",
+    async (allow, expected) => {
+      const editor = await mountParagraph(5, allow, [`ab${NBSP}cdefghij`]);
+      expect(await copyOrCut(editor, "cut")).toEqual({ plain: expected, html: "" });
+      expect(rootText(editor)).toBe("efghij");
+    },
+  );
+
+  it.each([
+    [false, "ab~cdef g~h"],
+    [true, `ab${NBSP}cdef g${NBSP}h`],
+  ] as const)(
+    "counts only the no-break spaces of the text shown when the copy spans a collapsed note (allowInvisibleCharacters %s)",
+    async (allow, expected) => {
+      const editor = await mountParagraph(11, allow, [`ab${NBSP}cdef`, note, ` g${NBSP}hijk`]);
+      expect(await copyOrCut(editor, "copy")).toEqual({ plain: expected, html: "" });
+      const cutEditor = await mountParagraph(11, allow, [`ab${NBSP}cdef`, note, ` g${NBSP}hijk`]);
+      expect((await copyOrCut(cutEditor, "cut")).plain).toBe(expected);
+    },
+  );
+});

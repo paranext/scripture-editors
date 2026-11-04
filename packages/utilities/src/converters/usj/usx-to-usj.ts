@@ -17,6 +17,12 @@ interface Attribs {
 /**
  * Converts a USX string to a USJ object.
  *
+ * The USJ `version` is the root `<usx version>` the USX declares, so a document comes back out of
+ * `usjToUsxString` at the version it went in at. USX, USJ and USFM share one version
+ * numbering, so no translation is needed. A version that is not 3.x (`"2.5"`, say) is preserved
+ * unchanged too: the conversion neither validates nor upgrades it. A USX that declares no version
+ * (or an empty one) gets {@link USJ_VERSION}.
+ *
  * @param usxString - The USX string to convert.
  * @returns The converted USJ object.
  *
@@ -28,12 +34,21 @@ export function usxStringToUsj(usxString: string): Usj {
   return usxDomToUsj(inputUsxDom.documentElement);
 }
 
+/**
+ * Converts a USX DOM element to a USJ object. The USJ `version` is the element's `version`
+ * attribute exactly as declared, including one that is not 3.x, which is neither validated nor
+ * upgraded; an element that declares no version (or an empty one), or none at all, gets
+ * {@link USJ_VERSION}.
+ *
+ * @param inputUsxDom - The root `usx` element to convert.
+ * @returns The converted USJ object.
+ */
 export function usxDomToUsj(inputUsxDom: Element | null): Usj {
   const [outputJson] = inputUsxDom
     ? convertUsxRecurse(inputUsxDom)
     : [{ content: [] as MarkerContent[] } as Usj];
   outputJson.type = USJ_TYPE;
-  outputJson.version = USJ_VERSION;
+  outputJson.version = inputUsxDom?.getAttribute("version") || USJ_VERSION;
   return outputJson;
 }
 
@@ -60,11 +75,12 @@ function convertUsxRecurse<T extends Usj | MarkerObject = Usj>(
     marker = attribs.style;
     delete attribs.style;
   }
-  // dropping because presence of vid in para elements is not consistent in USX
-  if (attribs.vid) delete attribs.vid;
+  // Dropped whatever their value, an empty one included: `vid` because its presence on para
+  // elements is not consistent in USX (ParatextData writes `vid=""` in every chapter after the
+  // first), `status` because it is nonstandard derived metadata that could get out of date.
+  delete attribs.vid;
+  delete attribs.status;
   // Not dropping `attribs.closed` for backwards compatibility.
-  // dropping because it is nonstandard derived metadata that could get out of date
-  if (attribs.status) delete attribs.status;
 
   let outObj: T = { type } as T;
   if (marker !== undefined) (outObj as MarkerObject).marker = marker;

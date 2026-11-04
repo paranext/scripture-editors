@@ -2,7 +2,8 @@
  * A scrRef navigation's caret placement must not swallow the edit that follows it.
  *
  * Its own file on purpose: state an earlier test in a shared file leaves behind lets a later
- * update clear Lexical's pending tags, which hides the leak this pins.
+ * update clear Lexical's pending tags, which hides the leak this pins. The per-view rows below each
+ * start from no document selection for the same reason.
  */
 import Editor from "./Editor";
 import { EditorRef } from "./editor.model";
@@ -10,7 +11,7 @@ import { flushQueuedEvents } from "./editor-test.utils";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act, render } from "@testing-library/react";
 import { createRef, ReactElement } from "react";
-import { getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
+import { EDITING_VIEWS } from "./editorViews.test-helpers";
 import { vi } from "vitest";
 
 describe("scrRef navigation followed immediately by a content edit", () => {
@@ -41,58 +42,66 @@ describe("scrRef navigation followed immediately by a content edit", () => {
     ],
   };
 
-  it("still reports insertMarker('f') to onUsjChange right after a scrRef navigation", async () => {
-    const ref = createRef<EditorRef>();
-    const onUsjChange = vi.fn();
-    const scrRefVerse1 = { book: "GEN", chapterNum: 1, verseNum: 1 };
-    const scrRefVerse2 = { book: "GEN", chapterNum: 1, verseNum: 2 };
-
-    let rerender: ((element: ReactElement) => void) | undefined;
-    await act(async () => {
-      const result = render(
-        <Editor
-          ref={ref}
-          defaultUsj={twoVerseUsj}
-          scrRef={scrRefVerse1}
-          onScrRefChange={() => undefined}
-          onUsjChange={onUsjChange}
-          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
-        />,
-      );
-      rerender = result.rerender;
-    });
-    await flushQueuedEvents();
-    if (!rerender) throw new Error("render did not return a rerender function");
-    if (!ref.current) throw new Error("EditorRef did not mount");
-    const rerenderEditor = rerender;
-
-    // Navigate to a new reference - a genuinely different scrRef object, exactly as a host
-    // passes one down. Flushed to completion (its own commit) BEFORE the marker insert below,
-    // so the insert lands as the NEXT, separate commit rather than being batched into the same
-    // one - the shape the leaked tag actually reaches in the app (a later keystroke or, here, a
-    // later palette action).
-    await act(async () => {
-      rerenderEditor(
-        <Editor
-          ref={ref}
-          defaultUsj={twoVerseUsj}
-          scrRef={scrRefVerse2}
-          onScrRefChange={() => undefined}
-          onUsjChange={onUsjChange}
-          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
-        />,
-      );
-    });
-    await flushQueuedEvents();
-    onUsjChange.mockClear();
-
-    await act(async () => {
-      ref.current?.insertMarker("f");
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await flushQueuedEvents();
-
-    expect(onUsjChange).toHaveBeenCalled();
+  beforeEach(() => {
+    document.getSelection()?.removeAllRanges();
   });
+
+  it.each(EDITING_VIEWS)(
+    "still reports insertMarker('f') to onUsjChange right after a scrRef navigation ($name)",
+    async ({ view }) => {
+      const ref = createRef<EditorRef>();
+      const onUsjChange = vi.fn();
+      const scrRefVerse1 = { book: "GEN", chapterNum: 1, verseNum: 1 };
+      const scrRefVerse2 = { book: "GEN", chapterNum: 1, verseNum: 2 };
+
+      let rerender: ((element: ReactElement) => void) | undefined;
+      await act(async () => {
+        const result = render(
+          <Editor
+            ref={ref}
+            defaultUsj={twoVerseUsj}
+            scrRef={scrRefVerse1}
+            onScrRefChange={() => undefined}
+            onUsjChange={onUsjChange}
+            options={{ view }}
+          />,
+        );
+        rerender = result.rerender;
+      });
+      await flushQueuedEvents();
+      if (!rerender) throw new Error("render did not return a rerender function");
+      if (!ref.current) throw new Error("EditorRef did not mount");
+      const rerenderEditor = rerender;
+
+      // Navigate to a new reference - a genuinely different scrRef object, exactly as a host
+      // passes one down. Flushed to completion (its own commit) BEFORE the marker insert below,
+      // so the insert lands as the NEXT, separate commit rather than being batched into the same
+      // one - the shape the leaked tag actually reaches in the app (a later keystroke or, here, a
+      // later palette action).
+      await act(async () => {
+        rerenderEditor(
+          <Editor
+            ref={ref}
+            defaultUsj={twoVerseUsj}
+            scrRef={scrRefVerse2}
+            onScrRefChange={() => undefined}
+            onUsjChange={onUsjChange}
+            options={{ view }}
+          />,
+        );
+      });
+      await flushQueuedEvents();
+      onUsjChange.mockClear();
+
+      await act(async () => {
+        ref.current?.insertMarker("f");
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await flushQueuedEvents();
+
+      expect(onUsjChange).toHaveBeenCalled();
+      expect(JSON.stringify(onUsjChange.mock.calls.at(-1)?.[0])).toContain('"type":"note"');
+    },
+  );
 });

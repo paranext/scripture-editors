@@ -23,11 +23,14 @@ import {
   $getRoot,
   $isElementNode,
   $setState,
+  ElementNode,
+  LexicalNode,
 } from "lexical";
 import {
   $createAttributeRunNode,
   $createCaretHostNode,
   $createCharNode,
+  $createImmutableTypedTextNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createMilestoneNode,
@@ -36,6 +39,7 @@ import {
   $createTypedMarkNode,
   $createVerseNode,
   $getLogicalContentItems,
+  authoredNbspState,
   getEditableCallerText,
   getVisibleOpenMarkerText,
   NBSP,
@@ -44,6 +48,8 @@ import {
   ZWSP,
 } from "shared";
 import {
+  $createImmutableNoteCallerNode,
+  FORMATTED_VIEW_MODE,
   getViewOptions,
   hasStandardViewWhitespace,
   UNFORMATTED_VIEW_MODE,
@@ -116,7 +122,8 @@ const cases: AgreementCase[] = [
     expected: [{ kind: "text", text: "content" }],
   },
   {
-    name: "an NBSP-only spacer between char spans is dropped",
+    // A lone NBSP outside the engine's display slots is the author's `~`, however it is spelled.
+    name: "a `~` between char spans is a content string of its own",
     $build: () => {
       $getRoot().append(
         $createParaNode("p").append(
@@ -126,13 +133,12 @@ const cases: AgreementCase[] = [
         ),
       );
     },
-    expected: [{ kind: "char" }, { kind: "char" }],
+    expected: [{ kind: "char" }, { kind: "text", text: NBSP }, { kind: "char" }],
   },
   {
-    // Formats differ around the spacer only to defeat Lexical's adjacent-simple-text merge (see
-    // the first case); the spacer itself must be dropped by BOTH projections and the run must
-    // coalesce across it.
-    name: "an NBSP-only spacer inside a text run is dropped and the run coalesces across it",
+    // Formats differ around the `~` only to defeat Lexical's adjacent-simple-text merge (see the
+    // first case); the run must coalesce across it with the byte kept.
+    name: "a `~` inside a text run joins the run",
     $build: () => {
       $getRoot().append(
         $createParaNode("p").append(
@@ -142,7 +148,36 @@ const cases: AgreementCase[] = [
         ),
       );
     },
-    expected: [{ kind: "text", text: "firstsecond" }],
+    expected: [{ kind: "text", text: `first${NBSP}second` }],
+  },
+  {
+    name: "a `~` right after the paragraph's tagged separator is content",
+    $build: () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode(NBSP),
+          $createVerseNode("1", getVisibleOpenMarkerText("v", "1")),
+        ),
+      );
+    },
+    expected: [{ kind: "text", text: NBSP }, { kind: "verse" }],
+  },
+  {
+    // The paragraph separator with its tag lost: still display, because it sits right after the
+    // glyph.
+    name: "a lone NBSP right after the paragraph glyph is display",
+    $build: () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $createTextNode(NBSP),
+          $createTextNode("text").toggleFormat("bold"),
+        ),
+      );
+    },
+    expected: [{ kind: "text", text: "text" }],
   },
   {
     // VerseNode IS a TextNode subclass in editable mode, so this also pins the
@@ -302,6 +337,172 @@ describe("content semantics agreement: deserializeEditorState vs $getLogicalCont
 
     // Pin the expected items themselves first, so both sides drifting together still fails
     // loudly; then the two projections must agree with each other by transitivity.
+    expect(logicalItems).toEqual(expected);
+    expect(usjItems).toEqual(expected);
+  });
+});
+
+/** Summarizes `parent`'s live logical items the way the suite above does. */
+function $logicalSummary(parent: ElementNode, view: ViewOptions): ContentItemSummary[] {
+  return $getLogicalContentItems(parent, hasStandardViewWhitespace(view)).map((item) =>
+    item.type === "text"
+      ? {
+          kind: "text",
+          text: item.segments
+            .map((segment) => segment.node.getTextContent().slice(segment.lead))
+            .join(""),
+        }
+      : { kind: item.node.getType() },
+  );
+}
+
+/** The editable opening glyph and closer around `content`, as the editable views build a span. */
+function $editableSpan(marker: string, ...content: LexicalNode[]) {
+  return $createCharNode(marker).append(
+    $createMarkerNode(marker),
+    ...content,
+    $createMarkerNode(marker, "closing"),
+  );
+}
+
+/** A text that is exactly one NBSP, marked as the author's `~` the way the forward adaptor does. */
+function $authoredNbsp() {
+  return $setState($createTextNode(NBSP), authoredNbspState, true);
+}
+
+/** A collapsed note: its caller, then `content`. */
+function $collapsedNote(...content: LexicalNode[]) {
+  return $createNoteNode("f", "+", true).append($createImmutableNoteCallerNode("+"), ...content);
+}
+
+const formattedView = getViewOptions(FORMATTED_VIEW_MODE);
+if (!formattedView) throw new Error("Formatted view options are required for these tests");
+const visibleView: ViewOptions = {
+  markerMode: "visible",
+  noteMode: "collapsed",
+  hasSpacing: true,
+  isFormattedFont: true,
+};
+
+interface ContainerAgreementCase {
+  name: string;
+  view: ViewOptions;
+  /** Builds the one span or note the paragraph holds. */
+  $container: () => ElementNode;
+  expected: ContentItemSummary[];
+}
+
+/**
+ * Lone NBSPs inside a span or a note, where the engine's display slots are: the live model must
+ * skip exactly the ones the conversion drops, or every logical offset after one is off by one.
+ */
+const containerCases: ContainerAgreementCase[] = [
+  {
+    name: "a hidden span's placeholder is display",
+    view: formattedView,
+    $container: () => $createCharNode("nd").append($createTextNode(NBSP)),
+    expected: [],
+  },
+  {
+    name: "a hidden span's author-marked `~` is content",
+    view: formattedView,
+    $container: () => $createCharNode("nd").append($authoredNbsp()),
+    expected: [{ kind: "text", text: NBSP }],
+  },
+  {
+    name: "a hidden span's `~` after a nested span is content",
+    view: formattedView,
+    $container: () =>
+      $createCharNode("nd").append(
+        $createTextNode("x "),
+        $createCharNode("w").append($createTextNode("y")),
+        $createTextNode(NBSP),
+      ),
+    expected: [{ kind: "text", text: "x " }, { kind: "char" }, { kind: "text", text: NBSP }],
+  },
+  {
+    name: "an editable span's separator is display, and the `~` after it content",
+    view: viewOptions,
+    $container: () => $editableSpan("nd", $createTextNode(`${NBSP}${NBSP}`)),
+    expected: [{ kind: "text", text: NBSP }],
+  },
+  {
+    name: "an editable span's lone separator is display",
+    view: viewOptions,
+    $container: () => $editableSpan("nd", $createTextNode(NBSP)),
+    expected: [],
+  },
+  {
+    name: "a placeholder after a read-only glyph is display",
+    view: visibleView,
+    $container: () =>
+      $createCharNode("nd").append(
+        $createImmutableTypedTextNode("marker", "\\nd"),
+        $createTextNode(NBSP),
+        $createImmutableTypedTextNode("marker", "\\nd*"),
+      ),
+    expected: [],
+  },
+  {
+    name: "an author-marked `~` after a read-only glyph is content",
+    view: visibleView,
+    $container: () =>
+      $createCharNode("nd").append(
+        $createImmutableTypedTextNode("marker", "\\nd"),
+        $authoredNbsp(),
+        $createImmutableTypedTextNode("marker", "\\nd*"),
+      ),
+    expected: [{ kind: "text", text: NBSP }],
+  },
+  {
+    name: "a collapsed note's untagged separators after the caller and a span are display",
+    view: formattedView,
+    $container: () =>
+      $collapsedNote(
+        $createTextNode(NBSP),
+        $createCharNode("ft").append($createTextNode("x")),
+        $createTextNode(NBSP),
+      ),
+    expected: [{ kind: "char" }],
+  },
+  {
+    name: "a collapsed note's `~` after a span's tagged separator is content",
+    view: formattedView,
+    $container: () =>
+      $collapsedNote(
+        $createMarkerTrailingSeparator(),
+        $createCharNode("ft").append($createTextNode("x")),
+        $createMarkerTrailingSeparator(),
+        $createTextNode(NBSP),
+        $createCharNode("ft").append($createTextNode("y")),
+      ),
+    expected: [{ kind: "char" }, { kind: "text", text: NBSP }, { kind: "char" }],
+  },
+];
+
+describe("content semantics agreement inside a span or a note", () => {
+  it.each(containerCases)("$name", ({ view, $container, expected }) => {
+    const { editor } = createBasicTestEnvironment(twinPinNodes, () => {
+      $getRoot().append($createParaNode("p").append($container()));
+    });
+
+    let logicalItems: ContentItemSummary[] = [];
+    editor.getEditorState().read(() => {
+      const container = $getRoot().getFirstChildOrThrow<ElementNode>().getFirstChild();
+      if (!$isElementNode(container)) throw new Error("Expected the built container");
+      logicalItems = $logicalSummary(container, view);
+    });
+
+    const usj = deserializeEditorState(editor.getEditorState(), view);
+    const para = usj?.content[0];
+    if (!para || typeof para === "string") throw new Error("Expected the built para");
+    const container = para.content?.[0];
+    if (!container || typeof container === "string")
+      throw new Error("Expected the built container as the para's only content");
+    const usjItems: ContentItemSummary[] = (container.content ?? []).map((entry) =>
+      typeof entry === "string" ? { kind: "text", text: entry } : { kind: entry.type },
+    );
+
     expect(logicalItems).toEqual(expected);
     expect(usjItems).toEqual(expected);
   });

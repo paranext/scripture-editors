@@ -66,7 +66,7 @@ describe("optbreak whitespace significance (USX<->USJ)", () => {
     ({ usxInner, roundTripInner }) => {
       const usj = usxStringToUsj(wrap(usxInner));
       const back = usjToUsxString(usj);
-      expect(back).toBe(`<usx version="3.1"><para style="p">${roundTripInner}</para></usx>`);
+      expect(back).toBe(wrap(roundTripInner));
     },
   );
 

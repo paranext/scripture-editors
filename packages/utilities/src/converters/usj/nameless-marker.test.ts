@@ -41,6 +41,33 @@ describe("a nameless marker round-trips", () => {
     expect(usx).toContain('<para style="">df</para>');
   });
 
+  it("keeps a character span's empty style through USX to USJ and back", () => {
+    // ParatextData reads the bare `\` in `\f + \ft \ b\f*` as a span with no name.
+    const usx =
+      '<usx version="3.1"><para style="p">text<note style="f" caller="+">' +
+      '<char style="ft" closed="false"/><char style="" closed="false">b</char></note></para></usx>';
+    const usj = usxStringToUsj(usx);
+    expect(usj.content).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          "text",
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [
+              { type: "char", marker: "ft", closed: "false" },
+              { type: "char", marker: "", closed: "false", content: ["b"] },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(usjToUsxString(usj)).toBe(usx);
+  });
+
   it("still gives an element with no style no marker", () => {
     const usj = usxStringToUsj('<usx version="3.1"><para style="p">a<optbreak />b</para></usx>');
     expect(usj.content).toEqual([

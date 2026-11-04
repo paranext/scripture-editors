@@ -9,6 +9,7 @@ import {
   $getState,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   $setState,
   TextNode,
 } from "lexical";
@@ -21,6 +22,7 @@ import {
   $isCharNode,
   $isMarkerNode,
   $isParaNode,
+  authoredNbspState,
   charIdState,
   CharNode,
   displayRunDescriptor,
@@ -53,7 +55,7 @@ describe("CharNodePlugin", () => {
   });
 
   it("should combine adjacent CharNodes with same marker", async () => {
-    const { editor } = await testEnvironment(() => {
+    const { editor } = await testEnvironmentAddedByUpdate(() => {
       $getRoot().append(
         $createParaNode().append(
           $createCharNode("add").append($createTextNode("add text1 ")),
@@ -95,7 +97,7 @@ describe("CharNodePlugin", () => {
   });
 
   it("should combine adjacent CharNodes with same marker and attributes", async () => {
-    const { editor } = await testEnvironment(() => {
+    const { editor } = await testEnvironmentAddedByUpdate(() => {
       $getRoot().append(
         $createParaNode().append(
           $createCharNode("add", { customAttr: "value" }).append($createTextNode("add text1 ")),
@@ -137,7 +139,7 @@ describe("CharNodePlugin", () => {
   });
 
   it("should combine adjacent CharNodes with same marker and cid", async () => {
-    const { editor } = await testEnvironment(() => {
+    const { editor } = await testEnvironmentAddedByUpdate(() => {
       const char1 = $createCharNode("add");
       $setState(char1, charIdState, "char-id");
       const char2 = $createCharNode("add");
@@ -162,7 +164,7 @@ describe("CharNodePlugin", () => {
   });
 
   it("should combine adjacent CharNodes with same marker and empty cids", async () => {
-    const { editor } = await testEnvironment(() => {
+    const { editor } = await testEnvironmentAddedByUpdate(() => {
       const char1 = $createCharNode("add");
       $setState(char1, charIdState, "");
       const char2 = $createCharNode("add");
@@ -212,7 +214,7 @@ describe("CharNodePlugin", () => {
   });
 
   it("should combine adjacent CharNodes with same marker, attributes and cid", async () => {
-    const { editor } = await testEnvironment(() => {
+    const { editor } = await testEnvironmentAddedByUpdate(() => {
       const char1 = $createCharNode("add", { customAttr: "value" });
       $setState(char1, charIdState, "char-id");
       const char2 = $createCharNode("add", { customAttr: "value" });
@@ -310,7 +312,7 @@ describe("CharNodePlugin", () => {
   });
 
   it("should combine nested adjacent CharNodes with same marker", async () => {
-    const { editor } = await testEnvironment(() => {
+    const { editor } = await testEnvironmentAddedByUpdate(() => {
       $getRoot().append(
         $createParaNode().append(
           $createCharNode("add").append(
@@ -438,7 +440,7 @@ describe("CharNodePlugin", () => {
     // rely on this merge to reunite it with its glyph-bearing neighbor. A plain child move would
     // put the content OUTSIDE the glyph pair; the merge must splice it in after the opening
     // glyph, moving the NBSP display separator onto the new first content.
-    const { editor } = await testEnvironment(() => {
+    const { editor } = await testEnvironmentAddedByUpdate(() => {
       $getRoot().append(
         $createParaNode().append(
           $createCharNode("nd").append($createTextNode("and ")),
@@ -465,7 +467,7 @@ describe("CharNodePlugin", () => {
   });
 
   it("merges a glyph-less span into the glyph-bearing span that precedes it, before the closer", async () => {
-    const { editor } = await testEnvironment(() => {
+    const { editor } = await testEnvironmentAddedByUpdate(() => {
       $getRoot().append(
         $createParaNode().append(
           $createCharNode("nd").append(
@@ -555,6 +557,184 @@ describe("CharNodePlugin", () => {
     });
   });
 
+  it("keeps the author's `~` that is a span's whole content when text is typed after it", async () => {
+    let tilde!: TextNode;
+    const { editor } = await testEnvironment(() => {
+      tilde = $setState($createTextNode(NBSP), authoredNbspState, true);
+      $getRoot().append($createParaNode().append($createCharNode("nd").append(tilde)));
+    });
+
+    await act(async () => {
+      editor.update(() => tilde.select(1, 1));
+    });
+    await act(async () => {
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        selection.insertText("xy");
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toBe(`${NBSP}xy`);
+    });
+  });
+
+  describe("a no-break space an edit leaves as a span's only text", () => {
+    // Without glyphs, a span's lone NBSP is also what an EMPTY span holds as its placeholder, and
+    // the save drops that one. A span whose other text was just removed is not empty: the NBSP that
+    // is left is the author's, and it has to survive the save.
+    async function $spanAfterRemoving(start: number, end: number) {
+      let text!: TextNode;
+      const { editor } = await testEnvironment(() => {
+        text = $createTextNode(`trail${NBSP}`);
+        $getRoot().append(
+          $createParaNode().append(
+            $createTextNode("Before "),
+            $createCharNode("nd").append(text),
+            $createTextNode(" after."),
+          ),
+        );
+      });
+      await act(async () => {
+        editor.update(() => {
+          const selection = $createRangeSelection();
+          selection.anchor.set(text.getKey(), start, "text");
+          selection.focus.set(text.getKey(), end, "text");
+          $setSelection(selection);
+          selection.removeText();
+        });
+      });
+      return { editor, text };
+    }
+
+    it("marks the NBSP left after the text in front of it is removed as the author's", async () => {
+      const { editor, text } = await $spanAfterRemoving(0, 5);
+
+      editor.getEditorState().read(() => {
+        const remaining = text.getLatest();
+        expect(remaining.getTextContent()).toBe(NBSP);
+        expect($getState(remaining, authoredNbspState)).toBe(true);
+      });
+    });
+
+    it("leaves an empty span's own placeholder untagged", async () => {
+      let placeholder!: TextNode;
+      const { editor } = await testEnvironment(() => {
+        placeholder = $createTextNode(NBSP);
+        $getRoot().append($createParaNode().append($createCharNode("nd").append(placeholder)));
+      });
+      await act(async () => {
+        editor.update(() => placeholder.markDirty());
+      });
+
+      editor.getEditorState().read(() => {
+        expect($getState(placeholder.getLatest(), authoredNbspState)).toBe(false);
+      });
+    });
+  });
+
+  describe("an empty span's placeholder when same-attribute spans combine", () => {
+    /** Each paragraph child's text, and for a span each of its children's. */
+    function $shape(): unknown[] {
+      return $getRoot()
+        .getFirstChildOrThrow<ParaNode>()
+        .getChildren()
+        .map((child) =>
+          $isCharNode(child)
+            ? child.getChildren().map((grandchild) => grandchild.getTextContent())
+            : child.getTextContent(),
+        );
+    }
+    const $authored = () => $setState($createTextNode(NBSP), authoredNbspState, true);
+
+    it.each([
+      {
+        name: "is dropped after a span ending in a nested span",
+        $build: () => [
+          $createCharNode("nd").append(
+            $createTextNode("x "),
+            $createCharNode("w").append($createTextNode("y")),
+          ),
+          $createCharNode("nd").append($createTextNode(NBSP)),
+        ],
+        expected: [["x ", "y"]],
+      },
+      {
+        name: "is dropped after a span ending in text",
+        $build: () => [
+          $createCharNode("nd").append($createTextNode("x")),
+          $createCharNode("nd").append($createTextNode(NBSP)),
+        ],
+        expected: [["x"]],
+      },
+      {
+        name: "is dropped after the author's `~`",
+        $build: () => [
+          $createCharNode("nd").append($authored()),
+          $createCharNode("nd").append($createTextNode(NBSP)),
+        ],
+        expected: [[NBSP]],
+      },
+      {
+        name: "is dropped before the author's `~`",
+        $build: () => [
+          $createCharNode("nd").append($createTextNode(NBSP)),
+          $createCharNode("nd").append($authored()),
+        ],
+        expected: [[NBSP]],
+      },
+      {
+        name: "stays, once, when both spans are empty",
+        $build: () => [
+          $createCharNode("nd").append($createTextNode(NBSP)),
+          $createCharNode("nd").append($createTextNode(NBSP)),
+        ],
+        expected: [[NBSP]],
+      },
+    ])("$name", async ({ $build, expected }) => {
+      const { editor } = await testEnvironmentAddedByUpdate(() => {
+        $getRoot().append($createParaNode().append(...$build()));
+      });
+
+      editor.getEditorState().read(() => {
+        expect($shape()).toEqual(expected);
+      });
+    });
+
+    it("moves a caret on the dropped placeholder to the end of the span it joins", async () => {
+      let empty!: CharNode;
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append(
+          $createParaNode().append(
+            $createCharNode("nd").append($createTextNode("x")),
+            $createTextNode(" b"),
+          ),
+        );
+      });
+
+      await act(async () => {
+        editor.update(() => {
+          const placeholder = $createTextNode(NBSP);
+          empty = $createCharNode("nd").append(placeholder);
+          $getRoot().getFirstChildOrThrow<ParaNode>().getFirstChildOrThrow().insertAfter(empty);
+          placeholder.select(1, 1);
+        });
+      });
+      await act(async () => {
+        editor.update(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+          selection.insertText("z");
+        });
+      });
+
+      editor.getEditorState().read(() => {
+        expect($shape()).toEqual([["xz"], " b"]);
+      });
+    });
+  });
+
   it("should combine 3 adjacent CharNodes with same marker on update", async () => {
     let ndCharNode: CharNode;
     const { editor } = await testEnvironment(() => {
@@ -588,6 +768,32 @@ describe("CharNodePlugin", () => {
       if (!$isCharNode(add)) throw new Error("Expected a CharNode");
       expect(add.getMarker()).toBe("add");
       expect(add.getTextContent()).toBe("add text1 nd text add text2 ");
+    });
+  });
+
+  it("keeps two alike spans apart once what separated them is removed", async () => {
+    // Two `\w` words with the same lemma are two words; Standard view keeps them apart too.
+    let separator: TextNode;
+    const { editor } = await testEnvironment(() => {
+      separator = $createTextNode(" ");
+      $getRoot().append(
+        $createParaNode().append(
+          $createCharNode("w", { lemma: "grace" }).append($createTextNode("one")),
+          separator,
+          $createCharNode("w", { lemma: "grace" }).append($createTextNode("two")),
+        ),
+      );
+    });
+
+    await act(async () => {
+      editor.update(() => {
+        separator.remove();
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      const p = $getRoot().getFirstChildOrThrow<ParaNode>();
+      expect(p.getChildren().map((child) => child.getTextContent())).toEqual(["one", "two"]);
     });
   });
 
@@ -1066,4 +1272,17 @@ describe("CharNodePlugin", () => {
 
 async function testEnvironment($initialEditorState: () => void) {
   return baseTestEnvironment($initialEditorState, <CharNodePlugin />);
+}
+
+/**
+ * An editor whose content `$addContent` adds in an update once the plugin is running: spans an
+ * update creates, as applying a marker or remote content makes them, rather than spans the
+ * document already held.
+ */
+async function testEnvironmentAddedByUpdate($addContent: () => void) {
+  const environment = await testEnvironment(() => undefined);
+  await act(async () => {
+    environment.editor.update($addContent);
+  });
+  return environment;
 }

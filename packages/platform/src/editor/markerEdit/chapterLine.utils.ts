@@ -163,6 +163,7 @@ function $wouldRewriteChapterMarker(selection: RangeSelection): boolean {
  * @param isStructureProtected Whether the document is structure-protected.
  * @param armSplitExpected Arms the engine's `splitExpected` flag for a multi-line replay.
  * @param getMarker The editor's stylesheet lookup, which says which pasted markers are structure.
+ * @param nbspSpelling What a stored NBSP displays as (`getNbspSpelling`).
  * @returns Whether the paste is claimed.
  */
 export function $pasteOnChapterLine(
@@ -170,6 +171,7 @@ export function $pasteOnChapterLine(
   isStructureProtected: boolean,
   armSplitExpected: () => void,
   getMarker: MarkerLookup,
+  nbspSpelling: string,
 ): boolean {
   const selection = $getSelection();
   if (isStructureProtected && $isRangeSelection(selection) && $wouldRewriteChapterMarker(selection))
@@ -177,7 +179,7 @@ export function $pasteOnChapterLine(
   if (!$chapterLineAtCaret()) return false;
   const caret = $getSelection();
   if (text && $isRangeSelection(caret))
-    $insertPastedText(caret, text, isStructureProtected, armSplitExpected, getMarker);
+    $insertPastedText(caret, text, isStructureProtected, armSplitExpected, getMarker, nbspSpelling);
   return true;
 }
 

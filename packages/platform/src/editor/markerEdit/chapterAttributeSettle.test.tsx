@@ -7,6 +7,7 @@
  * make displaying either run safe at all.
  */
 
+import { describeInView } from "../editorViews.test-helpers";
 import { requireDefined, viewOptions } from "./markerEdit.test-helpers";
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
 import { $rebuildChapter, Tier2Context } from "./tier2Rebuild.utils";
@@ -520,8 +521,9 @@ describe("chapter \\cp published-number run", () => {
 
     editor.getEditorState().read(() => {
       const chapter = $findChapter();
-      // Markup in the span aborts the fold, exactly as ParatextData keeps a \cp with markers as
-      // its own marker: pubnumber clears and a REAL cp paragraph materializes below the chapter.
+      // Markup in the span aborts the fold, the USFM-spec shape: pubnumber clears and a REAL cp
+      // paragraph materializes below the chapter. (ParatextData instead folds the text before the
+      // marker into pubnumber and leaves the rest loose; the saved bytes are the same.)
       expect(chapter.getPubnumber()).toBeUndefined();
       expect(chapter.getAltnumber()).toBe("2");
       const next = chapter.getNextSibling();
@@ -743,12 +745,14 @@ describe("first-class \\ca char span adjacent to its chapter", () => {
 /**
  * The other direction of the `\cp` unfold, and the piece the attribute-markers track left open.
  *
- * Typing markup into a chapter's `\cp` value correctly materializes a REAL `\cp` ParaNode below
- * the chapter — Paratext keeps a marker-bearing `cp` first-class, and the two tests above pin
- * that. Deleting the markup again has to put it back, and could not: a `\cp` paragraph is a
- * root-level ParaNode, so its own scope is a PARAGRAPH, and re-tokenizing `\cp 1` alone can only
- * ever produce a `\cp` paragraph. Only a re-tokenize that sees `\c 1` and `\cp 1` TOGETHER can
- * fold, so the paragraph stayed on screen until a reload while the file had already converged.
+ * Typing markup into a chapter's `\cp` value correctly materializes a REAL `\cp` ParaNode below the
+ * chapter — the USFM-spec shape for a marker-bearing `cp` (the saved bytes are the ones
+ * ParatextData writes, though ParatextData reads them back with the text before the marker folded
+ * into `pubnumber`), and the two tests above pin that. Deleting the markup again has to put it
+ * back, and could not: a `\cp` paragraph is a root-level ParaNode, so its own scope is a PARAGRAPH,
+ * and re-tokenizing `\cp 1` alone can only ever produce a `\cp` paragraph. Only a re-tokenize that
+ * sees `\c 1` and `\cp 1` TOGETHER can fold, so the paragraph stayed on screen until a reload while
+ * the file had already converged.
  *
  * The chapter settle REGION is what carries the fix: it already spans the chapter plus any
  * adjacent first-class `\ca`/`\cp` chars, and a directly-following `\cp` PARAGRAPH joins it on
@@ -934,8 +938,8 @@ describe("a real \\cp paragraph folds back onto its chapter", () => {
     );
 
     editor.getEditorState().read(() => {
-      // ParatextData keeps a marker-bearing `cp` first-class, and so does the tokenizer: the
-      // widened scope re-tokenizes to the identical paragraph and refuses at the fixed point.
+      // The tokenizer keeps a marker-bearing `cp` first-class (the USFM-spec shape): the widened
+      // scope re-tokenizes to the identical paragraph and refuses at the fixed point.
       const chapter = $findChapter();
       expect(chapter.getPubnumber()).toBeUndefined();
       const para = requireDefined($findCpPara(), "cp paragraph not found");
@@ -1148,7 +1152,7 @@ describe("typed \\ca literal in the chapter-adjacent implied paragraph", () => {
   });
 });
 
-describe("the chapter settle in the unformatted view", () => {
+describeInView("unformatted")("the chapter settle in the unformatted view", () => {
   // Content text keeps a no-break space as data in this view, but the chapter's own text is glyph
   // bytes: its no-break space is the separator after `\c`, and must reach the tokenizer as one.
   const unformatted = requireDefined(getViewOptions("unformatted"), "unformatted view missing");

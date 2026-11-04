@@ -11,6 +11,7 @@
  *
  * Standard view only — the marker-edit engine that settles a scope runs in no other view.
  */
+import { isViewEnabled, mountInPaneRow, rowsInEnabledViews } from "../editorViews.test-helpers";
 import {
   mountExpandedNoteEditor,
   mountStandardViewEditor,
@@ -348,14 +349,47 @@ const expandedNoteUsj: Usj = {
   ],
 };
 
-/** The expanded-note doc with `bravo` in the note's own content annotated and nothing pending. */
-async function mountWithAnnotatedNoteBody(onRemove?: TypedMarkOnRemove): Promise<Mounted> {
-  const mounted = await mountExpandedNoteEditor(expandedNoteUsj);
+/** {@link expandedNoteUsj}'s note. */
+const expandedNote = (expandedNoteUsj.content[2] as MarkerObject).content?.[1] as MarkerObject;
+
+/** A view a note's own content settles in, and where it puts the note. */
+interface NoteContentView {
+  view: string;
+  /** The note's content path, in the document the view holds. */
+  notePath: number[];
+  /** Mount `note` in the view. */
+  mount: (note: MarkerObject) => Promise<Mounted>;
+}
+
+/**
+ * Where a note's own content is edited and settles: the footnotes pane's row editor, the one place
+ * the app expands a note, over the note alone; and the text with notes expanded (library-only),
+ * over {@link directTextNoteUsj}.
+ */
+const noteContentViews: NoteContentView[] = rowsInEnabledViews([
+  { view: "footnotes-pane-row", notePath: [0, 0], mount: (note) => mountInPaneRow(note) },
+  {
+    view: "standard+expandedNotes",
+    notePath: [2, 1],
+    mount: (note) => mountExpandedNoteEditor(directTextNoteUsj(note.content ?? [])),
+  },
+]);
+
+/** {@link expandedNote} mounted in `view`, with `bravo` in its content annotated and nothing
+ * pending. */
+async function mountWithAnnotatedNoteBody(
+  { mount, notePath }: NoteContentView,
+  onRemove?: TypedMarkOnRemove,
+): Promise<Mounted> {
+  const mounted = await mount(expandedNote);
   await annotate(
     mounted,
     {
-      start: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf("bravo") },
-      end: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf("bravo") + "bravo".length },
+      start: { jsonPath: contentPath([...notePath, 1]), offset: body.indexOf("bravo") },
+      end: {
+        jsonPath: contentPath([...notePath, 1]),
+        offset: body.indexOf("bravo") + "bravo".length,
+      },
     },
     "1",
     onRemove,
@@ -363,9 +397,9 @@ async function mountWithAnnotatedNoteBody(onRemove?: TypedMarkOnRemove): Promise
   return mounted;
 }
 
-describe("an annotation inside settling note content", () => {
+describe.each(noteContentViews)("an annotation inside settling note content ($view)", (view) => {
   it("still wraps the same word after the note's content settles", async () => {
-    const mounted = await mountWithAnnotatedNoteBody();
+    const mounted = await mountWithAnnotatedNoteBody(view);
     expect(annotatedText(mounted.lexical)).toEqual(["bravo"]);
 
     await typeOver(mounted.lexical, literalHost, withLiteral);
@@ -381,7 +415,7 @@ describe("an annotation inside settling note content", () => {
 
   it("never tells the host its annotation was destroyed", async () => {
     const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
-    const mounted = await mountWithAnnotatedNoteBody(onRemove);
+    const mounted = await mountWithAnnotatedNoteBody(view, onRemove);
 
     await typeOver(mounted.lexical, literalHost, withLiteral);
     settleByBlurAndCommit(mounted);
@@ -721,17 +755,20 @@ function directTextNoteUsj(noteContent: NonNullable<Usj["content"]>): Usj {
   };
 }
 
-describe("annotations in a note's direct text", () => {
+describe.each(noteContentViews)("annotations in a note's direct text ($view)", (view) => {
+  const { mount, notePath } = view;
+
   it("carries every annotation, not just the first, when the note's content settles", async () => {
-    const mounted = await mountExpandedNoteEditor(
-      directTextNoteUsj([{ type: "char", marker: "fr", content: ["1.1"] }, body]),
-    );
+    const mounted = await mount(expandedNote);
     for (const word of ["alpha", "bravo"])
       await annotate(
         mounted,
         {
-          start: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf(word) },
-          end: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf(word) + word.length },
+          start: { jsonPath: contentPath([...notePath, 1]), offset: body.indexOf(word) },
+          end: {
+            jsonPath: contentPath([...notePath, 1]),
+            offset: body.indexOf(word) + word.length,
+          },
         },
         word,
       );
@@ -745,20 +782,25 @@ describe("annotations in a note's direct text", () => {
   });
 
   describe("after a preserved span", () => {
-    const preservedUsj = directTextNoteUsj([
-      { type: "char", marker: "fr", content: ["1.1 "] },
-      "aa ",
-      { type: "char", marker: "zcustom", content: ["x"] },
-      " bb cc ee",
-    ]);
+    const preservedNote: MarkerObject = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [
+        { type: "char", marker: "fr", content: ["1.1 "] },
+        "aa ",
+        { type: "char", marker: "zcustom", content: ["x"] },
+        " bb cc ee",
+      ],
+    };
 
     it("carries an annotation when the note's content settles", async () => {
-      const mounted = await mountExpandedNoteEditor(preservedUsj);
+      const mounted = await mount(preservedNote);
       await annotate(
         mounted,
         {
-          start: { jsonPath: contentPath([2, 1, 3]), offset: 1 },
-          end: { jsonPath: contentPath([2, 1, 3]), offset: 3 },
+          start: { jsonPath: contentPath([...notePath, 3]), offset: 1 },
+          end: { jsonPath: contentPath([...notePath, 3]), offset: 3 },
         },
         "1",
       );
@@ -771,7 +813,7 @@ describe("annotations in a note's direct text", () => {
     });
 
     it("puts the caret back where it was when the note's content settles", async () => {
-      const mounted = await mountExpandedNoteEditor(preservedUsj);
+      const mounted = await mount(preservedNote);
       await typeOver(mounted.lexical, " bb cc ee", " bb cc ee \\nd LORD\\nd*", " bb cc".length);
       act(() => mounted.ref.current?.commitPendingMarkerEdits());
 
@@ -1166,9 +1208,12 @@ describe("settled reads while a marker edit is pending beside annotations", () =
     expect(onRemoveB).not.toHaveBeenCalled();
   });
 
-  it.each([
+  // An unclosed note shows expanded in Standard view too, so the expanded-notes row repeats it.
+  it.each<[string, typeof mountStandardViewEditor]>([
     ["Standard view", mountStandardViewEditor],
-    ["expanded notes", mountExpandedNoteEditor],
+    ...(isViewEnabled("standard+expandedNotes")
+      ? [["expanded notes", mountExpandedNoteEditor] as [string, typeof mountStandardViewEditor]]
+      : []),
   ])("keeps an unclosed note's caller out of its content (%s)", async (_label, mount) => {
     const mounted = await mount(
       twoParaUsj([
@@ -1629,33 +1674,36 @@ describe("annotations around a typed footnote literal", () => {
       expect(marksAreInNotes(mounted.lexical)).toBe(true);
       expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
     });
-    it("carries a mark in a note's content past a note literal typed there", async () => {
-      // The note's content is its own settle scope, and a note typed inside it settles into a
-      // note nested in the note — a preserved node the scope's live bytes spell as a literal.
-      const mounted = await mountExpandedNoteEditor(expandedNoteUsj);
-      await annotate(
-        mounted,
-        {
-          start: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf("charlie") },
-          end: { jsonPath: contentPath([2, 1, 1]), offset: body.length },
-        },
-        "1",
-      );
-      expect(annotatedText(mounted.lexical)).toEqual(["charlie"]);
+    it.each(noteContentViews)(
+      "carries a mark in a note's content past a note literal typed there ($view)",
+      async ({ mount, notePath }) => {
+        // The note's content is its own settle scope, and a note typed inside it settles into a
+        // note nested in the note — a preserved node the scope's live bytes spell as a literal.
+        const mounted = await mount(expandedNote);
+        await annotate(
+          mounted,
+          {
+            start: { jsonPath: contentPath([...notePath, 1]), offset: body.indexOf("charlie") },
+            end: { jsonPath: contentPath([...notePath, 1]), offset: body.length },
+          },
+          "1",
+        );
+        expect(annotatedText(mounted.lexical)).toEqual(["charlie"]);
 
-      await typeOver(mounted.lexical, "alpha bravo ", "alpha \\fe + \\ft x\\fe* bravo ");
-      expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
-      settleByBlurAndCommit(mounted);
+        await typeOver(mounted.lexical, "alpha bravo ", "alpha \\fe + \\ft x\\fe* bravo ");
+        expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+        settleByBlurAndCommit(mounted);
 
-      expect(
-        treeHas(
-          mounted.lexical,
-          (node) => $isNoteNode(node) && node.getParents().some($isNoteNode),
-        ),
-      ).toBe(true);
-      expect(markShapes(mounted.lexical)).toEqual(["charlie"]);
-      expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
-    });
+        expect(
+          treeHas(
+            mounted.lexical,
+            (node) => $isNoteNode(node) && node.getParents().some($isNoteNode),
+          ),
+        ).toBe(true);
+        expect(markShapes(mounted.lexical)).toEqual(["charlie"]);
+        expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
+      },
+    );
   });
 
   describe("comment marks", () => {

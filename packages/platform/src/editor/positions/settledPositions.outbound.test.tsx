@@ -9,6 +9,12 @@
  * and a row that hard-codes an offset would then be asserting against a document that does not
  * exist.
  */
+import {
+  editorView,
+  mountInPaneRow,
+  mountInView,
+  rowsInEnabledViews,
+} from "../editorViews.test-helpers";
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes } from "./settledScopes.utils";
 import { $settledLocationFromLivePoint, $settledSelectionFromLive } from "./settledPositions.utils";
@@ -351,39 +357,35 @@ describe("top-level index shifts", () => {
   });
 });
 
-describe("a settling note", () => {
+/** A note whose body a row retypes. The reference span keeps the body text off the caller's own
+ * slot, so retyping the body cannot coalesce into the caller and cost the note its recognizable
+ * shape (which the note-content rebuild refuses outright). */
+const settlingNote: MarkerObject = {
+  type: "note",
+  marker: "f",
+  caller: "+",
+  content: [{ type: "char", marker: "fr", content: ["1.1"] }, "note body"],
+};
+
+/** Where a note's content is pended: in the text with notes expanded (library-only), and in the
+ * footnotes pane's row editor, the only note editor the app mounts. Only an EXPANDED note has
+ * inline-editable content to pend an edit in at all. */
+const settlingNoteViews = rowsInEnabledViews([
+  {
+    view: "standard+expandedNotes",
+    mount: () => mountExpandedNoteEditor(twoParaUsj(["before ", settlingNote, " after"])),
+    notePath: [2, 1],
+  },
+  { view: "footnotes-pane-row", mount: () => mountInPaneRow(settlingNote), notePath: [0, 0] },
+]);
+
+describe.each(settlingNoteViews)("a settling note ($view)", ({ mount, notePath }) => {
   it("reports a live point inside the note's content against the settled note", async () => {
-    // Only an EXPANDED note has inline-editable content to pend an edit in at all.
-    const { lexical, ref } = await mountExpandedNoteEditor({
-      type: "USJ",
-      version: "3.1",
-      content: [
-        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
-        { type: "chapter", marker: "c", number: "1" },
-        {
-          type: "para",
-          marker: "p",
-          content: [
-            "before ",
-            {
-              type: "note",
-              marker: "f",
-              caller: "+",
-              // The reference span keeps the body text off the caller's own slot, so retyping
-              // the body cannot coalesce into the caller and cost the note its recognizable
-              // shape (which the note-content rebuild refuses outright).
-              content: [{ type: "char", marker: "fr", content: ["1.1"] }, "note body"],
-            },
-            " after",
-          ],
-        },
-        { type: "para", marker: "p", content: ["depart here"] },
-      ],
-    });
+    const { lexical, ref } = await mount();
     const liveNoteText = "note \\nd body\\nd* tail";
     await typeOver(lexical, "note body", liveNoteText);
     const context = settledPositionContext(lexical);
-    const note = settledPara(ref.current?.getUsj(), 2).content?.[1];
+    const note = settledPara(ref.current?.getUsj(), notePath[0]).content?.[notePath[1]];
     if (!note || typeof note === "string") throw new Error("expected a settled note");
     const tailIndex = settledTextIndex(note, " tail");
 
@@ -392,7 +394,7 @@ describe("a settling note", () => {
       offset: liveNoteText.indexOf(" tail") + 1,
     }));
 
-    expect(location).toEqual({ jsonPath: contentPath([2, 1, tailIndex]), offset: 1 });
+    expect(location).toEqual({ jsonPath: contentPath([...notePath, tailIndex]), offset: 1 });
   });
 });
 
@@ -447,150 +449,153 @@ describe("a pending chapter", () => {
   });
 });
 
-describe("a preserved run the settle drops from one side only", () => {
-  /**
-   * The outbound half of the inbound suite's husk row: the live tree still carries the dead
-   * optbreak husk as a preserved run and the settled document does not, so every run after the
-   * husk sits one index earlier on the settled side. Crossed at the raw index a caret in the first
-   * note reports as the SECOND — with two shape-compatible notes in the paragraph, a settled
-   * location the host can resolve and act on — so the scope's own member-for-member correspondence
-   * is what decides which settled note a caret reports as.
-   */
-  async function huskBeforeTwoNotes() {
-    const mounted = await mountExpandedNoteEditor(optbreakAndTwoNotesUsj());
-    await emptyOptbreakHusk(mounted.lexical);
-    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
-    const para = settledPara(mounted.ref.current?.getUsj(), 2);
-    return { ...mounted, para, context: settledPositionContext(mounted.lexical) };
-  }
+describe.each(rowsInEnabledViews([{ view: "standard" }, { view: "standard+expandedNotes" }]))(
+  "a preserved run the settle drops from one side only ($view)",
+  ({ view }) => {
+    /**
+     * The outbound half of the inbound suite's husk row: the live tree still carries the dead
+     * optbreak husk as a preserved run and the settled document does not, so every run after the
+     * husk sits one index earlier on the settled side. Crossed at the raw index a caret in the first
+     * note reports as the SECOND — with two shape-compatible notes in the paragraph, a settled
+     * location the host can resolve and act on — so the scope's own member-for-member correspondence
+     * is what decides which settled note a caret reports as.
+     */
+    async function huskBeforeTwoNotes() {
+      const mounted = await mountInView(optbreakAndTwoNotesUsj(), editorView(view));
+      await emptyOptbreakHusk(mounted.lexical);
+      expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+      const para = settledPara(mounted.ref.current?.getUsj(), 2);
+      return { ...mounted, para, context: settledPositionContext(mounted.lexical) };
+    }
 
-  it("reports a live position in each note at that note's own settled location", async () => {
-    const { lexical, para, context } = await huskBeforeTwoNotes();
-    const noteIndexes = settledNoteIndexes(para);
-    expect(noteIndexes).toHaveLength(2);
-    const settledNote = (index: number): MarkerObject => {
-      const note = para.content?.[noteIndexes[index]];
-      if (!note || typeof note === "string") throw new Error("expected a settled note");
-      return note;
-    };
+    it("reports a live position in each note at that note's own settled location", async () => {
+      const { lexical, para, context } = await huskBeforeTwoNotes();
+      const noteIndexes = settledNoteIndexes(para);
+      expect(noteIndexes).toHaveLength(2);
+      const settledNote = (index: number): MarkerObject => {
+        const note = para.content?.[noteIndexes[index]];
+        if (!note || typeof note === "string") throw new Error("expected a settled note");
+        return note;
+      };
 
-    const first = settledLocation(lexical, context, () => ({
-      node: $textContaining("note one"),
-      offset: 2,
-    }));
-    const second = settledLocation(lexical, context, () => ({
-      node: $textContaining("note two"),
-      offset: 2,
-    }));
+      const first = settledLocation(lexical, context, () => ({
+        node: $textContaining("note one"),
+        offset: 2,
+      }));
+      const second = settledLocation(lexical, context, () => ({
+        node: $textContaining("note two"),
+        offset: 2,
+      }));
 
-    // The FIRST note — not the second, which is where crossing by raw index lands.
-    expect(first).toEqual({
-      jsonPath: contentPath([2, noteIndexes[0], settledTextIndex(settledNote(0), "note one")]),
-      offset: 2,
-    });
-    expect(second).toEqual({
-      jsonPath: contentPath([2, noteIndexes[1], settledTextIndex(settledNote(1), "note two")]),
-      offset: 2,
-    });
-  });
-
-  /**
-   * The husk's placeholder is a byte of the live fragment the settled one does not spell, and the
-   * byte anchor that carries an ordinary text position across counts a placeholder as a document
-   * byte (it is deliberately not whitespace). So a caret past the husk is only reportable once the
-   * scope stops counting the bytes of a run the settled side dropped.
-   */
-  it("reports a live text position past the dropped husk at the byte it names", async () => {
-    const { lexical, para, context } = await huskBeforeTwoNotes();
-    const tail = settledTextSite(para, "tail text");
-
-    const location = settledLocation(lexical, context, () => {
-      const text = $textContaining("tail text");
-      return { node: text, offset: text.getTextContent().indexOf("tail text") + 2 };
+      // The FIRST note — not the second, which is where crossing by raw index lands.
+      expect(first).toEqual({
+        jsonPath: contentPath([2, noteIndexes[0], settledTextIndex(settledNote(0), "note one")]),
+        offset: 2,
+      });
+      expect(second).toEqual({
+        jsonPath: contentPath([2, noteIndexes[1], settledTextIndex(settledNote(1), "note two")]),
+        offset: 2,
+      });
     });
 
-    expect(location).toEqual({
-      jsonPath: contentPath([2, tail.index]),
-      offset: tail.offset + 2,
-    });
-  });
+    /**
+     * The husk's placeholder is a byte of the live fragment the settled one does not spell, and the
+     * byte anchor that carries an ordinary text position across counts a placeholder as a document
+     * byte (it is deliberately not whitespace). So a caret past the husk is only reportable once the
+     * scope stops counting the bytes of a run the settled side dropped.
+     */
+    it("reports a live text position past the dropped husk at the byte it names", async () => {
+      const { lexical, para, context } = await huskBeforeTwoNotes();
+      const tail = settledTextSite(para, "tail text");
 
-  /**
-   * Deleting an optbreak's `//` leaves the caret in the emptied husk, which the settled document
-   * has no node for. The caret still has a place there: where the husk stood, which is where the
-   * text on either side of it meets once the husk is spliced out.
-   */
-  it("reports a caret left where the husk stood at the join of the text around it", async () => {
-    const { ref, lexical, para, context } = await huskBeforeTwoNotes();
-    const head = settledTextSite(para, "head");
-    const join = { jsonPath: contentPath([2, head.index]), offset: head.offset + "head ".length };
+      const location = settledLocation(lexical, context, () => {
+        const text = $textContaining("tail text");
+        return { node: text, offset: text.getTextContent().indexOf("tail text") + 2 };
+      });
 
-    const [caretIsInHusk, location, selection] = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      const husk = $getRoot()
-        .getChildren()
-        .filter($isParaNode)[0]
-        .getChildren()
-        .find($isUnknownNode);
-      if (!husk) throw new Error("no husk");
-      const current = $getSelection();
-      return [
-        $isRangeSelection(current) && current.anchor.key === husk.getKey(),
-        $settledLocationFromLivePoint(prepared, husk, 0),
-        $settledSelectionFromLive(prepared),
-      ] as const;
+      expect(location).toEqual({
+        jsonPath: contentPath([2, tail.index]),
+        offset: tail.offset + 2,
+      });
     });
 
-    expect(caretIsInHusk).toBe(true);
-    expect(location).toEqual(join);
-    expect(selection).toEqual({ start: join });
-    expect(ref.current?.getSelection()).toEqual({ start: join });
-  });
+    /**
+     * Deleting an optbreak's `//` leaves the caret in the emptied husk, which the settled document
+     * has no node for. The caret still has a place there: where the husk stood, which is where the
+     * text on either side of it meets once the husk is spliced out.
+     */
+    it("reports a caret left where the husk stood at the join of the text around it", async () => {
+      const { ref, lexical, para, context } = await huskBeforeTwoNotes();
+      const head = settledTextSite(para, "head");
+      const join = { jsonPath: contentPath([2, head.index]), offset: head.offset + "head ".length };
 
-  it("reports a range ending where the husk stood", async () => {
-    const { lexical, para, context } = await huskBeforeTwoNotes();
-    const head = settledTextSite(para, "head");
-    await act(async () => {
-      lexical.update(() => {
-        const current = $getSelection();
-        if (!$isRangeSelection(current)) throw new Error("expected a range selection");
+      const [caretIsInHusk, location, selection] = lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
         const husk = $getRoot()
           .getChildren()
           .filter($isParaNode)[0]
           .getChildren()
           .find($isUnknownNode);
         if (!husk) throw new Error("no husk");
-        current.anchor.set($textContaining("head").getKey(), 1, "text");
-        current.focus.set(husk.getKey(), 0, "element");
+        const current = $getSelection();
+        return [
+          $isRangeSelection(current) && current.anchor.key === husk.getKey(),
+          $settledLocationFromLivePoint(prepared, husk, 0),
+          $settledSelectionFromLive(prepared),
+        ] as const;
       });
-      await Promise.resolve();
+
+      expect(caretIsInHusk).toBe(true);
+      expect(location).toEqual(join);
+      expect(selection).toEqual({ start: join });
+      expect(ref.current?.getSelection()).toEqual({ start: join });
     });
 
-    const selection = lexical
-      .getEditorState()
-      .read(() => $settledSelectionFromLive($prepareSettleScopes(context)));
+    it("reports a range ending where the husk stood", async () => {
+      const { lexical, para, context } = await huskBeforeTwoNotes();
+      const head = settledTextSite(para, "head");
+      await act(async () => {
+        lexical.update(() => {
+          const current = $getSelection();
+          if (!$isRangeSelection(current)) throw new Error("expected a range selection");
+          const husk = $getRoot()
+            .getChildren()
+            .filter($isParaNode)[0]
+            .getChildren()
+            .find($isUnknownNode);
+          if (!husk) throw new Error("no husk");
+          current.anchor.set($textContaining("head").getKey(), 1, "text");
+          current.focus.set(husk.getKey(), 0, "element");
+        });
+        await Promise.resolve();
+      });
 
-    expect(selection).toEqual({
-      start: { jsonPath: contentPath([2, head.index]), offset: head.offset + 1 },
-      end: { jsonPath: contentPath([2, head.index]), offset: head.offset + "head ".length },
+      const selection = lexical
+        .getEditorState()
+        .read(() => $settledSelectionFromLive($prepareSettleScopes(context)));
+
+      expect(selection).toEqual({
+        start: { jsonPath: contentPath([2, head.index]), offset: head.offset + 1 },
+        end: { jsonPath: contentPath([2, head.index]), offset: head.offset + "head ".length },
+      });
     });
-  });
 
-  it("reports a live text position before the dropped husk at the byte it names", async () => {
-    const { lexical, para, context } = await huskBeforeTwoNotes();
-    const head = settledTextSite(para, "head");
+    it("reports a live text position before the dropped husk at the byte it names", async () => {
+      const { lexical, para, context } = await huskBeforeTwoNotes();
+      const head = settledTextSite(para, "head");
 
-    const location = settledLocation(lexical, context, () => ({
-      node: $textContaining("head"),
-      offset: 2,
-    }));
+      const location = settledLocation(lexical, context, () => ({
+        node: $textContaining("head"),
+        offset: 2,
+      }));
 
-    expect(location).toEqual({
-      jsonPath: contentPath([2, head.index]),
-      offset: head.offset + 2,
+      expect(location).toEqual({
+        jsonPath: contentPath([2, head.index]),
+        offset: head.offset + 2,
+      });
     });
-  });
-});
+  },
+);
 
 describe("every location subtype, while the paragraph is pending for an unrelated edit", () => {
   async function pendingParagraph() {
@@ -945,17 +950,21 @@ describe("the boundary between two touching closers", () => {
     expect(location).toEqual({ jsonPath: contentPath([2, ndIndex]), closingMarkerOffset: 0 });
   });
 
-  it.each([
-    ["\\nd*", "nd"],
-    ["\\f*", "f"],
-  ] as const)(
-    "reports byte 0 of %s in a run of three touching closers just past the closer before it",
-    async (closer, marker) => {
+  it.each(
+    rowsInEnabledViews([
+      { closer: "\\nd*", marker: "nd", view: "standard+expandedNotes" },
+      { closer: "\\f*", marker: "f", view: "standard+expandedNotes" },
+      { closer: "\\nd*", marker: "nd", view: "standard" },
+      { closer: "\\f*", marker: "f", view: "standard" },
+    ] as const),
+  )(
+    "reports byte 0 of $closer in a run of three touching closers just past the closer before it ($view)",
+    async ({ closer, marker, view }) => {
       // `\+add*\nd*\f*` all touch: byte 0 of `\f*` is past TWO closers, and must still report the
       // position just past the one directly in front of it — what the same caret reports in an
       // editor loaded with the settled document.
       const live = "In\\f + \\ft see \\nd LORD \\+add God\\+add*\\nd*\\f* made";
-      const mounted = await mountExpandedNoteEditor(twoParaUsj(["In the beginning made"]));
+      const mounted = await mountInView(twoParaUsj(["In the beginning made"]), editorView(view));
       await typeOver(mounted.lexical, "In the beginning made", live);
       expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
       const context = settledPositionContext(mounted.lexical);

@@ -16,7 +16,8 @@ import {
   ORACLE_TYPE,
   oracleView,
 } from "../annotationLocations/annotationLocations.test-helpers";
-import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { enabledViews, isViewEnabled, itInView, mountInPaneRow } from "../editorViews.test-helpers";
+import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { copyEvent, pasteEvent } from "./markerEdit.test-helpers";
 import { $textContaining, contentPath, twoParaUsj } from "../positions/positions.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -337,9 +338,10 @@ describe("typing over a span's separator", () => {
     expectScreenIsSaved(mounted, "wxgrace");
   });
 
-  it("heals the separator back in front of a space typed over it, keeping the space", async () => {
+  it("heals the separator back in front of a space typed over it, keeping the space on screen", async () => {
     // `\w grace` reads the same with the space as the separator, so the NBSP is restored in place
-    // and the typed space stays content: the screen shows `\w⍽ grace`, the writer `\w  grace`.
+    // and the typed space stays on screen: `\w⍽ grace`. The file does not get it — Paratext 9 skips
+    // whitespace after an opener — so the writer writes `\w agrace`.
     const mounted = await mountStandardViewEditor(wordUsj("w"));
     await selectIn(mounted.lexical, "grace", 0, 1);
     await typeChars(mounted.lexical, " a");
@@ -352,12 +354,15 @@ describe("typing over a span's separator", () => {
     const settled = mounted.ref.current?.getUsj();
     expect(paraOf(settled, "p").content).toEqual([
       "In the ",
-      { type: "char", marker: "w", content: [" agrace"] },
+      { type: "char", marker: "w", content: ["agrace"] },
       " of God",
     ]);
     expect(settled).toEqual(pending);
     expect(spanText()).toBe(`${NBSP} agrace`);
-    expectScreenIsSaved(mounted, "p");
+    // The screen keeps the dropped space, as it keeps one typed at a paragraph's start.
+    expect(screenBytes(mounted.lexical, () => $paraWithMarker("p")).replace("  ", " ")).toBe(
+      usfmOf(paraOf(mounted.ref.current?.getUsj(), "p")),
+    );
   });
 
   it("heals the separator back when a `|` is typed over it, and settles the `|…` it starts", async () => {
@@ -408,7 +413,7 @@ describe("typing between a span's glyph and its separator", () => {
   // the content text (`\w` + `x⍽grace`) depending on where the editor resolves the caret; the
   // same screen bytes settle the same way from both, and `getUsj()` while the edit is pending
   // already returns that settled document.
-  const rows: [shape: string, view: string, character: string][] = [
+  const allRows: [shape: string, view: string, character: string][] = [
     ["glyph", "standard", "x"],
     ["content", "standard", "x"],
     ["glyph", "standard", "j"],
@@ -416,6 +421,7 @@ describe("typing between a span's glyph and its separator", () => {
     ["glyph", "unformatted", "x"],
     ["content", "unformatted", "x"],
   ];
+  const rows = allRows.filter(([, view]) => isViewEnabled(view));
 
   it.each(rows)(
     "renames the opener and its closer (typed into the %s, %s view, `%s`)",
@@ -457,7 +463,7 @@ describe("typing between a span's glyph and its separator", () => {
     },
   );
 
-  it.each(["standard", "standard+expandedNotes", "unformatted"])(
+  it.each(enabledViews(["standard", "standard+expandedNotes", "unformatted"]))(
     "reads and places positions in the span's text against the settled span (%s view)",
     async (view) => {
       const mounted = await mountInView(wordUsj("w"), oracleView(view));
@@ -514,30 +520,33 @@ describe("typing between a span's glyph and its separator", () => {
     },
   );
 
-  it("ends the new name at the separator in the unformatted view", async () => {
-    // `\wj b\wj*` with `a` typed in front of the separator: the name is `wja`, never `wja b`.
-    const mounted = await mountInView(
-      twoParaUsj(["x ", { type: "char", marker: "wj", content: ["b"] }, " y"]),
-      oracleView("unformatted"),
-    );
-    await act(async () => {
-      mounted.lexical.update(() => {
-        const content = $textContaining("b");
-        content.setTextContent(`a${NBSP}b`);
-        content.select(1, 1);
+  itInView("unformatted")(
+    "ends the new name at the separator in the unformatted view",
+    async () => {
+      // `\wj b\wj*` with `a` typed in front of the separator: the name is `wja`, never `wja b`.
+      const mounted = await mountInView(
+        twoParaUsj(["x ", { type: "char", marker: "wj", content: ["b"] }, " y"]),
+        oracleView("unformatted"),
+      );
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const content = $textContaining("b");
+          content.setTextContent(`a${NBSP}b`);
+          content.select(1, 1);
+        });
+        await Promise.resolve();
       });
-      await Promise.resolve();
-    });
-    const expected = ["x ", { type: "char", marker: "wja", content: ["b"] }, " y"];
-    const pending = mounted.ref.current?.getUsj();
-    expect(paraOf(pending, "p").content).toEqual(expected);
+      const expected = ["x ", { type: "char", marker: "wja", content: ["b"] }, " y"];
+      const pending = mounted.ref.current?.getUsj();
+      expect(paraOf(pending, "p").content).toEqual(expected);
 
-    await depart(mounted);
-    const settled = mounted.ref.current?.getUsj();
-    expect(paraOf(settled, "p").content).toEqual(expected);
-    expect(settled).toEqual(pending);
-    expectScreenIsSaved(mounted, "p");
-  });
+      await depart(mounted);
+      const settled = mounted.ref.current?.getUsj();
+      expect(paraOf(settled, "p").content).toEqual(expected);
+      expect(settled).toEqual(pending);
+      expectScreenIsSaved(mounted, "p");
+    },
+  );
 });
 
 describe("a `|…` after the separator that is not an attribute list", () => {
@@ -750,7 +759,7 @@ describe("deleting the separator of a span whose text holds an authored no-break
   // Unformatted shows an authored no-break space as the byte itself, so `\w Lord~God\w*` with its
   // separator deleted reads `\wLord⍽God` — the same screen as `\w Lord God\w*` with its separator
   // deleted, and the two settle alike: the name ends at the space, as a new paragraph marker.
-  it.each([
+  itInView("unformatted").each([
     ["an authored no-break space", `Lord${NBSP}God`],
     ["a space", "Lord God"],
   ])("settles as the name the bytes spell (%s)", async (_name, text) => {
@@ -780,7 +789,7 @@ describe("deleting the separator of a span whose text holds an authored no-break
   });
 });
 
-describe.each(["standard", "unformatted"])(
+describe.each(enabledViews(["standard", "unformatted"]))(
   "a char opener's separator deleted, then a name byte typed (%s view)",
   (view) => {
     it("settles as the bytes the screen shows, not as a rename beside a missing separator", async () => {
@@ -826,8 +835,8 @@ describe.each(["standard", "unformatted"])(
 );
 
 describe.each([
-  ["standard+expandedNotes", false],
-  ["the footnote popover", true],
+  ...enabledViews(["standard+expandedNotes"]).map((name) => [name, false] as const),
+  ["the footnote popover", true] as const,
 ])("a paste over a span's glyph letters inside an unclosed note (%s)", (_name, isPopover) => {
   it("keeps the span's separator, so its marker is never renamed into its content", async () => {
     // `\f + \ft note text`, note and span both unclosed. Copy the span (`\ft note text`), select
@@ -920,4 +929,234 @@ describe.each([
     expect(mounted.logs.filter((line) => line.includes("Unexpected char marker"))).toEqual([]);
     mounted.unmount();
   });
+});
+
+/**
+ * One keystroke that removes a char opener's separator — Backspace with the caret right after it,
+ * or Delete with the caret at the end of the opener's glyph — keeps every byte: the bytes on screen
+ * settle as ParatextData reads them, the run-on name an unknown marker that opens a paragraph of its
+ * own outside a note (`UsfmParser.DetermineUnknownTokenType`) and a char span inside one, with the
+ * closer left unmatched and the text after it kept. Each expected document is ParatextData's own
+ * USX for those bytes (its `status="unknown"` aside). The edited paragraph alone loses the span
+ * and the text after it, so the whole document is compared, pending and settled.
+ */
+describe("removing a span's separator keeps every byte, as ParatextData reads them", () => {
+  /** A char span's attributes, spread in because `MarkerObject` declares no attribute fields. */
+  const attributes = (fields: { [attribute: string]: string }) => fields;
+  const NOTE_VIEW = "expanded notes";
+  const cases: {
+    name: string;
+    content: MarkerContent[];
+    view?: typeof NOTE_VIEW;
+    expected: MarkerContent[];
+  }[] = [
+    {
+      name: "a span with its default attribute",
+      content: [
+        "In the ",
+        { type: "char", marker: "w", ...attributes({ lemma: "grace" }), content: ["grace"] },
+        " of God",
+      ],
+      expected: [
+        { type: "para", marker: "p", content: ["In the "] },
+        {
+          type: "para",
+          marker: "wgrace",
+          content: ["|grace", { type: "unmatched", marker: "w*" }, " of God"],
+        },
+      ],
+    },
+    {
+      name: "a span with no attributes",
+      content: ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      expected: [
+        { type: "para", marker: "p", content: ["In the "] },
+        {
+          type: "para",
+          marker: "wgrace",
+          content: [{ type: "unmatched", marker: "w*" }, " of God"],
+        },
+      ],
+    },
+    {
+      name: "a span whose marker declares no default attribute",
+      content: ["In the ", { type: "char", marker: "nd", content: ["grace"] }, " of God"],
+      expected: [
+        { type: "para", marker: "p", content: ["In the "] },
+        {
+          type: "para",
+          marker: "ndgrace",
+          content: [{ type: "unmatched", marker: "nd*" }, " of God"],
+        },
+      ],
+    },
+    {
+      name: "a span with a named attribute",
+      content: [
+        "In the ",
+        { type: "char", marker: "w", ...attributes({ strong: "H1" }), content: ["grace"] },
+        " of God",
+      ],
+      expected: [
+        { type: "para", marker: "p", content: ["In the "] },
+        {
+          type: "para",
+          marker: "wgrace",
+          content: ['|strong="H1"', { type: "unmatched", marker: "w*" }, " of God"],
+        },
+      ],
+    },
+    {
+      name: "a nested span",
+      content: [
+        "In ",
+        {
+          type: "char",
+          marker: "nd",
+          content: [
+            "the ",
+            { type: "char", marker: "w", ...attributes({ lemma: "g" }), content: ["grace"] },
+            " x",
+          ],
+        },
+        " of God",
+      ],
+      expected: [
+        {
+          type: "para",
+          marker: "p",
+          content: ["In ", { type: "char", marker: "nd", closed: "false", content: ["the "] }],
+        },
+        {
+          type: "para",
+          marker: "+wgrace",
+          content: [
+            "|g",
+            { type: "unmatched", marker: "+w*" },
+            " x",
+            { type: "unmatched", marker: "nd*" },
+            " of God",
+          ],
+        },
+      ],
+    },
+    {
+      name: "a nested span in a note",
+      view: NOTE_VIEW,
+      content: [
+        "a",
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [
+            {
+              type: "char",
+              marker: "ft",
+              content: ["x ", { type: "char", marker: "w", content: ["grace"] }, " y"],
+            },
+          ],
+        },
+        " b",
+      ],
+      expected: [
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            "a",
+            {
+              type: "note",
+              marker: "f",
+              caller: "+",
+              content: [
+                {
+                  type: "char",
+                  marker: "ft",
+                  closed: "false",
+                  content: ["x ", { type: "char", marker: "wgrace", closed: "false" }],
+                },
+                { type: "unmatched", marker: "+w*" },
+                " y",
+                { type: "unmatched", marker: "ft*" },
+              ],
+            },
+            " b",
+          ],
+        },
+      ],
+    },
+  ];
+
+  /** The separator removed as `key` removes it: the character before a caret after it, or the one
+   * after a caret at the end of the opener's glyph. */
+  async function removeSeparator(lexical: LexicalEditor, key: "Backspace" | "Delete") {
+    await act(async () => {
+      lexical.update(() => {
+        const text = $textContaining(`${NBSP}grace`);
+        const selection = $createRangeSelection();
+        if (key === "Backspace") {
+          selection.anchor.set(text.getKey(), 1, "text");
+          selection.focus.set(text.getKey(), 0, "text");
+        } else {
+          const glyph = text.getPreviousSibling();
+          if (!$isMarkerNode(glyph)) throw new Error("no opener glyph before the span's text");
+          selection.anchor.set(glyph.getKey(), glyph.getTextContentSize(), "text");
+          selection.focus.set(text.getKey(), 1, "text");
+        }
+        $setSelection(selection);
+        selection.removeText();
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  /** The document between the chapter and the paragraph the caret departs to. */
+  const body = (usj: Usj | undefined) => usj?.content.slice(2, -1);
+
+  /** The note in `content`. */
+  const noteIn = (content: MarkerContent[] | undefined) =>
+    content?.find((item) => typeof item !== "string" && item.type === "note");
+
+  for (const key of ["Backspace", "Delete"] as const)
+    it.each(
+      cases.filter(({ view }) => view !== NOTE_VIEW || isViewEnabled("standard+expandedNotes")),
+    )(`${key} on $name`, async ({ content, view, expected }) => {
+      const usj = twoParaUsj(content);
+      const mounted =
+        view === NOTE_VIEW
+          ? await mountExpandedNoteEditor(usj)
+          : await mountStandardViewEditor(usj);
+      await removeSeparator(mounted.lexical, key);
+
+      expect(body(mounted.ref.current?.getUsj())).toEqual(expected);
+      await depart(mounted);
+      expect(body(mounted.ref.current?.getUsj())).toEqual(expected);
+      mounted.unmount();
+    });
+
+  // The note rows again in the footnotes pane's row editor, which holds the note alone; the caret
+  // leaves it by the editor losing focus.
+  for (const key of ["Backspace", "Delete"] as const)
+    it.each(cases.filter(({ view }) => view === NOTE_VIEW))(
+      `${key} on $name in the footnotes pane's row editor`,
+      async ({ content, expected }) => {
+        const note = noteIn(content);
+        const expectedNote = noteIn((expected[0] as MarkerObject).content);
+        if (typeof note !== "object" || !expectedNote) throw new Error("expected a note row");
+        const mounted = await mountInPaneRow(note);
+        const savedNote = () =>
+          noteIn((mounted.ref.current?.getUsj()?.content[0] as MarkerObject | undefined)?.content);
+        await removeSeparator(mounted.lexical, key);
+
+        expect(savedNote()).toEqual(expectedNote);
+        const rootElement = mounted.lexical.getRootElement();
+        if (!rootElement) throw new Error("editor root not found");
+        act(() => rootElement.blur());
+        act(() => mounted.ref.current?.commitPendingMarkerEdits());
+        expect(savedNote()).toEqual(expectedNote);
+        mounted.unmount();
+      },
+    );
 });

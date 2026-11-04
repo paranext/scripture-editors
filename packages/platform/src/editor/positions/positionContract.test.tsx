@@ -6,6 +6,7 @@ import {
   specMapSnapped,
   specSettledText,
 } from "./positionContract.test-helpers";
+import { isViewEnabled } from "../editorViews.test-helpers";
 import {
   $textContaining,
   huskBeforeNoteUsj,
@@ -463,40 +464,62 @@ const SPLITS: PositionScenario[] = [
   splitScenario("typed-char-at-scope-end", "In the \\c 2 \\nd LORD\\nd*", 3),
 ];
 
+/** The scenarios whose editor this run mounts: the expanded-note one only with the registry's
+ * library-only views (`standard+expandedNotes`). */
+function inEnabledViews<Scenario extends { mount?: "standard" | "expandedNotes" }>(
+  scenarios: Scenario[],
+): Scenario[] {
+  return scenarios.filter(
+    ({ mount }) => mount !== "expandedNotes" || isViewEnabled("standard+expandedNotes"),
+  );
+}
+
 describe("position contract — attribute re-spellings", () => {
-  it.each(RESPELLINGS.map((s) => [s.name, s] as const))("%s maps every position", async (_, s) => {
-    const report = await checkContract(s);
-    expect(report.outbound.length).toBeGreaterThan(0);
-    expect(report.inbound.length).toBeGreaterThan(0);
-    expect(contractMismatches(report)).toEqual([]);
-  });
+  it.each(inEnabledViews(RESPELLINGS).map((s) => [s.name, s] as const))(
+    "%s maps every position",
+    async (_, s) => {
+      const report = await checkContract(s);
+      expect(report.outbound.length).toBeGreaterThan(0);
+      expect(report.inbound.length).toBeGreaterThan(0);
+      expect(contractMismatches(report)).toEqual([]);
+    },
+  );
 });
 
 describe("position contract — literals the settle turns into nodes", () => {
-  it.each(LITERALS.map((s) => [s.name, s] as const))("%s maps every position", async (_, s) => {
-    const report = await checkContract(s);
-    expect(report.outbound.length).toBeGreaterThan(0);
-    expect(report.inbound.length).toBeGreaterThan(0);
-    expect(contractMismatches(report)).toEqual([]);
-  });
+  it.each(inEnabledViews(LITERALS).map((s) => [s.name, s] as const))(
+    "%s maps every position",
+    async (_, s) => {
+      const report = await checkContract(s);
+      expect(report.outbound.length).toBeGreaterThan(0);
+      expect(report.inbound.length).toBeGreaterThan(0);
+      expect(contractMismatches(report)).toEqual([]);
+    },
+  );
 });
 
 describe("position contract — baseline", () => {
-  it.each(BASELINE.map((s) => [s.name, s] as const))("%s maps every position", async (_, s) => {
-    const report = await checkContract(s);
-    expect(report.outbound.length).toBeGreaterThan(0);
-    expect(report.inbound.length).toBeGreaterThan(0);
-    expect(contractMismatches(report)).toEqual([]);
-  });
+  it.each(inEnabledViews(BASELINE).map((s) => [s.name, s] as const))(
+    "%s maps every position",
+    async (_, s) => {
+      const report = await checkContract(s);
+      expect(report.outbound.length).toBeGreaterThan(0);
+      expect(report.inbound.length).toBeGreaterThan(0);
+      expect(contractMismatches(report)).toEqual([]);
+    },
+  );
 });
 
 describe("position contract — scopes that settle into several top-level items", () => {
-  it.each(SPLITS.map((s) => [s.name, s] as const))("%s maps every position", async (_, s) => {
-    const report = await checkContract(s);
-    expect(report.outbound.length).toBeGreaterThan(0);
-    expect(report.inbound.length).toBeGreaterThan(0);
-    expect(contractMismatches(report)).toEqual([]);
-  });
+  it.each(inEnabledViews(SPLITS).map((s) => [s.name, s] as const))(
+    "%s maps every position",
+    async (_, s) => {
+      const report = await checkContract(s);
+      expect(report.outbound.length).toBeGreaterThan(0);
+      expect(report.inbound.length).toBeGreaterThan(0);
+      expect(contractMismatches(report)).toEqual([]);
+    },
+  );
 });
 
 describe("specMapSnapped", () => {
