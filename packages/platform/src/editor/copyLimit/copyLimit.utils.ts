@@ -16,7 +16,15 @@ import {
 } from "lexical";
 import { $dfs, $findMatchingParent } from "@lexical/utils";
 import { graphemeSegments } from "unicode-segmenter/grapheme";
-import { $isChapterNode, $isGlyphTextNode, $isNoteNode, $isSomeChapterNode } from "shared";
+import {
+  $isChapterNode,
+  $isGlyphTextNode,
+  $isLoneNbspContent,
+  $isMarkerTrailingSeparator,
+  $isNoteNode,
+  $isSomeChapterNode,
+  NBSP,
+} from "shared";
 import { $isImmutableNoteCallerNode, $isOpaqueBlockNode, $isSomeVerseNode } from "shared-react";
 
 /**
@@ -367,6 +375,92 @@ export function $selectionShownText(
   selection: RangeSelection,
   $isHidden: (node: LexicalNode) => boolean,
 ): string {
+  return $selectionShownParts(selection, $isHidden)
+    .map(({ text }) => text)
+    .join("");
+}
+
+/**
+ * The selection's text as plain prose for the clipboard in a hidden-marker view:
+ * {@link $selectionShownText} without the bytes the view shows only for layout, which never reach
+ * the file: the NBSP spacers a collapsed note's caller and runs are laid out with, and an empty char
+ * span's placeholder (see {@link $isLayoutText}). Copying those spacers made
+ * `Yahweh’s<NBSP>1:2 <NBSP>“Yahweh”…Name.<NBSP> law.`, which read as doubled spaces once pasted as
+ * plain text. Instead, one ordinary space separates a note's text from the text before and after
+ * it, where neither side already has whitespace (`Yahweh’s 1:2 “Yahweh”…Name. law.`); a note that
+ * contributes no text adds none. Within a note, its runs follow each other as the file has them
+ * (`\xt Gen 1:1\xt*, \xt Exo 2:3\xt*` copies as `Gen 1:1, Exo 2:3`). An NBSP the text itself
+ * holds is kept, or written as `$spell` spells the text of the node that shows it (a stored no-break
+ * space as `~`, say); spacing is decided on the text as shown, so a respelled NBSP still counts as
+ * the whitespace it is.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+export function $selectionPlainText(
+  selection: RangeSelection,
+  $isHidden: (node: LexicalNode) => boolean = () => false,
+  $spell: (node: LexicalNode, text: string) => string = (_node, text) => text,
+): string {
+  const texts: string[] = [];
+  let previous: { text: string; noteKey: NodeKey | undefined } | undefined;
+  for (const { node, text } of $selectionShownParts(selection, $isHidden)) {
+    if (text === "" || $isLayoutText(node)) continue;
+    // Text that displays as nothing (a lone direction mark, say) decides no spacing: the next
+    // visible text is weighed against what came before it.
+    if (INVISIBLE_ONLY.test(text)) {
+      texts.push($spell(node, text));
+      if (previous) previous = { ...previous, text: previous.text + text };
+      continue;
+    }
+    const noteKey = $findMatchingParent(node, $isNoteNode)?.getKey();
+    if (
+      previous &&
+      noteKey !== previous.noteKey &&
+      !TRAILING_SPACE.test(previous.text) &&
+      !LEADING_SPACE.test(text)
+    )
+      texts.push(" ");
+    texts.push($spell(node, text));
+    previous = { text, noteKey };
+  }
+  return texts.join("");
+}
+
+// Whitespace, past any default-ignorable characters (a zero-width space or no-break space, a
+// direction mark): those display as nothing, so they neither stand in for a space nor hide one.
+// U+FEFF is one of them, though `\s` counts it.
+const LEADING_SPACE = /^\p{Default_Ignorable_Code_Point}*[^\S\uFEFF]/u;
+const TRAILING_SPACE = /[^\S\uFEFF]\p{Default_Ignorable_Code_Point}*$/u;
+const INVISIBLE_ONLY = /^\p{Default_Ignorable_Code_Point}+$/u;
+
+/**
+ * Whether `node`'s text is layout a hidden-marker view shows that stands for nothing in the file:
+ * an engine-owned NBSP spacer (a collapsed note lays one out after its caller and after each run),
+ * or a lone NBSP that is no author's `~` ({@link $isLoneNbspContent} tells them apart), such as the
+ * placeholder an empty char span holds.
+ */
+function $isLayoutText(node: LexicalNode): boolean {
+  return (
+    $isMarkerTrailingSeparator(node) ||
+    ($isTextNode(node) && node.getTextContent() === NBSP && !$isLoneNbspContent(node))
+  );
+}
+
+/** One piece of {@link $selectionShownText}: a node's selected text, or a line break between
+ * blocks. */
+interface ShownPart {
+  node: LexicalNode;
+  text: string;
+}
+
+/**
+ * The pieces of {@link $selectionShownText} in order, each with the node it came from: built the
+ * same way as `RangeSelection.getTextContent()`, without the text of nodes `$isHidden` picks.
+ */
+function $selectionShownParts(
+  selection: RangeSelection,
+  $isHidden: (node: LexicalNode) => boolean,
+): ShownPart[] {
   const nodes = selection.getNodes();
   const lastIndex = nodes.length - 1;
   const [startPoint, endPoint] = selection.isBackward()
@@ -377,32 +471,35 @@ export function $selectionShownText(
     startPoint.type === "element" &&
     endPoint.type === "element" &&
     startPoint.offset !== endPoint.offset;
-  let text = "";
+  const parts: ShownPart[] = [];
   let prevWasElement = true;
   nodes.forEach((node, i) => {
     if ($isHidden(node)) return;
     if ($isElementNode(node) && !node.isInline()) {
-      if (!prevWasElement) text += "\n";
+      if (!prevWasElement) parts.push({ node, text: "\n" });
       prevWasElement = !node.isEmpty();
       return;
     }
     prevWasElement = false;
     if ($isTextNode(node)) {
       const content = node.getTextContent();
-      if (isElementRangeInOneNode) text += content;
+      if (isElementRangeInOneNode) parts.push({ node, text: content });
       else
-        text += content.slice(
-          i === 0 ? $characterOffset(startPoint) : 0,
-          i === lastIndex ? $characterOffset(endPoint) : content.length,
-        );
+        parts.push({
+          node,
+          text: content.slice(
+            i === 0 ? $characterOffset(startPoint) : 0,
+            i === lastIndex ? $characterOffset(endPoint) : content.length,
+          ),
+        });
     } else if (
       ($isDecoratorNode(node) || $isLineBreakNode(node)) &&
       (i !== lastIndex || !selection.isCollapsed())
     ) {
-      text += node.getTextContent();
+      parts.push({ node, text: node.getTextContent() });
     }
   });
-  return text;
+  return parts;
 }
 
 /**

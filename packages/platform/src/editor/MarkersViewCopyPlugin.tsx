@@ -2,21 +2,11 @@ import editorUsjAdaptor from "./adaptors/editor-usj.adaptor";
 import usjEditorAdaptor from "./adaptors/usj-editor.adaptor";
 import {
   $selectionToUsfmText,
-  $writeCopyPayload,
+  registerViewCopyWriter,
   usfmToClipboardHtml,
 } from "./markerEdit/whitespaceDisplay.plugin.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { mergeRegister } from "@lexical/utils";
-import {
-  $getSelection,
-  $isRangeSelection,
-  COMMAND_PRIORITY_HIGH,
-  COPY_COMMAND,
-  createEditor,
-  CUT_COMMAND,
-  EditorState,
-  LexicalEditor,
-} from "lexical";
+import { COMMAND_PRIORITY_HIGH, createEditor, EditorState, LexicalEditor } from "lexical";
 import { useEffect } from "react";
 import { TypedMarkNode } from "shared";
 import {
@@ -132,7 +122,7 @@ function rebuildAsStandardView(
  * No `application/x-lexical-editor` flavor is written: it would carry this view's display-shaped
  * nodes, which a native paste into an editable view would rebuild verbatim.
  *
- * A cut in a read-only editor copies and removes nothing ({@link $writeCopyPayload} owns that
+ * A cut in a read-only editor copies and removes nothing (`$writeCopyPayload` owns that
  * rule); Ctrl+X reaches the command there too.
  *
  * `copyLimit` is `EditorOptions.copyLimit`; `CopyLimitPlugin` has already fitted the selection to
@@ -150,30 +140,21 @@ export function MarkersViewCopyPlugin({
 }): null {
   const [editor] = useLexicalComposerContext();
 
-  useEffect(() => {
-    const $copy = (event: ClipboardEvent | KeyboardEvent | null, isCut: boolean): boolean => {
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-      const usfm = $selectionToUsfmViaStandardView(editor, viewOptions);
-      if (usfm === undefined) return false;
-      return $writeCopyPayload(
-        // COPY_COMMAND's payload is `ClipboardEvent | KeyboardEvent | null`, and jsdom (our test
-        // environment) has no `ClipboardEvent` for `instanceof` to narrow against, so this
-        // duck-checks the one property `$writeCopyPayload` needs. `in` throws on a non-object, so
-        // the type check comes first.
-        event && typeof event === "object" && "clipboardData" in event ? event : null,
+  useEffect(
+    () =>
+      registerViewCopyWriter(
         editor,
-        selection,
-        { "text/plain": usfm, "text/html": usfmToClipboardHtml(usfm) },
-        isCut,
+        COMMAND_PRIORITY_HIGH,
+        () => {
+          const usfm = $selectionToUsfmViaStandardView(editor, viewOptions);
+          return usfm === undefined
+            ? undefined
+            : { "text/plain": usfm, "text/html": usfmToClipboardHtml(usfm) };
+        },
         copyLimit,
-      );
-    };
-    return mergeRegister(
-      editor.registerCommand(COPY_COMMAND, (event) => $copy(event, false), COMMAND_PRIORITY_HIGH),
-      editor.registerCommand(CUT_COMMAND, (event) => $copy(event, true), COMMAND_PRIORITY_HIGH),
-    );
-  }, [editor, viewOptions, copyLimit]);
+      ),
+    [editor, viewOptions, copyLimit],
+  );
 
   return null;
 }
