@@ -25,7 +25,7 @@ import {
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   TextNode,
 } from "lexical";
-import { $isNoteNode, NBSP, NoteNode, ZWSP } from "shared";
+import { $isNoteNode, $orderedPoints, NBSP, NoteNode, ZWSP } from "shared";
 import {
   $isPlainProse,
   $selectionContainsVerseMarker,
@@ -205,9 +205,7 @@ function $edgeText(point: PointType, side: "start" | "end"): Edge | undefined {
  * of one paragraph; `undefined` for any other selection. */
 function $inlineRangeEdges(selection: RangeSelection): [start: Edge, end: Edge] | undefined {
   if (selection.isCollapsed()) return undefined;
-  const [startPoint, endPoint] = selection.isBackward()
-    ? [selection.focus, selection.anchor]
-    : [selection.anchor, selection.focus];
+  const [startPoint, endPoint] = $orderedPoints(selection);
   const start = $edgeText(startPoint, "start");
   const end = $edgeText(endPoint, "end");
   if (!start || !end || start.node.is(end.node)) return undefined;

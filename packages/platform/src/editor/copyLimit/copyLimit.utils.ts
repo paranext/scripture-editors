@@ -16,7 +16,14 @@ import {
 } from "lexical";
 import { $dfs, $findMatchingParent } from "@lexical/utils";
 import { graphemeSegments } from "unicode-segmenter/grapheme";
-import { $isChapterNode, $isGlyphTextNode, $isNoteNode, $isSomeChapterNode } from "shared";
+import {
+  $isChapterNode,
+  $isGlyphTextNode,
+  $isNoteNode,
+  $isSomeChapterNode,
+  $orderedPoints,
+  snapshotPoint,
+} from "shared";
 import { $isImmutableNoteCallerNode, $isOpaqueBlockNode, $isSomeVerseNode } from "shared-react";
 
 /**
@@ -130,10 +137,8 @@ export function $limitSelectionLength(
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
   if ($measure(selection) <= limit) return false;
 
-  const [startPoint, endPoint] = selection.isBackward()
-    ? [selection.focus, selection.anchor]
-    : [selection.anchor, selection.focus];
-  const start = { key: startPoint.key, offset: startPoint.offset, type: startPoint.type };
+  const [startPoint, endPoint] = $orderedPoints(selection);
+  const start = snapshotPoint(startPoint);
   const startOffset = $characterOffset(startPoint);
   const endOffset = $characterOffset(endPoint);
   const nodes = selection.getNodes();
@@ -369,9 +374,7 @@ export function $selectionShownText(
 ): string {
   const nodes = selection.getNodes();
   const lastIndex = nodes.length - 1;
-  const [startPoint, endPoint] = selection.isBackward()
-    ? [selection.focus, selection.anchor]
-    : [selection.anchor, selection.focus];
+  const [startPoint, endPoint] = $orderedPoints(selection);
   const isElementRangeInOneNode =
     lastIndex === 0 &&
     startPoint.type === "element" &&

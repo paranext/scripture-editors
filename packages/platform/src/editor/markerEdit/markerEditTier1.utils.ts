@@ -53,6 +53,7 @@ import {
   $isChapterNode,
   $milestoneAttributeRunPieces,
   $noteCategoryRunPieces,
+  $noteOpeningGlyphCount,
   $openerSeparatorGapFollowingBytes,
   $ownerOfRunPiece,
   $paraPrefixSeparatorCaretHeld,
@@ -1385,9 +1386,8 @@ export function $noteOfCallerText(node: LexicalNode): NoteNode | undefined {
   if (!$isTextNode(node) || $isMarkerNode(node) || !node.isUnmergeable()) return undefined;
   const note = node.getParent();
   if (!$isNoteNode(note) || note.getIsCollapsed() !== false) return undefined;
-  let slot: LexicalNode | null = note.getFirstChild();
-  while ($isMarkerNode(slot) && slot.getMarkerSyntax() === "opening") slot = slot.getNextSibling();
-  return node.is(slot) ? note : undefined;
+  const children = note.getChildren();
+  return node.is(children[$noteOpeningGlyphCount(children)]) ? note : undefined;
 }
 
 /**
@@ -1474,12 +1474,7 @@ export function $restoreRemovedNoteCaller(note: NoteNode, context: MarkerEditCon
   const caller = note.getCaller();
   if (!leadingAttributeNames(note.getMarker())?.includes("caller")) return;
   const children = note.getChildren();
-  let slot = 0;
-  while (slot < children.length) {
-    const child = children[slot];
-    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
-    slot++;
-  }
+  const slot = $noteOpeningGlyphCount(children);
   if (slot === 0) return;
   const occupant = children[slot];
   if (

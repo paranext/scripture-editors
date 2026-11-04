@@ -14,7 +14,7 @@ import {
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   TextNode,
 } from "lexical";
-import { textTypeState } from "shared";
+import { $orderedPoints, textTypeState } from "shared";
 
 function cleanupText(text: string): string {
   return text.replaceAll("\t", " ");
@@ -97,7 +97,7 @@ export function registerInlineProsePaste(editor: LexicalEditor): () => void {
     ({ nodes, selection }) => {
       if (!$isRangeSelection(selection) || nodes.length === 0 || !nodes.every($isPlainProse))
         return false;
-      const start = selection.isBackward() ? selection.focus : selection.anchor;
+      const [start] = $orderedPoints(selection);
       const startNode = start.getNode();
       // Typing into a token or segmented node replaces it whole, so only a caret in ordinary text
       // takes the typing route.

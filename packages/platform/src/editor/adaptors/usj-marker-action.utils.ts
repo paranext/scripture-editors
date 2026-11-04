@@ -38,6 +38,7 @@ import {
   $isVisibleMarkerNode,
   $liftOutOfCharStack,
   $normalizeSelectionOutOfGlyphText,
+  $orderedPoints,
   $recordNewlyMarkedSpan,
   $setCharNodeMarker,
   authoredNbspState,
@@ -871,9 +872,7 @@ function $wrapTextSelectionInInlineNode(
   markerMode?: ViewOptions["markerMode"],
 ): void {
   const [startOffset, endOffset] = $getSelectionOffsets(selection);
-  const [start, end] = selection.isBackward()
-    ? [selection.focus, selection.anchor]
-    : [selection.anchor, selection.focus];
+  const [start, end] = $orderedPoints(selection);
   // A span the selection holds all of is wrapped as one node, so its own children are not listed
   // again: `getNodes` lists a span AFTER its children, and wrapping them first put the wrapper
   // inside the span — the span's glyphs then belonged to the wrapper and the span itself was lost.
@@ -1003,9 +1002,7 @@ function $wrapTextSelectionInInlineNode(
  * @returns the start and end offsets of the selection.
  */
 function $getSelectionOffsets(selection: RangeSelection): [number, number] {
-  const [start, end] = selection.isBackward()
-    ? [selection.focus, selection.anchor]
-    : [selection.anchor, selection.focus];
+  const [start, end] = $orderedPoints(selection);
   const nodes = selection.getNodes();
   const last = nodes[nodes.length - 1];
   const startOffset = start.type === "text" ? start.offset : 0;

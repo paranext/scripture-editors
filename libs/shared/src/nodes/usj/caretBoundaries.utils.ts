@@ -54,7 +54,14 @@
  * into the node rather than resting at a boundary between children.
  */
 
-import { $isTextNode, ElementNode, TextNode } from "lexical";
+import {
+  $createRangeSelection,
+  $isTextNode,
+  $setSelection,
+  ElementNode,
+  PointType,
+  TextNode,
+} from "lexical";
 
 /**
  * The text node hosting a caret at the boundary before `parent`'s child at `index`, or `undefined`
@@ -91,4 +98,45 @@ export function $placeCaretAtBoundary(parent: ElementNode, index: number): void 
   const host = $caretHostAtBoundary(parent, index);
   if (host) host.select(0, 0);
   else parent.select(index, index);
+}
+
+/**
+ * Move ONE selection point to the boundary before `parent`'s child at `index`, by the same hosting
+ * rule {@link $placeCaretAtBoundary} follows: a text point at offset 0 of the text node hosting
+ * it, or the element point when nothing hosts it. Moving a single endpoint leaves the other where
+ * it is, so a range can be narrowed; `$placeCaretAtBoundary` replaces the whole selection, which is
+ * only right for a collapsed correction.
+ *
+ * Mutating (moves the selection `point` belongs to): call inside `editor.update()`.
+ *
+ * @param point - The live selection point to move.
+ * @param parent - The element whose children the boundary lies between.
+ * @param index - The boundary: the index of the child that follows it.
+ */
+export function $setPointAtBoundary(point: PointType, parent: ElementNode, index: number): void {
+  const host = $caretHostAtBoundary(parent, index);
+  if (host) point.set(host.getKey(), 0, "text");
+  else point.set(parent.getKey(), index, "element");
+}
+
+/**
+ * Collapse the caret to `element`'s element point at child slot `offset`, set directly on a fresh
+ * selection. `ElementNode.select` would not name the slot itself when `element` cannot be empty (a
+ * character span): it descends into the child at that edge instead — which may be a hidden
+ * construct, or a note whose hidden closing glyph would then hold an invisible caret.
+ *
+ * The fallback where no text hosts the position: a text point is preferred wherever there is one,
+ * because Lexical's normalization of a point read back from the DOM likewise descends into the
+ * element at a boundary.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @param element - The element to place the caret in.
+ * @param offset - The child slot to place it at.
+ */
+export function $collapseToElementPoint(element: ElementNode, offset: number): void {
+  const selection = $createRangeSelection();
+  selection.anchor.set(element.getKey(), offset, "element");
+  selection.focus.set(element.getKey(), offset, "element");
+  $setSelection(selection);
 }

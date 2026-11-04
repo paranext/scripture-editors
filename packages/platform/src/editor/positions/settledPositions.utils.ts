@@ -54,7 +54,6 @@ import {
   ContentJsonPath,
   PropertyJsonPath,
   UsjDocumentLocation,
-  indexesFromUsjJsonPath,
   isUsjAttributeKeyLocation,
   isUsjAttributeMarkerLocation,
   isUsjClosingAttributeMarkerLocation,
@@ -85,6 +84,8 @@ import {
   $isMarkerNode,
   $isNoteNode,
   $noteEditableCallerNode,
+  $orderedPoints,
+  $previousLeaf,
 } from "shared";
 import {
   $getJsonPathIndexes,
@@ -92,24 +93,13 @@ import {
   $getNodeFromLocation,
   $getUsjSelectionFromEditor,
   AnnotationRange,
+  contentIndexesOf,
+  contentPathOf,
   hasStandardViewWhitespace,
   SelectionRange,
   ViewOptions,
+  withContentIndexes,
 } from "shared-react";
-
-/** The `$.content[…]` prefix of a jsonPath, with any property suffix (`['marker']`) stripped. */
-const CONTENT_PATH = /^(\$(?:\.content\[\d+\])*)(?:\.|$|\[)/;
-
-function contentPathOf(jsonPath: string): string {
-  return CONTENT_PATH.exec(jsonPath)?.[1] ?? jsonPath;
-}
-
-/** `location` re-addressed at `indexes`, keeping its subtype, its offsets, and any property
- * suffix — the path is the only part a translation ever changes. */
-function withContentIndexes<T extends UsjDocumentLocation>(location: T, indexes: number[]): T {
-  const suffix = location.jsonPath.slice(contentPathOf(location.jsonPath).length);
-  return { ...location, jsonPath: `${usjJsonPathFromIndexes(indexes)}${suffix}` } as T;
-}
 
 /** Whether two index paths name the same node. */
 function isSamePath(first: readonly number[], second: readonly number[]): boolean {
@@ -147,7 +137,7 @@ function $isOwnBytesLocationOf(
   return (
     isNoteOwnBytesLocation(location) &&
     isSamePath(
-      indexesFromUsjJsonPath(contentPathOf(location.jsonPath)),
+      contentIndexesOf(location),
       $getJsonPathIndexes(note, hasStandardViewWhitespace(viewOptions)),
     )
   );
@@ -425,7 +415,7 @@ function $settledTarget(
   prepared: PreparedScopes,
   location: UsjDocumentLocation,
 ): SettledTarget | undefined {
-  const indexes = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
+  const indexes = contentIndexesOf(location);
   if (indexes.length === 0) {
     // The document root addresses itself: no top-level index to restate — except in the older
     // root-and-index spelling of a gap between blocks, whose index is a top-level index like any
@@ -513,7 +503,7 @@ function $resolveFoldedAttribute(
 ): { resolution: ScratchResolution | undefined } | undefined {
   const keyName = attributeNameOf(location);
   if (keyName === undefined) return undefined;
-  const path = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
+  const path = contentIndexesOf(location);
   for (const run of settledOnlyRuns)
     for (const folded of run.foldedAttributes) {
       const owner = $getNodeByKey(folded.ownerKey);
@@ -1132,7 +1122,7 @@ function $renamedCloserLocation(
   location: UsjDocumentLocation,
 ): UsjDocumentLocation | undefined {
   if (!isUsjClosingMarkerLocation(location)) return undefined;
-  const path = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
+  const path = contentIndexesOf(location);
   for (const [key, closer] of prepared.renamedClosers) {
     const span = $getNodeByKey(key)?.getParent();
     if (
@@ -1150,22 +1140,6 @@ function $renamedCloserLocation(
     };
   }
   return undefined;
-}
-
-/** The leaf in front of `node` in document order — the deepest last descendant of the nearest
- * earlier sibling of `node` or of one of its ancestors — or `null` at the document's start. An
- * empty element is a leaf. */
-function $leafBefore(node: LexicalNode): LexicalNode | null {
-  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
-    let leaf = current.getPreviousSibling();
-    if (!leaf) continue;
-    for (let last = $isElementNode(leaf) ? leaf.getLastChild() : null; last; ) {
-      leaf = last;
-      last = $isElementNode(leaf) ? leaf.getLastChild() : null;
-    }
-    return leaf;
-  }
-  return null;
 }
 
 /** Whether `node` is one of `scope` or inside one. */
@@ -1197,7 +1171,7 @@ function* $caretPointsBefore(
       from = last ?? node;
     }
   }
-  for (let leaf = $leafBefore(from); leaf; leaf = $leafBefore(leaf)) {
+  for (let leaf = $previousLeaf(from); leaf; leaf = $previousLeaf(leaf)) {
     if (!$isTextNode(leaf)) continue;
     if (scope && !$isWithin(leaf, scope)) return;
     for (let at = leaf.getTextContentSize(); at >= 0; at -= 1) yield { node: leaf, offset: at };
@@ -1391,7 +1365,7 @@ function settledTopTranslated<T extends UsjDocumentLocation>(
   prepared: PreparedScopes,
   location: T,
 ): T {
-  const indexes = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
+  const indexes = contentIndexesOf(location);
   if (indexes.length === 0) return location;
   return withContentIndexes(location, [
     prepared.liveToSettledTopIndex(indexes[0]),
@@ -1434,9 +1408,7 @@ function $settledScopePath(prepared: PreparedScopes, plan: SettleScopePlan): num
   if (enclosing) {
     // The exact location only: a location snapped left names something in front of the note.
     const located = $exactSettledLocationInScope(prepared, enclosing, node, 0);
-    return typeof located === "object"
-      ? indexesFromUsjJsonPath(contentPathOf(located.jsonPath))
-      : undefined;
+    return typeof located === "object" ? contentIndexesOf(located) : undefined;
   }
   const indexes = $scopeStartIndexes(node, prepared.viewOptions);
   if (indexes.length === 0) return indexes;
@@ -1835,7 +1807,7 @@ function $exactSettledLocationInScope(
   const indexes = settledPathFromScratch(
     plan,
     $settledScopePath(prepared, plan),
-    indexesFromUsjJsonPath(contentPathOf(scratchLocation.jsonPath)),
+    contentIndexesOf(scratchLocation),
   );
   return indexes && withContentIndexes(scratchLocation, indexes);
 }
@@ -1875,7 +1847,7 @@ function $settledScopeFront(
   const indexes = settledPathFromScratch(
     plan,
     $settledScopePath(prepared, plan),
-    indexesFromUsjJsonPath(contentPathOf(scratchStart.jsonPath)),
+    contentIndexesOf(scratchStart),
   );
   if (indexes) return withContentIndexes(scratchStart, indexes);
   const first = plan.liveNodes[0];
@@ -1992,7 +1964,7 @@ function $settledDocumentEnd(
   const indexes = settledPathFromScratch(
     plan,
     $settledScopePath(prepared, plan),
-    indexesFromUsjJsonPath(contentPathOf(scratchEnd.jsonPath)),
+    contentIndexesOf(scratchEnd),
   );
   return indexes && withContentIndexes(scratchEnd, indexes);
 }
@@ -2018,12 +1990,10 @@ export function $settledSelectionFromLive(prepared: PreparedScopes): SelectionRa
     return live;
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return undefined;
-  const backward = selection.isBackward();
-  const first = backward ? selection.focus : selection.anchor;
+  const [first, last] = $orderedPoints(selection);
   const start = $settledLocationFromLivePoint(prepared, first.getNode(), first.offset);
   if (!start) return undefined;
   if (selection.isCollapsed()) return { start };
-  const last = backward ? selection.anchor : selection.focus;
   const end = $settledLocationFromLivePoint(prepared, last.getNode(), last.offset);
   if (!end) return undefined;
   // The two ends cross on their own, so inside an attribute the settle moves they can come out in

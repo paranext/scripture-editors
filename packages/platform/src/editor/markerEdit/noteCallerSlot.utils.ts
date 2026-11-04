@@ -1,5 +1,5 @@
 import { LexicalNode } from "lexical";
-import { $isMarkerNode, $isNoteNode, leadingAttributeNames } from "shared";
+import { $isNoteNode, $noteOpeningGlyphCount, leadingAttributeNames } from "shared";
 
 /**
  * Whether `node` sits in an expanded note's caller slot: the first child after the note's
@@ -18,11 +18,5 @@ export function $isNoteCallerSlot(node: LexicalNode): boolean {
   if (!$isNoteNode(note) || note.getIsCollapsed() !== false) return false;
   if (!leadingAttributeNames(note.getMarker())?.includes("caller")) return false;
   const children = note.getChildren();
-  let slot = 0;
-  while (slot < children.length) {
-    const child = children[slot];
-    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
-    slot++;
-  }
-  return node.is(children[slot]);
+  return node.is(children[$noteOpeningGlyphCount(children)]);
 }

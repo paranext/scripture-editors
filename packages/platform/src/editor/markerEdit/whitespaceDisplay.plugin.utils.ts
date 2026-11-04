@@ -44,6 +44,7 @@ import {
   $isNoteNode,
   $isTypedMarkNode,
   $isUnknownNode,
+  $orderedPoints,
   ATTRIBUTE_NBSP_SPELLING,
   GENERATOR_NOTE_CALLER,
   MarkerLookup,
@@ -95,9 +96,7 @@ export function $storedNbsps(
 ): boolean[] {
   const stored: boolean[] = [];
   const range = $isRangeSelection(selection) ? selection : undefined;
-  const [start, end] = range?.isBackward()
-    ? [range.focus, range.anchor]
-    : [range?.anchor, range?.focus];
+  const [start, end] = range ? $orderedPoints(range) : [undefined, undefined];
   for (const node of selection.getNodes()) {
     if ($isHidden?.(node) || $isElementNode(node)) continue;
     if (!$isTextNode(node)) {

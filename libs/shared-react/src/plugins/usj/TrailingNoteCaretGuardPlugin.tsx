@@ -1,7 +1,7 @@
 import { releaseTagsAfterNextCommit } from "./editorUpdate.utils";
 import { useTransientCaretHost } from "./transientCaretHost";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $findMatchingParent, mergeRegister } from "@lexical/utils";
+import { mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $getNearestNodeFromDOMNode,
@@ -19,7 +19,14 @@ import {
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $isCursorPlaceholderOnlyText, $isNoteNode, CURSOR_CHANGE_TAG, NoteNode } from "shared";
+import {
+  $findFirstAncestorNoteNode,
+  $isCursorPlaceholderOnlyText,
+  $isNoteNode,
+  $orderedPoints,
+  CURSOR_CHANGE_TAG,
+  NoteNode,
+} from "shared";
 
 /**
  * `node` when it is a collapsed note that nothing in its block renders past — the one shape with no
@@ -117,7 +124,7 @@ function $trailingNoteUnderClick(event: MouseEvent): NoteNode | undefined {
   } else if (!selection) {
     landed = $nodeUnderDomSelection(event.target);
   }
-  return landed ? $asTrailingCollapsedNote($findMatchingParent(landed, $isNoteNode)) : undefined;
+  return landed ? $asTrailingCollapsedNote($findFirstAncestorNoteNode(landed)) : undefined;
 }
 
 /** The node the DOM selection is currently pointing at, in `target`'s document. */
@@ -155,12 +162,12 @@ function $trailingNoteUnderUnresolvedSelection(
 ): NoteNode | undefined {
   if ($getSelection()) return undefined;
   const landed = $nodeUnderDomSelection(rootElement);
-  return landed ? $asTrailingCollapsedNote($findMatchingParent(landed, $isNoteNode)) : undefined;
+  return landed ? $asTrailingCollapsedNote($findFirstAncestorNoteNode(landed)) : undefined;
 }
 
 /** The collapsed note `point` is inside (or on), or `undefined`. */
 function $collapsedNoteAt(point: PointType): NoteNode | undefined {
-  const note = $findMatchingParent(point.getNode(), $isNoteNode);
+  const note = $findFirstAncestorNoteNode(point.getNode());
   return note?.getIsCollapsed() === true ? note : undefined;
 }
 
@@ -185,9 +192,7 @@ function $collapsedNoteAt(point: PointType): NoteNode | undefined {
 export function $takeCollapsedNotesIntoRange(): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-  const [start, end] = selection.isBackward()
-    ? [selection.focus, selection.anchor]
-    : [selection.anchor, selection.focus];
+  const [start, end] = $orderedPoints(selection);
   const startNote = $collapsedNoteAt(start);
   const endNote = $collapsedNoteAt(end);
   if (startNote && endNote && startNote.is(endNote)) return false;
@@ -234,9 +239,7 @@ function isCaretToEndKey(event: KeyboardEvent): boolean {
 function $selectedTrailingNote(): NoteNode | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return undefined;
-  const [start, end] = selection.isBackward()
-    ? [selection.focus, selection.anchor]
-    : [selection.anchor, selection.focus];
+  const [start, end] = $orderedPoints(selection);
   if (start.type !== "element" || end.type !== "element" || start.key !== end.key) return undefined;
   if (end.offset !== start.offset + 1) return undefined;
   const parent = start.getNode();

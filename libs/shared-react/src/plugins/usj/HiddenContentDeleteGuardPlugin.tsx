@@ -28,8 +28,6 @@ import {
   $shouldBlockStructuralEdit,
   $shouldRefuseExtendedDelete,
   CONFIRMED_DELETE_TAG,
-  isSamePoint,
-  PointSnapshot,
   RangeSnapshot,
 } from "./structureKeyboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -64,7 +62,7 @@ import {
   REMOVE_TEXT_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $isUnknownNode, LoggerBasic, UnknownNode } from "shared";
+import { $isUnknownNode, isSamePoint, LoggerBasic, PointSnapshot, UnknownNode } from "shared";
 
 type DeleteGranularity = "character" | "word" | "line";
 

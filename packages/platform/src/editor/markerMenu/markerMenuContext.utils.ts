@@ -23,7 +23,6 @@ import { $findMatchingParent } from "@lexical/utils";
 import {
   $getRoot,
   $getSelection,
-  $isElementNode,
   $isRangeSelection,
   BaseSelection,
   LexicalEditor,
@@ -31,6 +30,7 @@ import {
 } from "lexical";
 import {
   $findFirstAncestorNoteNode,
+  $firstLeaf,
   $getSelectedParaMarker,
   $isBookNode,
   $isCharNode,
@@ -98,18 +98,6 @@ function $collectPreviousParaMarkers(node: LexicalNode): string[] {
   return markers;
 }
 
-/** First leaf of `node`: descend through first children of element nodes (the node itself
- * when it is already a leaf or an empty element). */
-function $getFirstLeaf(node: LexicalNode): LexicalNode {
-  let current = node;
-  while ($isElementNode(current)) {
-    const child: LexicalNode | null = current.getFirstChild();
-    if (!child) break;
-    current = child;
-  }
-  return current;
-}
-
 /**
  * True when `anchorNode`/`offset` sits at `para`'s CONTENT start: inside the marker prefix /
  * its trailing-space NBSP, or at offset 0 of the first LEAF of the first content child
@@ -150,7 +138,7 @@ export function $isAtParagraphContentStart(
     }
   }
   if (!contentStart) return false;
-  return anchorNode.is($getFirstLeaf(contentStart)) && offset === 0;
+  return anchorNode.is($firstLeaf(contentStart)) && offset === 0;
 }
 
 /**

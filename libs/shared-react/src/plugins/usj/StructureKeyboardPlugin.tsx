@@ -20,7 +20,6 @@ import {
   CONFIRMED_DELETE_TAG,
   DeleteIntent,
   keyDownToIntent,
-  snapshotPoint,
 } from "./structureKeyboard.utils";
 import { $generateNodesFromDOM } from "@lexical/html";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -57,6 +56,8 @@ import {
   $isBookNode,
   $isSomeParaNode,
   MARKER_TEXT_TYPE,
+  restorePoint,
+  snapshotPoint,
 } from "shared";
 import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
@@ -83,8 +84,8 @@ const MARKER_TEXT_WIDTH_PROPERTY = "--para-merge-armed-text-width";
 function $restorerFor(selection: RangeSelection): () => void {
   const { anchor, focus } = $rangeSnapshot(selection);
   return () => {
-    selection.anchor.set(anchor.key, anchor.offset, anchor.type);
-    selection.focus.set(focus.key, focus.offset, focus.type);
+    restorePoint(selection.anchor, anchor);
+    restorePoint(selection.focus, focus);
   };
 }
 

@@ -45,7 +45,7 @@ import {
   USJ_TYPE,
   USJ_VERSION,
 } from "@eten-tech-foundation/scripture-utilities";
-import { registerNestedElementResolver } from "@lexical/utils";
+import { $dfs, registerNestedElementResolver } from "@lexical/utils";
 import {
   $createTextNode,
   $createRangeSelection,
@@ -73,7 +73,7 @@ import {
 } from "lexical";
 import {
   $chapterGlyphTextNode,
-  $findFirstAncestorNoteNode,
+  $collapseToElementPoint,
   $hasUnrecoverableAttributes,
   $isCanonicalMarkerNode,
   $noteEditableCallerNode,
@@ -84,6 +84,7 @@ import {
   $isChapterNode,
   $isCharNode,
   $isImmutableUnmatchedNode,
+  $isInsideNote,
   isSerializedCaretHost,
   isSerializedImmutableUnmatchedNode,
   $isImpliedParaNode,
@@ -100,6 +101,7 @@ import {
   $isTypedMarkNode,
   $milestoneAttributeRunPieces,
   $verseAttributeRunPieces,
+  serializedTextType,
   $createImpliedParaNode,
   $createTypedMarkNode,
   $displayAnnotationsOf,
@@ -671,12 +673,6 @@ export function $charNeedsSentinelAs(
   return marker !== char.getMarker() || !$hasEditedOwnGlyph(char);
 }
 
-/** Whether `node` is inside a note's content. */
-function $isInsideNote(node: LexicalNode): boolean {
-  const parent = node.getParent();
-  return parent !== null && $findFirstAncestorNoteNode(parent) !== undefined;
-}
-
 /** Whether a char span carries attributes other than the derived `closed` flag. */
 function $hasAttributesBesidesClosed(char: CharNode): boolean {
   const attributes = char.getUnknownAttributes();
@@ -1018,12 +1014,6 @@ export function serializedChildren(
 export function serializedText(node: SerializedLexicalNode): string | undefined {
   const { text } = node as { text?: string };
   return typeof text === "string" ? text : undefined;
-}
-
-/** A serialized text node's `textTypeState` tag (Lexical keeps node state under `$`), or
- * `undefined` for a node with none. */
-function serializedTextType(node: SerializedLexicalNode): unknown {
-  return (node as { $?: { textType?: unknown } }).$?.textType;
 }
 
 /** A serialized node's own `type` tag, or `""` for a shape with none. */
@@ -1636,20 +1626,6 @@ function $replaceSentinels(roots: LexicalNode[], originals: LexicalNode[][]): vo
   roots.forEach(visit);
 }
 
-/**
- * Every VerseNode under `nodes`, depth-first in document order (including a verse nested inside
- * a char span that crosses it, per USFM ≤3.0 — see the crossing-span fixed-point test in
- * tier2Rebuild.utils.test.tsx). Backs sid carry-over in `$rebuildParas`: the OLD side is read into plain data before the
- * splice moves or destroys anything; the NEW side is read once the splice has settled.
- */
-function $collectVerseNodes(nodes: LexicalNode[], out: VerseNode[] = []): VerseNode[] {
-  for (const node of nodes) {
-    if ($isVerseNode(node)) out.push(node);
-    else if ($isElementNode(node)) $collectVerseNodes(node.getChildren(), out);
-  }
-  return out;
-}
-
 /** U+FFFC occurrences across a parsed node tree — must equal the preserved-run count. */
 function countSentinelNodes(nodes: LexicalNode[]): number {
   let count = 0;
@@ -1757,12 +1733,6 @@ export function $caretSpanByteAnchor(
   return undefined;
 }
 
-/** Every key in `node`'s subtree, `node` included. */
-function $collectKeys(node: LexicalNode, out: Set<NodeKey>): void {
-  out.add(node.getKey());
-  if ($isElementNode(node)) node.getChildren().forEach((child) => $collectKeys(child, out));
-}
-
 /** The span a `(key, offset)` pair addresses, if the fragment carries one for that node. */
 export function spanFor(
   fragment: FragmentAccumulator,
@@ -1821,7 +1791,7 @@ export function $anchorForPoint(
   node
     .getChildren()
     .slice(0, offset)
-    .forEach((child) => $collectKeys(child, before));
+    .forEach((child) => $subtreeKeys(child, before));
   const last = [...fragment.spans].reverse().find((span) => before.has(span.key));
   if (last) return anchoredAfter(last);
 
@@ -1829,8 +1799,7 @@ export function $anchorForPoint(
   // the fragment's start only when the element opens the fragment. In front of the element's
   // first byte is the precise spelling: a boundary past the previous paragraph's last byte would
   // resolve into that paragraph wherever the two are joined by whitespace.
-  const inside = new Set<NodeKey>();
-  $collectKeys(node, inside);
+  const inside = $subtreeKeys(node);
   const firstInside = fragment.spans.find((span) => inside.has(span.key));
   if (firstInside && !firstInside.isSentinel) return anchored(firstInside.key, 0);
   // An element that opens with a preserved node, or holds no bytes at all, has no first byte to
@@ -2119,21 +2088,31 @@ interface MarkByteRange {
   end: CaretByteAnchor;
 }
 
-/** Every `TypedMarkNode` under `nodes`, depth-first. A mark nested inside another (the transient
- * shape `registerNestedElementResolver` un-nests) is collected as its own range. */
-function $collectTypedMarks(nodes: LexicalNode[], out: TypedMarkNode[] = []): TypedMarkNode[] {
-  for (const node of nodes) {
-    if ($isTypedMarkNode(node)) out.push(node);
-    if ($isElementNode(node)) $collectTypedMarks(node.getChildren(), out);
-  }
-  return out;
-}
-
-/** `node` and everything under it, by key — the span owners whose bytes a mark wraps. */
-function $subtreeKeys(node: LexicalNode, out = new Set<NodeKey>()): Set<NodeKey> {
+/**
+ * `node` and everything under it, by key, added to `out` — e.g. the span owners whose bytes a mark
+ * wraps.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ */
+export function $subtreeKeys(node: LexicalNode, out = new Set<NodeKey>()): Set<NodeKey> {
   out.add(node.getKey());
   if ($isElementNode(node)) node.getChildren().forEach((child) => $subtreeKeys(child, out));
   return out;
+}
+
+/**
+ * Every node `guard` accepts among `nodes` and everything under them, depth-first in document
+ * order. The list is complete before it is returned, so a caller may mutate the nodes it finds.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ */
+export function $subtreeNodesMatching<T extends LexicalNode>(
+  nodes: readonly LexicalNode[],
+  guard: (node: LexicalNode) => node is T,
+): T[] {
+  return nodes
+    .flatMap((node) => $dfs(node).map(({ node: descendant }) => descendant))
+    .filter(guard);
 }
 
 /**
@@ -2197,7 +2176,9 @@ function $captureMarkByteRanges(
   callbacksFrom?: LexicalEditor,
 ): CapturedMarks {
   const ranges: MarkByteRange[] = [];
-  for (const mark of $collectTypedMarks(scope)) {
+  // A mark nested inside another (the transient shape `registerNestedElementResolver` un-nests) is
+  // collected as its own range.
+  for (const mark of $subtreeNodesMatching(scope, $isTypedMarkNode)) {
     const owners = $subtreeKeys(mark);
     const covered = fragment.spans.filter((span) => owners.has(span.key));
     // A mark's carried start is its first covered byte, a char span's opener glyph included: the
@@ -2761,10 +2742,7 @@ function $selectPoint(point: FragmentPoint): boolean {
     return true;
   }
   if (!$isElementNode(node)) return false;
-  const selection = $createRangeSelection();
-  selection.anchor.set(point.key, point.offset, "element");
-  selection.focus.set(point.key, point.offset, "element");
-  $setSelection(selection);
+  $collapseToElementPoint(node, point.offset);
   return true;
 }
 
@@ -3085,7 +3063,9 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
   // BEFORE the splice below moves or destroys the old paragraphs (a removed node's fields are
   // not safe to read afterward). Sid carry-over (below) pairs this against the freshly
   // re-tokenized tree's verses once the splice has settled.
-  const oldVerseSids = $collectVerseNodes(paras).map((verse) => ({
+  // Depth-first, so a verse nested inside a char span that crosses it (USFM ≤3.0 — see the
+  // crossing-span fixed-point test in tier2Rebuild.utils.test.tsx) is paired too.
+  const oldVerseSids = $subtreeNodesMatching(paras, $isVerseNode).map((verse) => ({
     number: verse.getNumber(),
     sid: verse.getSid(),
   }));
@@ -3103,7 +3083,7 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
   // pairing, so this is a harmless no-op for it. Runs strictly AFTER the fixed-point check above,
   // which deliberately never looks at sid (see the `$appendSignature` verse branch) — sid is
   // reconciled here, once, only when a rebuild is already happening for some other reason.
-  const newVerses = $collectVerseNodes(newNodes);
+  const newVerses = $subtreeNodesMatching(newNodes, $isVerseNode);
   for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
     if (newVerses[i].getNumber() === oldVerseSids[i].number)
       newVerses[i].setSid(oldVerseSids[i].sid);
@@ -3698,10 +3678,12 @@ export function $rebuildBook(
   // the splice below moves or destroys the old content nodes (a removed node's fields are not safe
   // to read afterward). Sid carry-over (below) pairs this against the freshly re-tokenized line's
   // verses once the splice has settled — mirrors `$rebuildParas`.
-  const oldVerseSids = $collectVerseNodes([...contentNodes, ...trailingParas]).map((verse) => ({
-    number: verse.getNumber(),
-    sid: verse.getSid(),
-  }));
+  const oldVerseSids = $subtreeNodesMatching([...contentNodes, ...trailingParas], $isVerseNode).map(
+    (verse) => ({
+      number: verse.getNumber(),
+      sid: verse.getSid(),
+    }),
+  );
 
   // Splice: insert the new content before the first old content node (or at the line's end when it
   // had none) and the new blocks directly after the book, move preserved sentinel runs into place,
@@ -3742,7 +3724,7 @@ export function $rebuildBook(
   // Collected from `liveContentNodes`, not the stale pre-splice `newNodes`: `$replaceSentinels`
   // (above) splices each preserved sentinel run into the live tree, so a sentinel verse is missing
   // from `newNodes` and every sid pairing after it shifts by one.
-  const newVerses = $collectVerseNodes(liveContentNodes);
+  const newVerses = $subtreeNodesMatching(liveContentNodes, $isVerseNode);
   for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
     if (newVerses[i].getNumber() === oldVerseSids[i].number)
       newVerses[i].setSid(oldVerseSids[i].sid);

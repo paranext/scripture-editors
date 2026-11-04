@@ -67,6 +67,20 @@ export function releaseTagsAfterNextCommit(editor: LexicalEditor, ...tags: strin
 }
 
 /**
+ * The document's DOM selection when its anchor is inside `root` (an editor's root element), or
+ * `undefined` when it is elsewhere — it then belongs to whatever the user is in — or there is none.
+ *
+ * @param root - The editor's root element.
+ * @returns The DOM selection, when it is in the editor.
+ */
+export function getDomSelectionInRoot(root: HTMLElement | null | undefined): Selection | undefined {
+  if (!root) return undefined;
+  const domSelection = root.ownerDocument.defaultView?.getSelection();
+  if (!domSelection?.anchorNode || !root.contains(domSelection.anchorNode)) return undefined;
+  return domSelection;
+}
+
+/**
  * Clears the document selection when it still sits inside `editor`'s root AND disagrees with what
  * Lexical committed.
  *
@@ -87,10 +101,8 @@ export function releaseTagsAfterNextCommit(editor: LexicalEditor, ...tags: strin
  * @param editor - The editor whose stale DOM selection to clear.
  */
 export function clearStaleDomSelection(editor: LexicalEditor): void {
-  const rootElement = editor.getRootElement();
-  const domSelection = rootElement?.ownerDocument.defaultView?.getSelection();
-  if (!rootElement || !domSelection?.anchorNode) return;
-  if (!rootElement.contains(domSelection.anchorNode)) return;
+  const domSelection = getDomSelectionInRoot(editor.getRootElement());
+  if (!domSelection) return;
   // `{ editor }` is required: `$createRangeSelectionFromDom` resolves the DOM nodes to Lexical
   // keys through the active editor context, which only this option supplies outside of an update.
   const matchesCommitted = editor.getEditorState().read(

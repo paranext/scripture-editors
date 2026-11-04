@@ -389,6 +389,22 @@ function $throughMarks(node: LexicalNode | undefined): LexicalNode | undefined {
 }
 
 /**
+ * How many of a note's `children` lead it as opening marker glyphs — the index of the note's
+ * caller slot, the first child that is not an opening `MarkerNode`.
+ *
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
+ */
+export function $noteOpeningGlyphCount(children: readonly LexicalNode[]): number {
+  let count = 0;
+  while (count < children.length) {
+    const child = children[count];
+    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
+    count++;
+  }
+  return count;
+}
+
+/**
  * The TextNode carrying a note's EDITABLE caller (` + ` with an NBSP tail —
  * `getEditableCallerText`), skipping any leading opening glyph(s) and looking through any
  * annotation mark wrapping it — the anchor a note's `\cat` run scans from and is inserted after.
@@ -406,13 +422,7 @@ function $throughMarks(node: LexicalNode | undefined): LexicalNode | undefined {
  */
 export function $noteEditableCallerNode(note: NoteNode): TextNode | undefined {
   const children = note.getChildren();
-  let index = 0;
-  while (index < children.length) {
-    const child = children[index];
-    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
-    index++;
-  }
-  const caller = $throughMarks(children[index]);
+  const caller = $throughMarks(children[$noteOpeningGlyphCount(children)]);
   if (!$isTextNode(caller) || caller.getType() !== TextNode.getType()) return undefined;
   if (caller.getTextContent() === getEditableCallerText(note.getCaller())) return caller;
   return caller.isUnmergeable() ? caller : undefined;

@@ -32,7 +32,6 @@ import {
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import { useEffect } from "react";
 import {
-  $caretHostAtBoundary,
   $getNextNode,
   $getPreviousNode,
   $getSelectedParaMarkerPara,
@@ -43,7 +42,9 @@ import {
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
   $isVisibleMarkerNode,
+  $orderedPoints,
   $placeCaretAtBoundary,
+  $setPointAtBoundary,
   BookNode,
   ImmutableTypedTextNode,
   NBSP,
@@ -75,25 +76,6 @@ export function $isBookPrefixNode(
 }
 
 /**
- * The point just past `book`'s own immutable prefix — the boundary any selection endpoint that has
- * landed ON or BEFORE the prefix should be clamped to. Follows the same hosting convention
- * `$placeCaretAtBoundary` does (a TEXT point at the following content's own start, or the ELEMENT
- * point when nothing hosts one yet), expressed as plain point pieces so a caller can move ONE
- * endpoint of an existing selection without collapsing the other — `$placeCaretAtBoundary` itself
- * replaces the whole active selection, which is only safe for a genuinely collapsed correction.
- */
-function $pointJustPastBookPrefix(book: BookNode): {
-  key: string;
-  offset: number;
-  type: "element" | "text";
-} {
-  const host = $caretHostAtBoundary(book, 1);
-  return host
-    ? { key: host.getKey(), offset: 0, type: "text" }
-    : { key: book.getKey(), offset: 1, type: "element" };
-}
-
-/**
  * For a NON-collapsed selection whose span includes the book's own prefix, moves whichever of
  * anchor/focus is EARLIER in document order to the boundary just past it, so the range that
  * survives covers only real content.
@@ -118,7 +100,7 @@ export function $narrowSelectionPastBookPrefix(selection: RangeSelection): boole
   // anywhere inside the book (its own element point included: a node's top-level element is
   // itself when the node already IS one). `getTopLevelElement()` returns `null` for the root node,
   // so the root case needs its own check rather than falling out of the same call.
-  const point = selection.isBackward() ? selection.focus : selection.anchor;
+  const [point] = $orderedPoints(selection);
   const pointNode = point.getNode();
   const mayReachPrefix =
     ($isRootNode(pointNode) && point.offset === 0) || $isBookNode(pointNode.getTopLevelElement());
@@ -129,8 +111,9 @@ export function $narrowSelectionPastBookPrefix(selection: RangeSelection): boole
   const book = prefixNode.getParent();
   if (!$isBookNode(book)) return false;
 
-  const target = $pointJustPastBookPrefix(book);
-  point.set(target.key, target.offset, target.type);
+  // Just past the book's own immutable prefix: boundary 1, the one any endpoint that has landed ON
+  // or BEFORE the prefix is clamped to.
+  $setPointAtBoundary(point, book, 1);
   return true;
 }
 
@@ -219,8 +202,7 @@ function $clampLineDeletionPastBookPrefix(isBackward: boolean): boolean {
   }
 
   if (selection.getNodes().some($isBookPrefixNode)) {
-    const target = $pointJustPastBookPrefix(book);
-    selection.focus.set(target.key, target.offset, target.type);
+    $setPointAtBoundary(selection.focus, book, 1);
   }
   if (!selection.isCollapsed()) selection.removeText();
   return true;

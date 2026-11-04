@@ -13,6 +13,7 @@ import {
   $isGutterMarkerNode,
   $isParaNode,
   $isVisibleMarkerNode,
+  $orderedPoints,
   getApplyingUpdateSource,
   ParaNode,
 } from "shared";
@@ -81,7 +82,7 @@ function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
     let survivor = prevNext;
     const selection = isUserEdit ? $getSelection() : undefined;
     if ($isRangeSelection(selection) && !selection.isCollapsed()) {
-      const end = (selection.isBackward() ? selection.anchor : selection.focus).getNode();
+      const end = $orderedPoints(selection)[1].getNode();
       const endPara = end.getTopLevelElement();
       if ($isParaNode(endPara) && !endPara.is(prevNode)) survivor = endPara;
     }

@@ -8,8 +8,8 @@
  * end. Mapping a location is therefore rewriting its leading indexes; everything below a unit is
  * unchanged. The layout has no pending edits, so there is no settled translation on top of this.
  */
+import { contentIndexesOf, contentPathOf, withContentIndexes } from "./jsonPath.utils";
 import {
-  indexesFromUsjJsonPath,
   isUsjTextContentLocation,
   usjJsonPathFromIndexes,
   type UsjDocumentLocation,
@@ -22,20 +22,6 @@ import {
   $shouldIgnoreNodeForContentIndexes,
   verseBlockSourceState,
 } from "shared";
-
-/** The `$.content[…]` prefix of a jsonPath, with any property suffix (`['marker']`) stripped. */
-const CONTENT_PATH = /^(\$(?:\.content\[\d+\])*)(?:\.|$|\[)/;
-
-function contentPathOf(jsonPath: string): string {
-  return CONTENT_PATH.exec(jsonPath)?.[1] ?? jsonPath;
-}
-
-/** `location` re-addressed at `indexes`, keeping its subtype, its offsets, and any property
- * suffix — the path is the only part a translation ever changes. */
-function withContentIndexes<T extends UsjDocumentLocation>(location: T, indexes: number[]): T {
-  const suffix = location.jsonPath.slice(contentPathOf(location.jsonPath).length);
-  return { ...location, jsonPath: `${usjJsonPathFromIndexes(indexes)}${suffix}` } as T;
-}
 
 /** One root-level unit of the block tree: a verse block's child, or a root child outside any block. */
 export interface BlockUnit {
@@ -133,7 +119,7 @@ export function $blockToUsj(
   mayDescend = true,
 ): UsjDocumentLocation | undefined {
   const suffix = location.jsonPath.slice(contentPathOf(location.jsonPath).length);
-  let indexes = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
+  let indexes = contentIndexesOf(location);
   // A verse block has no USJ counterpart: naming one names its first unit.
   if (
     indexes.length === 1 &&
@@ -197,7 +183,7 @@ export function $usjToBlock(
   units: BlockUnit[],
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation | undefined {
-  const indexes = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
+  const indexes = contentIndexesOf(location);
   if (indexes.length === 0)
     return isUsjTextContentLocation(location)
       ? $rootGapToBlock(location.offset, units, collapsesSpaceRuns)

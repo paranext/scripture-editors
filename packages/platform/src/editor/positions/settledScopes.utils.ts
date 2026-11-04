@@ -19,6 +19,8 @@ import {
   $chapterAdjacentAttributeNodes,
   $exportSubtree,
   $settledChapterScopeFragment,
+  $subtreeKeys,
+  $subtreeNodesMatching,
   joinSerializedLeadingLineToPreviousParagraph,
   cutFragment,
   serializedMarkerGlyphText,
@@ -74,9 +76,9 @@ import {
   $getLogicalContentItems,
   BookNode,
   $isImpliedParaNode,
-  $isMarkerNode,
   $isNoteNode,
   $isParaNode,
+  $noteOpeningGlyphCount,
   ChapterNode,
   isSerializedNoteNode,
   ImpliedParaNode,
@@ -200,15 +202,6 @@ function materializeScratch(
  * as the same signature. */
 const SIGNATURE_SEPARATOR = "\u0000";
 
-/** Every key in `nodes`' subtrees, depth-first. */
-function $subtreeKeys(nodes: readonly LexicalNode[], out: NodeKey[] = []): NodeKey[] {
-  for (const node of nodes) {
-    out.push(node.getKey());
-    if ($isElementNode(node)) $subtreeKeys(node.getChildren(), out);
-  }
-  return out;
-}
-
 /**
  * The signature a plan is memoized on: the same displayed bytes under the same view, with the same
  * declaration over them, settle to the same thing — and the same NODES hold them. A plan keeps live
@@ -225,22 +218,13 @@ function $planSignature(
 ): string {
   const view = `${tier2.viewOptions.markerMode}/${tier2.viewOptions.noteMode}`;
   const content = liveNodes.map((node) => node.getTextContent()).join(SIGNATURE_SEPARATOR);
-  const nodes = $subtreeKeys(liveNodes).join(" ");
+  const nodes = liveNodes.flatMap((node) => [...$subtreeKeys(node)]).join(" ");
   // The declaration's own NODE is part of what it means: the same run at the same offset in a
   // different node is a different cut, and therefore a different settled scope.
   const declared = transient
     ? `${transient.node.getKey()}:${transient.run}@${transient.caretOffset}`
     : "";
   return [kind, view, fragmentText, content, nodes, declared].join(SIGNATURE_SEPARATOR);
-}
-
-/** Every NoteNode under `nodes`, depth-first. */
-function $notesWithin(nodes: readonly LexicalNode[], out: NoteNode[] = []): NoteNode[] {
-  for (const node of nodes) {
-    if ($isNoteNode(node)) out.push(node);
-    if ($isElementNode(node)) $notesWithin(node.getChildren(), out);
-  }
-  return out;
 }
 
 /** A scope's settled fragment, read off its scratch tree, and — for a note a typed closer closes —
@@ -374,12 +358,7 @@ function isInSettlingBlock(block: LexicalNode, scopes: SettleScopes): boolean {
  * or `undefined` when there is no caller where one belongs. */
 function $noteBytesPastCaller(note: NoteNode): LexicalNode[] | undefined {
   const children = note.getChildren();
-  let start = 0;
-  while (start < children.length) {
-    const child = children[start];
-    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
-    start += 1;
-  }
+  const start = $noteOpeningGlyphCount(children);
   return start < children.length ? children.slice(start + 1) : undefined;
 }
 
@@ -413,7 +392,7 @@ function $planForClosedNote(
   const sites = new Map<NodeKey, SerializedSite>();
   $mapSerializedSites([block], [serialized], sites);
   $applyInPlaceRenames(scopes, sites);
-  $notesWithin([block])
+  $subtreeNodesMatching([block], $isNoteNode)
     .filter((other) => !other.is(note) && scopes.noteScopes.has(other.getKey()))
     .forEach((other) =>
       $applySettledNoteScope(
@@ -582,7 +561,7 @@ function $planForParas(
   const sites = new Map<NodeKey, SerializedSite>();
   $mapSerializedSites(paras, serialized, sites);
   $applyInPlaceRenames(scopes, sites);
-  $notesWithin(paras)
+  $subtreeNodesMatching(paras, $isNoteNode)
     .filter((note) => scopes.noteScopes.has(note.getKey()))
     .forEach((note) =>
       $applySettledNoteScope(
@@ -625,7 +604,7 @@ function $planForBook(
   const sites = new Map<NodeKey, SerializedSite>();
   $mapSerializedSites(liveNodes, serialized, sites);
   $applyInPlaceRenames(scopes, sites);
-  $notesWithin(liveNodes)
+  $subtreeNodesMatching(liveNodes, $isNoteNode)
     .filter((note) => scopes.noteScopes.has(note.getKey()))
     .forEach((note) =>
       $applySettledNoteScope(
@@ -719,7 +698,7 @@ function $planForHuskOnlyPara(
   const sites = new Map<NodeKey, SerializedSite>();
   $mapSerializedSites([para], [serialized], sites);
   $applyInPlaceRenames(scopes, sites);
-  $notesWithin([para])
+  $subtreeNodesMatching([para], $isNoteNode)
     .filter((note) => scopes.noteScopes.has(note.getKey()))
     .forEach((note) =>
       $applySettledNoteScope(

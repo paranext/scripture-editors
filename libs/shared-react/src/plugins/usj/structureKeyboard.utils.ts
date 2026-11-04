@@ -16,7 +16,6 @@ import {
   RangeSelection,
 } from "lexical";
 import {
-  $caretHostAtBoundary,
   $createImpliedParaNode,
   $getSelectableParaMarker,
   $getSelectedParaMarkerPara,
@@ -30,9 +29,14 @@ import {
   $isSomeChapterNode,
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
+  $orderedPoints,
   $placeCaretAtBoundary,
+  $setPointAtBoundary,
+  isSamePoint,
   ParaLikeNode,
   ParaNode,
+  PointSnapshot,
+  snapshotPoint,
   SomeParaNode,
 } from "shared";
 
@@ -56,14 +60,8 @@ export type DeleteTarget =
   | { kind: "verse"; node: SomeVerseNode }
   | { kind: "para"; node: SomeParaNode };
 
-/** A snapshot of one RangeSelection endpoint, used to detect whether a latched range still holds. */
-export interface PointSnapshot {
-  key: NodeKey;
-  offset: number;
-  type: "text" | "element";
-}
-
-/** A snapshot of a RangeSelection's two endpoints. */
+/** A snapshot of a RangeSelection's two endpoints, used to detect whether a latched range still
+ * holds. */
 export interface RangeSnapshot {
   anchor: PointSnapshot;
   focus: PointSnapshot;
@@ -76,20 +74,7 @@ export interface RangeSnapshot {
  * command handler.
  */
 export function $rangeSnapshot({ anchor, focus }: RangeSelection): RangeSnapshot {
-  const point = ({ key, offset, type }: PointSnapshot): PointSnapshot => ({ key, offset, type });
-  return { anchor: point(anchor), focus: point(focus) };
-}
-
-/** Whether `point` (a live selection point, or another snapshot) is the one `snapshot` recorded. */
-export function isSamePoint(point: PointSnapshot, snapshot: PointSnapshot): boolean {
-  return (
-    point.key === snapshot.key && point.offset === snapshot.offset && point.type === snapshot.type
-  );
-}
-
-/** Snapshots `point`, so a later selection can be checked against it. */
-export function snapshotPoint(point: PointSnapshot): PointSnapshot {
-  return { key: point.key, offset: point.offset, type: point.type };
+  return { anchor: snapshotPoint(anchor), focus: snapshotPoint(focus) };
 }
 
 /**
@@ -140,7 +125,6 @@ export function keyDownToIntent(event: KeyboardEvent): EditIntent | undefined {
  */
 export function $getParaAncestor(node: LexicalNode | null | undefined): LexicalNode | undefined {
   if (!node) return undefined;
-  if ($isParaLikeNode(node)) return node;
   const para = $findMatchingParent(node, (n: LexicalNode) => $isParaLikeNode(n));
   return para ?? undefined;
 }
@@ -173,7 +157,7 @@ export function $selectionSpansBlockBoundary(selection: BaseSelection): boolean 
  */
 export function $narrowSelectionPastGutterGlyph(selection: RangeSelection): void {
   if (selection.isCollapsed()) return;
-  $movePointPastGutterGlyph(selection.isBackward() ? selection.focus : selection.anchor);
+  $movePointPastGutterGlyph($orderedPoints(selection)[0]);
 }
 
 /**
@@ -222,9 +206,7 @@ function $movePointPastGutterGlyph(point: PointType): boolean {
   const para = point.getNode();
   if (point.type !== "element" || point.offset !== 0 || !$isParaNode(para)) return false;
   if (!$isGutterMarkerNode(para.getFirstChild())) return false;
-  const host = $caretHostAtBoundary(para, 1);
-  if (host) point.set(host.getKey(), 0, "text");
-  else point.set(para.getKey(), 1, "element");
+  $setPointAtBoundary(point, para, 1);
   return true;
 }
 

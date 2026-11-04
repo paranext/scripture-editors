@@ -10,7 +10,13 @@ import { $isAttributeRunNode } from "../usj/AttributeRunNode.js";
 import { $charSeparatorPrefixLength } from "../usj/markerSeparators.utils.js";
 import { $isMilestoneNode } from "../usj/MilestoneNode.js";
 import { TYPED_MARK_WRAP_TAG } from "../usj/node-constants.js";
-import { $isMarkerTrailingSeparator } from "../usj/node.utils.js";
+import {
+  $firstLeaf,
+  $isMarkerTrailingSeparator,
+  $lastLeaf,
+  $nextLeaf,
+  $orderedPoints,
+} from "../usj/node.utils.js";
 import { $isVerseNode } from "../usj/VerseNode.js";
 import {
   $addDisplayAnnotation,
@@ -62,26 +68,6 @@ function leafSize(node: LexicalNode): number {
   return $isTextNode(node) ? node.getTextContentSize() : 1;
 }
 
-function $firstLeaf(node: LexicalNode): LexicalNode {
-  let leaf = node;
-  while ($isElementNode(leaf)) {
-    const child = leaf.getFirstChild();
-    if (!child) return leaf;
-    leaf = child;
-  }
-  return leaf;
-}
-
-function $lastLeaf(node: LexicalNode): LexicalNode {
-  let leaf = node;
-  while ($isElementNode(leaf)) {
-    const child = leaf.getLastChild();
-    if (!child) return leaf;
-    leaf = child;
-  }
-  return leaf;
-}
-
 /**
  * The caret a selection point stands for. An element point `(E, i)` is in front of child `i`'s
  * first leaf, or behind E's last leaf when `i` is past its children — never a text offset.
@@ -115,15 +101,6 @@ function $coveredOffsets(leaf: LexicalNode, start: LeafCaret, end: LeafCaret): [
   return [from, Math.max(from, to)];
 }
 
-/** The first leaf after `node` in document order, if any. */
-function $leafAfter(node: LexicalNode): LexicalNode | undefined {
-  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
-    const sibling = current.getNextSibling();
-    if (sibling) return $firstLeaf(sibling);
-  }
-  return undefined;
-}
-
 /**
  * Whether the range covers `element` from in front of its first leaf through behind its last.
  *
@@ -138,7 +115,7 @@ function $coversWhole(element: ElementNode, start: LeafCaret, end: LeafCaret): b
   if (compareCarets(start, { leaf: first, offset: 0 }) > 0) return false;
   if (compareCarets(end, { leaf: last, offset: leafSize(last) }) < 0) return false;
   if ($isMarkerTrailingSeparator(last)) {
-    const after = $leafAfter(element);
+    const after = $nextLeaf(element);
     if (!after || compareCarets(end, { leaf: after, offset: 0 }) <= 0) return false;
   }
   return true;
@@ -201,9 +178,7 @@ export function $wrapSelectionInTypedMarkNode(
   if (selection.isCollapsed()) return;
   const nodes = selection.getNodes();
   const isBackward = selection.isBackward();
-  const [startPoint, endPoint] = isBackward
-    ? [selection.focus, selection.anchor]
-    : [selection.anchor, selection.focus];
+  const [startPoint, endPoint] = $orderedPoints(selection);
   // Measured before the loop splits anything: `splitText` keeps the original key on the first
   // piece and ordering reads the live tree, so each caret keeps naming the same place.
   const startCaret = $caretOf(startPoint);

@@ -2,10 +2,10 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { $getSelection, $isRangeSelection } from "lexical";
 import { useEffect } from "react";
 import {
-  $caretHostAtBoundary,
   $createGutterMarkerNode,
   $isGutterMarkerNode,
   $isSynthesizedMarkerNode,
+  $setPointAtBoundary,
   LoggerBasic,
   NBSP,
   openingMarkerText,
@@ -116,10 +116,7 @@ export function $restoreGutterMarkerIfMissing(para: ParaNode): void {
   const contentStart = $paraContentStartIndex(para);
   // Hosted by the text there when there is some (the convention `$placeCaretAtBoundary` follows),
   // so the point survives the browser's reading of it back.
-  const host = $caretHostAtBoundary(para, contentStart);
   for (const point of [selection.anchor, selection.focus])
-    if (point.type === "element" && point.key === para.getKey() && point.offset < contentStart) {
-      if (host) point.set(host.getKey(), 0, "text");
-      else point.set(para.getKey(), contentStart, "element");
-    }
+    if (point.type === "element" && point.key === para.getKey() && point.offset < contentStart)
+      $setPointAtBoundary(point, para, contentStart);
 }

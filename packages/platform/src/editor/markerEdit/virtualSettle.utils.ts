@@ -59,6 +59,7 @@ import {
   $opensNamelessParagraph,
   $settleScopeForNode,
   $signatureOf,
+  $subtreeKeys,
   countSentinels,
   countSerializedSentinels,
   cutFragment,
@@ -119,6 +120,7 @@ import {
   NoteNode,
   ParaNode,
   SerializedBookNode,
+  serializedTextType,
   SerializedVerseNode,
   UnknownNode,
 } from "shared";
@@ -866,13 +868,6 @@ export function $settledNoteScope(
   };
 }
 
-/** The custom node-state a serialized text node carries under Lexical's `$` state key, or
- * `undefined` for a plain node with none — this codebase's own `textTypeState` (the one custom
- * state field text nodes carry) rides there. */
-function serializedTextTypeState(node: SerializedLexicalNode): unknown {
-  return (node as { $?: { textType?: unknown } }).$?.textType;
-}
-
 /**
  * Whether two adjacent serialized nodes are both plain TextNodes (not a MarkerNode or other
  * TextNode subclass — Lexical's `type` field distinguishes them) with identical format, style,
@@ -906,7 +901,7 @@ function canMergeSerializedText(a: SerializedLexicalNode, b: SerializedLexicalNo
     aNode.style === bNode.style &&
     aNode.mode === bNode.mode &&
     aNode.detail === bNode.detail &&
-    serializedTextTypeState(a) === serializedTextTypeState(b) &&
+    serializedTextType(a) === serializedTextType(b) &&
     // Lexical never merges a caret host with its neighbor (its mark is node state that differs),
     // and merged in, its placeholder would reach the save as authored text.
     !isSerializedCaretHost(a as SerializedTextNode) &&
@@ -1075,13 +1070,6 @@ function replaceSpanBytes(
   return span ? replaceFragmentBytes(fragment, span.start, span.end, bytes) : fragment;
 }
 
-/** Every key in `node`'s subtree, `node` included. */
-function $keysOfSubtree(node: LexicalNode, out = new Set<NodeKey>()): Set<NodeKey> {
-  out.add(node.getKey());
-  if ($isElementNode(node)) node.getChildren().forEach((child) => $keysOfSubtree(child, out));
-  return out;
-}
-
 /**
  * `fragment` with the whole of `char`'s bytes replaced by one preserved-node placeholder — the
  * bytes the fragment builder spells for a span it preserves rather than re-tokenizes
@@ -1092,7 +1080,7 @@ function $preserveCharInFragment(
   fragment: FragmentAccumulator,
   char: CharNode,
 ): FragmentAccumulator {
-  const keys = $keysOfSubtree(char);
+  const keys = $subtreeKeys(char);
   const inChar = fragment.spans.filter((span) => keys.has(span.key));
   if (inChar.length === 0) return fragment;
   const start = Math.min(...inChar.map((span) => span.start));

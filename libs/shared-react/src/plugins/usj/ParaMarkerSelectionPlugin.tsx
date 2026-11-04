@@ -1,3 +1,4 @@
+import { getDomSelectionInRoot } from "./editorUpdate.utils";
 import { isEditingKey } from "./OpaqueBlockGuardPlugin";
 import {
   $advancePastParaPrefixes,
@@ -37,7 +38,6 @@ import {
   DROP_COMMAND,
   EditorState,
   FOCUS_COMMAND,
-  getDOMSelection,
   isDOMNode,
   KEY_DOWN_COMMAND,
   KEY_ESCAPE_COMMAND,
@@ -180,10 +180,9 @@ export function ParaMarkerSelectionPlugin({
      * @returns `true` if the editor's selection now follows the browser's.
      */
     const $adoptDomSelectionElsewhere = (glyphKey: NodeKey): boolean => {
-      const root = editor.getRootElement();
-      const domSelection = getDOMSelection(root?.ownerDocument.defaultView ?? null);
+      const domSelection = getDomSelectionInRoot(editor.getRootElement());
       const anchorNode = domSelection?.anchorNode;
-      if (!domSelection || !anchorNode || !root?.contains(anchorNode)) return false;
+      if (!domSelection || !anchorNode) return false;
       if (editor.getElementByKey(glyphKey)?.contains(anchorNode)) return false;
       const range = $createRangeSelectionFromDom(domSelection, editor);
       if (!range) return false;
@@ -672,11 +671,8 @@ function setActiveDescendant(
  * screen beside a selection that has no caret.
  */
 function removeDomRangesInside(root: HTMLElement | null | undefined): void {
-  if (!root) return;
-  const domSelection = root.ownerDocument.defaultView?.getSelection();
-  if (!domSelection || domSelection.rangeCount === 0) return;
-  if (domSelection.anchorNode && root.contains(domSelection.anchorNode))
-    domSelection.removeAllRanges();
+  const domSelection = getDomSelectionInRoot(root);
+  if (domSelection && domSelection.rangeCount > 0) domSelection.removeAllRanges();
 }
 
 /**

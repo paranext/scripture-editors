@@ -31,6 +31,7 @@ import {
   MarkerType,
   NoteNode,
 } from "shared";
+import { getDomSelectionInRoot } from "shared-react";
 
 /**
  * Outcome of the in-note break handlers (`$handleEnterInNote`, `$handlePasteLinesInNote`):
@@ -150,11 +151,9 @@ export function $handlePasteLinesInNote(
  * Mutating (moves the selection): call inside `editor.update()`.
  */
 export function $adoptDomCaretInExpandedNote(editor: LexicalEditor): boolean {
-  const rootElement = editor.getRootElement();
-  const domSelection = rootElement?.ownerDocument.getSelection();
+  const domSelection = getDomSelectionInRoot(editor.getRootElement());
   const anchorDomNode = domSelection?.anchorNode;
-  if (!rootElement || !domSelection || !anchorDomNode) return false;
-  if (!rootElement.contains(anchorDomNode)) return false;
+  if (!domSelection || !anchorDomNode) return false;
   const lexicalNode = $getNearestNodeFromDOMNode(anchorDomNode);
   if (!lexicalNode) return false;
   const note = $findFirstAncestorNoteNode(lexicalNode);

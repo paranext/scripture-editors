@@ -33,6 +33,7 @@ import {
   $paraPrefixSeparatorCaretHeld,
   $isParaLikeNode,
   $isParaNode,
+  $orderedPoints,
   $placeCaretAtBoundary,
   CharNode,
   getEditableCallerText,
@@ -237,9 +238,7 @@ function $paraOf(node: LexicalNode): ParaNode | undefined {
  * selection covering exactly one paragraph reports only that paragraph's children.
  */
 function $parasFullyCoveredBySelection(selection: RangeSelection): ParaNode[] {
-  const isBackward = selection.isBackward();
-  const start = isBackward ? selection.focus : selection.anchor;
-  const end = isBackward ? selection.anchor : selection.focus;
+  const [start, end] = $orderedPoints(selection);
   const candidates = new Set<ParaNode>();
   for (const node of selection.getNodes()) {
     const para = $paraOf(node);

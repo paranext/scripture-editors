@@ -62,6 +62,7 @@ import {
   $isParaNode,
   $isSomeParaNode,
   $normalizeSelectionOutOfGlyphText,
+  $orderedPoints,
   $selectCharContentStart,
   BookNode,
   createMarkerLookup,
@@ -274,7 +275,7 @@ function $splitBookWithMarker(book: BookNode, marker: string, viewOptions?: View
   if (!$isRangeSelection(selection)) return false;
   // Decided before anything is mutated, so a pick that cannot split leaves the line exactly as it
   // was rather than having already deleted the selection it was about to replace.
-  const start = selection.isBackward() ? selection.focus : selection.anchor;
+  const [start, end] = $orderedPoints(selection);
   if (!$canSplitBookAt(start, book)) return false;
   // The OTHER end is checked too, but narrowly: a selection can begin splittable and still reach
   // into a note's own expanded content nested in the line, a shape the char-stack lift-out below
@@ -282,7 +283,6 @@ function $splitBookWithMarker(book: BookNode, marker: string, viewOptions?: View
   // `removeText()` had already deleted it. A selection whose other end reaches PAST the book
   // altogether, into a following paragraph, is deliberately not refused here: that boundary is
   // what the removal just below is for, and is exercised by a passing test today.
-  const end = selection.isBackward() ? selection.anchor : selection.focus;
   if (!selection.isCollapsed() && $isTrappedInsideBookNote(end, book)) return false;
 
   // Captured before any insertion could shift what `book.getFirstChild()` reports.
@@ -606,7 +606,7 @@ export function $splitParagraphWithMarker(marker: string, viewOptions?: ViewOpti
   $normalizeSelectionOutOfGlyphText(selection);
   // The `\id` line is a BookNode, not a paragraph — `selection.insertParagraph()` has no
   // `ParaNode` to split there. Route it to the split that starts the new paragraph AFTER the line.
-  const startNode = (selection.isBackward() ? selection.focus : selection.anchor).getNode();
+  const startNode = $orderedPoints(selection)[0].getNode();
   if (!$findMatchingParent(startNode, $isParaNode)) {
     const book = $findMatchingParent(startNode, $isBookNode);
     if (book) return $splitBookWithMarker(book, marker, viewOptions);

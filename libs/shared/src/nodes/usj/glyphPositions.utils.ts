@@ -68,6 +68,7 @@ import { $isImmutableUnmatchedNode } from "../features/ImmutableUnmatchedNode.js
 import { $isCanonicalMarkerNode, $isMarkerNode } from "../features/MarkerNode.js";
 import { MARKER_TRAILING_SPACE_TEXT_TYPE, textTypeState } from "../collab/delta.state.js";
 import { $isCharNode } from "./CharNode.js";
+import { $orderedPoints } from "./node.utils.js";
 import { $isVerseNode } from "./VerseNode.js";
 import {
   $getSelection,
@@ -75,6 +76,7 @@ import {
   $isRangeSelection,
   $isTextNode,
   LexicalNode,
+  NodeKey,
   PointType,
   RangeSelection,
   TextNode,
@@ -83,9 +85,12 @@ import {
 /** The direction a range endpoint is nudged so the glyph it named falls outside the range. */
 type StepDirection = "next" | "previous";
 
-/** A point's addressable parts, so a rejected normalization can be put back exactly. */
-interface PointSnapshot {
-  key: string;
+/**
+ * A selection point's addressable parts, unaffected by later moves of the point: so a rejected
+ * normalization can be put back exactly, or a later selection checked against a latched one.
+ */
+export interface PointSnapshot {
+  key: NodeKey;
   offset: number;
   type: "text" | "element";
 }
@@ -182,12 +187,22 @@ function $glyphAtPointEnd(point: PointType): TextNode | undefined {
   return point.offset === 0 || point.offset === node.getTextContentSize() ? node : undefined;
 }
 
-function snapshotPoint(point: PointType): PointSnapshot {
+/** Snapshots `point` (a live selection point, or another snapshot). */
+export function snapshotPoint(point: PointSnapshot): PointSnapshot {
   return { key: point.key, offset: point.offset, type: point.type };
 }
 
-function restorePoint(point: PointType, snapshot: PointSnapshot): void {
+/** Moves the live `point` back to where `snapshot` recorded. Mutating: call inside
+ * `editor.update()`. */
+export function restorePoint(point: PointType, snapshot: PointSnapshot): void {
   point.set(snapshot.key, snapshot.offset, snapshot.type);
+}
+
+/** Whether `point` (a live selection point, or another snapshot) is the one `snapshot` recorded. */
+export function isSamePoint(point: PointSnapshot, snapshot: PointSnapshot): boolean {
+  return (
+    point.key === snapshot.key && point.offset === snapshot.offset && point.type === snapshot.type
+  );
 }
 
 /**
@@ -252,8 +267,7 @@ export function $normalizeSelectionOutOfGlyphText(selection: RangeSelection): bo
   }
 
   const wasBackward = selection.isBackward();
-  const start = wasBackward ? selection.focus : selection.anchor;
-  const end = wasBackward ? selection.anchor : selection.focus;
+  const [start, end] = $orderedPoints(selection);
   const before = [snapshotPoint(start), snapshotPoint(end)] as const;
   const movedStart = $stepPointPastGlyphs(start, "next");
   const movedEnd = $stepPointPastGlyphs(end, "previous");

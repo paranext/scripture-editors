@@ -16,6 +16,7 @@ import {
   $isDisplayAnnotationCarrier,
   $isMarkerTrailingSeparator,
   $isTypedMarkNode,
+  $nextLeaf,
   trimmedTextRange,
   TypedMarkNode,
 } from "shared";
@@ -60,24 +61,6 @@ function $isFillerChar(leaf: LexicalNode, index: number): boolean {
 function $blockKeyOf(node: LexicalNode): NodeKey | undefined {
   for (let parent = node.getParent(); parent; parent = parent.getParent())
     if ($isElementNode(parent) && !parent.isInline()) return parent.getKey();
-  return undefined;
-}
-
-function $firstLeaf(node: LexicalNode): LexicalNode {
-  let leaf = node;
-  while ($isElementNode(leaf)) {
-    const child = leaf.getFirstChild();
-    if (!child) return leaf;
-    leaf = child;
-  }
-  return leaf;
-}
-
-function $nextLeaf(node: LexicalNode): LexicalNode | undefined {
-  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
-    const sibling = current.getNextSibling();
-    if (sibling) return $firstLeaf(sibling);
-  }
   return undefined;
 }
 

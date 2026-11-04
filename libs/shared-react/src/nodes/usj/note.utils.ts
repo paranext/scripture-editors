@@ -20,7 +20,6 @@ import { $isSomeVerseNode } from "./node-react.utils";
 import { UsjNodeOptions } from "./usj-node-options.model";
 import { $dfs, $findMatchingParent } from "@lexical/utils";
 import {
-  $createRangeSelection,
   $createTextNode,
   $getCharacterOffsets,
   $getEditor,
@@ -40,6 +39,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $collapseToElementPoint,
   $createCharNode,
   $createImmutableTypedTextNode,
   $createMarkerNode,
@@ -52,6 +52,7 @@ import {
   $isGlyphTextNode,
   $isImmutableTypedTextNode,
   $isImmutableUnmatchedNode,
+  $isInsideNote,
   $isMarkerNode,
   $isNoteNode,
   $isSomeParaNode,
@@ -88,27 +89,6 @@ export { $getNoteAtIndex, $getNoteIndex } from "./note-index.utils";
 /** Caller count is in an object so it can be manipulated by passing the object. */
 export interface CallerData {
   count: number;
-}
-
-/**
- * Find all ImmutableNoteCallerNodes in the given nodes tree.
- * @param nodes - Lexical node array to look in.
- * @returns an array of all ImmutableNoteCallerNodes in the tree.
- */
-export function $findImmutableNoteCallerNodes(nodes: LexicalNode[]): ImmutableNoteCallerNode[] {
-  const immutableNoteCallerNodes: ImmutableNoteCallerNode[] = [];
-
-  function $traverse(node: LexicalNode) {
-    if ($isImmutableNoteCallerNode(node)) immutableNoteCallerNodes.push(node);
-    if (!$isElementNode(node)) return;
-
-    const children = node.getChildren();
-    children.forEach($traverse);
-  }
-
-  nodes.forEach($traverse);
-
-  return immutableNoteCallerNodes;
 }
 
 /**
@@ -695,10 +675,7 @@ export function $selectElementPoint(
     element.select(offset, offset);
     return;
   }
-  const selection = $createRangeSelection();
-  selection.anchor.set(element.getKey(), offset, "element");
-  selection.focus.set(element.getKey(), offset, "element");
-  $setSelection(selection);
+  $collapseToElementPoint(element, offset);
   if (announce) $getEditor().dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
 }
 
@@ -976,20 +953,6 @@ function $addSpaceNodes(
 }
 
 /**
- * Returns `true` when `node` is inside a NoteNode (i.e. an existing footnote/cross-reference
- * embedded in the selected body text) — its entire content, markers included, must be dropped.
- * `selection.getNodes()` flattens a NoteNode's descendants into the returned list alongside the
- * note itself, so skipping just the NoteNode entry is not enough; every descendant must also be
- * excluded by walking its ancestor chain.
- */
-function $isInsideNote(node: LexicalNode): boolean {
-  // The walk starts at the PARENT deliberately: the NoteNode entry itself is handled by the
-  // caller, and a note is not "inside" itself.
-  const parent = node.getParent();
-  return parent !== null && $findMatchingParent(parent, $isNoteNode) !== null;
-}
-
-/**
  * TS port of PT9 `RemoveMarkersAndFootnotes(text, isFootnote=true)`
  * (`UsfmSnippetInserter.cs:444-489`): builds a footnote/cross-reference quotation (`\fq`/`\xq`)
  * from a selection over body text — plain text only, with USFM markers and any nested
@@ -1019,6 +982,10 @@ export function $stripSelectionToQuotation(selection: RangeSelection): string {
 
   let result = "";
   for (const node of nodes) {
+    // A note embedded in the selected body text (an existing footnote/cross-reference) is dropped
+    // with its entire content, markers included. `selection.getNodes()` flattens a NoteNode's
+    // descendants into the list alongside the note itself, so skipping just the NoteNode entry is
+    // not enough; every descendant is excluded too, by walking its ancestor chain.
     if ($isNoteNode(node) || $isImmutableNoteCallerNode(node) || $isInsideNote(node)) continue;
     if ($isMarkerNode(node)) continue;
     // A stray closer's glyph bytes (`\nd*`) are display text, not quotation content.

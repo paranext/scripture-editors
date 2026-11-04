@@ -85,7 +85,6 @@ import {
   $getEditor,
   $getNodeByKey,
   $getSelection,
-  $isElementNode,
   $isNodeSelection,
   $isRangeSelection,
   $isTextNode,
@@ -122,6 +121,8 @@ import {
   $isBookNode,
   $isNoteNode,
   $isParaNode,
+  $lastLeaf,
+  $orderedPoints,
   blackListedChangeTags,
   createMarkerLookup,
   defaultStyleInfo,
@@ -136,6 +137,7 @@ import {
   MarkerLookup,
   NoteNode,
   ParaNode,
+  snapshotPoint,
   TypedMarkNode,
   TypedMarkOnClick,
   TypedMarkOnMouseEnter,
@@ -361,7 +363,7 @@ function $getOpsAfterNote(noteNode: NoteNode): DeltaOp[] {
   const first = following.at(0);
   const last = following.at(-1);
   if (!first || !last) return [];
-  const end = $isElementNode(last) ? (last.getLastDescendant() ?? last) : last;
+  const end = $lastLeaf(last);
   return $getParticularNodeOps(first, end, { contentOnly: true });
 }
 
@@ -1388,7 +1390,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           // inside the new paragraph. Route off the selection's START point, not its end: a
           // selection can run either direction, and a forward selection out of the `\id` line
           // leaves `focus` in the following paragraph while `anchor` is still in the book.
-          const start = selection.isBackward() ? selection.focus : selection.anchor;
+          const [start, endPoint] = $orderedPoints(selection);
           const book = $findMatchingParent(start.getNode(), $isBookNode);
           if (book) {
             // `$splitBookWithMarker` deletes a non-collapsed selection before splitting — correct
@@ -1396,7 +1398,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             // must never delete text. Collapse to the START point before calling it, then reapply
             // the SAME retag the non-book path below runs, over whatever the original selection
             // still reached past the split.
-            const endPoint = selection.isBackward() ? selection.anchor : selection.focus;
+            //
             // A selection that never leaves the `\id` line is entirely absorbed by the split below
             // (everything from the caret to the end of the line's content becomes ONE new,
             // already-tagged paragraph) — there is no later paragraph left to retag. It also isn't
@@ -1408,9 +1410,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               !selection.isCollapsed() &&
               !book.is(endPoint.getNode()) &&
               !book.isParentOf(endPoint.getNode());
-            const originalEnd = endsOutsideBook
-              ? { key: endPoint.key, offset: endPoint.offset, type: endPoint.type }
-              : undefined;
+            const originalEnd = endsOutsideBook ? snapshotPoint(endPoint) : undefined;
             const collapsedAtStart = $createRangeSelection();
             collapsedAtStart.anchor.set(start.key, start.offset, start.type);
             collapsedAtStart.focus.set(start.key, start.offset, start.type);

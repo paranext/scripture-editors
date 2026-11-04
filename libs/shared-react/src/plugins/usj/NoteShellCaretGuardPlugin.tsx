@@ -34,6 +34,7 @@ import {
   $isMarkerNode,
   $isNoteNode,
   $noteEditableCallerNode,
+  $noteOpeningGlyphCount,
   $placeCaretAtBoundary,
   APP_PLACED_CARET_COMMAND,
   NoteNode,
@@ -51,11 +52,8 @@ import {
  */
 function $noteShellNodes(note: NoteNode): LexicalNode[] {
   if (note.getIsCollapsed() !== false) return [];
-  const shell: LexicalNode[] = [];
-  for (const child of note.getChildren()) {
-    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
-    shell.push(child);
-  }
+  const children = note.getChildren();
+  const shell: LexicalNode[] = children.slice(0, $noteOpeningGlyphCount(children));
   const caller = $noteEditableCallerNode(note);
   if (caller) shell.push(caller);
   // Protected only when the adaptor marked it so. A partly-token shell is not a shape the adaptor

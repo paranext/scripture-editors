@@ -1,5 +1,5 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $findMatchingParent, mergeRegister } from "@lexical/utils";
+import { mergeRegister } from "@lexical/utils";
 import {
   $getSelection,
   $isRangeSelection,
@@ -10,12 +10,11 @@ import {
   LexicalNode,
 } from "lexical";
 import { useEffect } from "react";
-import { $isNoteNode } from "shared";
+import { $findFirstAncestorNoteNode } from "shared";
 
 /** Whether `node` is, or sits inside, an expanded note. */
 function $isInExpandedNote(node: LexicalNode): boolean {
-  const note = $isNoteNode(node) ? node : $findMatchingParent(node, $isNoteNode);
-  return $isNoteNode(note) && note.getIsCollapsed() === false;
+  return $findFirstAncestorNoteNode(node)?.getIsCollapsed() === false;
 }
 
 /**

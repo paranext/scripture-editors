@@ -2,19 +2,23 @@ import { $advancePastParaPrefixes } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { HiddenContentItem } from "./hidden-content-delete.model";
 import { $findMatchingParent } from "@lexical/utils";
 import {
-  $createRangeSelection,
   $isElementNode,
   $isRangeSelection,
   $isRootNode,
   $isTextNode,
-  $setSelection,
   BaseSelection,
   ElementNode,
   LexicalNode,
   PointType,
   RangeSelection,
 } from "lexical";
-import { $isNoteNode, $isParaLikeNode, $isUnknownNode, UnknownNode } from "shared";
+import {
+  $collapseToElementPoint,
+  $isNoteNode,
+  $isParaLikeNode,
+  $isUnknownNode,
+  UnknownNode,
+} from "shared";
 
 /** Which way a delete keystroke removes content from a collapsed caret. */
 export type DeleteDirection = "backward" | "forward";
@@ -244,7 +248,6 @@ export function $hiddenContentItems(nodes: UnknownNode[]): HiddenContentItem[] {
 
 /** The nearest paragraph or note holding `node`: the walk from a caret never leaves it. */
 function $caretContainer(node: LexicalNode): LexicalNode | undefined {
-  if ($isParaLikeNode(node) || $isNoteNode(node)) return node;
   return $findMatchingParent(node, (n) => $isParaLikeNode(n) || $isNoteNode(n)) ?? undefined;
 }
 
@@ -356,7 +359,7 @@ function $selectBefore(node: LexicalNode, container: LexicalNode): void {
   const previous = $nextLeaf(node, "backward", container);
   if ($isTextNode(previous) && !previous.isToken())
     previous.select(previous.getTextContentSize(), previous.getTextContentSize());
-  else $collapseAtBoundary(node.getParentOrThrow(), node.getIndexWithinParent());
+  else $collapseToElementPoint(node.getParentOrThrow(), node.getIndexWithinParent());
 }
 
 /**
@@ -366,21 +369,7 @@ function $selectBefore(node: LexicalNode, container: LexicalNode): void {
 function $selectAfter(node: LexicalNode, container: LexicalNode): void {
   const next = $nextLeaf(node, "forward", container);
   if ($isTextNode(next) && !next.isToken()) next.select(0, 0);
-  else $collapseAtBoundary(node.getParentOrThrow(), node.getIndexWithinParent() + 1);
-}
-
-/**
- * Collapses the caret to `parent`'s element point at `index`, the fallback where no text hosts the
- * position. Set directly: `ElementNode.select` would carry it into the child at that boundary when
- * `parent` cannot be empty (a character span), and that child may be a hidden construct or a note.
- * A text point is preferred wherever there is one, because Lexical's normalization of a point read
- * back from the DOM likewise descends into the element at a boundary.
- */
-function $collapseAtBoundary(parent: ElementNode, index: number): void {
-  const selection = $createRangeSelection();
-  selection.anchor.set(parent.getKey(), index, "element");
-  selection.focus.set(parent.getKey(), index, "element");
-  $setSelection(selection);
+  else $collapseToElementPoint(node.getParentOrThrow(), node.getIndexWithinParent() + 1);
 }
 
 /**
@@ -392,7 +381,7 @@ function $placeCaretAtVisibleEnd(block: ElementNode): void {
   const last = block.getLastChild();
   let leaf = last ? $resolveLeaf(last, "backward", block) : undefined;
   while ($isUnknownNode(leaf)) leaf = $nextLeaf(leaf, "backward", block);
-  if (!leaf) $collapseAtBoundary(block, 0);
+  if (!leaf) $collapseToElementPoint(block, 0);
   else if ($isTextNode(leaf)) leaf.select(leaf.getTextContentSize(), leaf.getTextContentSize());
   else $selectAfter(leaf, block);
 }
@@ -405,7 +394,7 @@ function $placeCaretAtVisibleEnd(block: ElementNode): void {
 function $placeCaretAtVisibleStart(block: ElementNode): void {
   const first = block.getFirstChild();
   const leaf = first ? $resolveLeaf(first, "forward", block) : undefined;
-  if (!leaf) $collapseAtBoundary(block, 0);
+  if (!leaf) $collapseToElementPoint(block, 0);
   else if ($isTextNode(leaf)) leaf.select(0, 0);
   else if ($isNoteNode(leaf)) $selectAfter(leaf, block);
   else $selectBefore(leaf, block);

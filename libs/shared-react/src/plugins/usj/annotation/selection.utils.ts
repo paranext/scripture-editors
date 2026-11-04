@@ -2,6 +2,7 @@ import { $isImmutableVerseNode, ImmutableVerseNode } from "../../../nodes/usj/Im
 import { $isSomeVerseNode } from "../../../nodes/usj/node-react.utils";
 import { hasStandardViewWhitespace, ViewOptions } from "../../../views/view-options.utils";
 import { $blockToUsj, $getBlockUnits, $usjToBlock } from "./blockVerseLocations.utils";
+import { contentPathOf } from "./jsonPath.utils";
 import { AnnotationRange, SelectionRange } from "./selection.model";
 import {
   type PropertyJsonPath,
@@ -41,6 +42,7 @@ import {
   $chapterGlyphTextNode,
   $charSeparatorPrefixLength,
   $decoratorDisplayText,
+  $firstLeaf,
   $getLogicalContentItems,
   $getLogicalIndexOfChild,
   $getLogicalParent,
@@ -73,6 +75,7 @@ import {
   $isVerseNode,
   $isVisibleMarkerNode,
   $noteEditableCallerNode,
+  $orderedPoints,
   $ownerOfRunPiece,
   $shouldIgnoreNodeForContentIndexes,
   $typedNoteCallerRange,
@@ -315,23 +318,12 @@ export function $getUsjSelectionFromEditor(
       : location;
   };
 
-  const startNode = editorSelection.isBackward()
-    ? editorSelection.focus.getNode()
-    : editorSelection.anchor.getNode();
-  const startOffset = editorSelection.isBackward()
-    ? editorSelection.focus.offset
-    : editorSelection.anchor.offset;
-  const start = $locate(startNode, startOffset);
+  const [startPoint, endPoint] = $orderedPoints(editorSelection);
+  const start = $locate(startPoint.getNode(), startPoint.offset);
   if (!start) return undefined;
   if (editorSelection.isCollapsed()) return { start };
 
-  const endNode = editorSelection.isBackward()
-    ? editorSelection.anchor.getNode()
-    : editorSelection.focus.getNode();
-  const endOffset = editorSelection.isBackward()
-    ? editorSelection.anchor.offset
-    : editorSelection.focus.offset;
-  const end = $locate(endNode, endOffset);
+  const end = $locate(endPoint.getNode(), endPoint.offset);
   if (!end) return undefined;
 
   return { start, end };
@@ -1573,11 +1565,8 @@ function $getPointType(node: LexicalNode | undefined): "text" | "element" {
  * @returns The node at the path, or undefined if not found.
  */
 function $navigateToNode(jsonPath: string, collapsesSpaceRuns: boolean): LexicalNode | undefined {
-  // Extract just the content path portion (strip property suffix if present)
-  const contentPathMatch = new RegExp(/^(\$(?:\.content\[\d+\])*)(?:\.|$|\[)/).exec(jsonPath);
-  const contentPath = contentPathMatch ? contentPathMatch[1] : jsonPath;
-
-  const jsonPathIndexes = indexesFromUsjJsonPath(contentPath);
+  // Just the content path portion (any property suffix stripped).
+  const jsonPathIndexes = indexesFromUsjJsonPath(contentPathOf(jsonPath));
   let currentNode: LexicalNode | undefined = $getRoot();
   for (const index of jsonPathIndexes) {
     if (!currentNode || !$isElementNode(currentNode)) return undefined;
@@ -1805,7 +1794,7 @@ function $locationOfFirstByteAfter(
     if (!parent) return undefined;
     return $locationFromNode(parent, parent.getChildrenSize(), collapsesSpaceRuns);
   }
-  const leaf = $isElementNode(next) ? (next.getFirstDescendant() ?? next) : next;
+  const leaf = $firstLeaf(next);
   if (
     $defersToNeighbor(leaf, collapsesSpaceRuns) ||
     $displayBytesOf(leaf)?.spans[0]?.bytes.kind === "precedingText"

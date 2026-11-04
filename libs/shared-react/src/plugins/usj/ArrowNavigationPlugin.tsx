@@ -11,7 +11,6 @@ import { $advancePastParaPrefixes, $isBookPrefixNode } from "./ParaMarkerPrefixC
 import { $opaqueBlockAncestor } from "./OpaqueBlockGuardPlugin";
 import { ViewOptions } from "../../views/view-options.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $findMatchingParent } from "@lexical/utils";
 import {
   $getRoot,
   $getSelection,
@@ -1011,8 +1010,8 @@ function $handleBackwardNavigation(
     const lastChild = prevNode.getLastChild();
     if (!lastChild) return false;
 
-    const note = $findMatchingParent(lastChild, (n: LexicalNode) => $isNoteNode(n));
-    if ($isNoteNode(note) && note.getIsCollapsed()) {
+    const note = $findFirstAncestorNoteNode(lastChild);
+    if (note?.getIsCollapsed()) {
       const parent = note.getParent();
       if (!parent) return false;
 

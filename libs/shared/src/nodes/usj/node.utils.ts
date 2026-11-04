@@ -284,6 +284,17 @@ export function $findFirstAncestorNoteNode(startNode: LexicalNode): NoteNode | u
 }
 
 /**
+ * Whether `node` is inside a note's content: some ancestor of it is a NoteNode. The walk starts at
+ * the PARENT deliberately — a note is not "inside" itself.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $isInsideNote(node: LexicalNode): boolean {
+  const parent = node.getParent();
+  return parent !== null && $findFirstAncestorNoteNode(parent) !== undefined;
+}
+
+/**
  * Checks if the node has a `getMarker` method. Excludes React nodes - consider using
  * `$isReactNodeWithMarker` instead.
  * @param node - LexicalNode to check.
@@ -336,6 +347,69 @@ export function $getPreviousNode(selection: RangeSelection): LexicalNode | null 
 
   const anchorNode = selection.anchor.getNode();
   return anchorNode.getPreviousSibling() ?? anchorNode.getParent()?.getPreviousSibling() ?? null;
+}
+
+/**
+ * The first leaf of `node`: descends through first children of element nodes. `node` itself when
+ * it is already a leaf or an empty element; an empty element met on the way down is the leaf.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $firstLeaf(node: LexicalNode): LexicalNode {
+  return $isElementNode(node) ? (node.getFirstDescendant() ?? node) : node;
+}
+
+/**
+ * The last leaf of `node`: descends through last children of element nodes. `node` itself when it
+ * is already a leaf or an empty element; an empty element met on the way down is the leaf.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $lastLeaf(node: LexicalNode): LexicalNode {
+  return $isElementNode(node) ? (node.getLastDescendant() ?? node) : node;
+}
+
+/**
+ * The first leaf after `node` in document order — the {@link $firstLeaf} of the nearest later
+ * sibling of `node` or of one of its ancestors — or `undefined` at the document's end. An empty
+ * element is a leaf.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $nextLeaf(node: LexicalNode): LexicalNode | undefined {
+  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
+    const sibling = current.getNextSibling();
+    if (sibling) return $firstLeaf(sibling);
+  }
+  return undefined;
+}
+
+/**
+ * The leaf in front of `node` in document order — the {@link $lastLeaf} of the nearest earlier
+ * sibling of `node` or of one of its ancestors — or `undefined` at the document's start. An empty
+ * element is a leaf.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $previousLeaf(node: LexicalNode): LexicalNode | undefined {
+  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
+    const sibling = current.getPreviousSibling();
+    if (sibling) return $lastLeaf(sibling);
+  }
+  return undefined;
+}
+
+/**
+ * `selection`'s two points in document order: the focus first when the selection is backward,
+ * else the anchor. Unlike Lexical's `getStartEndPoints` (always `[anchor, focus]`), the first is
+ * the earlier one. These are the selection's own live points, so setting one moves the selection.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $orderedPoints(selection: RangeSelection): [start: PointType, end: PointType] {
+  return selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
 }
 
 /** The caret: the selection's anchor when the selection is a collapsed range, else undefined.
@@ -477,11 +551,7 @@ export function $getCommonAncestorCompatible(
  * @param selection - The range selection to move to the end.
  */
 export function $moveSelectionToEnd(selection: RangeSelection) {
-  const startEndPoints = selection.getStartEndPoints();
-  if (!startEndPoints) return undefined;
-
-  const [start, end] = startEndPoints;
-  const actualEnd = selection.isBackward() ? start : end;
+  const [, actualEnd] = $orderedPoints(selection);
   selection.focus.set(actualEnd.key, actualEnd.offset, actualEnd.type);
   selection.anchor.set(actualEnd.key, actualEnd.offset, actualEnd.type);
 }
@@ -559,15 +629,11 @@ export function parseNumberFromMarkerText(
   return number;
 }
 
-/** The `textType` NodeState of a serialized node, if any — the serialize-only mirror of the live
+/** The `textType` NodeState of a serialized node (Lexical keeps node state under `$`), or
+ * `undefined` for a node with none — the serialize-only mirror of the live
  * `$getState(node, textTypeState)`. */
-function serializedTextType(node: SerializedLexicalNode): string | undefined {
-  const state = (node as { [NODE_STATE_KEY]?: unknown })[NODE_STATE_KEY];
-  if (state && typeof state === "object" && "textType" in state) {
-    const textType = (state as { textType?: unknown }).textType;
-    if (typeof textType === "string") return textType;
-  }
-  return undefined;
+export function serializedTextType(node: SerializedLexicalNode): unknown {
+  return node[NODE_STATE_KEY]?.textType;
 }
 
 /**

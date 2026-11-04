@@ -11,6 +11,7 @@ import {
   PointType,
 } from "lexical";
 import { useEffect } from "react";
+import { getDomSelectionInRoot } from "./editorUpdate.utils";
 
 /** The DOM text node `element` renders its text into: itself, or its first descendant that is. */
 function domTextNodeOf(element: Node | null | undefined): Node | undefined {
@@ -51,10 +52,9 @@ function $isDomPointOfElementCaret(
 export function $syncCaretFromDom(editor: LexicalEditor): void {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
-  const rootElement = editor.getRootElement();
-  const domSelection = rootElement?.ownerDocument.defaultView?.getSelection();
-  const domAnchor = domSelection?.anchorNode;
-  if (!domSelection?.isCollapsed || !domAnchor || !rootElement?.contains(domAnchor)) return;
+  const domSelection = getDomSelectionInRoot(editor.getRootElement());
+  if (!domSelection?.isCollapsed) return;
+  const domAnchor = domSelection.anchorNode;
   const { anchor } = selection;
   // Where Lexical rendered its caret, the DOM's is still there: nothing has moved it.
   if (
