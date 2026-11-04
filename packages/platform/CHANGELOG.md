@@ -320,6 +320,11 @@ refused. The public surface grew substantially; nothing was removed.
   the text after the selection stays where it was instead of landing in the span or the note.
 - Pressing Enter just before a space that a no-break, ideographic or zero-width no-break space
   follows no longer removes that character along with the space; Paratext 9 keeps it after a marker.
+- A newly inserted verse number now gets the caret at the start of the new verse's content, the
+  same place verse navigation puts it, so typing starts the new verse. At the end of a paragraph,
+  for example after the last verse of a chapter, typing used to extend the verse before it; right
+  before a footnote, the caret went into the footnote, and in Standard view the typed text was lost
+  from the saved document.
 - In views that hide markers, an empty paragraph right after a chapter can now be deleted with
   Backspace or Delete. When it is the only paragraph in its chapter, it leaves a blank line with no
   marker, where a marker can be picked with the `\` menu or `formatPara`. A blank line left empty

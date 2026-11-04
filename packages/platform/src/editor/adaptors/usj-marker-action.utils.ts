@@ -72,6 +72,7 @@ import {
   ViewOptions,
 } from "shared-react";
 import usjEditorAdaptor from "./usj-editor.adaptor";
+import { $placeCaretAtVerseContentStart } from "../verseCaret.utils";
 import { $coveredTextNodes } from "../markerEdit/charFormatting.utils";
 import { $moveCaretOffChapterLine } from "../markerEdit/chapterLine.utils";
 import {
@@ -572,6 +573,11 @@ export function getUsjMarkerAction(
             } else {
               nodeToInsert.selectEnd();
             }
+          } else if ($isSomeVerseNode(nodeToInsert)) {
+            // Typing after a new verse number starts that verse, so the caret goes to the start of
+            // its content - the rule verse navigation uses. Selecting into whatever follows instead
+            // would land in a following note's marker, or before the number when nothing follows.
+            $placeCaretAtVerseContentStart(nodeToInsert);
           } else {
             const nextNode = nodeToInsert.getNextSibling();
             if (nextNode) nextNode.selectStart();
