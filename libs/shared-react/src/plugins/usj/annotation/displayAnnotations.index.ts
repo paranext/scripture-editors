@@ -56,6 +56,7 @@ import {
   setTypedMarkRemovalSilenced,
   takeTypedMarkRemovalReports,
   TypedIDs,
+  typedMarkIdKey,
   typedMarkClassNames,
   TypedMarkNode,
   TypedMarkOnRemove,
@@ -98,10 +99,6 @@ const CARRIER_KLASSES: Klass<LexicalNode>[] = [
 
 const EMPTY: ReadonlySet<NodeKey> = new Set();
 
-function indexKey(type: string, id: string): string {
-  return JSON.stringify([type, id]);
-}
-
 function isTypeIdPair(value: unknown): value is [string, string] {
   return (
     Array.isArray(value) &&
@@ -111,8 +108,7 @@ function isTypeIdPair(value: unknown): value is [string, string] {
   );
 }
 
-/** The `type`/`id` an {@link indexKey} was built from. A type or id may itself contain the NUL
- * character a naive delimiter join would use, so the key is JSON, not a joined string. */
+/** The `type`/`id` a {@link typedMarkIdKey} key was built from. */
 function parseIndexKey(key: string): [string, string] {
   const parsed: unknown = JSON.parse(key);
   if (!isTypeIdPair(parsed)) throw new Error(`not an annotation index key: ${key}`);
@@ -217,7 +213,7 @@ function createIndex(editor: LexicalEditor): Entry {
   /** Re-note the covered text of every annotation `mark` holds, now that what it holds changed. */
   function $noteMarkText(mark: TypedMarkNode): void {
     for (const [type, ids] of Object.entries(mark.getTypedIDs()))
-      for (const id of ids) $noteCoveredText(indexKey(type, id), type, id);
+      for (const id of ids) $noteCoveredText(typedMarkIdKey(type, id), type, id);
   }
 
   /**
@@ -272,7 +268,7 @@ function createIndex(editor: LexicalEditor): Entry {
   ): Map<string, { annotation: DisplayAnnotation; text: string }> {
     const pointed = new Map<string, { annotation: DisplayAnnotation; text: string }>();
     for (const annotation of $displayAnnotationsOf(node)) {
-      const annotationKey = indexKey(annotation.type, annotation.id);
+      const annotationKey = typedMarkIdKey(annotation.type, annotation.id);
       if (pointed.has(annotationKey) || !hits(node.getKey(), annotationKey, event)) continue;
       pointed.set(annotationKey, { annotation, text: $coveredDisplayText(node, annotation) });
     }
@@ -492,7 +488,7 @@ function createIndex(editor: LexicalEditor): Entry {
 
   /** DOM ranges over everything `type`/`id` paints, in document order. */
   function rangesFor(type: string, id: string): Range[] {
-    const annotationKey = indexKey(type, id);
+    const annotationKey = typedMarkIdKey(type, id);
     const ranges: Range[] = [];
     const whole = (element: HTMLElement) => {
       const range = element.ownerDocument.createRange();
@@ -519,7 +515,7 @@ function createIndex(editor: LexicalEditor): Entry {
   }
 
   function setStateClass(type: string, id: string, name: string, on: boolean): void {
-    const annotationKey = indexKey(type, id);
+    const annotationKey = typedMarkIdKey(type, id);
     const names = stateClasses.get(annotationKey) ?? new Set<string>();
     if (names.has(name) === on) return;
     if (on) names.add(name);
@@ -538,13 +534,13 @@ function createIndex(editor: LexicalEditor): Entry {
           const after = node ? $displayAnnotationsOf(node) : [];
           const before = annotationsByKey.get(key) ?? [];
           for (const { type, id } of before) {
-            const annotationKey = indexKey(type, id);
+            const annotationKey = typedMarkIdKey(type, id);
             touched.add(annotationKey);
             if (!after.some((kept) => kept.type === type && kept.id === id))
               dropHolder(keysByAnnotation, annotationKey, key);
           }
           for (const annotation of after) {
-            const annotationKey = indexKey(annotation.type, annotation.id);
+            const annotationKey = typedMarkIdKey(annotation.type, annotation.id);
             touched.add(annotationKey);
             addHolder(keysByAnnotation, annotationKey, key);
           }
@@ -571,7 +567,7 @@ function createIndex(editor: LexicalEditor): Entry {
         const node = mutation === "destroyed" ? null : $getNodeByKey(key);
         const mark = $isTypedMarkNode(node) ? node : undefined;
         const typedIds = mark ? Object.entries(mark.getTypedIDs()) : [];
-        const after = typedIds.flatMap(([type, ids]) => ids.map((id) => indexKey(type, id)));
+        const after = typedIds.flatMap(([type, ids]) => ids.map((id) => typedMarkIdKey(type, id)));
         for (const annotationKey of annotationsByMark.get(key) ?? []) {
           if (after.includes(annotationKey)) continue;
           dropHolder(marksByAnnotation, annotationKey, key);
@@ -587,7 +583,7 @@ function createIndex(editor: LexicalEditor): Entry {
         for (const [type, ids] of typedIds)
           for (const id of ids) {
             const onRemove = onRemoves[type]?.[id];
-            if (onRemove) markOnRemove.set(indexKey(type, id), onRemove);
+            if (onRemove) markOnRemove.set(typedMarkIdKey(type, id), onRemove);
           }
       }
     });
@@ -605,7 +601,7 @@ function createIndex(editor: LexicalEditor): Entry {
   }
 
   function hear(type: string, id: string): void {
-    const annotationKey = indexKey(type, id);
+    const annotationKey = typedMarkIdKey(type, id);
     reported.add(annotationKey);
     heardThisCommit.add(annotationKey);
   }
@@ -677,7 +673,7 @@ function createIndex(editor: LexicalEditor): Entry {
   /** `setAnnotation` begins a new lifecycle: its loss is reported afresh. */
   function noteSet(type: string, id: string): void {
     takeMarkReports();
-    const annotationKey = indexKey(type, id);
+    const annotationKey = typedMarkIdKey(type, id);
     reported.delete(annotationKey);
     setTypedMarkRemovalSilenced(editor, type, id, false);
   }
@@ -729,12 +725,12 @@ function createIndex(editor: LexicalEditor): Entry {
 
   return {
     index: {
-      keysFor: (type, id) => keysByAnnotation.get(indexKey(type, id)) ?? EMPTY,
+      keysFor: (type, id) => keysByAnnotation.get(typedMarkIdKey(type, id)) ?? EMPTY,
       noteSet,
       noteReported: hear,
       hasReported: (type, id) => {
         takeMarkReports();
-        return reported.has(indexKey(type, id));
+        return reported.has(typedMarkIdKey(type, id));
       },
       setStateClass,
       rangesFor,

@@ -745,7 +745,7 @@ describe("TypedMarkNode", () => {
 
         // The left callback (the primary, since left absorbs right) should fire exactly once for
         // (grammarType, grammarId). Primary-wins is the intentional contract - see
-        // mergeTypedOnMouseEnterMaps. If two adjacent marks both register a callback under the
+        // mergeTypedCallbacks. If two adjacent marks both register a callback under the
         // same (type, id), the surviving (primary) mark's callback is preserved and the
         // overwritten side is silently dropped.
         expect(onMouseEnterLeft).toHaveBeenCalledTimes(1);
@@ -828,7 +828,7 @@ describe("TypedMarkNode", () => {
           const selection = $createRangeSelection();
           selection.anchor.set(word.getKey(), 2, "text");
           selection.focus.set(tail.getKey(), 3, "text");
-          $wrapSelectionInTypedMarkNode(selection, testType1, testID1, onClick, onRemove);
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1, { onClick, onRemove });
         },
         { discrete: true },
       );
@@ -1238,7 +1238,7 @@ describe("TypedMarkNode", () => {
           const selection = $createRangeSelection();
           selection.anchor.set(run.getKey(), 1, "text");
           selection.focus.set(run.getKey(), 6, "text");
-          $wrapSelectionInTypedMarkNode(selection, testType1, testID1, onClick, onRemove);
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1, { onClick, onRemove });
         },
         { discrete: true },
       );
@@ -1406,7 +1406,7 @@ describe("TypedMarkNode", () => {
           const selection = $createRangeSelection();
           selection.anchor.set(text.getKey(), 0, "text");
           selection.focus.set(text.getKey(), 2, "text");
-          $wrapSelectionInTypedMarkNode(selection, testType1, testID1, undefined, vi.fn());
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1, { onRemove: vi.fn() });
         },
         { discrete: true },
       );

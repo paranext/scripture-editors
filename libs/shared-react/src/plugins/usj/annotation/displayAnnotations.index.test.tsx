@@ -136,15 +136,7 @@ function wrap(
       const selection = $createRangeSelection();
       selection.anchor.set(node.getKey(), from, "text");
       selection.focus.set(node.getKey(), to, "text");
-      $wrapSelectionInTypedMarkNode(
-        selection,
-        type,
-        id,
-        callbacks.onClick,
-        callbacks.onRemove,
-        callbacks.onMouseEnter,
-        callbacks.onMouseLeave,
-      );
+      $wrapSelectionInTypedMarkNode(selection, type, id, callbacks);
     },
     { discrete: true },
   );
@@ -819,7 +811,7 @@ describe("the display-annotation index", () => {
         const selection = $createRangeSelection();
         selection.anchor.set(words.getKey(), 3, "text");
         selection.focus.set(run.getKey(), 6, "text");
-        $wrapSelectionInTypedMarkNode(selection, "external-spelling", "a", undefined, onRemove);
+        $wrapSelectionInTypedMarkNode(selection, "external-spelling", "a", { onRemove });
       },
       { discrete: true },
     );

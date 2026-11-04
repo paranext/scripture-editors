@@ -23,6 +23,7 @@ import {
   LexicalNode,
   NODE_STATE_KEY,
   NodeKey,
+  PointType,
   RangeSelection,
   SerializedLexicalNode,
   SerializedTextNode,
@@ -338,6 +339,13 @@ export function $getPreviousNode(selection: RangeSelection): LexicalNode | null 
 
   const anchorNode = selection.anchor.getNode();
   return anchorNode.getPreviousSibling() ?? anchorNode.getParent()?.getPreviousSibling() ?? null;
+}
+
+/** The caret: the selection's anchor when the selection is a collapsed range, else undefined.
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update. */
+export function $collapsedCaret(): PointType | undefined {
+  const selection = $getSelection();
+  return $isRangeSelection(selection) && selection.isCollapsed() ? selection.anchor : undefined;
 }
 
 /**
@@ -1395,6 +1403,12 @@ export function $withCharContentNbspPrefix(node: TextNode): void {
  */
 export function $isMarkerTrailingSeparator(node: LexicalNode | null | undefined): boolean {
   return $isTextNode(node) && $getState(node, textTypeState) === MARKER_TRAILING_SPACE_TEXT_TYPE;
+}
+
+/** Whether `node` is the text of an attribute display run — engine-owned display bytes, never
+ * annotated content. Read-only: call inside `editor.getEditorState().read(...)` or an update. */
+export function $isAttributeDisplayRun(node: LexicalNode): boolean {
+  return $isTextNode(node) && $getState(node, textTypeState) === "attribute";
 }
 
 /**

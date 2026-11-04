@@ -252,10 +252,7 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
             freshSelection,
             type,
             id,
-            onClick,
-            onRemove,
-            onMouseEnter,
-            onMouseLeave,
+            { onClick, onRemove, onMouseEnter, onMouseLeave },
             { decoratorHolds: freshDecoratorHolds },
           );
         },

@@ -2540,15 +2540,7 @@ function $restoreMarkByteRanges(
       const selection = $createRangeSelection();
       selection.anchor.set(start.key, start.offset, start.type);
       selection.focus.set(end.key, end.offset, end.type);
-      $wrapSelectionInTypedMarkNode(
-        selection,
-        annotation.type,
-        annotation.id,
-        annotation.onClick,
-        annotation.onRemove,
-        annotation.onMouseEnter,
-        annotation.onMouseLeave,
-      );
+      $wrapSelectionInTypedMarkNode(selection, annotation.type, annotation.id, annotation);
       if (preservedKey) $extendMarkOverPreservedRun(preservedKey, annotation.type, annotation.id);
     }
   }

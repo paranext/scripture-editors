@@ -33,6 +33,11 @@ export interface TypedIDs {
   [type: string]: string[];
 }
 
+/** Callbacks of one kind, by annotation type and then by id. */
+export interface TypedCallbacks<T> {
+  [type: string]: { [id: string]: T };
+}
+
 /**
  * DOM mouse event type.
  * @public
@@ -56,9 +61,7 @@ export type TypedMarkOnClick = (
   textContent: string,
 ) => void;
 
-export interface TypedOnClicks {
-  [type: string]: { [id: string]: TypedMarkOnClick };
-}
+export type TypedOnClicks = TypedCallbacks<TypedMarkOnClick>;
 
 /**
  * Typed mark removal cause types.
@@ -83,9 +86,7 @@ export type TypedMarkOnRemove = (
   textContent: string,
 ) => void;
 
-export interface TypedOnRemoves {
-  [type: string]: { [id: string]: TypedMarkOnRemove };
-}
+export type TypedOnRemoves = TypedCallbacks<TypedMarkOnRemove>;
 
 /**
  * A callback function type for handling mouse-enter events on annotated marks.
@@ -102,9 +103,7 @@ export type TypedMarkOnMouseEnter = (
   textContent: string,
 ) => void;
 
-export interface TypedOnMouseEnters {
-  [type: string]: { [id: string]: TypedMarkOnMouseEnter };
-}
+export type TypedOnMouseEnters = TypedCallbacks<TypedMarkOnMouseEnter>;
 
 /**
  * A callback function type for handling mouse-leave events on annotated marks.
@@ -121,9 +120,7 @@ export type TypedMarkOnMouseLeave = (
   textContent: string,
 ) => void;
 
-export interface TypedOnMouseLeaves {
-  [type: string]: { [id: string]: TypedMarkOnMouseLeave };
-}
+export type TypedOnMouseLeaves = TypedCallbacks<TypedMarkOnMouseLeave>;
 
 export type SerializedTypedMarkNode = Spread<
   {
@@ -132,29 +129,58 @@ export type SerializedTypedMarkNode = Spread<
   SerializedElementNode
 >;
 
+/** The callback each of a mark's callback slots holds. */
+interface TypedMarkCallbackKinds {
+  click: TypedMarkOnClick;
+  remove: TypedMarkOnRemove;
+  mouseEnter: TypedMarkOnMouseEnter;
+  mouseLeave: TypedMarkOnMouseLeave;
+}
+
+type CallbackSlot = keyof TypedMarkCallbackKinds;
+
+/** The slots a mouse event on the rendered `<mark>` fires. */
+type DOMEventSlot = "click" | "mouseEnter" | "mouseLeave";
+
+type SlotCallbacks<S extends CallbackSlot> = TypedCallbacks<TypedMarkCallbackKinds[S]>;
+
+/** A mark's callbacks by slot; `S` narrows it to the slots one write touches. */
+type TypedMarkCallbacks<S extends CallbackSlot = CallbackSlot> = {
+  [Slot in S]?: SlotCallbacks<Slot>;
+};
+
+/** Every slot, in the order each lifecycle step visits them. */
+const CALLBACK_SLOTS: readonly CallbackSlot[] = ["click", "remove", "mouseEnter", "mouseLeave"];
+
+/** Per slot, every mark's callbacks by node key. */
+const callbackRegistries: { [S in CallbackSlot]: Map<NodeKey, SlotCallbacks<S>> } = {
+  click: new Map(),
+  remove: new Map(),
+  mouseEnter: new Map(),
+  mouseLeave: new Map(),
+};
+
+/** The mark field holding the DOM listener each mouse-event slot attaches. */
+const DOM_LISTENER_FIELDS = {
+  click: "__domOnClickListener",
+  mouseEnter: "__domOnMouseEnterListener",
+  mouseLeave: "__domOnMouseLeaveListener",
+} as const;
+
 /** Reserved mark type for CommentPlugin. */
 export const COMMENT_MARK_TYPE = "internal-comment";
 
 const reservedTypes = [COMMENT_MARK_TYPE];
 const NO_IDS: TypedIDs = Object.freeze({});
-const NO_ON_CLICKS: TypedOnClicks = Object.freeze({});
-const NO_ON_REMOVES: TypedOnRemoves = Object.freeze({});
-const NO_ON_MOUSE_ENTERS: TypedOnMouseEnters = Object.freeze({});
-const NO_ON_MOUSE_LEAVES: TypedOnMouseLeaves = Object.freeze({});
 const TYPED_MARK_VERSION = 1;
-
-const typedOnClickRegistry = new Map<NodeKey, TypedOnClicks>();
-const typedOnRemoveRegistry = new Map<NodeKey, TypedOnRemoves>();
-const typedOnMouseEnterRegistry = new Map<NodeKey, TypedOnMouseEnters>();
-const typedOnMouseLeaveRegistry = new Map<NodeKey, TypedOnMouseLeaves>();
 
 /** Per editor a reporter listens to, the `type`/`id` pairs whose `onRemove` a mark has called
  * since the last take. An editor nobody listens to has no entry, so nothing piles up for it. */
 const removalReports = new WeakMap<LexicalEditor, [type: string, id: string][]>();
 
 /** Per editor a reporter listens to, the marks that have reported each `type`/`id`'s removal since
- * it was last set (by {@link removalKey}). An undo brings a mark back under its own key, so a mark
- * found here has already told the host and stays quiet the next time it goes. */
+ * it was last set (by {@link typedMarkIdKey}). An undo brings a mark back under its own key, so a
+ * mark found here has already told the host and stays quiet the next time it goes. */
 const reportedMarks = new WeakMap<LexicalEditor, Map<string, Set<NodeKey>>>();
 
 /**
@@ -186,9 +212,9 @@ export function takeTypedMarkRemovalReports(editor: LexicalEditor): [type: strin
 /** Per editor, the `type`/`id` pairs whose removal no mark reports any more. */
 const silencedRemovals = new WeakMap<LexicalEditor, Set<string>>();
 
-/** One key per `type`/`id` pair. JSON, not a delimiter join: a type or id may itself contain any
- * delimiter character, NUL included. */
-function removalKey(type: string, id: string): string {
+/** One key per `type`/`id` pair, for maps that key by annotation. JSON, not a delimiter join: a
+ * type or id may itself contain any delimiter character, NUL included. */
+export function typedMarkIdKey(type: string, id: string): string {
   return JSON.stringify([type, id]);
 }
 
@@ -207,10 +233,10 @@ export function setTypedMarkRemovalSilenced(
   let keys = silencedRemovals.get(editor);
   if (silenced) {
     if (!keys) silencedRemovals.set(editor, (keys = new Set()));
-    keys.add(removalKey(type, id));
+    keys.add(typedMarkIdKey(type, id));
   } else {
-    keys?.delete(removalKey(type, id));
-    reportedMarks.get(editor)?.delete(removalKey(type, id));
+    keys?.delete(typedMarkIdKey(type, id));
+    reportedMarks.get(editor)?.delete(typedMarkIdKey(type, id));
   }
 }
 
@@ -220,22 +246,19 @@ export function clearTypedMarkRemovalSilences(editor: LexicalEditor): void {
   reportedMarks.get(editor)?.clear();
 }
 
-/** Drop the callback for `type`/`id` from `registry`'s entry for `key`. */
-function dropRegisteredCallback<T>(
-  registry: Map<NodeKey, { [type: string]: { [id: string]: T } }>,
+/** Drop the callback for `type`/`id` from `slot`'s registry entry for `key`. */
+function dropRegisteredCallback<S extends CallbackSlot>(
+  slot: S,
   key: NodeKey,
   type: string,
   id: string,
 ): void {
+  const registry = callbackRegistries[slot];
   const entry = registry.get(key);
   const typeCallbacks = entry?.[type];
   if (!entry || !typeCallbacks || !(id in typeCallbacks)) return;
-  const remaining = omitRecordKey(typeCallbacks, id);
-  const next =
-    Object.keys(remaining).length > 0
-      ? { ...entry, [type]: remaining }
-      : omitRecordKey(entry, type);
-  if (Object.keys(next).length > 0) registry.set(key, next);
+  const next = omitTypedCallback(entry, type, id);
+  if (next) registry.set(key, next);
   else registry.delete(key);
 }
 
@@ -244,18 +267,12 @@ function dropRegisteredCallback<T>(
  * that left the document without `remove()` running.
  */
 export function forgetTypedMarkCallbacks(key: NodeKey, type: string, id: string): void {
-  dropRegisteredCallback(typedOnClickRegistry, key, type, id);
-  dropRegisteredCallback(typedOnRemoveRegistry, key, type, id);
-  dropRegisteredCallback(typedOnMouseEnterRegistry, key, type, id);
-  dropRegisteredCallback(typedOnMouseLeaveRegistry, key, type, id);
+  for (const slot of CALLBACK_SLOTS) dropRegisteredCallback(slot, key, type, id);
 }
 
 export class TypedMarkNode extends ElementNode {
   __typedIDs: TypedIDs;
-  __typedOnClicks?: TypedOnClicks;
-  __typedOnRemoves?: TypedOnRemoves;
-  __typedOnMouseEnters?: TypedOnMouseEnters;
-  __typedOnMouseLeaves?: TypedOnMouseLeaves;
+  private __typedOn: TypedMarkCallbacks;
   __domOnClickListener?: (event: DomMouseEvent) => void;
   __domOnMouseEnterListener?: (event: DomMouseEvent) => void;
   __domOnMouseLeaveListener?: (event: DomMouseEvent) => void;
@@ -271,18 +288,13 @@ export class TypedMarkNode extends ElementNode {
   ) {
     super(key);
     this.__typedIDs = cloneTypedIDs(typedIds);
-    this.__typedOnClicks = cloneTypedOnClicks(typedOnClicks);
-    this.__typedOnRemoves = cloneTypedOnRemoves(typedOnRemoves);
-    this.__typedOnMouseEnters = cloneTypedOnMouseEnters(typedOnMouseEnters);
-    this.__typedOnMouseLeaves = cloneTypedOnMouseLeaves(typedOnMouseLeaves);
-    this.pruneTypedOnClicks();
-    this.pruneTypedOnRemoves();
-    this.pruneTypedOnMouseEnters();
-    this.pruneTypedOnMouseLeaves();
-    this.syncTypedOnClicksToRegistry();
-    this.syncTypedOnRemovesToRegistry();
-    this.syncTypedOnMouseEntersToRegistry();
-    this.syncTypedOnMouseLeavesToRegistry();
+    this.__typedOn = {
+      click: cloneTypedCallbacks(typedOnClicks),
+      remove: cloneTypedCallbacks(typedOnRemoves),
+      mouseEnter: cloneTypedCallbacks(typedOnMouseEnters),
+      mouseLeave: cloneTypedCallbacks(typedOnMouseLeaves),
+    };
+    this.pruneCallbacks();
   }
 
   static override getType(): string {
@@ -290,19 +302,8 @@ export class TypedMarkNode extends ElementNode {
   }
 
   static override clone(node: TypedMarkNode): TypedMarkNode {
-    const __typedIDs = cloneTypedIDs(node.__typedIDs);
-    const __typedOnClicks = cloneTypedOnClicks(node.__typedOnClicks);
-    const __typedOnRemoves = cloneTypedOnRemoves(node.__typedOnRemoves);
-    const __typedOnMouseEnters = cloneTypedOnMouseEnters(node.__typedOnMouseEnters);
-    const __typedOnMouseLeaves = cloneTypedOnMouseLeaves(node.__typedOnMouseLeaves);
-    return new TypedMarkNode(
-      __typedIDs,
-      __typedOnClicks,
-      __typedOnRemoves,
-      __typedOnMouseEnters,
-      __typedOnMouseLeaves,
-      node.__key,
-    );
+    const { click, remove, mouseEnter, mouseLeave } = node.__typedOn;
+    return new TypedMarkNode(node.__typedIDs, click, remove, mouseEnter, mouseLeave, node.__key);
   }
 
   static isReservedType(type: string): boolean {
@@ -329,12 +330,9 @@ export class TypedMarkNode extends ElementNode {
   override createDOM(config: EditorConfig, editor: LexicalEditor): HTMLElement {
     const element = document.createElement("mark");
     addClassNamesToElement(element, ...typedMarkClassNames(config.theme, this.__typedIDs));
-    const clickListener = this.getOrCreateDOMClickListener(editor);
-    element.addEventListener("click", clickListener);
-    const mouseEnterListener = this.getOrCreateDOMMouseEnterListener(editor);
-    element.addEventListener("mouseenter", mouseEnterListener);
-    const mouseLeaveListener = this.getOrCreateDOMMouseLeaveListener(editor);
-    element.addEventListener("mouseleave", mouseLeaveListener);
+    element.addEventListener("click", this.getOrCreateDOMListener("click", editor));
+    element.addEventListener("mouseenter", this.getOrCreateDOMListener("mouseEnter", editor));
+    element.addEventListener("mouseleave", this.getOrCreateDOMListener("mouseLeave", editor));
     return element;
   }
 
@@ -412,14 +410,7 @@ export class TypedMarkNode extends ElementNode {
     const previousIDs = cloneTypedIDs(self.__typedIDs);
     self.__typedIDs = cloneTypedIDs(ids);
     self.dispatchRemovedIDs(previousIDs, self.__typedIDs, "removed");
-    self.pruneTypedOnClicks();
-    self.pruneTypedOnRemoves();
-    self.pruneTypedOnMouseEnters();
-    self.pruneTypedOnMouseLeaves();
-    self.syncTypedOnClicksToRegistry();
-    self.syncTypedOnRemovesToRegistry();
-    self.syncTypedOnMouseEntersToRegistry();
-    self.syncTypedOnMouseLeavesToRegistry();
+    self.pruneCallbacks();
     const mergedNode = self.mergeWithAdjacentTypedMarks();
     if (mergedNode.hasNoIDsForEveryType() && mergedNode.getParent() !== null)
       $unwrapTypedMarkNode(mergedNode);
@@ -427,63 +418,35 @@ export class TypedMarkNode extends ElementNode {
   }
 
   setTypedOnClicks(typedOnClicks: TypedOnClicks): this {
-    const self = this.getWritable();
-    self.__typedOnClicks = cloneTypedOnClicks(typedOnClicks);
-    self.pruneTypedOnClicks();
-    self.syncTypedOnClicksToRegistry();
-    return self;
+    return this.setCallbacks("click", typedOnClicks);
   }
 
   getTypedOnClicks(): TypedOnClicks {
-    const self = this.getLatest();
-    if (!$isTypedMarkNode(self)) return {};
-    const stored = typedOnClickRegistry.get(self.getKey());
-    return stored ?? {};
+    return this.getCallbacks("click");
   }
 
   setTypedOnRemoves(typedOnRemoves: TypedOnRemoves): this {
-    const self = this.getWritable();
-    self.__typedOnRemoves = cloneTypedOnRemoves(typedOnRemoves);
-    self.pruneTypedOnRemoves();
-    self.syncTypedOnRemovesToRegistry();
-    return self;
+    return this.setCallbacks("remove", typedOnRemoves);
   }
 
   getTypedOnRemoves(): TypedOnRemoves {
-    const self = this.getLatest();
-    if (!$isTypedMarkNode(self)) return {};
-    const stored = typedOnRemoveRegistry.get(self.getKey());
-    return stored ?? {};
+    return this.getCallbacks("remove");
   }
 
   setTypedOnMouseEnters(typedOnMouseEnters: TypedOnMouseEnters): this {
-    const self = this.getWritable();
-    self.__typedOnMouseEnters = cloneTypedOnMouseEnters(typedOnMouseEnters);
-    self.pruneTypedOnMouseEnters();
-    self.syncTypedOnMouseEntersToRegistry();
-    return self;
+    return this.setCallbacks("mouseEnter", typedOnMouseEnters);
   }
 
   getTypedOnMouseEnters(): TypedOnMouseEnters {
-    const self = this.getLatest();
-    if (!$isTypedMarkNode(self)) return {};
-    const stored = typedOnMouseEnterRegistry.get(self.getKey());
-    return stored ?? {};
+    return this.getCallbacks("mouseEnter");
   }
 
   setTypedOnMouseLeaves(typedOnMouseLeaves: TypedOnMouseLeaves): this {
-    const self = this.getWritable();
-    self.__typedOnMouseLeaves = cloneTypedOnMouseLeaves(typedOnMouseLeaves);
-    self.pruneTypedOnMouseLeaves();
-    self.syncTypedOnMouseLeavesToRegistry();
-    return self;
+    return this.setCallbacks("mouseLeave", typedOnMouseLeaves);
   }
 
   getTypedOnMouseLeaves(): TypedOnMouseLeaves {
-    const self = this.getLatest();
-    if (!$isTypedMarkNode(self)) return {};
-    const stored = typedOnMouseLeaveRegistry.get(self.getKey());
-    return stored ?? {};
+    return this.getCallbacks("mouseLeave");
   }
 
   addID(
@@ -505,20 +468,17 @@ export class TypedMarkNode extends ElementNode {
       ids = [];
       self.__typedIDs[type] = ids;
     }
-    for (const existingId of ids) {
-      if (id === existingId) {
-        if (onClick) self.setOnClickFor(type, id, onClick);
-        if (onRemove) self.setOnRemoveFor(type, id, onRemove);
-        if (onMouseEnter) self.setOnMouseEnterFor(type, id, onMouseEnter);
-        if (onMouseLeave) self.setOnMouseLeaveFor(type, id, onMouseLeave);
-        return;
-      }
+    if (!ids.includes(id)) ids.push(id);
+    const callbacks: { [S in CallbackSlot]?: TypedMarkCallbackKinds[S] } = {
+      click: onClick,
+      remove: onRemove,
+      mouseEnter: onMouseEnter,
+      mouseLeave: onMouseLeave,
+    };
+    for (const slot of CALLBACK_SLOTS) {
+      const callback = callbacks[slot];
+      if (callback) self.setCallbackFor(slot, type, id, callback);
     }
-    ids.push(id);
-    if (onClick) self.setOnClickFor(type, id, onClick);
-    if (onRemove) self.setOnRemoveFor(type, id, onRemove);
-    if (onMouseEnter) self.setOnMouseEnterFor(type, id, onMouseEnter);
-    if (onMouseLeave) self.setOnMouseLeaveFor(type, id, onMouseLeave);
   }
 
   deleteID(type: string, id: string): void {
@@ -536,14 +496,8 @@ export class TypedMarkNode extends ElementNode {
       }
     }
 
-    self.removeOnClickFor(type, id);
-    self.removeOnRemoveFor(type, id);
-    self.removeOnMouseEnterFor(type, id);
-    self.removeOnMouseLeaveFor(type, id);
-    self.pruneTypedOnClicks();
-    self.pruneTypedOnRemoves();
-    self.pruneTypedOnMouseEnters();
-    self.pruneTypedOnMouseLeaves();
+    for (const slot of CALLBACK_SLOTS) self.removeCallbackFor(slot, type, id);
+    self.pruneCallbacks();
     const mergedNode = self.mergeWithAdjacentTypedMarks();
     if (mergedNode.hasNoIDsForEveryType() && mergedNode.getParent() !== null)
       $unwrapTypedMarkNode(mergedNode);
@@ -611,33 +565,53 @@ export class TypedMarkNode extends ElementNode {
       self.dispatchOnRemoveForTypedIDs(typedIDs, "destroyed");
     }
 
-    typedOnClickRegistry.delete(self.getKey());
-    typedOnRemoveRegistry.delete(self.getKey());
-    typedOnMouseEnterRegistry.delete(self.getKey());
-    typedOnMouseLeaveRegistry.delete(self.getKey());
-    self.__typedOnClicks = undefined;
-    self.__typedOnRemoves = undefined;
-    self.__typedOnMouseEnters = undefined;
-    self.__typedOnMouseLeaves = undefined;
+    for (const slot of CALLBACK_SLOTS) callbackRegistries[slot].delete(self.getKey());
+    self.__typedOn = {};
 
     super.remove.call(self, preserveEmptyParent);
   }
 
-  private getOrCreateDOMClickListener(editor: LexicalEditor): (event: DomMouseEvent) => void {
-    if (!this.__domOnClickListener) {
-      this.__domOnClickListener = (event: DomMouseEvent) => {
-        this.handleDOMClick(event, editor);
-      };
-    }
-    return this.__domOnClickListener;
+  private getCallbacks<S extends CallbackSlot>(slot: S): SlotCallbacks<S> {
+    const self = this.getLatest();
+    if (!$isTypedMarkNode(self)) return {};
+    const stored = callbackRegistries[slot].get(self.getKey());
+    return stored ?? {};
   }
 
-  private handleDOMClick(event: DomMouseEvent, editor: LexicalEditor): void {
-    const typedOnClicks = typedOnClickRegistry.get(this.getKey());
-    if (!typedOnClicks) return;
+  private setCallbacks<S extends CallbackSlot>(slot: S, callbacks: SlotCallbacks<S>): this {
+    const self = this.getWritable();
+    self.setSlot(slot, cloneTypedCallbacks(callbacks));
+    self.pruneSlot(slot);
+    return self;
+  }
+
+  /** The one write to a slot: TypeScript cannot check a write through a key it only knows
+   * generically, so it is checked here against the slots `S` names. */
+  private setSlot<S extends CallbackSlot>(slot: S, callbacks: SlotCallbacks<S> | undefined): void {
+    (this.__typedOn as TypedMarkCallbacks<S>)[slot] = callbacks;
+  }
+
+  private getOrCreateDOMListener(
+    slot: DOMEventSlot,
+    editor: LexicalEditor,
+  ): (event: DomMouseEvent) => void {
+    const field = DOM_LISTENER_FIELDS[slot];
+    let listener = this[field];
+    if (!listener) {
+      listener = (event: DomMouseEvent) => {
+        this.handleDOMEvent(slot, event, editor);
+      };
+      this[field] = listener;
+    }
+    return listener;
+  }
+
+  private handleDOMEvent(slot: DOMEventSlot, event: DomMouseEvent, editor: LexicalEditor): void {
+    const typedCallbacks = callbackRegistries[slot].get(this.getKey());
+    if (!typedCallbacks) return;
 
     const callbacks: [TypedMarkOnClick, string, string][] = [];
-    for (const [type, callbacksById] of Object.entries(typedOnClicks)) {
+    for (const [type, callbacksById] of Object.entries(typedCallbacks)) {
       for (const [id, callback] of Object.entries(callbacksById)) {
         if (callback) callbacks.push([callback, type, id]);
       }
@@ -651,389 +625,55 @@ export class TypedMarkNode extends ElementNode {
     }
   }
 
-  private getOrCreateDOMMouseEnterListener(editor: LexicalEditor): (event: DomMouseEvent) => void {
-    if (!this.__domOnMouseEnterListener) {
-      this.__domOnMouseEnterListener = (event: DomMouseEvent) => {
-        this.handleDOMMouseEnter(event, editor);
-      };
+  private ensureSlotMutable<S extends CallbackSlot>(slot: S): SlotCallbacks<S> {
+    let callbacks: SlotCallbacks<S> | undefined = this.__typedOn[slot];
+    if (callbacks === undefined) {
+      callbacks = callbackRegistries[slot].get(this.getKey()) ?? {};
+      this.setSlot(slot, callbacks);
     }
-    return this.__domOnMouseEnterListener;
+    return callbacks;
   }
 
-  private handleDOMMouseEnter(event: DomMouseEvent, editor: LexicalEditor): void {
-    const typedOnMouseEnters = typedOnMouseEnterRegistry.get(this.getKey());
-    if (!typedOnMouseEnters) return;
-
-    const callbacks: [TypedMarkOnMouseEnter, string, string][] = [];
-    for (const [type, callbacksById] of Object.entries(typedOnMouseEnters)) {
-      for (const [id, callback] of Object.entries(callbacksById)) {
-        if (callback) callbacks.push([callback, type, id]);
-      }
-    }
-
-    if (callbacks.length === 0) return;
-
-    const textContent = editor.read(() => this.getTextContent());
-    for (const [callback, type, id] of callbacks) {
-      callback(event, type, id, textContent);
-    }
-  }
-
-  private getOrCreateDOMMouseLeaveListener(editor: LexicalEditor): (event: DomMouseEvent) => void {
-    if (!this.__domOnMouseLeaveListener) {
-      this.__domOnMouseLeaveListener = (event: DomMouseEvent) => {
-        this.handleDOMMouseLeave(event, editor);
-      };
-    }
-    return this.__domOnMouseLeaveListener;
-  }
-
-  private handleDOMMouseLeave(event: DomMouseEvent, editor: LexicalEditor): void {
-    const typedOnMouseLeaves = typedOnMouseLeaveRegistry.get(this.getKey());
-    if (!typedOnMouseLeaves) return;
-
-    const callbacks: [TypedMarkOnMouseLeave, string, string][] = [];
-    for (const [type, callbacksById] of Object.entries(typedOnMouseLeaves)) {
-      for (const [id, callback] of Object.entries(callbacksById)) {
-        if (callback) callbacks.push([callback, type, id]);
-      }
-    }
-
-    if (callbacks.length === 0) return;
-
-    const textContent = editor.read(() => this.getTextContent());
-    for (const [callback, type, id] of callbacks) {
-      callback(event, type, id, textContent);
-    }
-  }
-
-  private ensureOnClickMapMutable(): TypedOnClicks {
-    if (this.__typedOnClicks === undefined || this.__typedOnClicks === NO_ON_CLICKS) {
-      const existing = typedOnClickRegistry.get(this.getKey());
-      this.__typedOnClicks = existing ?? {};
-    }
-    return this.__typedOnClicks;
-  }
-
-  private syncTypedOnClicksToRegistry(): void {
-    if (!this.__typedOnClicks || Object.keys(this.__typedOnClicks).length === 0) {
-      typedOnClickRegistry.delete(this.getKey());
-      if (this.__typedOnClicks && Object.keys(this.__typedOnClicks).length === 0) {
-        this.__typedOnClicks = undefined;
-      }
+  private syncSlotToRegistry<S extends CallbackSlot>(slot: S): void {
+    const callbacks = this.__typedOn[slot];
+    if (callbacks && Object.keys(callbacks).length > 0) {
+      callbackRegistries[slot].set(this.getKey(), callbacks);
       return;
     }
-    typedOnClickRegistry.set(this.getKey(), this.__typedOnClicks);
+    callbackRegistries[slot].delete(this.getKey());
+    this.setSlot(slot, undefined);
   }
 
-  private setOnClickFor(type: string, id: string, onClick: TypedMarkOnClick): void {
+  private setCallbackFor<S extends CallbackSlot>(
+    slot: S,
+    type: string,
+    id: string,
+    callback: TypedMarkCallbackKinds[S],
+  ): void {
     assertSafeKey(type);
     assertSafeKey(id);
 
-    const callbacks = this.ensureOnClickMapMutable();
+    const callbacks = this.ensureSlotMutable(slot);
     const typeCallbacks = callbacks[type] ?? (callbacks[type] = {});
-    typeCallbacks[id] = onClick;
-    this.syncTypedOnClicksToRegistry();
+    typeCallbacks[id] = callback;
+    this.syncSlotToRegistry(slot);
   }
 
-  private removeOnClickFor(type: string, id: string): void {
-    if (!this.__typedOnClicks) return;
-    const typeCallbacks = this.__typedOnClicks[type];
-    if (!typeCallbacks) return;
-
-    const updatedTypeCallbacks = omitRecordKey(typeCallbacks, id);
-    const hasRemainingCallbacks = Object.keys(updatedTypeCallbacks).length > 0;
-
-    if (hasRemainingCallbacks) {
-      this.__typedOnClicks = {
-        ...this.__typedOnClicks,
-        [type]: updatedTypeCallbacks,
-      };
-    } else {
-      const remainingCallbacks = omitRecordKey(this.__typedOnClicks, type);
-      this.__typedOnClicks =
-        Object.keys(remainingCallbacks).length > 0 ? remainingCallbacks : undefined;
-    }
-
-    this.syncTypedOnClicksToRegistry();
+  private removeCallbackFor<S extends CallbackSlot>(slot: S, type: string, id: string): void {
+    const callbacks = this.__typedOn[slot];
+    if (!callbacks?.[type]) return;
+    this.setSlot(slot, omitTypedCallback(callbacks, type, id));
+    this.syncSlotToRegistry(slot);
   }
 
-  private pruneTypedOnClicks(): void {
-    if (!this.__typedOnClicks || this.__typedOnClicks === NO_ON_CLICKS) {
-      this.__typedOnClicks = undefined;
-      this.syncTypedOnClicksToRegistry();
-      return;
-    }
-
-    const nextTypedOnClicks: TypedOnClicks = {};
-
-    for (const [type, callbacks] of Object.entries(this.__typedOnClicks)) {
-      const ids = this.__typedIDs[type];
-      if (!ids || ids.length === 0) {
-        continue;
-      }
-      const idSet = new Set(ids);
-      const filteredCallbacks: { [id: string]: TypedMarkOnClick } = {};
-      for (const [id, callback] of Object.entries(callbacks)) {
-        if (idSet.has(id)) {
-          filteredCallbacks[id] = callback;
-        }
-      }
-      if (Object.keys(filteredCallbacks).length > 0) {
-        nextTypedOnClicks[type] = filteredCallbacks;
-      }
-    }
-
-    this.__typedOnClicks =
-      Object.keys(nextTypedOnClicks).length > 0 ? nextTypedOnClicks : undefined;
-    this.syncTypedOnClicksToRegistry();
+  /** Keep only the callbacks for ids the mark holds, then sync the slot's registry entry. */
+  private pruneSlot<S extends CallbackSlot>(slot: S): void {
+    this.setSlot(slot, pruneTypedCallbacks(this.__typedOn[slot], this.__typedIDs));
+    this.syncSlotToRegistry(slot);
   }
 
-  private ensureOnRemoveMapMutable(): TypedOnRemoves {
-    if (this.__typedOnRemoves === undefined || this.__typedOnRemoves === NO_ON_REMOVES) {
-      const existing = typedOnRemoveRegistry.get(this.getKey());
-      this.__typedOnRemoves = existing ?? {};
-    }
-    return this.__typedOnRemoves;
-  }
-
-  private syncTypedOnRemovesToRegistry(): void {
-    if (!this.__typedOnRemoves || Object.keys(this.__typedOnRemoves).length === 0) {
-      typedOnRemoveRegistry.delete(this.getKey());
-      if (this.__typedOnRemoves && Object.keys(this.__typedOnRemoves).length === 0) {
-        this.__typedOnRemoves = undefined;
-      }
-      return;
-    }
-    typedOnRemoveRegistry.set(this.getKey(), this.__typedOnRemoves);
-  }
-
-  private setOnRemoveFor(type: string, id: string, onRemove: TypedMarkOnRemove): void {
-    assertSafeKey(type);
-    assertSafeKey(id);
-
-    const callbacks = this.ensureOnRemoveMapMutable();
-    const typeCallbacks = callbacks[type] ?? (callbacks[type] = {});
-    typeCallbacks[id] = onRemove;
-    this.syncTypedOnRemovesToRegistry();
-  }
-
-  private removeOnRemoveFor(type: string, id: string): void {
-    if (!this.__typedOnRemoves) return;
-    const typeCallbacks = this.__typedOnRemoves[type];
-    if (!typeCallbacks) return;
-
-    const updatedTypeCallbacks = omitRecordKey(typeCallbacks, id);
-    const hasRemainingCallbacks = Object.keys(updatedTypeCallbacks).length > 0;
-    if (hasRemainingCallbacks) {
-      this.__typedOnRemoves = {
-        ...this.__typedOnRemoves,
-        [type]: updatedTypeCallbacks,
-      };
-    } else {
-      const remainingCallbacks = omitRecordKey(this.__typedOnRemoves, type);
-      this.__typedOnRemoves =
-        Object.keys(remainingCallbacks).length > 0 ? remainingCallbacks : undefined;
-    }
-
-    this.syncTypedOnRemovesToRegistry();
-  }
-
-  private pruneTypedOnRemoves(): void {
-    if (!this.__typedOnRemoves || this.__typedOnRemoves === NO_ON_REMOVES) {
-      this.__typedOnRemoves = undefined;
-      this.syncTypedOnRemovesToRegistry();
-      return;
-    }
-
-    const nextTypedOnRemoves: TypedOnRemoves = {};
-    for (const [type, callbacks] of Object.entries(this.__typedOnRemoves)) {
-      const ids = this.__typedIDs[type];
-      if (!ids || ids.length === 0) continue;
-
-      const idSet = new Set(ids);
-      const filteredCallbacks: { [id: string]: TypedMarkOnRemove } = {};
-      for (const [id, callback] of Object.entries(callbacks)) {
-        if (idSet.has(id)) filteredCallbacks[id] = callback;
-      }
-      if (Object.keys(filteredCallbacks).length > 0) {
-        nextTypedOnRemoves[type] = filteredCallbacks;
-      }
-    }
-
-    this.__typedOnRemoves =
-      Object.keys(nextTypedOnRemoves).length > 0 ? nextTypedOnRemoves : undefined;
-    this.syncTypedOnRemovesToRegistry();
-  }
-
-  private ensureOnMouseEnterMapMutable(): TypedOnMouseEnters {
-    if (
-      this.__typedOnMouseEnters === undefined ||
-      this.__typedOnMouseEnters === NO_ON_MOUSE_ENTERS
-    ) {
-      const existing = typedOnMouseEnterRegistry.get(this.getKey());
-      this.__typedOnMouseEnters = existing ?? {};
-    }
-    return this.__typedOnMouseEnters;
-  }
-
-  private syncTypedOnMouseEntersToRegistry(): void {
-    if (!this.__typedOnMouseEnters || Object.keys(this.__typedOnMouseEnters).length === 0) {
-      typedOnMouseEnterRegistry.delete(this.getKey());
-      if (this.__typedOnMouseEnters && Object.keys(this.__typedOnMouseEnters).length === 0) {
-        this.__typedOnMouseEnters = undefined;
-      }
-      return;
-    }
-    typedOnMouseEnterRegistry.set(this.getKey(), this.__typedOnMouseEnters);
-  }
-
-  private setOnMouseEnterFor(type: string, id: string, onMouseEnter: TypedMarkOnMouseEnter): void {
-    assertSafeKey(type);
-    assertSafeKey(id);
-
-    const callbacks = this.ensureOnMouseEnterMapMutable();
-    const typeCallbacks = callbacks[type] ?? (callbacks[type] = {});
-    typeCallbacks[id] = onMouseEnter;
-    this.syncTypedOnMouseEntersToRegistry();
-  }
-
-  private removeOnMouseEnterFor(type: string, id: string): void {
-    if (!this.__typedOnMouseEnters) return;
-    const typeCallbacks = this.__typedOnMouseEnters[type];
-    if (!typeCallbacks) return;
-
-    const updatedTypeCallbacks = omitRecordKey(typeCallbacks, id);
-    const hasRemainingCallbacks = Object.keys(updatedTypeCallbacks).length > 0;
-
-    if (hasRemainingCallbacks) {
-      this.__typedOnMouseEnters = {
-        ...this.__typedOnMouseEnters,
-        [type]: updatedTypeCallbacks,
-      };
-    } else {
-      const remainingCallbacks = omitRecordKey(this.__typedOnMouseEnters, type);
-      this.__typedOnMouseEnters =
-        Object.keys(remainingCallbacks).length > 0 ? remainingCallbacks : undefined;
-    }
-
-    this.syncTypedOnMouseEntersToRegistry();
-  }
-
-  private pruneTypedOnMouseEnters(): void {
-    if (!this.__typedOnMouseEnters || this.__typedOnMouseEnters === NO_ON_MOUSE_ENTERS) {
-      this.__typedOnMouseEnters = undefined;
-      this.syncTypedOnMouseEntersToRegistry();
-      return;
-    }
-
-    const nextTypedOnMouseEnters: TypedOnMouseEnters = {};
-
-    for (const [type, callbacks] of Object.entries(this.__typedOnMouseEnters)) {
-      const ids = this.__typedIDs[type];
-      if (!ids || ids.length === 0) {
-        continue;
-      }
-      const idSet = new Set(ids);
-      const filteredCallbacks: { [id: string]: TypedMarkOnMouseEnter } = {};
-      for (const [id, callback] of Object.entries(callbacks)) {
-        if (idSet.has(id)) {
-          filteredCallbacks[id] = callback;
-        }
-      }
-      if (Object.keys(filteredCallbacks).length > 0) {
-        nextTypedOnMouseEnters[type] = filteredCallbacks;
-      }
-    }
-
-    this.__typedOnMouseEnters =
-      Object.keys(nextTypedOnMouseEnters).length > 0 ? nextTypedOnMouseEnters : undefined;
-    this.syncTypedOnMouseEntersToRegistry();
-  }
-
-  private ensureOnMouseLeaveMapMutable(): TypedOnMouseLeaves {
-    if (
-      this.__typedOnMouseLeaves === undefined ||
-      this.__typedOnMouseLeaves === NO_ON_MOUSE_LEAVES
-    ) {
-      const existing = typedOnMouseLeaveRegistry.get(this.getKey());
-      this.__typedOnMouseLeaves = existing ?? {};
-    }
-    return this.__typedOnMouseLeaves;
-  }
-
-  private syncTypedOnMouseLeavesToRegistry(): void {
-    if (!this.__typedOnMouseLeaves || Object.keys(this.__typedOnMouseLeaves).length === 0) {
-      typedOnMouseLeaveRegistry.delete(this.getKey());
-      if (this.__typedOnMouseLeaves && Object.keys(this.__typedOnMouseLeaves).length === 0) {
-        this.__typedOnMouseLeaves = undefined;
-      }
-      return;
-    }
-    typedOnMouseLeaveRegistry.set(this.getKey(), this.__typedOnMouseLeaves);
-  }
-
-  private setOnMouseLeaveFor(type: string, id: string, onMouseLeave: TypedMarkOnMouseLeave): void {
-    assertSafeKey(type);
-    assertSafeKey(id);
-
-    const callbacks = this.ensureOnMouseLeaveMapMutable();
-    const typeCallbacks = callbacks[type] ?? (callbacks[type] = {});
-    typeCallbacks[id] = onMouseLeave;
-    this.syncTypedOnMouseLeavesToRegistry();
-  }
-
-  private removeOnMouseLeaveFor(type: string, id: string): void {
-    if (!this.__typedOnMouseLeaves) return;
-    const typeCallbacks = this.__typedOnMouseLeaves[type];
-    if (!typeCallbacks) return;
-
-    const updatedTypeCallbacks = omitRecordKey(typeCallbacks, id);
-    const hasRemainingCallbacks = Object.keys(updatedTypeCallbacks).length > 0;
-
-    if (hasRemainingCallbacks) {
-      this.__typedOnMouseLeaves = {
-        ...this.__typedOnMouseLeaves,
-        [type]: updatedTypeCallbacks,
-      };
-    } else {
-      const remainingCallbacks = omitRecordKey(this.__typedOnMouseLeaves, type);
-      this.__typedOnMouseLeaves =
-        Object.keys(remainingCallbacks).length > 0 ? remainingCallbacks : undefined;
-    }
-
-    this.syncTypedOnMouseLeavesToRegistry();
-  }
-
-  private pruneTypedOnMouseLeaves(): void {
-    if (!this.__typedOnMouseLeaves || this.__typedOnMouseLeaves === NO_ON_MOUSE_LEAVES) {
-      this.__typedOnMouseLeaves = undefined;
-      this.syncTypedOnMouseLeavesToRegistry();
-      return;
-    }
-
-    const nextTypedOnMouseLeaves: TypedOnMouseLeaves = {};
-
-    for (const [type, callbacks] of Object.entries(this.__typedOnMouseLeaves)) {
-      const ids = this.__typedIDs[type];
-      if (!ids || ids.length === 0) {
-        continue;
-      }
-      const idSet = new Set(ids);
-      const filteredCallbacks: { [id: string]: TypedMarkOnMouseLeave } = {};
-      for (const [id, callback] of Object.entries(callbacks)) {
-        if (idSet.has(id)) {
-          filteredCallbacks[id] = callback;
-        }
-      }
-      if (Object.keys(filteredCallbacks).length > 0) {
-        nextTypedOnMouseLeaves[type] = filteredCallbacks;
-      }
-    }
-
-    this.__typedOnMouseLeaves =
-      Object.keys(nextTypedOnMouseLeaves).length > 0 ? nextTypedOnMouseLeaves : undefined;
-    this.syncTypedOnMouseLeavesToRegistry();
+  private pruneCallbacks(): void {
+    for (const slot of CALLBACK_SLOTS) this.pruneSlot(slot);
   }
 
   private invokeOnRemove(type: string, id: string, cause: TypedMarkRemovalCause): void {
@@ -1042,10 +682,10 @@ export class TypedMarkNode extends ElementNode {
     if (!callback) return;
 
     const editor = $getEditor();
-    const key = removalKey(type, id);
+    const key = typedMarkIdKey(type, id);
     const reportedHere = reportedMarks.get(editor);
     if (silencedRemovals.get(editor)?.has(key) || reportedHere?.get(key)?.has(this.getKey())) {
-      this.removeOnRemoveFor(type, id);
+      this.removeCallbackFor("remove", type, id);
       return;
     }
     removalReports.get(editor)?.push([type, id]);
@@ -1064,7 +704,7 @@ export class TypedMarkNode extends ElementNode {
         editor._onError(error instanceof Error ? error : new Error(String(error))),
       );
     }
-    this.removeOnRemoveFor(type, id);
+    this.removeCallbackFor("remove", type, id);
   }
 
   private dispatchRemovedIDs(
@@ -1111,10 +751,7 @@ export class TypedMarkNode extends ElementNode {
   }
 
   private mergeWithPreviousTypedMark(previous: TypedMarkNode): void {
-    this.mergeOnClicksFrom(previous.getTypedOnClicks());
-    this.mergeOnRemovesFrom(previous.getTypedOnRemoves());
-    this.mergeOnMouseEntersFrom(previous.getTypedOnMouseEnters());
-    this.mergeOnMouseLeavesFrom(previous.getTypedOnMouseLeaves());
+    this.mergeCallbacksFrom(previous);
 
     const previousChildren = previous.getChildren();
     if (previousChildren.length > 0) {
@@ -1126,10 +763,7 @@ export class TypedMarkNode extends ElementNode {
   }
 
   private mergeWithNextTypedMark(next: TypedMarkNode): void {
-    this.mergeOnClicksFrom(next.getTypedOnClicks());
-    this.mergeOnRemovesFrom(next.getTypedOnRemoves());
-    this.mergeOnMouseEntersFrom(next.getTypedOnMouseEnters());
-    this.mergeOnMouseLeavesFrom(next.getTypedOnMouseLeaves());
+    this.mergeCallbacksFrom(next);
 
     const nextChildren = next.getChildren();
     if (nextChildren.length > 0) {
@@ -1140,36 +774,16 @@ export class TypedMarkNode extends ElementNode {
     next.remove();
   }
 
-  private mergeOnClicksFrom(additional: TypedOnClicks): void {
-    if (!additional || Object.keys(additional).length === 0) return;
-    const merged = mergeTypedOnClickMaps(this.getTypedOnClicks(), additional);
-    if (Object.keys(merged).length === 0) return;
-
-    this.setTypedOnClicks(merged);
+  private mergeCallbacksFrom(other: TypedMarkNode): void {
+    for (const slot of CALLBACK_SLOTS) this.mergeSlotFrom(slot, other.getCallbacks(slot));
   }
 
-  private mergeOnRemovesFrom(additional: TypedOnRemoves): void {
+  private mergeSlotFrom<S extends CallbackSlot>(slot: S, additional: SlotCallbacks<S>): void {
     if (!additional || Object.keys(additional).length === 0) return;
-    const merged = mergeTypedOnRemoveMaps(this.getTypedOnRemoves(), additional);
+    const merged = mergeTypedCallbacks(this.getCallbacks(slot), additional);
     if (Object.keys(merged).length === 0) return;
 
-    this.setTypedOnRemoves(merged);
-  }
-
-  private mergeOnMouseEntersFrom(additional: TypedOnMouseEnters): void {
-    if (!additional || Object.keys(additional).length === 0) return;
-    const merged = mergeTypedOnMouseEnterMaps(this.getTypedOnMouseEnters(), additional);
-    if (Object.keys(merged).length === 0) return;
-
-    this.setTypedOnMouseEnters(merged);
-  }
-
-  private mergeOnMouseLeavesFrom(additional: TypedOnMouseLeaves): void {
-    if (!additional || Object.keys(additional).length === 0) return;
-    const merged = mergeTypedOnMouseLeaveMaps(this.getTypedOnMouseLeaves(), additional);
-    if (Object.keys(merged).length === 0) return;
-
-    this.setTypedOnMouseLeaves(merged);
+    this.setCallbacks(slot, merged);
   }
 }
 
@@ -1193,14 +807,14 @@ function cloneTypedIDs(typedIds: TypedIDs = NO_IDS): TypedIDs {
   return clone;
 }
 
-function cloneTypedOnClicks(typedOnClicks?: TypedOnClicks): TypedOnClicks | undefined {
-  if (!typedOnClicks || typedOnClicks === NO_ON_CLICKS) return undefined;
+function cloneTypedCallbacks<T>(callbacks?: TypedCallbacks<T>): TypedCallbacks<T> | undefined {
+  if (!callbacks) return undefined;
 
-  const clone: TypedOnClicks = {};
-  for (const [type, callbacks] of Object.entries(typedOnClicks)) {
+  const clone: TypedCallbacks<T> = {};
+  for (const [type, callbacksById] of Object.entries(callbacks)) {
     assertSafeKey(type);
-    const clonedCallbacks: { [id: string]: TypedMarkOnClick } = {};
-    for (const [id, callback] of Object.entries(callbacks)) {
+    const clonedCallbacks: { [id: string]: T } = {};
+    for (const [id, callback] of Object.entries(callbacksById)) {
       assertSafeKey(id);
       clonedCallbacks[id] = callback;
     }
@@ -1210,59 +824,40 @@ function cloneTypedOnClicks(typedOnClicks?: TypedOnClicks): TypedOnClicks | unde
   return Object.keys(clone).length > 0 ? clone : undefined;
 }
 
-function cloneTypedOnRemoves(typedOnRemoves?: TypedOnRemoves): TypedOnRemoves | undefined {
-  if (!typedOnRemoves || typedOnRemoves === NO_ON_REMOVES) return undefined;
+/** `callbacks` without those for ids `typedIDs` no longer holds; undefined when none are left. */
+function pruneTypedCallbacks<T>(
+  callbacks: TypedCallbacks<T> | undefined,
+  typedIDs: TypedIDs,
+): TypedCallbacks<T> | undefined {
+  if (!callbacks) return undefined;
 
-  const clone: TypedOnRemoves = {};
-  for (const [type, callbacks] of Object.entries(typedOnRemoves)) {
-    assertSafeKey(type);
-    const clonedCallbacks: { [id: string]: TypedMarkOnRemove } = {};
-    for (const [id, callback] of Object.entries(callbacks)) {
-      assertSafeKey(id);
-      clonedCallbacks[id] = callback;
+  const next: TypedCallbacks<T> = {};
+  for (const [type, callbacksById] of Object.entries(callbacks)) {
+    const ids = typedIDs[type];
+    if (!ids || ids.length === 0) continue;
+
+    const idSet = new Set(ids);
+    const filteredCallbacks: { [id: string]: T } = {};
+    for (const [id, callback] of Object.entries(callbacksById)) {
+      if (idSet.has(id)) filteredCallbacks[id] = callback;
     }
-    if (Object.keys(clonedCallbacks).length > 0) clone[type] = clonedCallbacks;
+    if (Object.keys(filteredCallbacks).length > 0) next[type] = filteredCallbacks;
   }
 
-  return Object.keys(clone).length > 0 ? clone : undefined;
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
-function cloneTypedOnMouseEnters(
-  typedOnMouseEnters?: TypedOnMouseEnters,
-): TypedOnMouseEnters | undefined {
-  if (!typedOnMouseEnters || typedOnMouseEnters === NO_ON_MOUSE_ENTERS) return undefined;
-
-  const clone: TypedOnMouseEnters = {};
-  for (const [type, callbacks] of Object.entries(typedOnMouseEnters)) {
-    assertSafeKey(type);
-    const clonedCallbacks: { [id: string]: TypedMarkOnMouseEnter } = {};
-    for (const [id, callback] of Object.entries(callbacks)) {
-      assertSafeKey(id);
-      clonedCallbacks[id] = callback;
-    }
-    if (Object.keys(clonedCallbacks).length > 0) clone[type] = clonedCallbacks;
-  }
-
-  return Object.keys(clone).length > 0 ? clone : undefined;
-}
-
-function cloneTypedOnMouseLeaves(
-  typedOnMouseLeaves?: TypedOnMouseLeaves,
-): TypedOnMouseLeaves | undefined {
-  if (!typedOnMouseLeaves || typedOnMouseLeaves === NO_ON_MOUSE_LEAVES) return undefined;
-
-  const clone: TypedOnMouseLeaves = {};
-  for (const [type, callbacks] of Object.entries(typedOnMouseLeaves)) {
-    assertSafeKey(type);
-    const clonedCallbacks: { [id: string]: TypedMarkOnMouseLeave } = {};
-    for (const [id, callback] of Object.entries(callbacks)) {
-      assertSafeKey(id);
-      clonedCallbacks[id] = callback;
-    }
-    if (Object.keys(clonedCallbacks).length > 0) clone[type] = clonedCallbacks;
-  }
-
-  return Object.keys(clone).length > 0 ? clone : undefined;
+/** A copy of `callbacks` without the one for `type`/`id`, dropping a type left with none; undefined
+ * when no type is left. */
+function omitTypedCallback<T>(
+  callbacks: TypedCallbacks<T>,
+  type: string,
+  id: string,
+): TypedCallbacks<T> | undefined {
+  const remaining = omitRecordKey(callbacks[type] ?? {}, id);
+  if (Object.keys(remaining).length > 0) return { ...callbacks, [type]: remaining };
+  const otherTypes = omitRecordKey(callbacks, type);
+  return Object.keys(otherTypes).length > 0 ? otherTypes : undefined;
 }
 
 function omitRecordKey<T>(source: { [key: string]: T }, keyToOmit: string): { [key: string]: T } {
@@ -1318,8 +913,13 @@ function typedIDsAreEqual(a: TypedIDs, b: TypedIDs): boolean {
   return true;
 }
 
-function mergeTypedOnClickMaps(primary: TypedOnClicks, secondary: TypedOnClicks): TypedOnClicks {
-  const merged: TypedOnClicks = {};
+/** Both maps' callbacks, `primary`'s winning where both hold one for the same `type`/`id`: a merge
+ * keeps the surviving mark's callback and drops the absorbed mark's. */
+function mergeTypedCallbacks<T>(
+  primary: TypedCallbacks<T>,
+  secondary: TypedCallbacks<T>,
+): TypedCallbacks<T> {
+  const merged: TypedCallbacks<T> = {};
   const types = new Set([...Object.keys(primary), ...Object.keys(secondary)]);
 
   for (const type of types) {
@@ -1327,79 +927,7 @@ function mergeTypedOnClickMaps(primary: TypedOnClicks, secondary: TypedOnClicks)
     const secondaryCallbacks = secondary[type] ?? {};
     const ids = new Set([...Object.keys(primaryCallbacks), ...Object.keys(secondaryCallbacks)]);
 
-    const mergedCallbacks: { [id: string]: TypedMarkOnClick } = {};
-    for (const id of ids) {
-      const callback = primaryCallbacks[id] ?? secondaryCallbacks[id];
-      if (callback) mergedCallbacks[id] = callback;
-    }
-
-    if (Object.keys(mergedCallbacks).length > 0) merged[type] = mergedCallbacks;
-  }
-
-  return merged;
-}
-
-function mergeTypedOnRemoveMaps(
-  primary: TypedOnRemoves,
-  secondary: TypedOnRemoves,
-): TypedOnRemoves {
-  const merged: TypedOnRemoves = {};
-  const types = new Set([...Object.keys(primary), ...Object.keys(secondary)]);
-
-  for (const type of types) {
-    const primaryCallbacks = primary[type] ?? {};
-    const secondaryCallbacks = secondary[type] ?? {};
-    const ids = new Set([...Object.keys(primaryCallbacks), ...Object.keys(secondaryCallbacks)]);
-
-    const mergedCallbacks: { [id: string]: TypedMarkOnRemove } = {};
-    for (const id of ids) {
-      const callback = primaryCallbacks[id] ?? secondaryCallbacks[id];
-      if (callback) mergedCallbacks[id] = callback;
-    }
-
-    if (Object.keys(mergedCallbacks).length > 0) merged[type] = mergedCallbacks;
-  }
-
-  return merged;
-}
-
-function mergeTypedOnMouseEnterMaps(
-  primary: TypedOnMouseEnters,
-  secondary: TypedOnMouseEnters,
-): TypedOnMouseEnters {
-  const merged: TypedOnMouseEnters = {};
-  const types = new Set([...Object.keys(primary), ...Object.keys(secondary)]);
-
-  for (const type of types) {
-    const primaryCallbacks = primary[type] ?? {};
-    const secondaryCallbacks = secondary[type] ?? {};
-    const ids = new Set([...Object.keys(primaryCallbacks), ...Object.keys(secondaryCallbacks)]);
-
-    const mergedCallbacks: { [id: string]: TypedMarkOnMouseEnter } = {};
-    for (const id of ids) {
-      const callback = primaryCallbacks[id] ?? secondaryCallbacks[id];
-      if (callback) mergedCallbacks[id] = callback;
-    }
-
-    if (Object.keys(mergedCallbacks).length > 0) merged[type] = mergedCallbacks;
-  }
-
-  return merged;
-}
-
-function mergeTypedOnMouseLeaveMaps(
-  primary: TypedOnMouseLeaves,
-  secondary: TypedOnMouseLeaves,
-): TypedOnMouseLeaves {
-  const merged: TypedOnMouseLeaves = {};
-  const types = new Set([...Object.keys(primary), ...Object.keys(secondary)]);
-
-  for (const type of types) {
-    const primaryCallbacks = primary[type] ?? {};
-    const secondaryCallbacks = secondary[type] ?? {};
-    const ids = new Set([...Object.keys(primaryCallbacks), ...Object.keys(secondaryCallbacks)]);
-
-    const mergedCallbacks: { [id: string]: TypedMarkOnMouseLeave } = {};
+    const mergedCallbacks: { [id: string]: T } = {};
     for (const id of ids) {
       const callback = primaryCallbacks[id] ?? secondaryCallbacks[id];
       if (callback) mergedCallbacks[id] = callback;

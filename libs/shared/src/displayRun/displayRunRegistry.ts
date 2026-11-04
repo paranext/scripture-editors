@@ -45,8 +45,8 @@ import {
   nbspValueToDisplay,
 } from "../nodes/usj/nbspDisplaySpelling.utils.js";
 import { NBSP } from "../nodes/usj/node-constants.js";
+import { $collapsedCaret, $isAttributeDisplayRun } from "../nodes/usj/node.utils.js";
 import { $isVerseNode } from "../nodes/usj/VerseNode.js";
-import { textTypeState } from "../nodes/collab/delta.state.js";
 import { $isImmutableTypedTextNode } from "../nodes/features/ImmutableTypedTextNode.js";
 import { $isMarkerNode } from "../nodes/features/MarkerNode.js";
 import { $isUnknownNode } from "../nodes/features/UnknownNode.js";
@@ -55,14 +55,7 @@ import {
   defaultMarkerAttribute,
   milestoneDefaultAttribute,
 } from "../converters/usfm/usfmFragmentToUsj.js";
-import {
-  $getSelection,
-  $getState,
-  $isElementNode,
-  $isRangeSelection,
-  $isTextNode,
-  LexicalNode,
-} from "lexical";
+import { $isElementNode, $isTextNode, LexicalNode, PointType } from "lexical";
 
 /** No run wanted and no value — the answer for an owner whose state carries nothing to display,
  * and the safe answer when a descriptor is handed a node of the wrong type. */
@@ -70,6 +63,30 @@ const NO_RUN: ExpectedRun = { wantsRun: false, valueText: undefined };
 
 /** No pieces found — the answer when a descriptor is handed a node of the wrong type. */
 const NO_PIECES: ScannedRun = {};
+
+const VERSE_RUN_MARKERS: readonly VerseAttributeMarker[] = ["va", "vp"];
+const CHAPTER_RUN_MARKERS = ["ca", "cp"] as const;
+const CAT_RUN_MARKERS = ["cat"] as const;
+
+/** The run an owner's attribute `value` calls for: none without a value, else the value after its
+ * separator NBSP, spelled for display. */
+function $valueRun(value: string | undefined): ExpectedRun {
+  if (value === undefined) return NO_RUN;
+  return {
+    wantsRun: true,
+    valueText: NBSP + nbspValueToDisplay(value, $getAttributeNbspDisplaySpelling()),
+  };
+}
+
+/** Whether the collapsed `caret` sits at the text end of `node`. */
+function $caretAtEnd(caret: PointType, node: LexicalNode | null): boolean {
+  return node !== null && caret.getNode().is(node) && caret.offset === node.getTextContentSize();
+}
+
+/** Whether the collapsed `caret` sits at the very start of `node`. */
+function $caretAtStart(caret: PointType, node: LexicalNode | null): boolean {
+  return node !== null && caret.getNode().is(node) && caret.offset === 0;
+}
 
 /** The sibling a verse's run for `marker` is anchored after: the verse itself for `\va`, and
  * `\va`'s wrapper (or, while caret-grace defers the wrap, its loose closer) for `\vp`. Shared by
@@ -87,21 +104,11 @@ function $verseRunAnchor(verse: LexicalNode, marker: VerseAttributeMarker): Lexi
  * `\ca` closer glyph), so that arm is checked too. The shared reporter already graces the
  * wrapper's subtree and the live value node. */
 function $verseFlankGrace(anchor: LexicalNode): boolean {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const anchorNode = selection.anchor.getNode();
-  if (anchorNode.is(anchor) && selection.anchor.offset === anchor.getTextContentSize()) return true;
-  if ($isElementNode(anchor)) {
-    const last = anchor.getLastDescendant();
-    if (
-      last !== null &&
-      anchorNode.is(last) &&
-      selection.anchor.offset === last.getTextContentSize()
-    )
-      return true;
-  }
-  const next = anchor.getNextSibling();
-  return next !== null && anchorNode.is(next) && selection.anchor.offset === 0;
+  const caret = $collapsedCaret();
+  if (!caret) return false;
+  if ($caretAtEnd(caret, anchor)) return true;
+  if ($isElementNode(anchor) && $caretAtEnd(caret, anchor.getLastDescendant())) return true;
+  return $caretAtStart(caret, anchor.getNextSibling());
 }
 
 /** The caret arm shared by verse and milestone runs when only the VALUE was deleted beside a
@@ -109,26 +116,36 @@ function $verseFlankGrace(anchor: LexicalNode): boolean {
 function $glyphDebrisGrace(pieces: ScannedRun): boolean {
   const { opener, closer } = pieces;
   if (!opener) return false;
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const anchorNode = selection.anchor.getNode();
-  const atOpenerEnd =
-    anchorNode.is(opener) && selection.anchor.offset === opener.getTextContentSize();
-  if (closer) return atOpenerEnd || anchorNode.is(closer);
+  const caret = $collapsedCaret();
+  if (!caret) return false;
+  const atOpenerEnd = $caretAtEnd(caret, opener);
+  if (closer) return atOpenerEnd || caret.getNode().is(closer);
   return atOpenerEnd;
 }
 
-/** Whether `node` is a piece of a verse's `\va`/`\vp` run — a whole wrapper (crossed in one step,
- * so a `\vp` piece's walk passes its own `\va` wrapper), a `va`/`vp` glyph riding loose, or a
- * loose attribute-tagged value. Loose shapes are transient (an undo stack, a collab-materialized
- * bare verse, a mid-edit tree with one marker wrapped and the other not) but real for a commit. */
-function $isVerseRunPiece(node: LexicalNode): boolean {
-  if ($isAttributeRunNode(node)) return node.getRunKind() === "va" || node.getRunKind() === "vp";
-  if ($isMarkerNode(node)) return node.getMarker() === "va" || node.getMarker() === "vp";
-  return $isTextNode(node) && $getState(node, textTypeState) === "attribute";
+/** The grace arms a verse, note or chapter attribute run shares: with no glyph left, the run's
+ * insertion point beside the anchor `$anchorOf` finds ({@link $verseFlankGrace}); otherwise the
+ * glyph debris ({@link $glyphDebrisGrace}). The anchor is looked up only when it is needed. */
+function $attributeRunGrace($anchorOf: () => LexicalNode | undefined, pieces: ScannedRun): boolean {
+  if (!pieces.opener && !pieces.closer) {
+    const anchor = $anchorOf();
+    return anchor !== undefined && $verseFlankGrace(anchor);
+  }
+  return $glyphDebrisGrace(pieces);
 }
 
-/** The `va`/`vp` marker a loose piece belongs to: its own marker for a glyph, and for a value the
+/** Whether `node` is a piece of an owner's runs for `markers` — a whole wrapper of one of those
+ * kinds (crossed in one step, so a `\vp` piece's walk passes its own `\va` wrapper, and a loose
+ * `\cp` piece's walk the `\ca` wrapper), one of their glyphs riding loose, or a loose
+ * attribute-tagged value. Loose shapes are transient (an undo stack, a collab-materialized bare
+ * verse, a mid-edit tree with one marker wrapped and the other not) but real for a commit. */
+function $isRunPiece(node: LexicalNode, markers: readonly string[]): boolean {
+  if ($isAttributeRunNode(node)) return markers.includes(node.getRunKind());
+  if ($isMarkerNode(node)) return markers.includes(node.getMarker());
+  return $isAttributeDisplayRun(node);
+}
+
+/** The one of `markers` a loose piece belongs to: its own marker for a glyph, and for a value the
  * marker of the glyph immediately before it — the run pieces' fixed order puts a value's own opener
  * exactly one step back, even in the previous state where that opener is also being destroyed.
  *
@@ -137,16 +154,16 @@ function $isVerseRunPiece(node: LexicalNode): boolean {
  * not enough: the ordinary verse text that follows a settled `\va …\va*` run also has that run's
  * closing glyph as its previous sibling, and claiming it would pend the verse — and run a settle
  * plus a whole-paragraph rebuild — for a deletion in unrelated content. */
-function $loosePieceMarker(node: LexicalNode): VerseAttributeMarker | undefined {
-  if ($isMarkerNode(node)) {
-    const marker = node.getMarker();
-    return marker === "va" || marker === "vp" ? marker : undefined;
-  }
-  if (!$isTextNode(node) || $getState(node, textTypeState) !== "attribute") return undefined;
-  const previous = node.getPreviousSibling();
-  if (!$isMarkerNode(previous)) return undefined;
-  const marker = previous.getMarker();
-  return marker === "va" || marker === "vp" ? marker : undefined;
+function $loosePieceMarkerOf<M extends string>(
+  node: LexicalNode,
+  markers: readonly M[],
+): M | undefined {
+  let glyph: LexicalNode | null = null;
+  if ($isMarkerNode(node)) glyph = node;
+  else if ($isAttributeDisplayRun(node)) glyph = node.getPreviousSibling();
+  if (!$isMarkerNode(glyph)) return undefined;
+  const marker = glyph.getMarker();
+  return markers.find((candidate) => candidate === marker);
 }
 
 /** Walk back from `start` over `marker`'s own run pieces to the VerseNode the run rides on. */
@@ -157,7 +174,32 @@ function $verseOfRunChain(start: LexicalNode): LexicalNode | undefined {
     previous = previous.getPreviousSibling()
   ) {
     if ($isVerseNode(previous)) return previous;
-    if (!$isVerseRunPiece(previous)) return undefined;
+    if (!$isRunPiece(previous, VERSE_RUN_MARKERS)) return undefined;
+  }
+  return undefined;
+}
+
+/** Walk back from `start` over a run's own pieces (`isPiece`) to the anchor `anchorOf` finds in its
+ * owner, and from there to the owner the run rides in. A piece's parent must BE the owner (loose
+ * pieces are the owner's direct children); crossing anything that is not a piece ends the walk with
+ * no owner. */
+function $anchoredChainOwner<O extends LexicalNode>(
+  start: LexicalNode,
+  isOwner: (node: LexicalNode | null) => node is O,
+  anchorOf: (owner: O) => LexicalNode | undefined,
+  isPiece: (node: LexicalNode) => boolean,
+): LexicalNode | undefined {
+  const parent = start.getParent();
+  if (!isOwner(parent)) return undefined;
+  const anchor = anchorOf(parent);
+  if (!anchor) return undefined;
+  for (
+    let previous = start.getPreviousSibling();
+    previous;
+    previous = previous.getPreviousSibling()
+  ) {
+    if (previous.is(anchor)) return parent;
+    if (!isPiece(previous)) return undefined;
   }
   return undefined;
 }
@@ -174,26 +216,20 @@ function verseDescriptor(marker: VerseAttributeMarker): DisplayRunDescriptor {
       const parent = node.getParent();
       if ($isAttributeRunNode(parent))
         return parent.getRunKind() === marker ? $verseOfRunChain(parent) : undefined;
-      return $loosePieceMarker(node) === marker ? $verseOfRunChain(node) : undefined;
+      return $loosePieceMarkerOf(node, VERSE_RUN_MARKERS) === marker
+        ? $verseOfRunChain(node)
+        : undefined;
     },
     expectedPieces: (owner) => {
       if (!$isVerseNode(owner)) return NO_RUN;
-      const value = marker === "va" ? owner.getAltnumber() : owner.getPubnumber();
-      if (value === undefined) return NO_RUN;
-      return {
-        wantsRun: true,
-        valueText: NBSP + nbspValueToDisplay(value, $getAttributeNbspDisplaySpelling()),
-      };
+      return $valueRun(marker === "va" ? owner.getAltnumber() : owner.getPubnumber());
     },
     scanPieces: (owner) =>
       $isVerseNode(owner)
         ? $verseAttributeRunPieces($verseRunAnchor(owner, marker), marker)
         : NO_PIECES,
-    graceSite: (owner, pieces) => {
-      if (!$isVerseNode(owner)) return false;
-      if (!pieces.opener && !pieces.closer) return $verseFlankGrace($verseRunAnchor(owner, marker));
-      return $glyphDebrisGrace(pieces);
-    },
+    graceSite: (owner, pieces) =>
+      $isVerseNode(owner) && $attributeRunGrace(() => $verseRunAnchor(owner, marker), pieces),
     settleScope: "owner",
     deletionPolicy: "retokenize",
     byteFormat: {
@@ -227,7 +263,7 @@ const charDescriptor: DisplayRunDescriptor = {
   ownerPredicate: (node) => $isCharNode(node),
   ownerOf: (node) => {
     // A char span's run is a direct TextNode child, never wrapped and never a glyph.
-    if (!$isTextNode(node) || $getState(node, textTypeState) !== "attribute") return undefined;
+    if (!$isAttributeDisplayRun(node)) return undefined;
     const parent = node.getParent();
     return $isCharNode(parent) ? parent : undefined;
   },
@@ -251,15 +287,10 @@ const charDescriptor: DisplayRunDescriptor = {
     if (!$isCharNode(owner) || pieces.value) return false;
     const closingGlyph = $charClosingGlyph(owner);
     if (!closingGlyph) return false;
-    const selection = $getSelection();
-    if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-    const anchorNode = selection.anchor.getNode();
-    if (anchorNode.is(closingGlyph)) return true;
-    const lastContent = closingGlyph.getPreviousSibling();
+    const caret = $collapsedCaret();
+    if (!caret) return false;
     return (
-      lastContent !== null &&
-      anchorNode.is(lastContent) &&
-      selection.anchor.offset === lastContent.getTextContentSize()
+      caret.getNode().is(closingGlyph) || $caretAtEnd(caret, closingGlyph.getPreviousSibling())
     );
   },
   settleScope: "owner",
@@ -273,32 +304,10 @@ const charDescriptor: DisplayRunDescriptor = {
 
 /** Whether `node` is a loose piece of a note's `\cat` run — a `cat` glyph, or an attribute-tagged
  * value whose own opener (one step back, the run pieces' fixed order) is a `cat` glyph. The value
- * arm requires the candidate to BE a run piece, mirroring `$loosePieceMarker`'s rule for verses:
+ * arm requires the candidate to BE a run piece, mirroring `$loosePieceMarkerOf`'s rule for verses:
  * position alone must not claim ordinary note content that happens to follow a settled run. */
 function $isLooseCatPiece(node: LexicalNode): boolean {
-  if ($isMarkerNode(node)) return node.getMarker() === "cat";
-  if (!$isTextNode(node) || $getState(node, textTypeState) !== "attribute") return false;
-  const previous = node.getPreviousSibling();
-  return $isMarkerNode(previous) && previous.getMarker() === "cat";
-}
-
-/** Walk back from `start` over the cat run's own pieces to the editable caller anchor, and from
- * there to the NoteNode the run rides in. A piece's parent must BE the note (loose pieces are the
- * note's direct children); crossing anything that is not a cat piece ends the walk with no owner. */
-function $noteOfCatChain(start: LexicalNode): LexicalNode | undefined {
-  const parent = start.getParent();
-  if (!$isNoteNode(parent)) return undefined;
-  const anchor = $noteEditableCallerNode(parent);
-  if (!anchor) return undefined;
-  for (
-    let previous = start.getPreviousSibling();
-    previous;
-    previous = previous.getPreviousSibling()
-  ) {
-    if (previous.is(anchor)) return parent;
-    if (!$isLooseCatPiece(previous)) return undefined;
-  }
-  return undefined;
+  return $loosePieceMarkerOf(node, CAT_RUN_MARKERS) !== undefined;
 }
 
 const catDescriptor: DisplayRunDescriptor = {
@@ -317,7 +326,10 @@ const catDescriptor: DisplayRunDescriptor = {
       return parent.getRunKind() === "cat" && $isNoteNode(parent.getParent())
         ? (parent.getParent() ?? undefined)
         : undefined;
-    return $isLooseCatPiece(node) ? $noteOfCatChain(node) : undefined;
+    // The walk goes back to the editable caller anchor, over the cat run's loose pieces only.
+    return $isLooseCatPiece(node)
+      ? $anchoredChainOwner(node, $isNoteNode, $noteEditableCallerNode, $isLooseCatPiece)
+      : undefined;
   },
   expectedPieces: (owner) => {
     if (!$isNoteNode(owner)) return NO_RUN;
@@ -325,22 +337,11 @@ const catDescriptor: DisplayRunDescriptor = {
     // display text at all), and only the expanded editable shape carries the caller anchor the
     // run is positioned by.
     if (owner.getIsCollapsed() !== false) return NO_RUN;
-    const category = owner.getCategory();
-    if (category === undefined) return NO_RUN;
-    return {
-      wantsRun: true,
-      valueText: NBSP + nbspValueToDisplay(category, $getAttributeNbspDisplaySpelling()),
-    };
+    return $valueRun(owner.getCategory());
   },
   scanPieces: (owner) => ($isNoteNode(owner) ? $noteCategoryRunPieces(owner) : NO_PIECES),
-  graceSite: (owner, pieces) => {
-    if (!$isNoteNode(owner)) return false;
-    if (!pieces.opener && !pieces.closer) {
-      const anchor = $noteEditableCallerNode(owner);
-      return anchor !== undefined && $verseFlankGrace(anchor);
-    }
-    return $glyphDebrisGrace(pieces);
-  },
+  graceSite: (owner, pieces) =>
+    $isNoteNode(owner) && $attributeRunGrace(() => $noteEditableCallerNode(owner), pieces),
   settleScope: "owner",
   deletionPolicy: "retokenize",
   byteFormat: {
@@ -352,50 +353,6 @@ const catDescriptor: DisplayRunDescriptor = {
     insertRunAfter: (owner) => ($isNoteNode(owner) ? $noteEditableCallerNode(owner) : undefined),
   },
 };
-
-/** Whether `node` is a piece of a chapter's `\ca`/`\cp` runs — a whole wrapper of either kind
- * (crossed in one step, so a loose `\cp` piece's walk passes the `\ca` wrapper), a `ca`/`cp`
- * glyph riding loose, or a loose attribute-tagged value — the chapter twin of
- * `$isVerseRunPiece`. */
-function $isChapterRunPiece(node: LexicalNode): boolean {
-  if ($isAttributeRunNode(node)) return node.getRunKind() === "ca" || node.getRunKind() === "cp";
-  if ($isMarkerNode(node)) return node.getMarker() === "ca" || node.getMarker() === "cp";
-  return $isTextNode(node) && $getState(node, textTypeState) === "attribute";
-}
-
-/** The `ca`/`cp` marker a loose chapter piece belongs to — the chapter twin of
- * `$loosePieceMarker`, with the same value-arm rule (the candidate must BE a run piece whose own
- * opener sits one step back; position alone must not claim unrelated content). */
-function $chapterLoosePieceMarker(node: LexicalNode): "ca" | "cp" | undefined {
-  if ($isMarkerNode(node)) {
-    const marker = node.getMarker();
-    return marker === "ca" || marker === "cp" ? marker : undefined;
-  }
-  if (!$isTextNode(node) || $getState(node, textTypeState) !== "attribute") return undefined;
-  const previous = node.getPreviousSibling();
-  if (!$isMarkerNode(previous)) return undefined;
-  const marker = previous.getMarker();
-  return marker === "ca" || marker === "cp" ? marker : undefined;
-}
-
-/** Walk back from `start` over the chapter runs' own pieces (of EITHER kind — a `\cp` piece's
- * walk crosses the whole `\ca` wrapper in one step) to the chapter's `\c N` glyph anchor, and
- * from there to the ChapterNode the runs ride in — the chapter twin of `$verseOfRunChain`. */
-function $chapterOfRunChain(start: LexicalNode): LexicalNode | undefined {
-  const parent = start.getParent();
-  if (!$isChapterNode(parent)) return undefined;
-  const anchor = $chapterGlyphTextNode(parent);
-  if (!anchor) return undefined;
-  for (
-    let previous = start.getPreviousSibling();
-    previous;
-    previous = previous.getPreviousSibling()
-  ) {
-    if (previous.is(anchor)) return parent;
-    if (!$isChapterRunPiece(previous)) return undefined;
-  }
-  return undefined;
-}
 
 /** One chapter attribute-marker descriptor — `"ca"` (altnumber; opener + value + closer) or
  * `"cp"` (pubnumber; opener + value, NO closer: the span closes implicitly at the next block
@@ -423,16 +380,17 @@ function chapterDescriptor(marker: "ca" | "cp"): DisplayRunDescriptor {
         return parent.getRunKind() === marker && $isChapterNode(parent.getParent())
           ? (parent.getParent() ?? undefined)
           : undefined;
-      return $chapterLoosePieceMarker(node) === marker ? $chapterOfRunChain(node) : undefined;
+      // The walk goes back to the chapter's `\c N` glyph anchor, over the pieces of EITHER
+      // chapter run: a `\cp` piece's walk crosses the whole `\ca` wrapper in one step.
+      return $loosePieceMarkerOf(node, CHAPTER_RUN_MARKERS) === marker
+        ? $anchoredChainOwner(node, $isChapterNode, $chapterGlyphTextNode, (piece) =>
+            $isRunPiece(piece, CHAPTER_RUN_MARKERS),
+          )
+        : undefined;
     },
     expectedPieces: (owner) => {
       if (!$isChapterNode(owner)) return NO_RUN;
-      const value = marker === "ca" ? owner.getAltnumber() : owner.getPubnumber();
-      if (value === undefined) return NO_RUN;
-      return {
-        wantsRun: true,
-        valueText: NBSP + nbspValueToDisplay(value, $getAttributeNbspDisplaySpelling()),
-      };
+      return $valueRun(marker === "ca" ? owner.getAltnumber() : owner.getPubnumber());
     },
     scanPieces: (owner) =>
       !$isChapterNode(owner)
@@ -440,14 +398,8 @@ function chapterDescriptor(marker: "ca" | "cp"): DisplayRunDescriptor {
         : marker === "ca"
           ? $chapterAltnumberRunPieces(owner)
           : $chapterPubnumberRunPieces(owner),
-    graceSite: (owner, pieces) => {
-      if (!$isChapterNode(owner)) return false;
-      if (!pieces.opener && !pieces.closer) {
-        const anchor = $anchor(owner);
-        return anchor !== undefined && $verseFlankGrace(anchor);
-      }
-      return $glyphDebrisGrace(pieces);
-    },
+    graceSite: (owner, pieces) =>
+      $isChapterNode(owner) && $attributeRunGrace(() => $anchor(owner), pieces),
     settleScope: "owner",
     deletionPolicy: "retokenize",
     byteFormat: {
@@ -469,7 +421,7 @@ function $isMilestoneRunPiece(node: LexicalNode): boolean {
     const syntax = node.getMarkerSyntax();
     return syntax === "selfClosing" || syntax === "opening";
   }
-  return $isTextNode(node) && $getState(node, textTypeState) === "attribute";
+  return $isAttributeDisplayRun(node);
 }
 
 /** Walk back from a LOOSE milestone run piece over the run's other loose pieces to the milestone,
@@ -554,18 +506,12 @@ const milestoneDescriptor: DisplayRunDescriptor = {
   graceSite: (owner, pieces) => {
     if (!$isMilestoneNode(owner)) return false;
     if (!pieces.opener && !pieces.closer) {
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-      const anchorNode = selection.anchor.getNode();
-      const previous = owner.getPreviousSibling();
-      if (
-        previous !== null &&
-        anchorNode.is(previous) &&
-        selection.anchor.offset === previous.getTextContentSize()
-      )
-        return true;
-      const next = owner.getNextSibling();
-      return next !== null && anchorNode.is(next) && selection.anchor.offset === 0;
+      const caret = $collapsedCaret();
+      return (
+        !!caret &&
+        ($caretAtEnd(caret, owner.getPreviousSibling()) ||
+          $caretAtStart(caret, owner.getNextSibling()))
+      );
     }
     return $glyphDebrisGrace(pieces);
   },

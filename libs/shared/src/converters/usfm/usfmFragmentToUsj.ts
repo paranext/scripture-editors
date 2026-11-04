@@ -375,11 +375,17 @@ export function isMilestoneHeuristicName(name: string): boolean {
   return STYLESHEET_MILESTONE_NAME_REGEX.test(name) || isMilestoneCommentMarker(name);
 }
 
+/** The first index at or after `index` that is not separator whitespace (any whitespace, NBSP or
+ * ZWSP). PT9 skips all of it after an opening marker, not just a single space. */
+function skipSeparatorSpace(fragment: string, index: number): number {
+  while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
+  return index;
+}
+
 /** PT9 `GetNextWord`: skip leading whitespace, take up to whitespace or `\` — or a placeholder,
  * which stands for bytes that start with `\`. */
 function getNextWord(fragment: string, start: number): { word: string; next: number } {
-  let index = start;
-  while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
+  let index = skipSeparatorSpace(fragment, start);
   const wordStart = index;
   while (
     index < fragment.length &&
@@ -388,8 +394,7 @@ function getNextWord(fragment: string, start: number): { word: string; next: num
   )
     index++;
   const word = fragment.slice(wordStart, index);
-  while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
-  return { word, next: index };
+  return { word, next: skipSeparatorSpace(fragment, index) };
 }
 
 /** The fragment offsets of the placeholders that stand for a note or a verse, in order. */
@@ -465,15 +470,9 @@ function tokenize(
     const { name, next } = scanMarkerName(fragment, index + 1);
     index = next;
 
-    // Consume the separator whitespace after an opening marker (PT9 skips it) — all leading
-    // whitespace, not just a single space.
-    const consumeSeparator = () => {
-      while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
-    };
-
     if (name === "") {
       if (readsAsNamelessMarker(fragment, rawStart, opensNamelessParagraph)) {
-        consumeSeparator();
+        index = skipSeparatorSpace(fragment, index);
         tokens.push({ kind: "para", marker: "" });
         continue;
       }
@@ -525,7 +524,7 @@ function tokenize(
       continue;
     }
     if (kind === MarkerType.Milestone || (kind === undefined && isMilestoneHeuristicName(name))) {
-      const milestone = scanMilestone(fragment, rawStart, name, index, attributeNbspSpelling);
+      const milestone = scanMilestone(fragment, name, index, attributeNbspSpelling);
       if (milestone) {
         tokens.push(milestone.token);
         if (milestone.ejectedText) pushText(milestone.ejectedText);
@@ -540,16 +539,16 @@ function tokenize(
       continue;
     }
     if (kind === MarkerType.Paragraph) {
-      consumeSeparator();
+      index = skipSeparatorSpace(fragment, index);
       tokens.push({ kind: "para", marker: name });
     } else if (kind === MarkerType.Character) {
-      consumeSeparator();
+      index = skipSeparatorSpace(fragment, index);
       tokens.push({ kind: "charOpen", marker: clean, isNested });
     } else if (attributeMarker(clean)) {
       // Attribute markers (ca/cp/va/vp/cat) are parser-level in ParatextData, not stylesheet
       // entries — classify them by their fixed shape when the sheet doesn't know them, so
       // the assembly loop can fold them onto their target (or keep them standalone).
-      consumeSeparator();
+      index = skipSeparatorSpace(fragment, index);
       if (attributeMarker(clean)?.shape === "para") tokens.push({ kind: "para", marker: name });
       else tokens.push({ kind: "charOpen", marker: clean, isNested });
     } else {
@@ -558,7 +557,7 @@ function tokenize(
       // a note; `esb`/`esbe` are explicitly paragraphs (UsfmToken.cs:405-421).
       // A non-`+` char run closes any open char style unconditionally, same as
       // a known Character token (UsfmParser.cs:247).
-      consumeSeparator();
+      index = skipSeparatorSpace(fragment, index);
       const insideNote = isNoteContext || openNoteMarker !== undefined;
       if (!insideNote || name === SIDEBAR_MARKER || name === SIDEBAR_END_MARKER)
         tokens.push({ kind: "para", marker: name });
@@ -826,8 +825,7 @@ function scanAbsorbableAttributes(
   name: string,
   attributeNbspSpelling: string | undefined,
 ): { attributes: { [attributeName: string]: string }; next: number } | undefined {
-  let index = start;
-  while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
+  const index = skipSeparatorSpace(fragment, start);
   if (fragment[index] !== "|") return undefined;
   const closeIndex = fragment.indexOf("\\", index);
   if (closeIndex === -1 || fragment.slice(closeIndex, closeIndex + 2) !== "\\*") return undefined;
@@ -847,7 +845,6 @@ function scanAbsorbableAttributes(
  */
 function scanMilestone(
   fragment: string,
-  _rawStart: number,
   name: string,
   index: number,
   attributeNbspSpelling: string | undefined,
@@ -953,10 +950,6 @@ function getContent(object: MarkerObject): MarkerContent[] {
   return object.content;
 }
 
-interface CharFrame {
-  object: MarkerObject;
-}
-
 /**
  * `closed` is nonstandard derived USX/USJ metadata for an implicitly-closed marker
  * (see `usx-to-usj.ts`'s "Not dropping attribs.closed for backwards compatibility");
@@ -996,7 +989,7 @@ export function usfmFragmentToUsjContent(
   let noteCategorySpan: MarkerObject | undefined;
   let para: MarkerObject | undefined;
   let note: ClosableMarkerObject | undefined;
-  const charStack: CharFrame[] = [];
+  const charStack: MarkerObject[] = [];
   // Char-stack depth at the moment the open note started: frames BELOW it enclose the note
   // (USX nests the note inside them and the span continues after it — `\wj a \f …\f* b\wj*`
   // puts both the note and " b" inside the wj span); frames AT/ABOVE it were opened inside
@@ -1039,11 +1032,10 @@ export function usfmFragmentToUsjContent(
     if (note) {
       // Inside the note, only frames opened WITHIN it receive content; the enclosing
       // frames are suspended until the note closes.
-      if (charStack.length > noteBaseDepth)
-        return getContent(charStack[charStack.length - 1].object);
+      if (charStack.length > noteBaseDepth) return getContent(charStack[charStack.length - 1]);
       return getContent(note);
     }
-    if (charStack.length > 0) return getContent(charStack[charStack.length - 1].object);
+    if (charStack.length > 0) return getContent(charStack[charStack.length - 1]);
     if (!para) {
       if (atChapterRootScope && !isNoteContext) return blockTarget();
       para = { type: "para", marker: PARA_MARKER_DEFAULT, content: [] };
@@ -1060,27 +1052,35 @@ export function usfmFragmentToUsjContent(
       target.push(item);
     }
   };
+  /** Open a `marker` char span holding `text` (if any) in the current container, and push it onto
+   * the char stack, so the content that follows lands inside it. */
+  const openCharFrame = (marker: string, text?: string): MarkerObject => {
+    const object: MarkerObject = { type: "char", marker, content: [] };
+    if (text) object.content = [toBodyText(text)];
+    container().push(object);
+    charStack.push(object);
+    return object;
+  };
 
   // Implicit close: every still-open char span gets closed="false", mirroring ParatextData
   // (a span only stays unmarked when the user's own `\marker*` terminated it).
   const markImplicitlyClosed = (fromIndex: number) => {
     for (let i = fromIndex; i < charStack.length; i += 1) {
-      const object: ClosableMarkerObject = charStack[i].object;
+      const object: ClosableMarkerObject = charStack[i];
       object.closed = "false";
     }
   };
-  const closeCharStack = () => {
-    markImplicitlyClosed(0);
-    charStack.length = 0;
+  /** Close every char span from `depth` up, implicitly, and drop them from the stack. */
+  const truncateCharStack = (depth: number) => {
+    markImplicitlyClosed(depth);
+    charStack.length = depth;
   };
+  const closeCharStack = () => truncateCharStack(0);
   const closeNote = (terminated: boolean) => {
     if (!note) return;
     // Chars opened INSIDE the note close with it (implicitly); frames below the note
     // boundary survive — the enclosing span continues after the note.
-    if (charStack.length > noteBaseDepth) {
-      markImplicitlyClosed(noteBaseDepth);
-      charStack.length = noteBaseDepth;
-    }
+    if (charStack.length > noteBaseDepth) truncateCharStack(noteBaseDepth);
     noteBaseDepth = 0;
     if (!terminated) note.closed = "false";
     note = undefined;
@@ -1112,6 +1112,15 @@ export function usfmFragmentToUsjContent(
     if (spanEnd) cell.colspan = String(Number(spanEnd) + 1 - Number(spanStart));
     getContent(row).push(cell);
     para = cell;
+  };
+  /** Open `marker` as a cell of the open row, if there is one and ParatextData recognizes the name
+   * as a cell (see isRecognizedTableCell). Returns whether it did. */
+  const tryOpenTableCell = (marker: string): boolean => {
+    if (!tableRow) return false;
+    const cellMatch = TABLE_CELL_MARKER_REGEX.exec(marker);
+    if (!cellMatch || !isRecognizedTableCell(cellMatch)) return false;
+    pushTableCell(tableRow, marker, cellMatch);
+    return true;
   };
   const closeSidebar = (terminated: boolean) => {
     if (!sidebar) return;
@@ -1178,10 +1187,7 @@ export function usfmFragmentToUsjContent(
    * nested markup and the eventual closer process normally). */
   const materializeCaptureAsChar = () => {
     if (!attrCapture) return;
-    const object: MarkerObject = { type: "char", marker: attrCapture.marker, content: [] };
-    if (attrCapture.value) object.content = [toBodyText(attrCapture.value)];
-    container().push(object);
-    charStack.push({ object });
+    openCharFrame(attrCapture.marker, attrCapture.value);
     attrCapture = undefined;
   };
   /** Start an ordinary paragraph block. Any non-row/cell paragraph-kind marker also ends an
@@ -1199,6 +1205,20 @@ export function usfmFragmentToUsjContent(
   const materializeCaptureAsPara = () => {
     if (!attrCapture) return;
     startParagraph(attrCapture.marker, attrCapture.value);
+    attrCapture = undefined;
+  };
+  /** End a para-shaped capture (`\cp`, which has no end marker) at the block boundary or fragment
+   * end that closes it. An empty one stays a first-class (empty) para element, never an empty
+   * pubnumber; one with plain-text content folds as the target's attribute (trailing line
+   * whitespace is structural). */
+  const finishParaCapture = () => {
+    if (!attrCapture) return;
+    const cpValue = attrCapture.value.replace(/[\s\u200B]+$/, "");
+    if (cpValue === "") startParagraph(attrCapture.marker);
+    else
+      Object.assign(attrCapture.target, {
+        [attrCapture.attrName]: toAttributeValue(cpValue),
+      });
     attrCapture = undefined;
   };
 
@@ -1279,10 +1299,7 @@ export function usfmFragmentToUsjContent(
     if (figCapture.shape === "para") {
       startParagraph(FIGURE_MARKER, figCapture.value);
     } else {
-      const object: MarkerObject = { type: "char", marker: FIGURE_MARKER, content: [] };
-      if (figCapture.value) object.content = [toBodyText(figCapture.value)];
-      container().push(object);
-      charStack.push({ object });
+      openCharFrame(FIGURE_MARKER, figCapture.value);
     }
     figCapture = undefined;
   };
@@ -1358,38 +1375,30 @@ export function usfmFragmentToUsjContent(
         continue;
       }
       if (attrCapture.shape === "para" && (token.kind === "para" || token.kind === "chapter")) {
-        const cpValue = attrCapture.value.replace(/[\s\u200B]+$/, "");
-        if (cpValue === "") {
-          // Empty `\cp` (paragraph-shaped, no end marker): PT9 never yields an empty pubnumber \u2014
-          // it stays a first-class (empty) para element. Materialize the standalone paragraph
-          // with no content, then fall through to process the boundary token normally.
-          //
-          // Unlike the char-shaped empty branch above, this one deliberately does NOT clear
-          // `attrTarget` (`startParagraph` leaves it alone), so the receptive window survives a
-          // materialized empty `\cp`. That is audited, not overlooked, on two counts.
-          //
-          // A CHAR-shaped attribute marker cannot reach the surviving window at all, so the
-          // document-order rewrite the char branch closes has no para-shaped twin. This branch only
-          // runs when the token that ENDS the capture is a para/chapter boundary; `\ca` is
-          // char-shaped, so it arrives while the capture is still open and falls to the
-          // unfoldable-markup arm below, which clears `attrTarget` BEFORE materializing the
-          // paragraph. `\c 1` \u23ce `\cp ` \u23ce `\ca 2\ca*` \u23ce `\p body` therefore leaves the chapter with
-          // no altnumber and the `\ca` an ordinary char span (pinned in usfmFragmentToUsj.test.ts).
-          //
-          // What DOES re-enter the window is a foldable PARA token, and `cp` is the only
-          // `shape: "para"` attribute marker \u2014 so that means a degenerate duplicate `\cp` on one
-          // chapter. It does not fold: the empty span was the chapter's one `\cp`
-          // (`ATTRIBUTE_FOLD_ORDER`), and ParatextData folds neither of the two.
-          startParagraph(attrCapture.marker);
-          attrCapture = undefined;
-        } else {
-          // The cp "paragraph" ended with plain-text content only: fold (trailing line
-          // whitespace is structural).
-          Object.assign(attrCapture.target, {
-            [attrCapture.attrName]: toAttributeValue(cpValue),
-          });
-          attrCapture = undefined;
-        }
+        // Empty `\cp` (paragraph-shaped, no end marker): PT9 never yields an empty pubnumber \u2014
+        // it stays a first-class (empty) para element. Materialize the standalone paragraph
+        // with no content, then fall through to process the boundary token normally.
+        //
+        // Unlike the char-shaped empty branch above, this one deliberately does NOT clear
+        // `attrTarget` (`startParagraph` leaves it alone), so the receptive window survives a
+        // materialized empty `\cp`. That is audited, not overlooked, on two counts.
+        //
+        // A CHAR-shaped attribute marker cannot reach the surviving window at all, so the
+        // document-order rewrite the char branch closes has no para-shaped twin. This branch only
+        // runs when the token that ENDS the capture is a para/chapter boundary; `\ca` is
+        // char-shaped, so it arrives while the capture is still open and falls to the
+        // unfoldable-markup arm below, which clears `attrTarget` BEFORE materializing the
+        // paragraph. `\c 1` \u23ce `\cp ` \u23ce `\ca 2\ca*` \u23ce `\p body` therefore leaves the chapter with
+        // no altnumber and the `\ca` an ordinary char span (pinned in usfmFragmentToUsj.test.ts).
+        //
+        // What DOES re-enter the window is a foldable PARA token, and `cp` is the only
+        // `shape: "para"` attribute marker \u2014 so that means a degenerate duplicate `\cp` on one
+        // chapter. It does not fold: the empty span was the chapter's one `\cp`
+        // (`ATTRIBUTE_FOLD_ORDER`), and ParatextData folds neither of the two.
+        //
+        // With plain-text content, the cp "paragraph" folds instead (trailing line whitespace is
+        // structural).
+        finishParaCapture();
         // fall through to process the boundary token normally
       } else {
         // Markup inside the span (or a mismatched closer): not foldable — materialize the
@@ -1579,16 +1588,9 @@ export function usfmFragmentToUsjContent(
           atChapterRootScope = false;
           break;
         }
-        if (tableEligible && tableRow) {
-          const cellMatch = TABLE_CELL_MARKER_REGEX.exec(token.marker);
-          // A name outside what ParatextData recognizes as a cell (see
-          // isRecognizedTableCell) is an unknown marker that ENDS the table (and the next
-          // `\tr` starts a fresh one).
-          if (cellMatch && isRecognizedTableCell(cellMatch)) {
-            pushTableCell(tableRow, token.marker, cellMatch);
-            break;
-          }
-        }
+        // A name outside what ParatextData recognizes as a cell (see isRecognizedTableCell) is an
+        // unknown marker that ENDS the table (and the next `\tr` starts a fresh one).
+        if (tableEligible && tryOpenTableCell(token.marker)) break;
         // Any other paragraph-kind token (esb/esbe included) ends an open table; the token
         // itself then processes normally. A cell marker with NO open row is not table
         // content — it stays an unknown paragraph, exactly as ParatextData splits it out.
@@ -1691,24 +1693,11 @@ export function usfmFragmentToUsjContent(
         // Guarded on an open row — only `\tr` opens one — so a char span that merely shares a
         // cell marker's name outside a table keeps its ordinary resolution, and a NESTED span
         // (`\+tc1`) is never a cell.
-        if (!note && !isNoteContext && tableRow && !token.isNested) {
-          const cellMatch = TABLE_CELL_MARKER_REGEX.exec(token.marker);
-          if (cellMatch && isRecognizedTableCell(cellMatch)) {
-            pushTableCell(tableRow, token.marker, cellMatch);
-            break;
-          }
-        }
+        if (!note && !isNoteContext && !token.isNested && tryOpenTableCell(token.marker)) break;
         // A new non-nested char marker auto-closes open char styles (PT9) — but never
         // across an open note's boundary: the frames enclosing the note stay open.
-        if (!token.isNested) {
-          const base = note ? noteBaseDepth : 0;
-          markImplicitlyClosed(base);
-          charStack.length = base;
-        }
-        const target = container();
-        const object: MarkerObject = { type: "char", marker: token.marker, content: [] };
-        target.push(object);
-        charStack.push({ object });
+        if (!token.isNested) truncateCharStack(note ? noteBaseDepth : 0);
+        const object = openCharFrame(token.marker);
         if (isNoteContext && tokenIndex === 0 && token.marker === NOTE_CATEGORY_MARKER)
           noteCategorySpan = object;
         break;
@@ -1719,10 +1708,10 @@ export function usfmFragmentToUsjContent(
         // reach across the note boundary and close an enclosing span from within the note.
         const searchBase = note ? noteBaseDepth : 0;
         const frameIndex = charStack.findLastIndex(
-          (frame, index) => index >= searchBase && frame.object.marker === marker,
+          (frame, index) => index >= searchBase && frame.marker === marker,
         );
         if (frameIndex >= 0) {
-          extractAttributes(charStack[frameIndex].object, attributeNbspSpelling);
+          extractAttributes(charStack[frameIndex], attributeNbspSpelling);
           // Nested spans above the explicitly-closed frame are closed IMPLICITLY by it.
           markImplicitlyClosed(frameIndex + 1);
           charStack.length = frameIndex;
@@ -1739,8 +1728,7 @@ export function usfmFragmentToUsjContent(
           // with the existing `.invalid` styling that serializes back to the same text. Closing
           // the open frames first keeps the following text in the paragraph/note instead of
           // swallowing it into a span PT9 has already terminated.
-          markImplicitlyClosed(searchBase);
-          charStack.length = searchBase;
+          truncateCharStack(searchBase);
           pushContent({ type: "unmatched", marker: `${token.marker}*` });
         }
         break;
@@ -1767,15 +1755,9 @@ export function usfmFragmentToUsjContent(
     // the paragraph ended with plain-text content. A char-shaped capture never saw its
     // closer, so it stays a standalone (implicitly closed) span.
     if (attrCapture.shape === "para") {
-      const cpValue = attrCapture.value.replace(/[\s\u200B]+$/, "");
       // Empty `\cp` at fragment end stays a first-class empty para (never an empty pubnumber);
       // a non-empty one folds as the pubnumber.
-      if (cpValue === "") startParagraph(attrCapture.marker);
-      else
-        Object.assign(attrCapture.target, {
-          [attrCapture.attrName]: toAttributeValue(cpValue),
-        });
-      attrCapture = undefined;
+      finishParaCapture();
     } else {
       // Trailing line break at the fragment-end boundary is structural (text-case rule).
       if (attrCapture.value.endsWith("\n")) attrCapture.value = attrCapture.value.slice(0, -1);

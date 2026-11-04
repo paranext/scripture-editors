@@ -707,7 +707,7 @@ describe("a comment mark that the settle leaves on display bytes alone", () => {
         const selection = $createRangeSelection();
         selection.anchor.set(text.getKey(), start, "text");
         selection.focus.set(text.getKey(), start + '|lemma="'.length, "text");
-        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1", undefined, onRemove);
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1", { onRemove });
         $textContaining("depart here").select(1, 1);
       });
       await Promise.resolve();

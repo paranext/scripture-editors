@@ -20,18 +20,11 @@ import {
   $isDisplayAnnotationCarrier,
   $isElementOwnerRunAnchor,
   $registerDisplayAnnotation,
+  DisplayAnnotationCallbacks,
 } from "./displayAnnotations.utils.js";
 import { $isImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
 import { $isMarkerNode } from "./MarkerNode.js";
-import {
-  $createTypedMarkNode,
-  $isTypedMarkNode,
-  COMMENT_MARK_TYPE,
-  TypedMarkOnClick,
-  TypedMarkOnMouseEnter,
-  TypedMarkOnMouseLeave,
-  TypedMarkOnRemove,
-} from "./TypedMarkNode.js";
+import { $createTypedMarkNode, $isTypedMarkNode, COMMENT_MARK_TYPE } from "./TypedMarkNode.js";
 import type { ElementNode, LexicalNode, NodeKey, PointType, RangeSelection } from "lexical";
 import { $addUpdateTag, $isElementNode, $isTextNode } from "lexical";
 
@@ -198,12 +191,12 @@ export function $wrapSelectionInTypedMarkNode(
   selection: RangeSelection,
   type: string,
   id: string,
-  onClick?: TypedMarkOnClick,
-  onRemove?: TypedMarkOnRemove,
-  onMouseEnter?: TypedMarkOnMouseEnter,
-  onMouseLeave?: TypedMarkOnMouseLeave,
+  callbacks: DisplayAnnotationCallbacks = {},
   options: TypedMarkWrapOptions = {},
 ): void {
+  // Taken apart here so a caller's object carrying other fields (a carried annotation's own
+  // `type`/`id`) registers only these four callbacks below.
+  const { onClick, onRemove, onMouseEnter, onMouseLeave } = callbacks;
   // A collapsed range names no byte, so it holds nothing — not even the node beside it.
   if (selection.isCollapsed()) return;
   const nodes = selection.getNodes();

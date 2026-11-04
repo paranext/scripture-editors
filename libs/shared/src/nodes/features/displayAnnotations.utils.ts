@@ -7,7 +7,6 @@
  * (`attributeDisplay.utils.ts`), which itself imports `TypedMarkNode.ts`.
  */
 
-import { textTypeState } from "../collab/delta.state.js";
 import { $chapterGlyphTextNode, $noteEditableCallerNode } from "../usj/attributeDisplay.utils.js";
 import { $isChapterNode } from "../usj/ChapterNode.js";
 import { ImmutableChapterNode } from "../usj/ImmutableChapterNode.js";
@@ -16,7 +15,7 @@ import {
   IMMUTABLE_VERSE_NODE_TYPE,
   ZWSP,
 } from "../usj/node-constants.js";
-import { $isMarkerTrailingSeparator } from "../usj/node.utils.js";
+import { $isAttributeDisplayRun, $isMarkerTrailingSeparator } from "../usj/node.utils.js";
 import { $isNoteNode } from "../usj/NoteNode.js";
 import { $isVerseNode, VerseNode } from "../usj/VerseNode.js";
 import {
@@ -35,9 +34,12 @@ import type {
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
 } from "./TypedMarkNode.js";
-import { $isTypedMarkNode } from "./TypedMarkNode.js";
+import { $isTypedMarkNode, typedMarkIdKey } from "./TypedMarkNode.js";
 import type { Klass, LexicalEditor, LexicalNode } from "lexical";
 import { $getEditor, $getState, $isDecoratorNode, $isTextNode, $setState, TextNode } from "lexical";
+
+// Defined beside `$isMarkerTrailingSeparator`; re-exported for this module's importers.
+export { $isAttributeDisplayRun };
 
 /** Decorators whose DOM is their display bytes, annotated as a whole node. */
 const DISPLAY_ANNOTATION_DECORATOR_TYPES: ReadonlySet<string> = new Set([
@@ -47,12 +49,6 @@ const DISPLAY_ANNOTATION_DECORATOR_TYPES: ReadonlySet<string> = new Set([
   // A chapter in the views without editable markers: the same whole-node treatment as a verse.
   ImmutableChapterNode.getType(),
 ]);
-
-/** Whether `node` is the text of an attribute display run — engine-owned display bytes, never
- * annotated content. */
-export function $isAttributeDisplayRun(node: LexicalNode): boolean {
-  return $isTextNode(node) && $getState(node, textTypeState) === "attribute";
-}
 
 /**
  * Whether `node` is the text an element owner's attribute display run is anchored after: a note's
@@ -377,12 +373,6 @@ export type DisplayAnnotationRegistration = DisplayAnnotationCallbacks;
 
 const registrations = new WeakMap<LexicalEditor, Map<string, DisplayAnnotationRegistration>>();
 
-/** A type or id may itself contain the NUL character a delimiter join would use, so the key is
- * JSON, not a joined string. */
-function registrationKey(type: string, id: string): string {
-  return JSON.stringify([type, id]);
-}
-
 /**
  * Record `type`/`id` for the active editor: callbacks given here replace the ones held. Call
  * inside an update or read of the editor.
@@ -398,7 +388,7 @@ export function $registerDisplayAnnotation(
     byKey = new Map();
     registrations.set(editor, byKey);
   }
-  const key = registrationKey(type, id);
+  const key = typedMarkIdKey(type, id);
   const previous = byKey.get(key);
   const defined = Object.fromEntries(
     Object.entries(callbacks).filter(([, callback]) => callback !== undefined),
@@ -411,7 +401,7 @@ export function getDisplayAnnotationRegistration(
   type: string,
   id: string,
 ): DisplayAnnotationRegistration | undefined {
-  return registrations.get(editor)?.get(registrationKey(type, id));
+  return registrations.get(editor)?.get(typedMarkIdKey(type, id));
 }
 
 export function deleteDisplayAnnotationRegistration(
@@ -419,7 +409,7 @@ export function deleteDisplayAnnotationRegistration(
   type: string,
   id: string,
 ): void {
-  registrations.get(editor)?.delete(registrationKey(type, id));
+  registrations.get(editor)?.delete(typedMarkIdKey(type, id));
 }
 
 /**

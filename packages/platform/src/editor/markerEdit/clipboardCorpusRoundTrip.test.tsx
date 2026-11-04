@@ -138,9 +138,9 @@ function chapterHeaderSkeletonUsj(usj: Usj): Usj {
  *   not a bug: isolated with a minimal non-corpus repro, pasting the literal text `"\p  X"`
  *   (marker, its own required separator, and a SECOND, real content-leading space) into a fresh
  *   empty `"\p"` host produces `"\p X"` — one space, not two. The mechanism is
- *   `consumeSeparator()` (`usfmFragmentToUsj.ts`), whose own comment says exactly this: "Consume
- *   the separator whitespace after an opening marker (PT9 skips it) — all leading whitespace, not
- *   just a single space." That mirrors Paratext 9's own `NormalizeUsfm` re-tokenization pass
+ *   `skipSeparatorSpace()` (`usfmFragmentToUsj.ts`), which skips every separator whitespace
+ *   character after an opening marker; its own comment says exactly this: "PT9 skips all of it
+ *   after an opening marker, not just a single space." That mirrors Paratext 9's own `NormalizeUsfm` re-tokenization pass
  *   (documented above under "Paratext 9 Reference Behavior": "whitespace collapse, newlines
  *   inserted before paragraph/verse markers"), which likewise collapses a whitespace run after a
  *   marker during paste's reformat pipeline — P10 doing the same is parity, not a divergence.
@@ -270,7 +270,7 @@ describe("corpus copy/paste round trip (Standard view)", () => {
 
   it(`${ACCEPTED_DIVERGENCE_FIXTURE}: the paragraph-leading space is collapsed, matching Paratext 9`, async () => {
     // ACCEPTED normalization, not a bug — and therefore pinned to the shape it actually produces
-    // rather than skipped. `consumeSeparator()` (usfmFragmentToUsj.ts) eats the whole whitespace
+    // rather than skipped. `skipSeparatorSpace()` (usfmFragmentToUsj.ts) eats the whole whitespace
     // run after an opening marker, which is what P9's own `NormalizeUsfm` reformat pass does to a
     // pasted `\p  X`. Asserting the collapsed shape is what keeps the parity claim honest: a
     // regression that started KEEPING the space, or that ate a non-leading one too, fails here.

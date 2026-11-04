@@ -337,7 +337,7 @@ describe("$wrapSelectionInTypedMarkNode() covers exactly the bytes the range nam
         const selection = $createRangeSelection();
         selection.anchor.set(root.getKey(), 0, "element");
         selection.focus.set(root.getKey(), 0, "element");
-        $wrapSelectionInTypedMarkNode(selection, testType1, testID1, undefined, vi.fn());
+        $wrapSelectionInTypedMarkNode(selection, testType1, testID1, { onRemove: vi.fn() });
       },
       { discrete: true },
     );
@@ -373,10 +373,7 @@ describe("$wrapSelectionInTypedMarkNode() covers exactly the bytes the range nam
           selection,
           testType1,
           testID1,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
+          {},
           typeof options === "function" ? options(decorator) : options,
         );
       },
@@ -453,7 +450,7 @@ describe("$wrapSelectionInTypedMarkNode() covers exactly the bytes the range nam
         const selection = $createRangeSelection();
         selection.anchor.set(para.getKey(), 1, "element");
         selection.focus.set(para.getKey(), 2, "element");
-        $wrapSelectionInTypedMarkNode(selection, testType1, testID1, onClick, onRemove);
+        $wrapSelectionInTypedMarkNode(selection, testType1, testID1, { onClick, onRemove });
       },
       { discrete: true },
     );

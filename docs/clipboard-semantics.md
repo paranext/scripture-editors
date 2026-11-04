@@ -222,10 +222,10 @@ coverage over it.
 4. **Paragraph-leading space swallowed on paste (ACCEPTED normalization — matches Paratext 9, not a
    bug):** isolated with a minimal non-corpus repro: pasting the literal text `"\p  X"` (marker, its
    own required separator, and a SECOND, real content-leading space) into a fresh empty `"\p"` host
-   produces `"\p X"` — one space, not two. The mechanism is `consumeSeparator()`
-   (`usfmFragmentToUsj.ts`), whose own comment states exactly this: "Consume the separator
-   whitespace after an opening marker (PT9 skips it) — all leading whitespace, not just a single
-   space." That mirrors Paratext 9's own `NormalizeUsfm` re-tokenization pass (see "Paratext 9
+   produces `"\p X"` — one space, not two. The mechanism is `skipSeparatorSpace()`
+   (`usfmFragmentToUsj.ts`), which skips every separator whitespace character after an opening
+   marker; its own comment states exactly this: "PT9 skips all of it after an opening marker, not
+   just a single space." That mirrors Paratext 9's own `NormalizeUsfm` re-tokenization pass (see "Paratext 9
    Reference Behavior" above: "whitespace collapse, newlines inserted before paragraph/verse
    markers"), which likewise collapses a whitespace run after a marker during its own paste reformat
    pipeline — P10 doing the same is parity with P9, not a divergence from it. Corpus symptom:

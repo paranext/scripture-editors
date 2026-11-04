@@ -2327,7 +2327,7 @@ describe("removal is reported by what holds the annotation now", () => {
         const selection = $createRangeSelection();
         selection.anchor.set(text.getKey(), start, "text");
         selection.focus.set(text.getKey(), start + name.length, "text");
-        $wrapSelectionInTypedMarkNode(selection, "external-test", "D", undefined, onRemove);
+        $wrapSelectionInTypedMarkNode(selection, "external-test", "D", { onRemove });
       });
       await Promise.resolve();
       await Promise.resolve();
