@@ -467,13 +467,7 @@ function $placeholderIndex(node: TextNode, text: string): number | undefined {
 
 /** Whether the selection is a caret at the very start of `node`. */
 function $isCaretAtStartOf(node: TextNode): boolean {
-  const selection = $getSelection();
-  return (
-    $isRangeSelection(selection) &&
-    selection.isCollapsed() &&
-    selection.anchor.key === node.getKey() &&
-    selection.anchor.offset === 0
-  );
+  return $collapsedCaretOffsetIn(node) === 0;
 }
 
 /** Removes the byte at `index` from `node`. A selection point in `node` keeps its user byte; any

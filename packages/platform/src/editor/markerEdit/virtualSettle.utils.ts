@@ -1330,7 +1330,7 @@ export function $settledChapterScope(
 }
 
 /** A note's own OPENING glyph retyped to a different marker name, and the note it renames. */
-export interface NoteGlyphRename {
+interface NoteGlyphRename {
   glyph: MarkerNode;
   note: NoteNode;
   oldMarker: string;

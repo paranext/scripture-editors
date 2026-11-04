@@ -2441,8 +2441,9 @@ describe("USJ Marker Action Utils", () => {
       updateSelection(editor, noteTextNode, 0, noteTextNode, 4);
 
       // `$getTargetNode` only drops a leaf whose *immediate* parent is a NoteNode, so this deeper
-      // shape reaches the gap filter. It's `$isInsideNote` that refuses it: without that guard the
-      // absent `$getMatchingCharNode` match would read as "uncovered" and wrap the note's text.
+      // shape reaches the gap filter. It's `$isInsideNoteWithinPara` that refuses it: without that
+      // guard the absent `$getMatchingCharNode` match would read as "uncovered" and wrap the note's
+      // text.
       expect(sutExtendCharacterMarker(editor, "bd")).toBe(false);
 
       editor.getEditorState().read(() => {

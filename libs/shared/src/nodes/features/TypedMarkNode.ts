@@ -218,6 +218,22 @@ export function typedMarkIdKey(type: string, id: string): string {
   return JSON.stringify([type, id]);
 }
 
+function isTypeIdPair(value: unknown): value is [string, string] {
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    typeof value[0] === "string" &&
+    typeof value[1] === "string"
+  );
+}
+
+/** The `type`/`id` a {@link typedMarkIdKey} key was built from. */
+export function parseTypedMarkIdKey(key: string): [string, string] {
+  const parsed: unknown = JSON.parse(key);
+  if (!isTypeIdPair(parsed)) throw new Error(`not an annotation index key: ${key}`);
+  return parsed;
+}
+
 /**
  * Stop, or resume, every mark of `editor` reporting the removal of `type`/`id`. A reporter that has
  * already told the host an annotation is gone silences it, so a mark an undo brings back cannot

@@ -18,7 +18,7 @@
  * (settleShared.utils.ts), kept here so this module stays free of editor imports. */
 export const PLACEHOLDER = "￼";
 
-export interface AlignedSegment {
+interface AlignedSegment {
   readonly liveStart: number;
   readonly liveEnd: number;
   readonly settledStart: number;
@@ -42,13 +42,13 @@ export interface ByteAlignment {
 /** Where a settled placeholder's literal sits on the live side, and how its bytes line up with the
  * placeholder's spelling: `inner`'s live offsets count from the literal's first byte, and its
  * settled offsets count into the spelling. */
-export interface SpelledLiteral {
+interface SpelledLiteral {
   readonly liveStart: number;
   readonly liveEnd: number;
   readonly inner: ByteAlignment;
 }
 
-export interface ScopeAlignmentResult {
+interface ScopeAlignmentResult {
   readonly alignment: ByteAlignment;
   /** Keyed by the placeholder's index in the settled bytes. A placeholder past a divergence the
    * alignment cannot explain has no entry. */

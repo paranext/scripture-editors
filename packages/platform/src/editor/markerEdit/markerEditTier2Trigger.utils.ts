@@ -516,9 +516,11 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
       // so the owner — found by `$ownerOfRunPiece`
       // (shared's displayRunOwner.utils.ts), the same walk MarkerEditPlugin's live
       // AttributeRunNode transform delegates to — is what gets pended here, not the wrapper's own
-      // key. Its verse/milestone descriptors' walk-back recognizes this shape directly, and
-      // nothing about it depends on the wrapper actually being destroyed — only on tree position,
-      // which this attached (undo-restored) wrapper still has.
+      // key. Each owning kind's `ownerOf` recognizes this shape directly: the verse and milestone
+      // descriptors look back from the wrapper to the owner in front of it, and the cat and
+      // chapter descriptors take the wrapper's parent, the note or chapter it rides in. Nothing
+      // about it depends on the wrapper actually being destroyed — only on tree position, which
+      // this attached (undo-restored) wrapper still has.
       const owner = $ownerOfRunPiece(node)?.owner;
       if (owner) context.pendingKeys.add(owner.getKey());
       return;

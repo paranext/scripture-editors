@@ -164,6 +164,18 @@ function $coveredCarrierRange(
   return clamped[1] > clamped[0] ? clamped : undefined;
 }
 
+/**
+ * Wrap the bytes `selection` covers in `TypedMarkNode`s carrying `type`/`id`. Display-byte nodes the
+ * range covers are never moved into a mark: one that can carry an annotation holds it on the node
+ * itself (see `$isDisplayAnnotationCarrier`), and separators and attribute-run wrappers hold
+ * nothing. A collapsed range holds nothing.
+ *
+ * Mutating: call inside `editor.update()`. It splits text, inserts marks and tags the update.
+ * `selection` need not be the document selection (a range built with `$createRangeSelection`
+ * works). For `COMMENT_MARK_TYPE`, when the last node the range covers ends up inside a mark, the
+ * document selection is collapsed at that mark's end (its start for a backward range); otherwise
+ * the document selection is left as it was.
+ */
 export function $wrapSelectionInTypedMarkNode(
   selection: RangeSelection,
   type: string,

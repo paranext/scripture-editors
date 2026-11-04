@@ -116,7 +116,7 @@ export function charOwnChildSignatureText(text: string): string {
  * Returned rather than logged, because the two settles report the same guard differently (their own
  * wording, and their own level for `"empty"`).
  */
-export type ExpandedNoteContentFailure = "shape" | "caller" | "empty";
+type ExpandedNoteContentFailure = "shape" | "caller" | "empty";
 
 /** {@link $serializeExpandedNoteContent}'s result: content children, or why there are none. */
 export type ExpandedNoteContentResult =
@@ -289,11 +289,11 @@ export function $serializeNoteClosedAtOwnCloser(
  * Returned rather than logged, so each settle reports the guard in its own wording, exactly as
  * {@link ExpandedNoteContentFailure} is.
  */
-export type BookLineFailure = "shape" | "empty";
+type BookLineFailure = "shape" | "empty";
 
 /** {@link $serializeBookLine}'s result: the line's content children plus the blocks that follow the
  * line, or why there are none. */
-export type BookLineResult =
+type BookLineResult =
   | {
       children: SerializedLexicalNode[];
       followingBlocks: SerializedLexicalNode[];

@@ -1137,7 +1137,7 @@ function $selectsTextInAndOutsideSpanOf(selection: RangeSelection, marker: strin
   let isInSpan = false;
   let isOutsideSpan = false;
   nodes.forEach((node, index) => {
-    if (!$isTextNode(node) || $isMarkerNode(node) || $isInsideNote(node)) return;
+    if (!$isTextNode(node) || $isMarkerNode(node) || $isInsideNoteWithinPara(node)) return;
     const start = index === 0 ? startOffset : 0;
     const end = index === nodes.length - 1 ? endOffset : node.getTextContentSize();
     if (end <= start) return;
@@ -1516,7 +1516,7 @@ function $getMatchingCharNode(node: LexicalNode, marker: string | undefined): Ch
  * @param node - The node to check.
  * @returns `true` if a `NoteNode` encloses `node`.
  */
-function $isInsideNote(node: LexicalNode): boolean {
+function $isInsideNoteWithinPara(node: LexicalNode): boolean {
   // Bounded at the nearest paragraph (`node` itself included): the shared walk matches the
   // boundary alongside the target, so "inside a note" is "the first note-or-paragraph ancestor is
   // a note" — a note ABOVE the enclosing paragraph does not count.
@@ -1997,11 +1997,12 @@ export function $extendCharacterMarkerAtSelection(
 
   // A target is already covered when any ancestor up to the enclosing para carries `marker` — the
   // same walk removal and replacement use to find their target. Note interiors are screened
-  // separately by `$isInsideNote`, because an absent match means "uncovered" here but "do nothing"
-  // there, and `$getTargetNode` only drops note text one level deep. Kept in step with
+  // separately by `$isInsideNoteWithinPara`, because an absent match means "uncovered" here but
+  // "do nothing" there, and `$getTargetNode` only drops note text one level deep. Kept in step with
   // `$hasUncoveredNode`, the read-only pre-flight for this same filter.
   const gapNodes = targetNodes.filter(
-    (targetNode) => !$isInsideNote(targetNode) && !$getMatchingCharNode(targetNode, marker),
+    (targetNode) =>
+      !$isInsideNoteWithinPara(targetNode) && !$getMatchingCharNode(targetNode, marker),
   );
   if (gapNodes.length > 0) {
     $groupAdjacentGapRuns(gapNodes).forEach((run) => $wrapRunInCharNode(run, marker));
@@ -2024,7 +2025,7 @@ export function $extendCharacterMarkerAtSelection(
  * Built on `$getActionableNodes`, which is deliberately no narrower than `$getTargetNode`, so this
  * can only ever be more permissive — it never wrongly refuses an extend that would have happened.
  *
- * Note interiors are excluded up front by `$isInsideNote` rather than by an absent
+ * Note interiors are excluded up front by `$isInsideNoteWithinPara` rather than by an absent
  * `$getMatchingCharNode` match: unlike removal and replacement, extension treats a missing match as
  * "uncovered", so without that guard a note's text would read as something left to cover. Must stay
  * in step with the gap filter in `$extendCharacterMarkerAtSelection`, which screens the same way.
@@ -2035,7 +2036,7 @@ export function $extendCharacterMarkerAtSelection(
  */
 function $hasUncoveredNode(nodes: LexicalNode[], marker: string): boolean {
   return $getActionableNodes(nodes).some(
-    (node) => !$isInsideNote(node) && !$getMatchingCharNode(node, marker),
+    (node) => !$isInsideNoteWithinPara(node) && !$getMatchingCharNode(node, marker),
   );
 }
 

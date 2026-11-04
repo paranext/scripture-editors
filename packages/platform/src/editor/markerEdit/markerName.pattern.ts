@@ -28,7 +28,7 @@
 export const ENGINE_MARKER_NAME_BYTES = String.raw`\w-`;
 
 /** Canonical USFM marker-name byte class CONTENTS (no brackets): lowercase letters and digits. */
-export const CANONICAL_MARKER_NAME_BYTES = "a-z0-9";
+const CANONICAL_MARKER_NAME_BYTES = "a-z0-9";
 
 /**
  * A complete canonical marker NAME: a lowercase letter, then canonical name bytes (`p`, `q1`,

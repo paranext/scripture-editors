@@ -77,6 +77,7 @@ import {
   $hasUnrecoverableAttributes,
   $isCanonicalMarkerNode,
   $noteEditableCallerNode,
+  $noteOpeningGlyphCount,
   $isAttributeRunNode,
   $isBookNode,
   $isBookPrefixGlyph,
@@ -3186,12 +3187,7 @@ function $noteContentNodes(note: NoteNode): LexicalNode[] | undefined {
 
   const children = note.getChildren();
   // Skip the leading opening-marker(s) prefix.
-  let start = 0;
-  while (start < children.length) {
-    const node = children[start];
-    if (!$isMarkerNode(node) || node.getMarkerSyntax() !== "opening") break;
-    start++;
-  }
+  let start = $noteOpeningGlyphCount(children);
   // Skip the caller node (an ImmutableNoteCallerNode, or the expanded editable caller
   // TextNode); anything else in this slot is an unexpected shape, so refuse.
   const callerNode = children[start];

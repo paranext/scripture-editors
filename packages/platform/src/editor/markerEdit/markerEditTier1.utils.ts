@@ -1293,9 +1293,8 @@ function $moveNoteGlyphTailToCaller(glyph: MarkerNode): boolean {
  * start of what follows it — where the caret rests after deleting the caller's last byte.
  */
 function $isCaretAtNoteCaller(callerNode: TextNode): boolean {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const { anchor } = selection;
+  const anchor = $collapsedCaret();
+  if (!anchor) return false;
   if (anchor.key === callerNode.getKey()) return true;
   const next = callerNode.getNextSibling();
   return anchor.offset === 0 && next !== null && anchor.key === next.getKey();
@@ -1431,12 +1430,11 @@ export function $restoreRemovedNoteCaller(note: NoteNode, context: MarkerEditCon
   children[slot - 1].insertAfter(callerNode);
   // A caret left at the glyph's end or the note's boundary there lands at the content's start, so
   // the next keystroke is content rather than caller.
-  const selection = $getSelection();
+  const anchor = $collapsedCaret();
   if (
-    $isRangeSelection(selection) &&
-    selection.isCollapsed() &&
-    (selection.anchor.key === children[slot - 1].getKey() ||
-      (selection.anchor.key === note.getKey() && selection.anchor.offset === slot))
+    anchor &&
+    (anchor.key === children[slot - 1].getKey() ||
+      (anchor.key === note.getKey() && anchor.offset === slot))
   )
     $selectNoteContentStart(note, callerNode);
 }
@@ -1566,9 +1564,9 @@ function $emptyAttributeRunWrappers(node: LexicalNode): AttributeRunNode[] {
  * later. Read-only: call inside a read or update.
  */
 function $caretOnEmptyHuskOf(node: LexicalNode): boolean {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const anchorNode = selection.anchor.getNode();
+  const anchor = $collapsedCaret();
+  if (!anchor) return false;
+  const anchorNode = anchor.getNode();
   return $emptyAttributeRunWrappers(node).some((wrapper) => anchorNode.is(wrapper));
 }
 

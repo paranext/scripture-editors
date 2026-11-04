@@ -95,13 +95,13 @@ export function $hiddenRunAtCaret(
     while (leaf) {
       if ($isUnknownNode(leaf)) inline.push(leaf);
       else if (!$isEmptyText(leaf)) break;
-      leaf = $nextLeaf(leaf, direction, container);
+      leaf = $nextLeafWithin(leaf, direction, container);
     }
     // An expanded note's text runs on into its paragraph's: a delete at the note's edge leaves it.
     if (leaf || !$isNoteNode(container)) break;
     const outer = $caretContainer(container.getParentOrThrow());
     if (!outer) return undefined;
-    leaf = $nextLeaf(container, direction, outer);
+    leaf = $nextLeafWithin(container, direction, outer);
     container = outer;
   }
   if (inline.length > 0) {
@@ -154,7 +154,7 @@ export function $hiddenNodesToParaEdge(
   let leaf = $firstLeafFromCaret(selection, direction, container);
   while (leaf) {
     if ($isUnknownNode(leaf)) found.push(leaf);
-    leaf = $nextLeaf(leaf, direction, container);
+    leaf = $nextLeafWithin(leaf, direction, container);
   }
   return direction === "backward" ? found.reverse() : found;
 }
@@ -263,10 +263,11 @@ function $firstLeafFromCaret(
 ): LexicalNode | undefined {
   const { anchor } = selection;
   const node = anchor.getNode();
-  if (anchor.type === "text" || !$isElementNode(node)) return $nextLeaf(node, direction, container);
+  if (anchor.type === "text" || !$isElementNode(node))
+    return $nextLeafWithin(node, direction, container);
   const child = node.getChildAtIndex(direction === "backward" ? anchor.offset - 1 : anchor.offset);
   if (child) return $resolveLeaf(child, direction, container);
-  return node.is(container) ? undefined : $nextLeaf(node, direction, container);
+  return node.is(container) ? undefined : $nextLeafWithin(node, direction, container);
 }
 
 /**
@@ -310,7 +311,7 @@ function $resolveLeaf(
 }
 
 /** The next leaf after `node` in `direction` within `container`. */
-function $nextLeaf(
+function $nextLeafWithin(
   node: LexicalNode,
   direction: DeleteDirection,
   container: LexicalNode,
@@ -356,7 +357,7 @@ function $outermostUnknown(node: LexicalNode): UnknownNode | undefined {
  * `container` (looking out of a character span `node` starts), or at the boundary when there is none.
  */
 function $selectBefore(node: LexicalNode, container: LexicalNode): void {
-  const previous = $nextLeaf(node, "backward", container);
+  const previous = $nextLeafWithin(node, "backward", container);
   if ($isTextNode(previous) && !previous.isToken())
     previous.select(previous.getTextContentSize(), previous.getTextContentSize());
   else $collapseToElementPoint(node.getParentOrThrow(), node.getIndexWithinParent());
@@ -367,7 +368,7 @@ function $selectBefore(node: LexicalNode, container: LexicalNode): void {
  * `container` (looking out of a character span `node` ends), or at the boundary when there is none.
  */
 function $selectAfter(node: LexicalNode, container: LexicalNode): void {
-  const next = $nextLeaf(node, "forward", container);
+  const next = $nextLeafWithin(node, "forward", container);
   if ($isTextNode(next) && !next.isToken()) next.select(0, 0);
   else $collapseToElementPoint(node.getParentOrThrow(), node.getIndexWithinParent() + 1);
 }
@@ -380,7 +381,7 @@ function $selectAfter(node: LexicalNode, container: LexicalNode): void {
 function $placeCaretAtVisibleEnd(block: ElementNode): void {
   const last = block.getLastChild();
   let leaf = last ? $resolveLeaf(last, "backward", block) : undefined;
-  while ($isUnknownNode(leaf)) leaf = $nextLeaf(leaf, "backward", block);
+  while ($isUnknownNode(leaf)) leaf = $nextLeafWithin(leaf, "backward", block);
   if (!leaf) $collapseToElementPoint(block, 0);
   else if ($isTextNode(leaf)) leaf.select(leaf.getTextContentSize(), leaf.getTextContentSize());
   else $selectAfter(leaf, block);

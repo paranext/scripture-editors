@@ -54,6 +54,7 @@ import {
   clearTypedMarkRemovalSilences,
   forgetTypedMarkCallbacks,
   listenForTypedMarkRemovalReports,
+  parseTypedMarkIdKey,
   setTypedMarkRemovalSilenced,
   takeTypedMarkRemovalReports,
   TypedIDs,
@@ -99,22 +100,6 @@ const CARRIER_KLASSES: Klass<LexicalNode>[] = [
 ];
 
 const EMPTY: ReadonlySet<NodeKey> = new Set();
-
-function isTypeIdPair(value: unknown): value is [string, string] {
-  return (
-    Array.isArray(value) &&
-    value.length === 2 &&
-    typeof value[0] === "string" &&
-    typeof value[1] === "string"
-  );
-}
-
-/** The `type`/`id` a {@link typedMarkIdKey} key was built from. */
-function parseIndexKey(key: string): [string, string] {
-  const parsed: unknown = JSON.parse(key);
-  if (!isTypeIdPair(parsed)) throw new Error(`not an annotation index key: ${key}`);
-  return parsed;
-}
 
 /** Remove `displayAnnotationsState` from `node` and its whole subtree. Mutating. */
 function $stripDisplayAnnotations(node: LexicalNode): void {
@@ -309,7 +294,7 @@ function createIndex(editor: LexicalEditor): {
     const typedIds: TypedIDs = {};
     const states = new Set<string>();
     for (const annotationKey of annotationKeys) {
-      const [type, id] = parseIndexKey(annotationKey);
+      const [type, id] = parseTypedMarkIdKey(annotationKey);
       const ids = (typedIds[type] ??= []);
       if (!ids.includes(id)) ids.push(id);
       stateClasses.get(annotationKey)?.forEach((name) => states.add(name));
@@ -447,7 +432,7 @@ function createIndex(editor: LexicalEditor): {
     for (const [annotationKey, marks] of marksByAnnotation)
       if (marks.size >= 2) candidates.add(annotationKey);
     for (const annotationKey of candidates) {
-      const [type, id] = parseIndexKey(annotationKey);
+      const [type, id] = parseTypedMarkIdKey(annotationKey);
       const next = $paintIntervalsOf(
         type,
         id,
@@ -549,7 +534,7 @@ function createIndex(editor: LexicalEditor): {
         // Re-join the text of every holder of a touched annotation still holding it, so a later
         // loss of the last one reports the full text.
         for (const annotationKey of touched) {
-          const [type, id] = parseIndexKey(annotationKey);
+          const [type, id] = parseTypedMarkIdKey(annotationKey);
           $noteCoveredText(annotationKey, type, id);
         }
       },
@@ -608,7 +593,7 @@ function createIndex(editor: LexicalEditor): {
     clearTypedMarkRemovalSilences(editor);
     for (const annotationKey of new Set([...markOnRemove.keys(), ...coveredText.keys()])) {
       if (holderCount(annotationKey) > 0) continue;
-      const [type, id] = parseIndexKey(annotationKey);
+      const [type, id] = parseTypedMarkIdKey(annotationKey);
       forget(annotationKey, type, id);
     }
   }
@@ -641,7 +626,7 @@ function createIndex(editor: LexicalEditor): {
     const errors: unknown[] = [];
     for (const annotationKey of candidates) {
       if (holderCount(annotationKey) > 0) continue;
-      const [type, id] = parseIndexKey(annotationKey);
+      const [type, id] = parseTypedMarkIdKey(annotationKey);
       const onRemove =
         getDisplayAnnotationRegistration(editor, type, id)?.onRemove ??
         markOnRemove.get(annotationKey);

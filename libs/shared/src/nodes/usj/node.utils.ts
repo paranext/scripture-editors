@@ -556,6 +556,9 @@ export function $getCommonAncestorCompatible(
 
 /**
  * Moves the selection to the end of the current range, accounting for backward selections.
+ *
+ * Mutating: call inside `editor.update()`. Sets `selection`'s own points, so passed the document
+ * selection it moves the caret.
  * @param selection - The range selection to move to the end.
  */
 export function $moveSelectionToEnd(selection: RangeSelection) {
@@ -725,7 +728,7 @@ function $getTextContentExcludingMarkers(node: LexicalNode): string {
   if ($isMarkerNode(node)) return "";
   if ($isVisibleMarkerNode(node)) return "";
   // The attribute display run (textType "attribute") is engine-owned presentation, not content.
-  if ($isTextNode(node) && $getState(node, textTypeState) === "attribute") return "";
+  if ($isAttributeDisplayRun(node)) return "";
 
   // For text nodes, return the text
   if ($isTextNode(node)) return node.getTextContent();

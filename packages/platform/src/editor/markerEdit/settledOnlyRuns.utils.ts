@@ -253,7 +253,7 @@ interface SettledRunFacts {
 
 /** The SETTLED half of a pairing: every preserved run of the settled fragment, described, and the
  * fragment's non-whitespace bytes. */
-export interface SettledRunSide {
+interface SettledRunSide {
   runs: SettledRunFacts[];
   bytes: string;
 }

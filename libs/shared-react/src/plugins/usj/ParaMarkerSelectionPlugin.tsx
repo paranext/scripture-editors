@@ -148,7 +148,8 @@ export function ParaMarkerSelectionPlugin({
     // The last committed marker selection and the paragraphs beside its own, so a selection
     // orphaned by a later update (a remote delete, say) knows where to collapse to.
     let lastSelected: SelectedMarkerKeys | undefined;
-    // Set while a pointer is pressed on the root: the focus that press brings places its own caret.
+    // Set while a primary-button press is held anywhere in the root's document (heard there by
+    // `registerPrimaryPointerPress`): the focus that press brings places its own caret.
     let isPointerPressed = false;
     // The focus handler's deferred pass, cleared when the plugin unmounts.
     let focusTimer: number | undefined;
