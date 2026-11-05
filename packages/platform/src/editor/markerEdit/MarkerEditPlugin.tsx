@@ -12,11 +12,7 @@ import {
   $paraMarkerDeletionTransform,
   $prepareReplaceSelection,
 } from "./markerEditDeletion.utils";
-import {
-  $pasteOnChapterLine,
-  $refuseLineBreakOnChapterLine,
-  $splitOnChapterLine,
-} from "./chapterLine.utils";
+import { $pasteOnChapterLine, $splitOnChapterLine } from "./chapterLine.utils";
 import {
   $adoptDomCaretInExpandedNote,
   $handleEnterInNote,
@@ -72,7 +68,6 @@ import {
   EditorState,
   HISTORIC_TAG,
   HISTORY_MERGE_TAG,
-  INSERT_LINE_BREAK_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
@@ -1360,17 +1355,13 @@ export function MarkerEditPlugin({
         },
         COMMAND_PRIORITY_HIGH,
       ),
-      // A chapter line cannot be split: Enter there starts a `\p` after it and a line break is
-      // refused (see chapterLine.utils.ts). CRITICAL so both run ahead of every split, including
-      // this plugin's own char-stack split below.
+      // A chapter line cannot be split: Enter there starts a `\p` after it (see
+      // chapterLine.utils.ts), and so does a line break, which `LineBreakPlugin` runs as Enter.
+      // CRITICAL so it runs ahead of every split, including this plugin's own char-stack split
+      // below.
       editor.registerCommand(
         INSERT_PARAGRAPH_COMMAND,
         () => $splitOnChapterLine(PARA_MARKER_DEFAULT, context.viewOptions),
-        COMMAND_PRIORITY_CRITICAL,
-      ),
-      editor.registerCommand(
-        INSERT_LINE_BREAK_COMMAND,
-        () => $refuseLineBreakOnChapterLine(),
         COMMAND_PRIORITY_CRITICAL,
       ),
       // A drop inserts through Lexical's clipboard path, which splits at every line break without
