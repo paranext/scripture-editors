@@ -37,7 +37,7 @@ const NOTE = {
   content: [{ type: "char", marker: "ft", content: ["note text"] }],
 } as MarkerObject;
 
-const BOOK = { type: "book", marker: "id", code: "GEN", content: ["Genesis title"] };
+const BOOK = { type: "book", marker: "id", code: "GEN" as const, content: ["Genesis title"] };
 const CHAPTER = { type: "chapter", marker: "c", number: "1" };
 const FIRST = {
   type: "para",
@@ -160,6 +160,15 @@ async function drop({ lexical }: MountedEditor, store: Map<string, string>): Pro
 
 function content({ ref }: MountedEditor): MarkerContent[] {
   return ref.current?.getUsj()?.content ?? [];
+}
+
+/** The text `content` holds, every string in it in document order. */
+function textOf(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map(textOf).join("");
+  return content && typeof content === "object" && "content" in content
+    ? textOf(content.content)
+    : "";
 }
 
 const UNLOCKED: StructureProtectionMode[] = ["off", "guarded"];
@@ -429,6 +438,61 @@ describe.each(CHAPTERS)("Select All in $name", ({ front }) => {
         ]);
       });
 
+      it("pastes over a range holding the chapter line alone after it, keeping it", async () => {
+        await act(async () =>
+          mounted.lexical.update(
+            () => {
+              const selection = $createRangeSelection();
+              selection.anchor.set($getRoot().getKey(), chapterAt, "element");
+              selection.focus.set($getRoot().getKey(), chapterAt + 1, "element");
+              $setSelection(selection);
+            },
+            { discrete: true },
+          ),
+        );
+
+        await pasteFlavors(mounted, new Map([["text/plain", "pasted "]]));
+
+        expect(content(mounted)).toEqual([
+          BOOK,
+          ...front,
+          CHAPTER,
+          { ...FIRST, content: [FIRST.content[0], "pasted first ", ...FIRST.content.slice(2)] },
+          SECOND,
+        ]);
+      });
+
+      it.runIf(front.length > 0)(
+        "cut from the front matter into the Scripture text, pasted back puts each part on its side of the chapter line",
+        async () => {
+          await act(async () =>
+            mounted.lexical.update(
+              () => {
+                const texts = $getRoot().getAllTextNodes();
+                const intro = texts.find((node) => node.getTextContent().startsWith("An intro"));
+                const first = texts.find((node) => node.getTextContent() === "first ");
+                if (!intro || !first) throw new Error("no introduction or first Scripture text");
+                const selection = $createRangeSelection();
+                selection.anchor.set(intro.getKey(), 5, "text");
+                selection.focus.set(first.getKey(), 3, "text");
+                $setSelection(selection);
+              },
+              { discrete: true },
+            ),
+          );
+          const store = await copyOrCut(mounted, CUT_COMMAND);
+
+          await ctrlV(mounted, store);
+
+          const after = content(mounted);
+          const chapterNow = after.findIndex(
+            (item) => typeof item !== "string" && item.type === "chapter",
+          );
+          expect(after.slice(chapterNow)).toEqual([CHAPTER, FIRST, SECOND]);
+          expect(textOf(after.slice(0, chapterNow))).toBe(textOf([BOOK, ...front]));
+        },
+      );
+
       it("pasted over the same Select All, leaves the document as it was", async () => {
         await selectAll(mounted);
         const store = await copyOrCut(mounted, COPY_COMMAND);
@@ -574,6 +638,70 @@ describe.each(["paragraph-structure", "formatted"])(
           mounted.unmount();
         }
       });
+    });
+  },
+);
+
+describe.each(["paragraph-structure", "formatted"])(
+  "a chapter line with another block after it, in the %s view",
+  (viewName) => {
+    const TABLE: MarkerObject = {
+      type: "table",
+      content: [
+        {
+          type: "table:row",
+          marker: "tr",
+          content: [{ type: "table:cell", marker: "tc1", align: "start", content: ["cell"] }],
+        },
+      ],
+    };
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [BOOK, ...FRONT_MATTER, CHAPTER, TABLE],
+    };
+    const chapterAt = 1 + FRONT_MATTER.length;
+
+    describe.each(UNLOCKED)("structure %s", (mode) => {
+      let mounted: MountedEditor;
+      beforeEach(async () => {
+        mounted = await mountInView(usj, editorView(viewName), { structureProtectionMode: mode });
+      });
+      afterEach(() => mounted.unmount());
+
+      // No paragraph follows the chapter line to take the caret, so the paste goes in right after
+      // the chapter line, where it would go were one there.
+      it.each<[string, Map<string, string>, MarkerContent]>([
+        ["plain text", new Map([["text/plain", "pasted"]]), "pasted"],
+        [
+          "html",
+          new Map([["text/html", "<p>pasted</p>"]]),
+          { type: "para", marker: "p", content: ["pasted"] },
+        ],
+      ])(
+        "pastes %s over a range from the book line to the chapter line after the chapter line",
+        async (_flavor, delivered, pasted) => {
+          await act(async () =>
+            mounted.lexical.update(
+              () => {
+                const title = $getRoot()
+                  .getAllTextNodes()
+                  .find((node) => node.getTextContent().includes("Genesis title"));
+                if (!title) throw new Error("no book title text");
+                const selection = $createRangeSelection();
+                selection.anchor.set(title.getKey(), 8, "text");
+                selection.focus.set($getRoot().getKey(), chapterAt + 1, "element");
+                $setSelection(selection);
+              },
+              { discrete: true },
+            ),
+          );
+
+          await pasteFlavors(mounted, delivered);
+
+          expect(content(mounted)).toEqual([BOOK, CHAPTER, pasted, TABLE]);
+        },
+      );
     });
   },
 );
