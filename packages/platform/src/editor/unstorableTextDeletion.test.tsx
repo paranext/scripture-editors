@@ -5,7 +5,7 @@
  * the text the user sees would change on the next load. Standard view saves a `//` as it is typed,
  * so nothing there is refused or reported.
  */
-import { MountedEditor, editorView, mountInView } from "./editorViews.test-helpers";
+import { MountedEditor, editorView, enabledViews, mountInView } from "./editorViews.test-helpers";
 import { installSelectionModify, press } from "./typingFidelityOracle.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -527,25 +527,123 @@ describe("deleting a selected paragraph marker after the editor switches into pa
   });
 });
 
-describe("deleting in Standard view", () => {
+/** Every text node's text run together: marker glyphs and all, in a view that shows markers. */
+function shownText({ lexical }: MountedEditor): string {
+  return lexical.getEditorState().read(() =>
+    $getRoot()
+      .getAllTextNodes()
+      .filter($isTextNode)
+      .map((node) => node.getTextContent())
+      .join(""),
+  );
+}
+
+describe.each(enabledViews(["standard", "visible"]))(
+  "deleting in the %s view, which shows markers",
+  (viewName) => {
+    async function mount(
+      ...paras: MarkerContent[][]
+    ): Promise<{ mounted: MountedEditor; onRemoved: ReturnType<typeof vi.fn> }> {
+      const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+      const mounted = await mountInView(usjWith(...paras), editorView(viewName), {
+        onUnstorableTextRemoved: onRemoved,
+      });
+      return { mounted, onRemoved };
+    }
+
+    it.each([
+      ["Backspace", 3],
+      ["Delete", 2],
+    ])("%s joins two `/` as asked, telling no one", async (key, offset) => {
+      const { mounted, onRemoved } = await mount(["a/b/c"]);
+      await select(mounted, { text: "a/b/c", offset });
+
+      await press(mounted, key);
+
+      expect(shownText(mounted)).toContain("a//c");
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["backward", true, 3],
+      ["forward", false, 2],
+    ])(
+      "a %s delete that arrives without a keydown joins two `/`, telling no one",
+      async (_, isBackward, offset) => {
+        const { mounted, onRemoved } = await mount(["a/b/c"]);
+        await select(mounted, { text: "a/b/c", offset });
+
+        await dispatch(mounted.lexical, (editor) =>
+          editor.dispatchCommand(DELETE_CHARACTER_COMMAND, isBackward),
+        );
+
+        expect(shownText(mounted)).toContain("a//c");
+        expect(onRemoved).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      ["word", DELETE_WORD_COMMAND],
+      ["line", DELETE_LINE_COMMAND],
+    ])("a %s delete joins two `/`, telling no one", async (_, command) => {
+      const { mounted, onRemoved } = await mount(["x/ab/y"]);
+      const restore = stubWordAndLineExtent(mounted.lexical, 2);
+      try {
+        await select(mounted, { text: "x/ab/y", offset: 4 });
+
+        await dispatch(mounted.lexical, (editor) => editor.dispatchCommand(command, true));
+
+        expect(shownText(mounted)).toContain("x//y");
+        expect(onRemoved).not.toHaveBeenCalled();
+      } finally {
+        restore();
+      }
+    });
+
+    it("a cut joins two `/`, telling no one", async () => {
+      const { mounted, onRemoved } = await mount(["a/bc/d"]);
+      await select(mounted, { text: "a/bc/d", offset: 2 }, { text: "a/bc/d", offset: 4 });
+
+      const clipboard = await cut(mounted);
+
+      expect(shownText(mounted)).toContain("a//d");
+      expect(clipboard.get("text/plain")).toBe("bc");
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+
+    it("the removal half of a drag-move joins two `/`, telling no one", async () => {
+      const { mounted, onRemoved } = await mount(["a/bc/d"]);
+      await select(mounted, { text: "a/bc/d", offset: 2 }, { text: "a/bc/d", offset: 4 });
+
+      await dispatch(mounted.lexical, (editor) =>
+        editor.dispatchCommand(
+          REMOVE_TEXT_COMMAND,
+          new InputEvent("beforeinput", { inputType: "deleteByDrag", cancelable: true }),
+        ),
+      );
+
+      expect(shownText(mounted)).toContain("a//d");
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+  },
+);
+
+describe("deleting after the editor switches from paragraph-structure into Standard view", () => {
   it("joins two `/` as asked, telling no one", async () => {
     const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
-    const mounted = await mountInView(usjWith(["a/b/c"]), editorView("standard"), {
+    const mounted = await mountInView(usjWith(["a/b/c"]), editorView("paragraph-structure"), {
       onUnstorableTextRemoved: onRemoved,
     });
-    await select(mounted, { text: "a/b/c", offset: 3 });
+    try {
+      await mounted.rerenderWithView(editorView("standard"));
+      await select(mounted, { text: "a/b/c", offset: 3 });
 
-    await press(mounted, "Backspace");
+      await press(mounted, "Backspace");
 
-    expect(
-      mounted.lexical.getEditorState().read(() =>
-        $getRoot()
-          .getAllTextNodes()
-          .filter($isTextNode)
-          .map((node) => node.getTextContent())
-          .join(""),
-      ),
-    ).toContain("a//c");
-    expect(onRemoved).not.toHaveBeenCalled();
+      expect(shownText(mounted)).toContain("a//c");
+      expect(onRemoved).not.toHaveBeenCalled();
+    } finally {
+      mounted.unmount();
+    }
   });
 });

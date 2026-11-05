@@ -4,7 +4,7 @@
  * reported to the host once through `onUnstorableTextRemoved`. Standard view stores a typed `\` as
  * the start of a marker, so nothing there is refused or reported.
  */
-import { MountedEditor, editorView, mountInView } from "./editorViews.test-helpers";
+import { MountedEditor, editorView, enabledViews, mountInView } from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -440,7 +440,7 @@ describe.each(["paragraph-structure", "formatted"])("transposing in %s view", (v
   });
 });
 
-describe.each(["standard", "visible"])("transposing in the %s view", (viewName) => {
+describe.each(enabledViews(["standard", "visible"]))("transposing in the %s view", (viewName) => {
   it("lets a transpose that makes `//` through, telling no one", async () => {
     const { mounted, onRemoved } = await mount(viewName, "/x/", 2);
 
@@ -451,15 +451,106 @@ describe.each(["standard", "visible"])("transposing in the %s view", (viewName) 
   });
 });
 
-describe("typing into Standard view", () => {
-  it("lets a typed `\\` reach the marker-edit engine, telling no one", async () => {
-    const { mounted, onRemoved } = await mount("standard", "ab", 1);
+/** Every text node's text run together: marker glyphs and all, in a view that shows markers. */
+function shownText({ lexical }: MountedEditor): string {
+  return lexical.getEditorState().read(() =>
+    $getRoot()
+      .getAllTextNodes()
+      .filter($isTextNode)
+      .map((node) => node.getTextContent())
+      .join(""),
+  );
+}
 
-    expect(await type(mounted, "\\")).toBe(false);
+/**
+ * The views that show markers. The Markers view's `CommandMenuPlugin` refuses every `\\` and `/`
+ * keystroke itself, silently; Standard view types them.
+ */
+const VIEWS_SHOWING_MARKERS = enabledViews([
+  { name: "standard", isKeystrokeRefused: false },
+  { name: "visible", isKeystrokeRefused: true },
+]);
 
-    expect(mounted.lexical.getEditorState().read(() => $getRoot().getTextContent())).toContain(
-      "a\\b",
+describe.each(VIEWS_SHOWING_MARKERS)(
+  "typing into the $name view, which shows markers",
+  ({ name: viewName, isKeystrokeRefused }) => {
+    it("leaves a `\\` to the view, telling no one", async () => {
+      const { mounted, onRemoved } = await mount(viewName, "ab", 1);
+
+      expect(await type(mounted, "\\")).toBe(isKeystrokeRefused);
+
+      expect(shownText(mounted)).toContain(isKeystrokeRefused ? "ab" : "a\\b");
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+
+    it("leaves a `/` beside a `/` to the view, telling no one", async () => {
+      const { mounted, onRemoved } = await mount(viewName, "a/b", 2);
+
+      expect(await type(mounted, "/")).toBe(isKeystrokeRefused);
+
+      expect(shownText(mounted)).toContain(isKeystrokeRefused ? "a/b" : "a//b");
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+
+    it.each(["\\", "/"])(
+      "lets a `%s` that arrives with no keydown through, telling no one",
+      async (data) => {
+        const { mounted, onRemoved } = await mount(viewName, "a/b", 2);
+
+        const beforeInput = await inputWithoutKeydown(mounted, data);
+
+        expect(beforeInput.defaultPrevented).toBe(false);
+        expect(onRemoved).not.toHaveBeenCalled();
+      },
     );
-    expect(onRemoved).not.toHaveBeenCalled();
+
+    it.each<[string, string | InputEvent]>([
+      ["typed text Lexical inserts itself", "x//y"],
+      [
+        "a replacement",
+        new InputEvent("beforeinput", { inputType: "insertReplacementText", data: "x//y" }),
+      ],
+      ["a yank", new InputEvent("beforeinput", { inputType: "insertFromYank", data: "x//y" })],
+    ])("puts in %s with its `//`, telling no one", async (_, payload) => {
+      const { mounted, onRemoved } = await mount(viewName, "ab", 1);
+
+      await act(async () => {
+        mounted.lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, payload);
+      });
+
+      expect(shownText(mounted)).toContain("ax//yb");
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+  },
+);
+
+describe("typing after the editor switches from paragraph-structure into Standard view", () => {
+  it("lets a typed `\\` reach the marker-edit engine, telling no one", async () => {
+    const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+    const mounted = await mountInView(usjWith("ab"), editorView("paragraph-structure"), {
+      onUnstorableTextRemoved: onRemoved,
+    });
+    try {
+      await mounted.rerenderWithView(editorView("standard"));
+      await act(async () =>
+        mounted.lexical.update(
+          () => {
+            const node = $getRoot()
+              .getAllTextNodes()
+              .find((text) => text.getType() === "text" && text.getTextContent() === "ab");
+            if (!node) throw new Error("verse text not found");
+            node.select(1, 1);
+          },
+          { discrete: true },
+        ),
+      );
+
+      expect(await type(mounted, "\\")).toBe(false);
+
+      expect(shownText(mounted)).toContain("a\\b");
+      expect(onRemoved).not.toHaveBeenCalled();
+    } finally {
+      mounted.unmount();
+    }
   });
 });
