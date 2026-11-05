@@ -7,6 +7,7 @@ import {
   NODE_COPY_HTML_ATTRIBUTE,
   nodeCopyIn,
   pasteSelection,
+  pasteSelectionAsPlainText,
   removeMarkerTokens,
   withoutMarkerTokens,
   withoutNodeCopy,
@@ -354,5 +355,159 @@ describe("html marked as a marker-showing view's text", () => {
     const transfer = data(`<p>${MARKER_TEXT_HTML_ATTRIBUTE} \\ft x</p>`, "\\ft x");
 
     expect(withoutMarkerTokens(transfer)).toBe(transfer);
+  });
+});
+
+describe("pasting what the clipboard read gives", () => {
+  /** A clipboard read that gives `flavors` as its one item, or no item at all when undefined. */
+  function clipboardHolding(flavors: { [type: string]: string } | undefined) {
+    return {
+      read: vi.fn(() =>
+        Promise.resolve(
+          flavors
+            ? [
+                {
+                  types: Object.keys(flavors),
+                  getType: (type: string) => Promise.resolve(new Blob([flavors[type]])),
+                },
+              ]
+            : [],
+        ),
+      ),
+      readText: vi.fn(() => Promise.resolve(flavors?.["text/plain"] ?? "")),
+    };
+  }
+
+  /** Rejections nothing handled, collected while a test runs. */
+  let unhandled: unknown[];
+  const collectUnhandled = (reason: unknown) => unhandled.push(reason);
+  beforeEach(() => {
+    unhandled = [];
+    process.on("unhandledRejection", collectUnhandled);
+  });
+
+  /** An editor whose dispatched pastes are recorded rather than run, and a logger. */
+  function setUp(clipboard: object) {
+    vi.stubGlobal("navigator", {
+      clipboard,
+      permissions: { query: () => Promise.resolve({ state: "granted" }) },
+    });
+    // jsdom has neither of these: all the read does with them is hand the flavors to the command.
+    vi.stubGlobal(
+      "DataTransfer",
+      class {
+        data = new Map<string, string>();
+        setData(type: string, value: string) {
+          this.data.set(type, value);
+        }
+        getData(type: string) {
+          return this.data.get(type) ?? "";
+        }
+      },
+    );
+    vi.stubGlobal(
+      "ClipboardEvent",
+      class {
+        clipboardData: DataTransfer;
+        constructor(_type: string, init: { clipboardData: DataTransfer }) {
+          this.clipboardData = init.clipboardData;
+        }
+      },
+    );
+    const editor = createEditor({
+      onError: (error) => {
+        throw error;
+      },
+    });
+    const pasted: DataTransfer[] = [];
+    vi.spyOn(editor, "dispatchCommand").mockImplementation((command, payload) => {
+      if (command === PASTE_COMMAND)
+        pasted.push((payload as ClipboardEvent).clipboardData as DataTransfer);
+      return true;
+    });
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    return { editor, pasted, logger };
+  }
+
+  /** Lets a paste's clipboard read, and what follows it, finish. */
+  async function settled(): Promise<void> {
+    for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  afterEach(() => {
+    process.off("unhandledRejection", collectUnhandled);
+    expect(unhandled).toEqual([]);
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  describe.each([
+    ["pasteSelection", pasteSelection, "text/html"],
+    ["pasteSelectionAsPlainText", pasteSelectionAsPlainText, "text/plain"],
+  ] as const)("%s", (_name, paste, readType) => {
+    it("pastes what the clipboard holds", async () => {
+      const { editor, pasted, logger } = setUp(
+        clipboardHolding({ "text/html": "<b>a\tb</b>", "text/plain": "a\tb" }),
+      );
+
+      paste(editor, logger);
+      await settled();
+
+      expect(pasted).toHaveLength(1);
+      expect(pasted[0].getData(readType)).toBe(readType === "text/html" ? "<b>a b</b>" : "a b");
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it("logs a clipboard read that fails, and pastes nothing", async () => {
+      const refused = new DOMException("Read permission denied.", "NotAllowedError");
+      const { editor, pasted, logger } = setUp({
+        read: vi.fn(() => Promise.reject(refused)),
+        readText: vi.fn(() => Promise.reject(refused)),
+      });
+
+      paste(editor, logger);
+      await settled();
+
+      expect(pasted).toHaveLength(0);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(String(logger.warn.mock.calls[0][0])).toContain("NotAllowedError");
+    });
+
+    it("logs a failed read to the console when it is given no logger", async () => {
+      const { editor, pasted } = setUp({
+        read: vi.fn(() => Promise.reject(new Error("no clipboard"))),
+        readText: vi.fn(() => Promise.reject(new Error("no clipboard"))),
+      });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      paste(editor);
+      await settled();
+
+      expect(pasted).toHaveLength(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it("pastes nothing from an empty clipboard, and logs nothing", async () => {
+      const { editor, pasted, logger } = setUp(clipboardHolding(undefined));
+
+      paste(editor, logger);
+      await settled();
+
+      expect(pasted).toHaveLength(0);
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it("pastes nothing when the editor turned read-only during the read", async () => {
+      const { editor, pasted, logger } = setUp(
+        clipboardHolding({ "text/html": "<b>a</b>", "text/plain": "a" }),
+      );
+
+      paste(editor, logger);
+      editor.setEditable(false);
+      await settled();
+
+      expect(pasted).toHaveLength(0);
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
   });
 });
