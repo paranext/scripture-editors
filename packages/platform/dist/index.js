@@ -8748,8 +8748,8 @@ const rN = [
   // display runs as AttributeRunNode wrappers, and this package's own self-healing sync
   // (displayRunSync.utils.ts's shared $syncDisplayRun driver, parameterized by each kind's own
   // descriptor) constructs one whenever it heals a run forward from a loose or missing shape —
-  // every USJ-shaped editor needs the class registered, not only shared-react's (a non-react host,
-  // e.g. packages/scribe's NoteEditor, builds its editor straight from usjBaseNodes with no
+  // every USJ-shaped editor needs the class registered, not only shared-react's (this package's
+  // own createBasicTestEnvironment builds its editor straight from usjBaseNodes with no
   // react-specific node list).
   Zr,
   {
