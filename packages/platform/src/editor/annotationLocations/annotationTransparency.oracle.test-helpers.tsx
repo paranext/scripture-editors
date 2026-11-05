@@ -115,6 +115,7 @@ import {
 import {
   $carrierHoldableRange,
   $isDisplayAnnotationCarrier,
+  $isGutterMarkerNode,
   $isMarkerTrailingSeparator,
   $isNoteNode,
   $isTypedMarkNode,
@@ -1225,18 +1226,19 @@ function $isHiddenByCollapsedNote(node: LexicalNode): boolean {
 /**
  * Where the edge classes disagree with what each annotation paints, read from the DOM: an
  * annotation's first painted element (by document order, leaving out one inside another of its
- * elements and one a collapsed note hides) must carry the editor theme's start class for its type
- * and its last the end class, and no other element may carry either unless it is some
- * annotation's first or last.
+ * elements, one a collapsed note hides, and a paragraph's gutter glyph, drawn in the gutter away
+ * from the annotation's box) must carry the editor theme's start class for its type and its last
+ * the end class, and no other element may carry either unless it is some annotation's first or
+ * last.
  */
 function edgeFailures(mounted: MountedInView, ids: Iterable<string>): string[] {
   const root = mounted.lexical.getRootElement();
   if (!root) return [];
-  const isShown = (element: Element) =>
+  const isInBox = (element: Element) =>
     mounted.lexical.getEditorState().read(
       () => {
         const node = $getNearestNodeFromDOMNode(element);
-        return !node || !$isHiddenByCollapsedNote(node);
+        return !node || (!$isHiddenByCollapsedNote(node) && !$isGutterMarkerNode(node));
       },
       { editor: mounted.lexical },
     );
@@ -1246,7 +1248,7 @@ function edgeFailures(mounted: MountedInView, ids: Iterable<string>): string[] {
   const starts = new Set<Element>();
   const ends = new Set<Element>();
   for (const id of ids) {
-    const elements = [...root.getElementsByClassName(`annotationId-${id}`)].filter(isShown);
+    const elements = [...root.getElementsByClassName(`annotationId-${id}`)].filter(isInBox);
     const outermost = elements.filter(
       (element) => !elements.some((other) => other !== element && other.contains(element)),
     );

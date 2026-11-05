@@ -38,6 +38,7 @@ import {
 import {
   $addDisplayAnnotation,
   $createCharNode,
+  $createGutterMarkerNode,
   $createVerseNode,
   getVisibleOpenMarkerText,
   $isPieceContinuation,
@@ -1763,6 +1764,26 @@ describe("the first and last element an annotation paints", () => {
     );
     wrapRange(editor, [first, 7], [last, 3], "a");
     expect(edges(editor)).toEqual({ starts: ["beginning"], ends: ["was"] });
+  });
+
+  it("puts no edge on a paragraph's gutter glyph, which is drawn beside the text", () => {
+    const editor = setupEdges();
+    let first!: TextNode;
+    let last!: TextNode;
+    editor.update(
+      () => {
+        first = $createTextNode("In the beginning");
+        last = $createTextNode("was the Word");
+        $getRoot().append(
+          $createParaNode().append($createGutterMarkerNode(`\\p${NBSP}`), first),
+          $createParaNode().append($createGutterMarkerNode(`\\p${NBSP}`), last),
+        );
+      },
+      { discrete: true },
+    );
+    // From the end of the first paragraph into the second, across the second's `\p` glyph.
+    wrapRange(editor, [first, 16], [last, 3], "a");
+    expect(edges(editor)).toEqual({ starts: ["was"], ends: ["was"] });
   });
 
   it("gives each of two overlapping annotations of one type its own edges", () => {
