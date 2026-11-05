@@ -402,6 +402,13 @@ refused. The public surface grew substantially; nothing was removed.
   loses its marker tokens first (`1 TR and `), with no `onUnstorableTextRemoved` report for them. A
   verse's number, a note's caller and an attribute list stay as text. A paste with neither
   (another program's) is unchanged, as are Standard and Markers views.
+- **Plain text of several lines pasted into a line with no paragraph marker keeps its line
+  breaks** in the views that hide markers. Pasted or dropped into the blank line after a chapter
+  line that nothing follows (or into text that USFM holds with no marker), `one` and `two` on two
+  lines saved as `onetwo`. Under `"off"` and `"guarded"` structure the first line now stays where it
+  was pasted and each line after it starts a `\p` paragraph, as a paste's line breaks start
+  paragraphs anywhere else; under `"protected"` structure the lines join with one space, as they
+  already did.
 - Undoing an edit that restores a char span's separator (its no-break space after the glyph) sends
   the separator to the host as U+00A0, not a space, so the span gains no leading content space.
 - A delta applied in Standard view places the ops after an inserted char span correctly. An insert
