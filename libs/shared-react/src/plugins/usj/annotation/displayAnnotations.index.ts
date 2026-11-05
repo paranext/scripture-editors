@@ -63,6 +63,7 @@ import {
 import {
   $coveredDisplayText,
   $displayAnnotationsOf,
+  $isGutterMarkerNode,
   $isNoteNode,
   $isPieceContinuation,
   $isTypedMarkNode,
@@ -591,16 +592,17 @@ function createIndex(editor: LexicalEditor): Entry {
   /**
    * The first and last node annotation `annotationKey` paints, by the document order of their
    * elements: its marks and the leaves painted here, leaving out one inside another of them (a
-   * carrier inside a mark of the same annotation is painted by the mark) and one a collapsed note
-   * hides ({@link $isInCollapsedNoteContent}), whose element shows nothing to draw a side on.
-   * Read after the commit, from the DOM, as {@link rangesFor} orders what it paints. Call inside a
-   * read.
+   * carrier inside a mark of the same annotation is painted by the mark), one a collapsed note
+   * hides ({@link $isInCollapsedNoteContent}), whose element shows nothing to draw a side on, and a
+   * paragraph's gutter glyph, which the view draws in the gutter beside the text, away from the
+   * box the annotation's other elements draw. Read after the commit, from the DOM, as
+   * {@link rangesFor} orders what it paints. Call inside a read.
    */
   function $edgesOf(annotationKey: string): { start: NodeKey; end: NodeKey } | undefined {
     const painting: { key: NodeKey; element: HTMLElement }[] = [];
     const add = (key: NodeKey) => {
       const node = $getNodeByKey(key);
-      if (!node || $isInCollapsedNoteContent(node)) return;
+      if (!node || $isInCollapsedNoteContent(node) || $isGutterMarkerNode(node)) return;
       const element = editor.getElementByKey(key);
       if (element?.isConnected) painting.push({ key, element });
     };
