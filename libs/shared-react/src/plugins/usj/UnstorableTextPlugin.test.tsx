@@ -11,14 +11,18 @@ import {
   $createTextNode,
   $getRoot,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  CUT_COMMAND,
+  DELETE_CHARACTER_COMMAND,
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
   LexicalEditor,
   LexicalNode,
   PASTE_COMMAND,
   RangeSelection,
+  REMOVE_TEXT_COMMAND,
   TextNode,
 } from "lexical";
+import { useEffect, useState } from "react";
 import { $createParaNode, $isImmutableUnmatchedNode } from "shared";
 
 interface Flavors {
@@ -508,6 +512,224 @@ describe("UnstorableTextPlugin — typing", () => {
 
     expect(readParas(editor)).toEqual(["xa/b"]);
     expect(onRemoved).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * One paragraph holding `text`, the caret (or a selection) in it, and `UnstorableTextPlugin`
+ * mounted with `isEnabled` held in state, so `setEnabled` switches it as a view switch does.
+ */
+async function switchableEnvironment(
+  text: string,
+  {
+    anchor = text.length,
+    focus = anchor,
+    isEnabled = false,
+  }: { anchor?: number; focus?: number; isEnabled?: boolean } = {},
+) {
+  const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+  const switches: { set?: (isEnabled: boolean) => void } = {};
+  function SwitchablePlugin() {
+    const [isEnabledNow, setIsEnabled] = useState(isEnabled);
+    useEffect(() => {
+      switches.set = setIsEnabled;
+    }, []);
+    return <UnstorableTextPlugin isEnabled={isEnabledNow} onRemoved={onRemoved} />;
+  }
+  let textNode: TextNode;
+  const { editor } = await baseTestEnvironment(
+    () => {
+      textNode = $createTextNode(text);
+      $getRoot().append($createParaNode("p").append(textNode));
+    },
+    <SwitchablePlugin />,
+  );
+  updateSelection(editor, textNode!, anchor, textNode!, focus);
+  const setEnabled = async (isEnabledNext: boolean) => {
+    await act(async () => switches.set?.(isEnabledNext));
+  };
+  return { editor, onRemoved, setEnabled };
+}
+
+function keydown(key: string): KeyboardEvent {
+  return new KeyboardEvent("keydown", { key, cancelable: true });
+}
+
+/** Dispatches a `beforeinput` on the editor's root, as the browser does before it inputs. */
+async function beforeInput(editor: LexicalEditor, init: InputEventInit): Promise<InputEvent> {
+  const event = new InputEvent("beforeinput", { ...init, bubbles: true, cancelable: true });
+  await act(async () => {
+    editor.getRootElement()!.dispatchEvent(event);
+  });
+  return event;
+}
+
+/** A clipboard event over an in-memory store, as Lexical's cut writes to it. */
+function cutEvent(): ClipboardEvent {
+  const store = new Map<string, string>();
+  const event = new ClipboardEvent("cut", { cancelable: true });
+  Object.defineProperty(event, "clipboardData", {
+    value: {
+      types: [],
+      files: [],
+      getData: (type: string) => store.get(type) ?? "",
+      setData: (type: string, data: string) => store.set(type, data),
+      clearData: () => store.clear(),
+    },
+  });
+  return event;
+}
+
+describe("UnstorableTextPlugin — disabled, as a view that shows markers mounts it", () => {
+  it("leaves a plain-text paste's `//` to the editor, telling no one", async () => {
+    const { editor, onRemoved } = await switchableEnvironment("see ");
+    const event = pasteEvent({ "text/plain": "https://example.org" });
+
+    await dispatch(editor, () => editor.dispatchCommand(PASTE_COMMAND, event));
+
+    expect(readParas(editor)).toEqual(["see https://example.org"]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("leaves an html paste's `\\` and marker glyph to the editor, telling no one", async () => {
+    const { editor, onRemoved } = await switchableEnvironment("x");
+
+    await dispatch(editor, () =>
+      editor.dispatchCommand(
+        PASTE_COMMAND,
+        pasteEvent({
+          "text/html": '<p><span data-text-type="marker" class="marker">\\w </span>a\\b</p>',
+          "text/plain": "\\w a\\b",
+        }),
+      ),
+    );
+
+    const pasted = readParas(editor).join("|");
+    expect(pasted).toContain("\\w");
+    expect(pasted).toContain("a\\b");
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, Flavors]>([
+    ["plain text", { "text/plain": "a\\b" }],
+    ["html", { "text/html": "<span>a\\b</span>", "text/plain": "a\\b" }],
+  ])("leaves a %s drop's `\\` to the editor, telling no one", async (_, flavors) => {
+    const { editor, onRemoved } = await switchableEnvironment("x");
+
+    await dispatch(editor, () =>
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, dropInputEvent(flavors)),
+    );
+
+    expect(readParas(editor).join("|")).toContain("a\\b");
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("lets the `keydown` of a `\\`, and of a `/` beside a `/`, through", async () => {
+    const { editor, onRemoved } = await switchableEnvironment("a/b", { anchor: 2 });
+    const events = [keydown("\\"), keydown("/")];
+
+    for (const event of events)
+      await dispatch(editor, () => editor.dispatchCommand(KEY_DOWN_COMMAND, event));
+
+    expect(events.map((event) => event.defaultPrevented)).toEqual([false, false]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, string | InputEvent]>([
+    ["typed text", "y//z\\"],
+    [
+      "a replacement",
+      new InputEvent("beforeinput", { inputType: "insertReplacementText", data: "y//z\\" }),
+    ],
+    ["a yank", new InputEvent("beforeinput", { inputType: "insertFromYank", data: "y//z\\" })],
+  ])("leaves %s with `//` and `\\` to the editor, telling no one", async (_, payload) => {
+    const { editor, onRemoved } = await switchableEnvironment("x");
+
+    await dispatch(editor, () =>
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, payload),
+    );
+
+    expect(readParas(editor)).toEqual(["xy//z\\"]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("lets a `beforeinput` of a `\\` with no keydown, and a transpose that makes `//`, through", async () => {
+    const { editor, onRemoved } = await switchableEnvironment("/x/", { anchor: 2 });
+
+    const typed = await beforeInput(editor, { inputType: "insertText", data: "\\" });
+    const transposed = await beforeInput(editor, { inputType: "insertTranspose" });
+
+    expect([typed.defaultPrevented, transposed.defaultPrevented]).toEqual([false, false]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  // Over a selection, so that the delete needs no `Selection.modify`, which jsdom lacks.
+  it("leaves the Backspace that would join two `/` to the editor, telling no one", async () => {
+    const { editor, onRemoved } = await switchableEnvironment("a/b/c", { anchor: 2, focus: 3 });
+
+    await dispatch(editor, () => editor.dispatchCommand(KEY_DOWN_COMMAND, keydown("Backspace")));
+
+    expect(readParas(editor)).toEqual(["a//c"]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("leaves a delete without a keydown that joins two `/` to the editor, telling no one", async () => {
+    const { editor, onRemoved } = await switchableEnvironment("a/b/c", { anchor: 2, focus: 3 });
+
+    await dispatch(editor, () => editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true));
+
+    expect(readParas(editor)).toEqual(["a//c"]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("leaves a cut that joins two `/` to the editor, telling no one", async () => {
+    const { editor, onRemoved } = await switchableEnvironment("a/bc/d", { anchor: 2, focus: 4 });
+
+    await dispatch(editor, () => editor.dispatchCommand(CUT_COMMAND, cutEvent()));
+    // Lexical's cut removes the text once its copy has been written, a step later.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(readParas(editor)).toEqual(["a//d"]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("leaves a drag-move's removal that joins two `/` to the editor, telling no one", async () => {
+    const { editor, onRemoved } = await switchableEnvironment("a/bc/d", { anchor: 2, focus: 4 });
+
+    await dispatch(editor, () =>
+      editor.dispatchCommand(
+        REMOVE_TEXT_COMMAND,
+        new InputEvent("beforeinput", { inputType: "deleteByDrag", cancelable: true }),
+      ),
+    );
+
+    expect(readParas(editor)).toEqual(["a//d"]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("acts only while enabled across switches, keeping the handlers it registered", async () => {
+    const { editor, onRemoved, setEnabled } = await switchableEnvironment("ab", {
+      anchor: 1,
+      isEnabled: true,
+    });
+    const registerCommand = vi.spyOn(editor, "registerCommand");
+    const pressBackslash = async () => {
+      const event = keydown("\\");
+      await dispatch(editor, () => editor.dispatchCommand(KEY_DOWN_COMMAND, event));
+      return event.defaultPrevented;
+    };
+
+    const whileEnabled = await pressBackslash();
+    await setEnabled(false);
+    const whileDisabled = await pressBackslash();
+    await setEnabled(true);
+    const whenEnabledAgain = await pressBackslash();
+
+    expect([whileEnabled, whileDisabled, whenEnabledAgain]).toEqual([true, false, true]);
+    expect(onRemoved).toHaveBeenCalledTimes(2);
+    expect(registerCommand).not.toHaveBeenCalled();
   });
 });
 
