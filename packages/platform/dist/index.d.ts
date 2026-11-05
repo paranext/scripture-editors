@@ -267,14 +267,6 @@ export declare interface EditorOptions {
    * Defaults to "off".
    */
   structureProtectionMode?: StructureProtectionMode;
-  /**
-   * Asks the user before an edit removes content the view hides: figures, sidebars, `\periph` and
-   * other constructs the editor carries unmodeled, hidden whenever `view.markerMode` is not
-   * `"editable"`. Deletes that reach one, and any edit over a selection holding one, wait for the
-   * answer (see {@link HiddenContentDeleteHandler}). Dragging such a selection, or cutting it while
-   * {@link EditorOptions.copyLimit} is set, is refused. Unset, editing is native.
-   */
-  onHiddenContentDelete?: HiddenContentDeleteHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */
   hasExternalUI?: boolean;
   /** Is the editor enabled for spell checking. */
@@ -361,9 +353,7 @@ export declare interface EditorProps<TLogger extends LoggerBasic> {
    * - `ops` — **Live**: refers to the editor's current tree as displayed, including marker text
    *   the user is still typing that has not settled yet; the change's delta ops in the live
    *   document's delta coordinates, absent when the change moved no delta (a marker glyph or
-   *   attribute text edited, or its undo). In Standard view with
-   *   `ViewOptions.allowInvisibleCharacters` on, a stored no-break space is U+00A0 in them and a
-   *   space the view shows as an NBSP (in a run) is a space, as in every op the editor gives out.
+   *   attribute text edited, or its undo).
    * - `insertedNodeKey` — **Live**: refers to the editor's current tree as displayed; the editor
    *   key of a node the change inserted into it.
    */
@@ -558,17 +548,8 @@ export declare interface EditorRef {
    * it implicitly.
    */
   setTransientInput(input: TransientInput | undefined): void;
-  /**
-   * Set the USJ Scripture data, replacing the editor's content.
-   *
-   * Does nothing when `usj` is a document the editor already holds, so the caret and the undo
-   * history survive: the document {@link EditorRef.getUsj} returns now (what is on screen), or,
-   * while a marker edit is in progress, the editor's own record from before that edit — so a host
-   * re-sending the text as it was does not throw the edit away. Pass `options.force` to load it
-   * regardless (see {@link SetUsjOptions.force}). `options` is EXPERIMENTAL
-   * (see {@link SetUsjOptions}).
-   */
-  setUsj(usj: Usj, options?: SetUsjOptions): void;
+  /** Set the USJ Scripture data. */
+  setUsj(usj: Usj): void;
   /**
    * EXPERIMENTAL: Apply Operational Transform delta update.
    *
@@ -584,11 +565,6 @@ export declare interface EditorRef {
    * listener such as `onUsjChange`), the apply commits once that update finishes, so it is not yet
    * reflected when this call returns; its `onUsjChange` comes when it commits, with these ops and
    * `source`.
-   *
-   * In Standard view, a C0 control character other than tab, line feed and carriage return in an
-   * inserted text goes in as a space, and with `ViewOptions.allowInvisibleCharacters` on a U+00A0
-   * that is not a marker's separator goes in as a stored no-break space — the same text the
-   * editor's own ops give out.
    *
    * @throws Will throw an error if the editor uses the block verse layout and `source` is
    *   `"local"`.
@@ -689,18 +665,20 @@ export declare interface EditorRef {
    * the annotation themselves. Setting an annotation never changes the document, a position, or
    * what `getSelection` reports.
    *
-   * Painting is exact: an annotation paints the bytes it holds, plus the whitespace the editor
-   * shows between two of them in one paragraph (a marker's separator, a verse number's trailing
-   * space) — never whitespace at its edges, and never the rest of a display byte it holds only part
-   * of. A display byte painted over all of its text gets the same class names a `<mark>` gets
-   * (`<typedMark>-<type>`, `<typedMarkOverlap>-<type>` where two ids of a type overlap,
-   * `annotationId-<id>`) plus `display-annotation`. A part of one is painted with a CSS Custom
-   * Highlight instead, which the editor styles from the same class rules: it copies the
-   * properties a highlight can paint (`background-color`, `color`, a `text-decoration` that draws
-   * a line, `text-shadow`) and otherwise draws a bottom border as an underline. Other properties
-   * and `:hover` rules apply only to elements, and the rules must not depend on ancestors inside
-   * the editable content. Where the browser has no highlight API, a display byte is painted whole.
-   * Find painted annotations with {@link EditorRef.getAnnotationRanges}, not by class.
+   * Painting is exact, and always by element: an annotation paints the bytes it holds, plus the
+   * whitespace the editor shows between two of them in one paragraph (a marker's separator, a
+   * verse number's trailing space) — never whitespace at its edges, and never the rest of a
+   * display byte it holds only part of. Every painted element gets the same class names a
+   * `<mark>` gets (`<typedMark>-<type>`, `<typedMarkOverlap>-<type>` where two ids of a type
+   * overlap, `annotationId-<id>`); a display byte gets `display-annotation` too. An editable
+   * display byte held in part is cut at the hold's edges into pieces of its own kind, so the held
+   * part is its own element and is painted whole; a read-only glyph held in part paints a sub-span
+   * of its text. So every host class rule — background, border, padding, font, `:hover`,
+   * `::selection` — applies to everything an annotation paints. The first element it paints, in
+   * document order, also gets `<typedMarkStart>-<type>` and the last `<typedMarkEnd>-<type>`, so
+   * a box style can put its inline sides only there and draw one box over every element. Find
+   * painted annotations with {@link EditorRef.getAnnotationRanges}, which lists every element it
+   * paints, rather than by class alone.
    *
    * A read-only glyph, verse number or chapter number (the views without editable markers) holds
    * and paints exactly the part of what it shows that the range names. A range that names only
@@ -734,18 +712,26 @@ export declare interface EditorRef {
    *
    * `onRemove`: each `<mark>` reports its own removal when it goes away — one call per `<mark>`,
    * whatever else still holds the annotation — and only once: a `<mark>` an undo brings back stays
-   * quiet when it goes again. Beyond that, the annotation's last holder — a `<mark>` or a display
-   * byte — leaving the document without any `<mark>` having reported the annotation's removal since
-   * it was set fires ONE more report, through its display bytes: `"removed"` when
-   * `removeAnnotation` or setting the same id again takes it away, `"destroyed"` when it drops out
-   * of the document (an edit, a collaborator's edit, or a settle that discards those bytes). That
-   * report's text is every `<mark>`'s and carrier's text joined in document order when they all
-   * leave in the same edit; holders lost across separate edits leave only the text of the
-   * piece(s) still present at the last one. A collapsed note caller's text is the note's caller.
-   * Undo, redo, and a `setUsj` reload report nothing; setting the id again starts a fresh reporting
-   * cycle for it. An `onRemove` that throws — in a `<mark>`'s own report or in the one more
-   * report — does not stop the edit or call that removed the annotation, or the other reports: the
-   * error is handed to the editor's error handler, which rethrows it, in a later microtask.
+   * quiet when it goes again. A `<mark>` whose bytes an edit re-spells as display bytes (a settle
+   * turning typed text into a marker's attribute) hands the annotation on to them and reports
+   * nothing. Beyond that, the annotation's last holder — a `<mark>` or a display byte — leaving
+   * the document without any `<mark>` having reported the annotation's removal since it was set
+   * fires ONE more report, through its display bytes: `"removed"` when `removeAnnotation` or
+   * setting the same id again takes it away, `"destroyed"` when it drops out of the document (an
+   * edit, a collaborator's edit, or a settle that discards those bytes). That report's text is
+   * every `<mark>`'s and carrier's text joined in document order when they all leave in the same
+   * edit; holders lost across separate edits leave only the text of the piece(s) still present at
+   * the last one. A collapsed note caller's text is the note's caller. Undo, redo, and a `setUsj`
+   * reload report nothing; setting the id again starts a fresh reporting cycle for it. An
+   * `onRemove` that throws — in a `<mark>`'s own report or in the one more report — does not stop
+   * the edit or call that removed the annotation, or the other reports: the error is handed to the
+   * editor's error handler, which rethrows it, in a later microtask.
+   *
+   * Setting or removing an annotation through this method or {@link EditorRef.removeAnnotation}
+   * adds no undo step: an undo that reverts the edit it was set on reverts it too, silently — a
+   * host re-sets annotations from its own state on the next change, as it does after a reload. A
+   * comment the user adds or deletes in `Marginal`'s comment panel is not set through this method:
+   * it is the user's own edit, an undo step of its own.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.
@@ -799,8 +785,9 @@ export declare interface EditorRef {
    * DOM ranges over everything an annotation paints: each `<mark>` that holds its text, each
    * display byte it holds (only the part it holds), and the whitespace painted between them — in
    * document order, empty when nothing paints it. Measure, scroll to or hit-test an annotation with
-   * these; an element lookup by its `annotationId-<id>` class misses the display bytes painted
-   * with a highlight.
+   * these rather than by its `annotationId-<id>` class alone: a read-only glyph held in part paints
+   * a sub-span of its own, and the whitespace painted between two held bytes is an element of its
+   * own.
    *
    * @remarks **Live**: the ranges are over the editor's current DOM, including marker text the
    *   user is still typing; take them again after the next edit.
@@ -982,29 +969,6 @@ export declare interface EditorRef {
    *   verse marker.
    */
   insertMarker(marker: string): string | undefined;
-  /**
-   * Starts chapter 1 in a book that has no chapters: inserts `\c 1`, then `verseCount` empty
-   * verses, after the book's front matter (the `\id` line, running header, table of contents,
-   * titles and introduction; a section heading such as `\s1` already belongs to the chapter). This
-   * is where {@link EditorRef.insertMarker} with `"c"` and the `\` menu's `\c` put it too.
-   *
-   * When the chapter content after the front matter already holds anything (text, a verse, a
-   * note, a milestone or a figure), as a book typed or imported without chapter markers does, no
-   * verses are added: they would go above that content, leaving all of it in the last verse. A
-   * section heading counts, so a book holding only one gets `\c 1` without verses.
-   *
-   * Where the markers show (Standard view), the caret goes at the end of the chapter line. Where
-   * they are hidden there is no chapter line, so the caret goes after verse 1, or with no verses to
-   * the start of the paragraph that follows; with neither, it stays where it was.
-   *
-   * @param verseCount - How many empty verses to add after the chapter marker, when the chapter
-   *   content holds nothing yet. Defaults to none.
-   * @returns `false`, changing nothing, unless the `scrRef` prop is chapter 1 and the document has
-   *   no chapter yet.
-   * @throws Will throw an error if the editor is in readonly mode.
-   * @throws Will throw an error if the `scrRef` prop was not provided to the editor.
-   */
-  insertFirstChapter(verseCount?: number): boolean;
   /**
    * Snapshot of the marker-menu context at the current selection (standard-view marker menus).
    * Returns undefined when the editor is readonly or has no range selection.
@@ -1388,22 +1352,6 @@ export declare function filterAndRankItems<T extends Item>(
 export declare function generateUsjCss(styleInfo: StyleInfo, options?: UsjCssOptions): string;
 
 /**
- * Generate only the font part of {@link generateUsjCss}'s output: the base rule for the project
- * default font family and size, and a `font-family` rule for each marker that names a font (the
- * marker's font, then the project default font, then the Scripture fallback chain). Weight, colour,
- * size, margins, alignment and every other marker declaration are left out, as are the
- * chapter-nested `\ca`/`\cp` rules, so a view that keeps its own marker layout can take the
- * project's fonts without the project's layout. There is no `rtl` option: none of these
- * declarations depend on text direction.
- *
- * @public
- */
-export declare function generateUsjFontCss(
-  styleInfo: StyleInfo,
-  options?: Pick<UsjCssOptions, "zoom" | "containerSelector">,
-): string;
-
-/**
  * Note caller will be auto-generated.
  * @public
  */
@@ -1502,69 +1450,6 @@ export declare function getViewOptions(viewMode?: string | undefined): ViewOptio
  * @public
  */
 export declare const HIDDEN_NOTE_CALLER = "-";
-
-/**
- * What the user did that would remove hidden content.
- * - `"deleteBackward"` / `"deleteForward"`: Backspace / Delete (or a word or line chord of either)
- *   with a collapsed caret.
- * - `"replaceSelection"`: deleting, typing over, pressing Enter over, pasting over, or cutting a
- *   selection.
- *
- * More actions may be added; a host that branches on this should handle values it does not know.
- */
-export declare type HiddenContentDeleteAction =
-  | "deleteBackward"
-  | "deleteForward"
-  | "replaceSelection";
-
-/**
- * The user's answer.
- * - `"delete"`: go ahead and remove the hidden content along with the edit. A delete that stops at
- *   a paragraph's edge removes only the hidden content there: it never merges the paragraph into a
- *   hidden block, or dissolves one into the paragraph.
- * - `"keep"`: keep it. The caret moves past it when the request's `canSkip` is `true`; otherwise
- *   the edit is cancelled.
- */
-export declare type HiddenContentDeleteDecision = "delete" | "keep";
-
-/**
- * Asks the user whether an edit may remove content the current view does not show (a figure, a
- * sidebar, ...).
- *
- * The editor holds the edit until this settles and refuses typing, deleting, pasting and cutting
- * meanwhile, so it must settle: a modal dialog whose every way out answers is the intended shape.
- * Until it does, editing stays held. A rejected promise, a thrown error, and any answer other than
- * `"delete"` count as `"keep"`. It is called after the keystroke's own dispatch has finished, so
- * it may call back into the editor.
- *
- * The answer is dropped, and nothing changed, if what the edit covers changed, the selection moved
- * or the editor became read-only while the host was asking.
- */
-export declare type HiddenContentDeleteHandler = (
-  request: HiddenContentDeleteRequest,
-) => HiddenContentDeleteDecision | Promise<HiddenContentDeleteDecision>;
-
-/** Passed to {@link HiddenContentDeleteHandler} when an edit would remove hidden content. */
-export declare interface HiddenContentDeleteRequest {
-  /** Each hidden construct the edit would remove, in document order. Never empty. */
-  readonly items: readonly HiddenContentItem[];
-  /** What the user did. */
-  readonly action: HiddenContentDeleteAction;
-  /**
-   * Whether `"keep"` moves the caret past the hidden content, leaving the user free to keep going.
-   * When `false`, `"keep"` cancels the edit and the caret stays where it was. `true` only for a
-   * caret delete whose sole hidden content is the run at the caret, with somewhere past it to go.
-   */
-  readonly canSkip: boolean;
-}
-
-/** One construct the current view cannot show, which an edit is about to remove. */
-export declare interface HiddenContentItem {
-  /** The construct's USJ type, e.g. `"figure"`, `"sidebar"`, `"periph"`. */
-  readonly tag: string;
-  /** The construct's USFM marker without the backslash, e.g. `"fig"`, `"esb"`, when it has one. */
-  readonly marker?: string;
-}
 
 /**
  * Whether the view options select the block verse layout.
@@ -1744,13 +1629,6 @@ export declare interface MarkerMenuContext {
   hasTextSelection: boolean;
   /** Caret is inside visible marker glyph text (extension lets Enter pass through). */
   inMarkerText: boolean;
-  /**
-   * Set when a chapter marker can be inserted here: the document is chapter 1 of a book that holds
-   * chapters and has no `\c` yet, as in a book that has no chapters, and the caret is not in a note
-   * or over a text selection. Every other chapter document already carries its own `\c`, and the
-   * host's save removes a second one.
-   */
-  canInsertChapter?: boolean;
 }
 
 /**
@@ -2052,27 +1930,6 @@ export declare interface SelectionRange {
 }
 
 /**
- * EXPERIMENTAL: Options for {@link EditorRef.setUsj}.
- *
- * @public
- */
-export declare interface SetUsjOptions {
-  /**
-   * EXPERIMENTAL: Load the document even when the editor already holds it. Defaults to `false`.
-   *
-   * Pass `true` to correct what is on screen while a marker edit may be in progress. The editor
-   * keeps two versions of its document while such an edit is in progress: what is on screen, and
-   * its own record from before the edit. A document equal to that record is skipped by default,
-   * which keeps the edit from being thrown away by a host that re-sends the text as it was. The
-   * same test skips a correction that happens to put back what the edit removed, such as a chapter
-   * number the user backspaced away, so a host making that correction forces it. A forced load
-   * replaces the edit in progress, and, like any load, takes the caret and the undo history with
-   * it.
-   */
-  force?: boolean;
-}
-
-/**
  * Ranking knobs for {@link filterAndRankItems}. `priorityOrder` defaults to
  * `["exact", "startsWith", "contains"]` — the marker palettes' exact-match-first ordering.
  *
@@ -2165,31 +2022,6 @@ export declare interface Thread {
 }
 
 /**
- * Respells the no-break spaces in text a host takes from the editor's display — a DOM selection or
- * an element's `textContent`, for a copy or a search — the way the project's USFM spells them.
- * Standard view shows a stored no-break space in body text as `~` while
- * `ViewOptions.allowInvisibleCharacters` is off, which is already the USFM spelling, so that is left
- * as it is. With it on, and in an attribute value under either setting, the editor holds a no-break
- * space as an internal stand-in it draws as a blank the width of a space; each one becomes U+00A0
- * here, and `~` stays an ordinary character. Other display characters (the no-break spaces a space
- * run or a marker separator shows as) are left as they are.
- *
- * Expected to be removed once Standard view holds a stored no-break space as itself (PT-4931):
- * display text will then already carry the project's spelling.
- *
- * @param displayText - Text read from the editor's display.
- * @param viewOptions - The editor's view options.
- * @returns The text with the project's spelling of a no-break space.
- * @experimental This member is unstable and may change shape or disappear without notice.
- *
- * @public
- */
-export declare function toUsfmNbspSpelling(
-  displayText: string,
-  viewOptions: ViewOptions | undefined,
-): string;
-
-/**
  * In-progress input an in-editor command surface has declared to the editor. `kind` names the shape
  * of the claim so more can be added without widening the method; `run` is the exact byte sequence
  * the surface expects to find immediately before the caret.
@@ -2272,8 +2104,7 @@ export declare type TypedMarkOnRemove = (
 export declare type TypedMarkRemovalCause = "removed" | "destroyed";
 
 /**
- * Options controlling {@link generateUsjCss}'s output. {@link generateUsjFontCss} takes `zoom` and
- * `containerSelector` from these.
+ * Options controlling {@link generateUsjCss}'s output.
  *
  * @public
  */
@@ -2477,61 +2308,6 @@ export declare interface ViewOptions {
    * when they mount the editor rather than toggling a live one.
    */
   verseLayout?: VerseLayout;
-  /**
-   * Whether the project stores invisible characters literally: Paratext's per-project
-   * `AllowInvisibleChars` setting ("Allow whitespace and invisible characters" in Paratext 9's
-   * project properties), which Platform.Bible exposes as the project setting
-   * `platformScripture.allowInvisibleCharacters`. A host passes that setting of the project whose
-   * text the editor holds, whatever view it shows. It describes the project's text rather than the
-   * view, so it never changes the mode {@link getViewMode} reports.
-   *
-   * Off (`undefined` or `false`, Paratext's default): the project's USFM spells a no-break space
-   * as `~`, so the USJ the editor is given holds U+00A0 and never `~`. Standard view shows each
-   * U+00A0 as `~`, saves a `~` the user types or pastes as U+00A0, and saves a U+00A0 typed as a
-   * character as a space — the author's no-break space is typed as `~`, as in Paratext 9.
-   *
-   * On: `~` is an ordinary character and the project stores U+00A0 as itself, so the USJ can hold
-   * both and they mean different things. Standard view keeps `~` as `~` and shows each U+00A0 as a
-   * blank the width of a space, as a no-break space looks, and saves each as itself. A U+00A0 typed
-   * or pasted is kept as one, and a copy writes `~` and U+00A0 as themselves. The Markers view's
-   * copy and the Unformatted view's marker settle spell them the same way. Space runs still collapse
-   * on save. ParatextData still drops a U+00A0 right after a marker or next to a space when it
-   * saves, in both products.
-   *
-   * Inside the editor Standard view holds each such U+00A0 as an internal stand-in (U+001A,
-   * `NBSP_STAND_IN` in shared), since its engine reads an on-screen U+00A0 as display spacing; the
-   * `PlatformEditorNbspStandIn` font face draws it as the blank (a host stylesheet that sets its own
-   * Scripture `font-family` names that family first). The stand-in never leaves the editor:
-   * `getUsj`, `onUsjChange` and its delta ops, the note-op getters, the clipboard and drag data,
-   * annotation callbacks and note-caller previews all give U+00A0. Delta ops coming in
-   * (`applyUpdate`, `replaceEmbedUpdate`) take a U+00A0 that is not a marker's separator as a stored
-   * no-break space; going out, an NBSP the view shows for a space in a run is that space. Text read
-   * from the editor's DOM still holds the stand-in; `toUsfmNbspSpelling` turns it back. No project
-   * text can hold U+001A — Paratext's reader turns U+0001-U+0008 and U+000E-U+001F into spaces — and
-   * Standard view turns every C0 control character other than tab, line feed and carriage return
-   * that comes in (a load, a paste, a drop, typing, applied ops) into a space, in either setting,
-   * so the stand-in is never mistaken for one. That includes U+000B and U+000C, which Paratext's
-   * reader keeps; they become spaces on purpose, since JavaScript reads them as whitespace.
-   *
-   * An attribute value (a char span's `|lemma`, a milestone's `who`, a note's `\cat`, a verse's
-   * `\va`/`\vp`, …) is the same either way: Paratext reads `~` as a no-break space only in body
-   * text, so a value's `~` is always an ordinary character and is kept as `~`, and Standard view
-   * holds a value's U+00A0 as the stand-in above and shows it as the blank. A copy writes a value's
-   * U+00A0 as U+00A0 under either setting.
-   *
-   * Views that hide markers (formatted, paragraph-structure, block verse) show the stored
-   * characters as they are either way, so they behave the same with this on or off.
-   *
-   * Passing the wrong value for the project corrupts text saved from Standard view: off for a
-   * project that has it on turns every `~` into U+00A0; on for a project that has it off saves a
-   * typed `~` as `~`, which that project reads back as a no-break space.
-   *
-   * Pass the right value before the first document loads (`defaultUsj` or the first `setUsj`). A
-   * later change reloads the view from the editor's own export of the document, not the host's,
-   * and a distinction the wrong value has already lost (a stored `~` and a stored no-break space
-   * read as the same character) cannot be recovered from it.
-   */
-  allowInvisibleCharacters?: boolean;
 }
 
 export {};

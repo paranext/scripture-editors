@@ -4,31 +4,54 @@ import {
   $createImmutableVerseNode,
   ImmutableVerseNode,
 } from "../../../nodes/usj/ImmutableVerseNode";
-import { annotationHighlightClassNames } from "./annotationHighlights";
 import {
   acquireDisplayAnnotationIndex,
   DISPLAY_ANNOTATION_CLASS_NAME,
+  DISPLAY_PIECE_CONTINUATION_ATTRIBUTE,
 } from "./displayAnnotations.index";
 import {
   $addUpdateTag,
+  $copyNode,
   $createRangeSelection,
   $createTextNode,
+  $getNodeByKey,
   $getRoot,
   $getSelection,
+  $getState,
+  $isElementNode,
+  $isRangeSelection,
+  $isTextNode,
+  $parseSerializedNode,
+  $setSelection,
   $setState,
   COMMAND_PRIORITY_HIGH,
   createEditor,
   HISTORIC_TAG,
+  INSERT_PARAGRAPH_COMMAND,
   LexicalEditor,
   LexicalNode,
+  NodeKey,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+  SerializedLexicalNode,
   TextNode,
 } from "lexical";
 import {
   $addDisplayAnnotation,
   $createCharNode,
+  $createVerseNode,
+  getVisibleOpenMarkerText,
+  $isPieceContinuation,
+  $logicalChildren,
+  $logicalText,
+  $pieceHead,
+  $pieces,
+  displayPieceChainState,
+  displayPieceTokenTextState,
+  NBSP,
+  getDecoratorPaint,
   $createMarkerNode,
   $createNoteNode,
+  $createImmutableTableRowNode,
   $createParaNode,
   $createTypedMarkNode,
   $displayAnnotationsOf,
@@ -45,9 +68,8 @@ import {
   TypedMarkOnMouseEnter,
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
-  ZWSP,
 } from "shared";
-import { onTestFinished, vi } from "vitest";
+import { vi } from "vitest";
 
 /** The platform editor's own theme names for `typedMark`/`typedMarkOverlap`; the painter reads
  * them from the editor's theme exactly as `TypedMarkNode.createDOM` does. */
@@ -94,29 +116,56 @@ afterEach(() => {
   lastContainer = undefined;
 });
 
-/** A `<style>` holding `css` for one test. */
-function stylesheetForTest(css: string): void {
-  const style = document.createElement("style");
-  style.textContent = css;
-  document.head.append(style);
-  onTestFinished(() => style.remove());
-}
-
 function classesOf(editor: LexicalEditor, node: TextNode): string[] {
   return [...(editor.getElementByKey(node.getKey())?.classList ?? [])];
 }
 
-/** Every piece of text an editor highlight paints, with the class names it paints it with. */
-function highlighted(): { text: string; classNames: string[] }[] {
-  return [...CSS.highlights].flatMap(([name, highlight]) =>
-    [...highlight].map((range) => ({
-      text: range instanceof Range ? range.toString() : "",
-      classNames: [...(annotationHighlightClassNames(name) ?? [])].sort(),
-    })),
+/** Every element painted outside a mark — a carrier piece painted whole, a decorator's sub-span —
+ * with its text and the class names it is painted with. */
+function painted(editor: LexicalEditor): { text: string; classNames: string[] }[] {
+  const root = editor.getRootElement();
+  return [...(root?.querySelectorAll(`.${DISPLAY_ANNOTATION_CLASS_NAME}`) ?? [])].map(
+    (element) => ({
+      text: element.textContent ?? "",
+      classNames: [...element.classList].sort(),
+    }),
   );
 }
 
-/** Wrap `type`/`id` over `[from, to)` of `node` through the real wrap, with `callbacks`. */
+/** The element painted with `text` ({@link painted}). */
+function paintedElement(editor: LexicalEditor, text: string): HTMLElement {
+  const root = editor.getRootElement();
+  const element = [...(root?.querySelectorAll(`.${DISPLAY_ANNOTATION_CLASS_NAME}`) ?? [])].find(
+    (candidate) => candidate.textContent === text,
+  );
+  if (!(element instanceof HTMLElement)) throw new Error(`nothing painted reads ${text}`);
+  return element;
+}
+
+/** Drop `type`/`id` from every piece of the carrier `node` is a piece of, as `removeAnnotation`
+ * does through the index's holder keys. Mutating. */
+function $removeFromCarrier(node: TextNode, type: string, id: string): void {
+  for (const piece of $pieces(node.getLatest())) $removeDisplayAnnotation(piece, type, id);
+}
+
+/** Remove every piece of the carrier `node` is a piece of. Mutating. */
+function $removeCarrier(node: TextNode): void {
+  for (const piece of $pieces(node.getLatest())) piece.remove();
+}
+
+/** The text point `offset` bytes into the carrier `node` is a piece of, on the piece holding it. */
+function $pointInCarrier(node: TextNode, offset: number): [string, number] {
+  let at = offset;
+  const pieces = $pieces(node.getLatest());
+  for (const piece of pieces) {
+    if (at <= piece.getTextContentSize()) return [piece.getKey(), at];
+    at -= piece.getTextContentSize();
+  }
+  throw new Error(`offset ${offset} is past the carrier`);
+}
+
+/** Wrap `type`/`id` over `[from, to)` of the carrier `node` is a piece of, through the real wrap,
+ * with `callbacks`. */
 function wrap(
   editor: LexicalEditor,
   node: TextNode,
@@ -134,8 +183,8 @@ function wrap(
   editor.update(
     () => {
       const selection = $createRangeSelection();
-      selection.anchor.set(node.getKey(), from, "text");
-      selection.focus.set(node.getKey(), to, "text");
+      selection.anchor.set(...$pointInCarrier(node, from), "text");
+      selection.focus.set(...$pointInCarrier(node, to), "text");
       $wrapSelectionInTypedMarkNode(
         selection,
         type,
@@ -178,19 +227,6 @@ describe("the display-annotation index", () => {
     again.release();
   });
 
-  it("removes its highlight stylesheet and probes when released", async () => {
-    stylesheetForTest(".editor-typed-mark-external-spelling { background-color: rgb(1, 2, 3); }");
-    const { editor, run, release } = setup();
-    wrap(editor, run, 1, 6, "external-spelling", "a");
-    await Promise.resolve();
-    expect(document.querySelectorAll("style[data-editor-annotation-highlights]")).toHaveLength(1);
-    expect(document.querySelectorAll("[data-editor-annotation-probes]")).toHaveLength(1);
-    release();
-    expect(document.querySelectorAll("style[data-editor-annotation-highlights]")).toHaveLength(0);
-    expect(document.querySelectorAll("[data-editor-annotation-probes]")).toHaveLength(0);
-    expect(highlighted()).toEqual([]);
-  });
-
   it("paints a carrier held whole with the class names a mark gets, and unpaints it when the annotation goes", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 0, 6, "external-spelling", "a");
@@ -201,7 +237,7 @@ describe("the display-annotation index", () => {
         DISPLAY_ANNOTATION_CLASS_NAME,
       ]),
     );
-    editor.update(() => $removeDisplayAnnotation(run.getLatest(), "external-spelling", "a"), {
+    editor.update(() => $removeFromCarrier(run, "external-spelling", "a"), {
       discrete: true,
     });
     expect(classesOf(editor, run)).not.toContain("annotationId-a");
@@ -213,7 +249,7 @@ describe("the display-annotation index", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 6, "external-spelling", "a");
     expect(classesOf(editor, run)).toEqual([]);
-    expect(highlighted()).toEqual([
+    expect(painted(editor)).toEqual([
       {
         text: "grace",
         classNames: [
@@ -223,10 +259,10 @@ describe("the display-annotation index", () => {
         ],
       },
     ]);
-    editor.update(() => $removeDisplayAnnotation(run.getLatest(), "external-spelling", "a"), {
+    editor.update(() => $removeFromCarrier(run, "external-spelling", "a"), {
       discrete: true,
     });
-    expect(highlighted()).toEqual([]);
+    expect(painted(editor)).toEqual([]);
     expect(classesOf(editor, run)).toEqual([]);
     release();
   });
@@ -235,7 +271,7 @@ describe("the display-annotation index", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 6, "external-spelling", "a");
     wrap(editor, run, 1, 4, "external-spelling", "b");
-    expect(highlighted()).toEqual(
+    expect(painted(editor)).toEqual(
       expect.arrayContaining([
         {
           text: "gra",
@@ -257,11 +293,11 @@ describe("the display-annotation index", () => {
         },
       ]),
     );
-    expect(highlighted()).toHaveLength(2);
-    editor.update(() => $removeDisplayAnnotation(run.getLatest(), "external-spelling", "a"), {
+    expect(painted(editor)).toHaveLength(2);
+    editor.update(() => $removeFromCarrier(run, "external-spelling", "a"), {
       discrete: true,
     });
-    expect(highlighted()).toEqual([
+    expect(painted(editor)).toEqual([
       {
         text: "gra",
         classNames: [
@@ -278,8 +314,8 @@ describe("the display-annotation index", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 3, "external-spelling", "a");
     wrap(editor, run, 4, 6, "external-spelling", "b");
-    expect(highlighted().map(({ text }) => text)).toEqual(["gr", "ce"]);
-    expect(highlighted().flatMap(({ classNames }) => classNames)).not.toContain(
+    expect(painted(editor).map(({ text }) => text)).toEqual(["gr", "ce"]);
+    expect(painted(editor).flatMap(({ classNames }) => classNames)).not.toContain(
       "editor-typed-markOverlap-external-spelling",
     );
     expect(classesOf(editor, run)).toEqual([]);
@@ -300,7 +336,7 @@ describe("the display-annotation index", () => {
     expect(classesOf(editor, run)).toEqual(
       expect.arrayContaining([...markTokens, DISPLAY_ANNOTATION_CLASS_NAME]),
     );
-    editor.update(() => $removeDisplayAnnotation(run.getLatest(), "external-spelling", "a b"), {
+    editor.update(() => $removeFromCarrier(run, "external-spelling", "a b"), {
       discrete: true,
     });
     expect(classesOf(editor, run)).toEqual([]);
@@ -347,24 +383,6 @@ describe("the display-annotation index", () => {
   });
 
   describe("over a carrier two annotations each hold part of", () => {
-    /** Where each painted text sits on screen: `gr` from x 0 to 10, `ce` from x 20 to 30. */
-    const rectsByText: { [text: string]: DOMRect } = {
-      gr: new DOMRect(0, 0, 10, 10),
-      ce: new DOMRect(20, 0, 10, 10),
-    };
-    beforeEach(() => {
-      Object.defineProperty(Range.prototype, "getClientRects", {
-        configurable: true,
-        value(this: Range): DOMRect[] {
-          const rect = rectsByText[this.toString()];
-          return rect ? [rect] : [];
-        },
-      });
-    });
-    afterEach(() => {
-      Reflect.deleteProperty(Range.prototype, "getClientRects");
-    });
-
     function setupTwo() {
       const fixture = setup();
       const callbacks = {
@@ -373,14 +391,26 @@ describe("the display-annotation index", () => {
       };
       wrap(fixture.editor, fixture.run, 1, 3, "external-spelling", "a", callbacks.a);
       wrap(fixture.editor, fixture.run, 4, 6, "external-spelling", "b", callbacks.b);
-      const element = fixture.editor.getElementByKey(fixture.run.getKey());
-      if (!element) throw new Error("the run renders");
-      return { ...fixture, callbacks, element };
+      return {
+        ...fixture,
+        callbacks,
+        gr: paintedElement(fixture.editor, "gr"),
+        ce: paintedElement(fixture.editor, "ce"),
+      };
     }
 
+    it("cuts the carrier into a piece per held part, each painted whole", () => {
+      const { editor, run, release } = setupTwo();
+      expect(
+        editor.getEditorState().read(() => $pieces(run.getLatest()).map((p) => p.getTextContent())),
+      ).toEqual(["|", "gr", "a", "ce"]);
+      expect(painted(editor).map(({ text }) => text)).toEqual(["gr", "ce"]);
+      release();
+    });
+
     it("calls only the click callback of the annotation painted where the pointer is", () => {
-      const { callbacks, element, release } = setupTwo();
-      element.dispatchEvent(new MouseEvent("click", { clientX: 5, clientY: 5 }));
+      const { callbacks, gr, release } = setupTwo();
+      gr.dispatchEvent(new MouseEvent("click"));
       expect(callbacks.a.onClick).toHaveBeenCalledWith(
         expect.any(MouseEvent),
         "external-spelling",
@@ -388,24 +418,21 @@ describe("the display-annotation index", () => {
         "gr",
       );
       expect(callbacks.b.onClick).not.toHaveBeenCalled();
-
-      element.dispatchEvent(new MouseEvent("click", { clientX: 15, clientY: 5 }));
-      expect(callbacks.a.onClick).toHaveBeenCalledTimes(1);
-      expect(callbacks.b.onClick).not.toHaveBeenCalled();
       release();
     });
 
     it("enters and leaves each annotation as the pointer moves over the part it paints", () => {
-      const { callbacks, element, release } = setupTwo();
-      element.dispatchEvent(new MouseEvent("mouseenter", { clientX: 15, clientY: 5 }));
-      expect(callbacks.a.onMouseEnter).not.toHaveBeenCalled();
-      element.dispatchEvent(new MouseEvent("mousemove", { clientX: 5, clientY: 5 }));
-      element.dispatchEvent(new MouseEvent("mousemove", { clientX: 6, clientY: 5 }));
+      const { callbacks, gr, ce, release } = setupTwo();
+      gr.dispatchEvent(new MouseEvent("mouseenter"));
       expect(callbacks.a.onMouseEnter).toHaveBeenCalledTimes(1);
-      element.dispatchEvent(new MouseEvent("mousemove", { clientX: 25, clientY: 5 }));
+      expect(callbacks.b.onMouseEnter).not.toHaveBeenCalled();
+      gr.dispatchEvent(new MouseEvent("mousemove"));
+      expect(callbacks.a.onMouseEnter).toHaveBeenCalledTimes(1);
+      gr.dispatchEvent(new MouseEvent("mouseleave"));
+      ce.dispatchEvent(new MouseEvent("mouseenter"));
       expect(callbacks.a.onMouseLeave).toHaveBeenCalledTimes(1);
       expect(callbacks.b.onMouseEnter).toHaveBeenCalledTimes(1);
-      element.dispatchEvent(new MouseEvent("mouseleave", { clientX: 40, clientY: 5 }));
+      ce.dispatchEvent(new MouseEvent("mouseleave"));
       expect(callbacks.b.onMouseLeave).toHaveBeenCalledTimes(1);
       expect(callbacks.b.onMouseLeave).toHaveBeenCalledWith(
         expect.any(MouseEvent),
@@ -417,9 +444,9 @@ describe("the display-annotation index", () => {
     });
 
     it("adds a state class only to the parts its annotation paints", () => {
-      const { index, release } = setupTwo();
+      const { editor, index, release } = setupTwo();
       index.setStateClass("external-spelling", "a", "selected", true);
-      expect(highlighted()).toEqual(
+      expect(painted(editor)).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ text: "gr", classNames: expect.arrayContaining(["selected"]) }),
           {
@@ -433,7 +460,7 @@ describe("the display-annotation index", () => {
         ]),
       );
       index.setStateClass("external-spelling", "a", "selected", false);
-      expect(highlighted().flatMap(({ classNames }) => classNames)).not.toContain("selected");
+      expect(painted(editor).flatMap(({ classNames }) => classNames)).not.toContain("selected");
       release();
     });
 
@@ -467,56 +494,136 @@ describe("the display-annotation index", () => {
     release();
   });
 
-  it("moves a partial highlight onto the text of an element Lexical re-creates", () => {
+  it("repaints the held piece of a carrier on an element Lexical re-creates", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 6, "external-spelling", "a");
-    editor.update(() => run.getLatest().setFormat("code"), { discrete: true });
-    const after = editor.getElementByKey(run.getKey());
-    const ranges = [...CSS.highlights.values()].flatMap((highlight) => [...highlight]);
-    expect(ranges).toHaveLength(1);
-    expect(ranges[0].toString()).toBe("grace");
-    expect(after?.contains(ranges[0].startContainer)).toBe(true);
+    const before = paintedElement(editor, "grace");
+    editor.update(
+      () => {
+        const [, held] = $pieces(run.getLatest());
+        held.setFormat("code");
+      },
+      { discrete: true },
+    );
+    const after = paintedElement(editor, "grace");
+    expect(after).not.toBe(before);
+    expect(after.tagName).toBe("CODE");
     release();
   });
 
-  it("keeps a partial highlight on the same bytes as the carrier's text is typed into", () => {
+  /** Each piece of the carrier `node` is a piece of, by its text, and whether its element is
+   * marked a continuation. */
+  function continuationMarks(editor: LexicalEditor, node: TextNode): [string, boolean][] {
+    return editor
+      .getEditorState()
+      .read(() =>
+        $pieces(node.getLatest()).map((piece) => [
+          piece.getTextContent(),
+          !!editor
+            .getElementByKey(piece.getKey())
+            ?.hasAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE),
+        ]),
+      );
+  }
+
+  it("marks the element of every piece of a cut carrier after its first, held or not", () => {
     const { editor, run, release } = setup();
-    wrap(editor, run, 1, 6, "external-spelling", "a");
-    editor.update(() => run.getLatest().setTextContent("|xgrace"), { discrete: true });
-    expect(highlighted().map(({ text }) => text)).toEqual(["grace"]);
+    wrap(editor, run, 0, 1, "external-spelling", "a");
+    expect(continuationMarks(editor, run)).toEqual([
+      ["|", false],
+      ["grace", true],
+    ]);
+    wrap(editor, run, 3, 4, "external-spelling", "b");
+    expect(continuationMarks(editor, run)).toEqual([
+      ["|", false],
+      ["gr", true],
+      ["a", true],
+      ["ce", true],
+    ]);
+    editor.update(
+      () => {
+        $removeFromCarrier(run, "external-spelling", "a");
+        $removeFromCarrier(run, "external-spelling", "b");
+      },
+      { discrete: true },
+    );
+    expect(continuationMarks(editor, run)).toEqual([["|grace", false]]);
+    expect(
+      editor.getRootElement()?.querySelectorAll(`[${DISPLAY_PIECE_CONTINUATION_ATTRIBUTE}]`).length,
+    ).toBe(0);
     release();
   });
 
-  it("keeps a partial highlight on its bytes when a whole-state replacement rewrites the carrier's text", () => {
+  it("marks a continuation piece on an element Lexical re-creates, its own or its parent's", () => {
+    const { editor, release } = setup();
+    let glyph!: TextNode;
+    let row!: ReturnType<typeof $createImmutableTableRowNode>;
+    editor.update(
+      () => {
+        glyph = $createMarkerNode("tr");
+        row = $createImmutableTableRowNode("tr").append(glyph);
+        $getRoot().append(row);
+      },
+      { discrete: true },
+    );
+    wrap(editor, glyph, 0, 1, "external-spelling", "a");
+    expect(continuationMarks(editor, glyph)).toEqual([
+      ["\\", false],
+      ["tr", true],
+    ]);
+    // A row whose marker changes is re-created, and every element inside it with it.
+    const before = editor.getElementByKey(row.getKey());
+    editor.update(() => row.getLatest().setMarker("tr2"), { discrete: true });
+    expect(editor.getElementByKey(row.getKey())).not.toBe(before);
+    expect(continuationMarks(editor, glyph)).toEqual([
+      ["\\", false],
+      ["tr", true],
+    ]);
+    // "code" changes the piece's own tag, which re-creates its element.
+    editor.update(() => $pieces(glyph.getLatest())[1].setFormat("code"), { discrete: true });
+    expect(continuationMarks(editor, glyph)).toEqual([
+      ["\\", false],
+      ["tr", true],
+    ]);
+    release();
+  });
+
+  it("keeps a partial paint on the same bytes as the carrier's text is typed into", () => {
+    const { editor, run, release } = setup();
+    wrap(editor, run, 1, 6, "external-spelling", "a");
+    // Typed in front of the held bytes: the head piece grows, the held piece stays.
+    editor.update(() => run.getLatest().setTextContent("|x"), { discrete: true });
+    expect(painted(editor).map(({ text }) => text)).toEqual(["grace"]);
+    // Typed at the held piece's end: a byte at a hold's edge stays outside it.
+    editor.update(
+      () => {
+        const [, held] = $pieces(run.getLatest());
+        held.setTextContent("gracey");
+      },
+      { discrete: true },
+    );
+    expect(painted(editor).map(({ text }) => text)).toEqual(["grace"]);
+    expect(
+      editor.getEditorState().read(() => $pieces(run.getLatest()).map((p) => p.getTextContent())),
+    ).toEqual(["|x", "grace", "y"]);
+    release();
+  });
+
+  it("keeps a partial paint on its bytes when a whole-state replacement rewrites the carrier's text", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 6, "external-spelling", "a");
     const annotated = editor.getEditorState();
-    // An edit outside the range: what the annotation paints stays `[1, 6)`.
-    editor.update(() => run.getLatest().setTextContent("Xgrace"), { discrete: true });
-    expect(highlighted().map(({ text }) => text)).toEqual(["grace"]);
+    // An edit outside the range: what the annotation paints stays `grace`.
+    editor.update(() => run.getLatest().setTextContent("X"), { discrete: true });
+    expect(painted(editor).map(({ text }) => text)).toEqual(["grace"]);
 
-    // Undo and redo replace the whole state: the carrier is not a dirty leaf, but its DOM text is
-    // rewritten, which collapses every range over it.
+    // Undo and redo replace the whole state: the pieces come back as they were.
     editor.setEditorState(annotated);
-    expect(highlighted().map(({ text }) => text)).toEqual(["grace"]);
+    expect(painted(editor).map(({ text }) => text)).toEqual(["grace"]);
     release();
   });
 
-  it("checks its highlights once per edit, not again for the DOM writes the commit made", async () => {
-    const { editor, run, release } = setup();
-    wrap(editor, run, 1, 6, "external-spelling", "a");
-    await Promise.resolve();
-    const reads = vi.spyOn(Range.prototype, "toString");
-    editor.update(() => run.getLatest().setTextContent("|xgrace"), { discrete: true });
-    const afterCommit = reads.mock.calls.length;
-    expect(afterCommit).toBeGreaterThan(0);
-    await Promise.resolve();
-    expect(reads.mock.calls.length).toBe(afterCommit);
-    reads.mockRestore();
-    release();
-  });
-
-  it("follows a decorator's text when it renders after the commit that changed it", async () => {
+  it("gives a decorator a paint over exactly the characters it holds, and follows them through a renumber", () => {
     const { editor, release } = setup();
     let verse!: ImmutableVerseNode;
     editor.update(
@@ -528,20 +635,31 @@ describe("the display-annotation index", () => {
       },
       { discrete: true },
     );
-    const element = editor.getElementByKey(verse.getKey());
-    if (!element) throw new Error("the verse renders");
-    // What the decorator's portal renders, after the commit.
-    element.textContent = `${ZWSP}12${ZWSP}`;
-    await Promise.resolve();
-    expect(highlighted().map(({ text }) => text)).toEqual(["1"]);
+    const paintedChars = () =>
+      getDecoratorPaint(editor, verse.getKey()).map(({ start, end, classNames }) => ({
+        text: editor
+          .getEditorState()
+          .read(() => verse.getLatest().getRenderedText().slice(start, end)),
+        classNames: [...classNames].sort(),
+      }));
+    expect(paintedChars()).toEqual([
+      {
+        text: "1",
+        classNames: [
+          "annotationId-a",
+          DISPLAY_ANNOTATION_CLASS_NAME,
+          "editor-typed-mark-external-spelling",
+        ],
+      },
+    ]);
 
     editor.update(() => verse.getLatest().setNumber("13"), { discrete: true });
-    // The portal re-renders the number in place, after the commit painted over the old text.
-    const text = element.firstChild;
-    if (!text) throw new Error("the verse has text");
-    text.nodeValue = `${ZWSP}13${ZWSP}`;
-    await Promise.resolve();
-    expect(highlighted().map(({ text }) => text)).toEqual(["1"]);
+    expect(paintedChars()).toEqual([expect.objectContaining({ text: "1" })]);
+
+    editor.update(() => $removeDisplayAnnotation(verse.getLatest(), "external-spelling", "a"), {
+      discrete: true,
+    });
+    expect(paintedChars()).toEqual([]);
     release();
   });
 
@@ -621,7 +739,7 @@ describe("the display-annotation index", () => {
     const { editor, run, release } = setup();
     const onRemove = vi.fn();
     wrap(editor, run, 1, 6, "external-spelling", "a", { onRemove });
-    editor.update(() => run.getLatest().remove(), { discrete: true });
+    editor.update(() => $removeCarrier(run), { discrete: true });
     editor.update(() => $getRoot().clear(), { discrete: true });
     expect(onRemove).toHaveBeenCalledTimes(1);
     expect(onRemove).toHaveBeenCalledWith("external-spelling", "a", "destroyed", "grace");
@@ -703,6 +821,85 @@ describe("the display-annotation index", () => {
       "destroyed",
       "alpha |gracegamma",
     );
+    release();
+  });
+
+  /** `alpha` in a mark holding `m`, then the carrier `|grace` holding `m` whole. */
+  function $markThenCarrier(onRemove: TypedMarkOnRemove): { word: TextNode; carrier: TextNode } {
+    const mark = $createTypedMarkNode({});
+    mark.addID("external-spelling", "m", undefined, onRemove);
+    const word = $createTextNode("alpha");
+    const carrier = $setState($createTextNode("|grace"), textTypeState, "attribute");
+    $getRoot().append($createParaNode().append(mark.append(word), carrier));
+    $addDisplayAnnotation(carrier, "external-spelling", "m", 0, carrier.getTextContentSize());
+    $registerDisplayAnnotation("external-spelling", "m", { onRemove });
+    return { word, carrier };
+  }
+
+  it("reports a mark a selection delete empties once, with its own text, while a carrier still holds the annotation, and nothing when the carrier goes later", () => {
+    const { editor, release } = setup();
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    let word!: TextNode;
+    let carrier!: TextNode;
+    editor.update(
+      () => {
+        $getRoot().clear();
+        ({ word, carrier } = $markThenCarrier(onRemove));
+      },
+      { discrete: true },
+    );
+
+    // Lexical drops the emptied mark without calling its `remove()`.
+    editor.update(
+      () => {
+        const selection = $createRangeSelection();
+        selection.anchor.set(word.getKey(), 0, "text");
+        selection.focus.set(word.getKey(), word.getTextContentSize(), "text");
+        selection.removeText();
+      },
+      { discrete: true },
+    );
+
+    expect(onRemove.mock.calls).toEqual([["external-spelling", "m", "destroyed", "alpha"]]);
+    expect(
+      editor.getEditorState().read(() => $displayAnnotationsOf(carrier.getLatest()).length),
+    ).toBe(1);
+
+    editor.update(() => $removeCarrier(carrier), { discrete: true });
+
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    release();
+  });
+
+  it("reports nothing when a mark is dropped in the commit a carrier begins holding its annotation", () => {
+    const { editor, release } = setup();
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    let word!: TextNode;
+    editor.update(
+      () => {
+        $getRoot().clear();
+        const mark = $createTypedMarkNode({});
+        mark.addID("external-spelling", "m", undefined, onRemove);
+        word = $createTextNode("|grace");
+        $getRoot().append($createParaNode().append(mark.append(word)));
+      },
+      { discrete: true },
+    );
+
+    // A settle re-spelling the marked bytes as a display byte: the mark's paragraph is rebuilt
+    // and the new carrier holds the annotation.
+    editor.update(
+      () => {
+        const para = word.getLatest().getTopLevelElementOrThrow();
+        const carrier = $setState($createTextNode("|grace"), textTypeState, "attribute");
+        para.replace($createParaNode().append(carrier));
+        $addDisplayAnnotation(carrier, "external-spelling", "m", 0, carrier.getTextContentSize());
+        $registerDisplayAnnotation("external-spelling", "m", { onRemove });
+      },
+      { discrete: true },
+    );
+
+    expect(onRemove).not.toHaveBeenCalled();
     release();
   });
 
@@ -823,7 +1020,7 @@ describe("the display-annotation index", () => {
       },
       { discrete: true },
     );
-    editor.update(() => run.getLatest().remove(), { discrete: true });
+    editor.update(() => $removeCarrier(run), { discrete: true });
     expect(onRemove).not.toHaveBeenCalled();
     release();
   });
@@ -853,7 +1050,7 @@ describe("the display-annotation index", () => {
       editor.update(
         () => {
           $addUpdateTag(tag);
-          run.getLatest().remove();
+          $removeCarrier(run);
         },
         { discrete: true },
       );
@@ -873,7 +1070,7 @@ describe("the display-annotation index", () => {
     editor.update(
       () => {
         $addUpdateTag(DELTA_CHANGE_TAG);
-        run.getLatest().remove();
+        $removeCarrier(run);
       },
       { discrete: true },
     );
@@ -940,6 +1137,860 @@ describe("the display-annotation index", () => {
       { discrete: true },
     );
     unregister();
+    release();
+  });
+
+  describe("a paragraph break inside a cut carrier", () => {
+    it("splits the carrier's text at the caret, as a break in the carrier no annotation cuts does", () => {
+      const { editor, run, release } = setup();
+      let closer!: TextNode;
+      editor.update(() => (closer = run.replace($createMarkerNode("w", "closing"))), {
+        discrete: true,
+      });
+      wrap(editor, closer, 0, 1, "external-spelling", "a");
+      editor.update(
+        () => {
+          const [head] = $pieces(closer.getLatest());
+          head.select(1, 1);
+          editor.dispatchCommand(INSERT_PARAGRAPH_COMMAND, undefined);
+        },
+        { discrete: true },
+      );
+      editor.read(() => {
+        // The generic break would split the text it finds at the caret, and leave the rest there.
+        const para = $getRoot().getFirstChild();
+        if (!$isElementNode(para)) throw new Error("no paragraph");
+        expect(
+          para.getChildren().map((node) => `${node.getType()} ${node.getTextContent()}`),
+        ).toEqual(["text In the ", "marker \\", "text w*"]);
+        expect(
+          $displayAnnotationsOf(para.getChildAtIndex(1) ?? closer).map(({ id }) => id),
+        ).toEqual(["a"]);
+      });
+      release();
+    });
+  });
+
+  describe("a pasted copy of a carrier's pieces", () => {
+    /** Paste `nodes` through the command, then put them at the start of the run's paragraph, as
+     * the default handler inserts a paste at a caret there: before its content text, which no
+     * attribute text merges with, so the pasted carrier stands apart from the run it was copied
+     * from. */
+    function $paste(editor: LexicalEditor, run: TextNode, nodes: LexicalNode[]): void {
+      editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+        nodes,
+        selection: $getSelection() ?? $createRangeSelection(),
+      });
+      let before = run.getLatest().getParent()?.getFirstChild();
+      if (!before) throw new Error("the run has no paragraph");
+      for (const node of [...nodes].reverse()) {
+        before.insertBefore(node);
+        before = node;
+      }
+    }
+
+    it("makes a piece pasted without its head a carrier of its own", () => {
+      const { editor, run, release } = setup();
+      wrap(editor, run, 1, 6, "external-spelling", "a");
+      let pasted!: TextNode;
+      editor.update(
+        () => {
+          const [, grace] = $pieces(run.getLatest());
+          expect($isPieceContinuation(grace)).toBe(true);
+          pasted = $copyNode(grace);
+          $paste(editor, run, [pasted]);
+          expect($isPieceContinuation(pasted)).toBe(false);
+        },
+        { discrete: true },
+      );
+      editor.read(() => {
+        expect($logicalText(run)).toBe("|grace");
+        expect($pieceHead(pasted).is(pasted)).toBe(true);
+        expect($logicalText(pasted)).toBe("grace");
+        expect($getState(pasted, textTypeState)).toBe("attribute");
+        expect($displayAnnotationsOf(pasted)).toEqual([]);
+      });
+      release();
+    });
+
+    it("keeps a carrier pasted whole one carrier, apart from the one it was copied from", () => {
+      const { editor, run, release } = setup();
+      let closer!: TextNode;
+      editor.update(() => (closer = run.replace($createMarkerNode("w", "closing"))), {
+        discrete: true,
+      });
+      wrap(editor, closer, 0, 1, "external-spelling", "a");
+      let pasted!: TextNode[];
+      editor.update(
+        () => {
+          const pieces = $pieces(closer.getLatest());
+          pasted = pieces.map((piece) => $copyNode(piece));
+          editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+            nodes: pasted,
+            selection: $getSelection() ?? $createRangeSelection(),
+          });
+          expect(pasted.map($isPieceContinuation)).toEqual([false, true]);
+          // Right after its source, where a copy of a glyph no annotation cuts stays a glyph of its
+          // own: Lexical merges only simple text.
+          let after: LexicalNode = pieces[pieces.length - 1];
+          for (const node of pasted) {
+            after.insertAfter(node);
+            after = node;
+          }
+        },
+        { discrete: true },
+      );
+      editor.read(() => {
+        expect($carriers()).toEqual(['text "In the "', 'marker "\\\\w*"', 'marker "\\\\w*"']);
+        expect($holdsByPiece(closer)).toEqual([
+          ["\\", ["a"]],
+          ["w*", []],
+        ]);
+        // Held by nothing, the pasted pieces are joined into one carrier.
+        const [copy] = pasted;
+        expect($holdsByPiece(copy)).toEqual([["\\w*", []]]);
+      });
+      release();
+    });
+
+    it("keeps a head pasted between its source's pieces from taking the source's continuation", () => {
+      const { editor, run, release } = setup();
+      // Held apart, the source's two pieces never merge with an unheld copy beside them.
+      wrap(editor, run, 0, 1, "external-spelling", "a");
+      wrap(editor, run, 1, 6, "external-spelling", "b");
+      let pasted!: TextNode;
+      let grace!: TextNode;
+      editor.update(
+        () => {
+          const [head, continuation] = $pieces(run.getLatest());
+          grace = continuation;
+          pasted = $copyNode(head);
+          editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+            nodes: [pasted],
+            selection: $getSelection() ?? $createRangeSelection(),
+          });
+          // Where a paste at the caret between the two pieces puts it.
+          head.insertAfter(pasted);
+        },
+        { discrete: true },
+      );
+      editor.read(() => {
+        expect($getRoot().getTextContent()).toBe("In the ||grace");
+        // The copy carried the source's chain id until the paste restated it, so the piece after
+        // it is never the copy's: the copy, held by nothing, joins the run as a paste into the run
+        // not cut joins it, under the source's own head, and each hold stays on its own bytes.
+        const head = $pieceHead(grace.getLatest());
+        expect(head.getKey()).not.toBe(pasted.getKey());
+        expect($logicalText(head)).toBe("||grace");
+        expect(
+          $pieces(head).map((piece) => [
+            piece.getTextContent(),
+            $displayAnnotationsOf(piece).map(({ id }) => id),
+          ]),
+        ).toEqual([
+          ["|", ["a"]],
+          ["|", []],
+          ["grace", ["b"]],
+        ]);
+      });
+      release();
+    });
+
+    /** Insert `nodes` at `selection` (by default the caret) the way a paste does
+     * (`@lexical/clipboard`'s `$insertGeneratedNodes`): the command, then, unless a handler took
+     * it, the selection's own insertion. */
+    function $insertPasted(
+      editor: LexicalEditor,
+      nodes: LexicalNode[],
+      selection = $getSelection(),
+    ): void {
+      if (!$isRangeSelection(selection)) throw new Error("no caret to paste at");
+      if (!editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, { nodes, selection }))
+        selection.insertNodes(nodes);
+    }
+
+    /** The paragraph's children as a reader sees them: one per carrier, its class and its whole
+     * text. */
+    function $carriers(): string[] {
+      const para = $getRoot().getFirstChild();
+      if (!$isElementNode(para)) throw new Error("no paragraph");
+      return $logicalChildren(para).map(
+        (node) => `${node.getType()} ${JSON.stringify($logicalText(node))}`,
+      );
+    }
+
+    /** The pieces of the carrier `node` is a piece of: each one's text and the ids holding it. */
+    function $holdsByPiece(node: LexicalNode): [string, string[]][] {
+      return $pieces(node.getLatest()).map((piece) => [
+        piece.getTextContent(),
+        $displayAnnotationsOf(piece).map(({ id }) => id),
+      ]);
+    }
+
+    /** What pasting `$copy()` at byte `at` of the carrier `$carrier()` reads, with the carrier cut
+     * by the holds `holds` (none: unsplit) and the caret at its `spelling`-th spelling there. With
+     * `editorSelection`, the paste goes in at a selection of its own there, as an insertion at a
+     * drop point or a stored caret does, while the editor has no selection (`"none"`) or a caret at
+     * the paragraph's start (`"start"`). */
+    function pasteInto(
+      $carrier: (run: TextNode) => TextNode,
+      holds: readonly (readonly [from: number, to: number, id: string])[],
+      $copy: (carrier: TextNode) => LexicalNode | LexicalNode[],
+      at: number,
+      spelling: 0 | 1,
+      editorSelection?: "none" | "start",
+    ): { carriers: string[]; holds: [string, string[]][] } {
+      const { editor, run, release } = setup();
+      let carrier!: TextNode;
+      editor.update(() => (carrier = $carrier(run)), { discrete: true });
+      for (const [from, to, id] of holds) wrap(editor, carrier, from, to, "external-spelling", id);
+      editor.update(
+        () => {
+          const pasted = [$copy(carrier.getLatest())].flat();
+          // A caret at a cut is the end of the piece before it, or the start of the piece after.
+          const [key, offset] = $pointInCarrier(carrier, at);
+          const piece = $pieces(carrier.getLatest()).find((each) => each.getKey() === key);
+          if (!piece) throw new Error("no piece at the caret");
+          const next = piece.getNextSibling();
+          const caret: [TextNode, number] =
+            spelling === 1 && offset === piece.getTextContentSize() && $isTextNode(next)
+              ? [next, 0]
+              : [piece, offset];
+          if (!editorSelection) {
+            caret[0].select(caret[1], caret[1]);
+            $insertPasted(editor, pasted);
+            return;
+          }
+          const insertion = $createRangeSelection();
+          insertion.anchor.set(caret[0].getKey(), caret[1], "text");
+          insertion.focus.set(caret[0].getKey(), caret[1], "text");
+          if (editorSelection === "start") $getRoot().selectStart();
+          else $setSelection(null);
+          $insertPasted(editor, pasted, insertion);
+        },
+        { discrete: true },
+      );
+      const read = editor.read(() => ({
+        carriers: $carriers(),
+        holds: $holdsByPiece($pieceHead(carrier.getLatest())),
+      }));
+      release();
+      return read;
+    }
+
+    describe("joins the copy into the carrier where a paste into the unsplit carrier joins it", () => {
+      const $attributeRun = (run: TextNode) => run;
+      const $closer = (run: TextNode) => run.replace($createMarkerNode("w", "closing"));
+      it.each([0, 1] as const)(
+        "a copy of an attribute run's byte, pasted at a cut between its pieces (spelling %i)",
+        (spelling) => {
+          const $copyOfBar = () => $setState($createTextNode("|"), textTypeState, "attribute");
+          const plain = pasteInto($attributeRun, [], $copyOfBar, 1, spelling);
+          expect(plain.carriers).toEqual(['text "In the "', 'text "||grace"']);
+          // One hold: the bar is not held, its copy is the same bytes.
+          const oneHold = pasteInto(
+            $attributeRun,
+            [[1, 6, "b"]],
+            (carrier) => $copyNode($pieces(carrier)[0]),
+            1,
+            spelling,
+          );
+          expect(oneHold.carriers).toEqual(plain.carriers);
+          expect(oneHold.holds).toEqual([
+            ["||", []],
+            ["grace", ["b"]],
+          ]);
+          // Two holds: each stays on its own bytes; the copy, pasted between them, holds nothing.
+          const twoHolds = pasteInto(
+            $attributeRun,
+            [
+              [0, 1, "a"],
+              [1, 6, "b"],
+            ],
+            (carrier) => $copyNode($pieces(carrier)[0]),
+            1,
+            spelling,
+          );
+          expect(twoHolds.carriers).toEqual(plain.carriers);
+          expect(twoHolds.holds).toEqual([
+            ["|", ["a"]],
+            ["|", []],
+            ["grace", ["b"]],
+          ]);
+        },
+      );
+
+      it.each([0, 1] as const)(
+        "a copy of a glyph's byte, pasted at a cut between its pieces (spelling %i)",
+        (spelling) => {
+          const $copyOfBackslash = (carrier: TextNode) =>
+            $copyNode($pieceHead(carrier)).setTextContent("\\");
+          const plain = pasteInto($closer, [], $copyOfBackslash, 1, spelling);
+          // The insertion splits the glyph: the bytes after the caret are a text of their own.
+          expect(plain.carriers).toEqual([
+            'text "In the "',
+            'marker "\\\\"',
+            'marker "\\\\"',
+            'text "w*"',
+          ]);
+          const annotated = pasteInto(
+            $closer,
+            [
+              [0, 1, "a"],
+              [1, 2, "b"],
+            ],
+            (carrier) => $copyNode($pieces(carrier)[0]),
+            1,
+            spelling,
+          );
+          expect(annotated.carriers).toEqual(plain.carriers);
+        },
+      );
+
+      it.each([
+        // Lexical's insertion splits the text at the editor's caret when there is one, wherever
+        // the selection it was handed is; the pasted bytes go there.
+        ["start", 0, ['marker "\\\\"', 'text "In the "', 'marker "\\\\w*"']],
+        ["start", 1, ['marker "\\\\"', 'text "In the "', 'marker "\\\\w*"']],
+        // With none, it splits the text where the selection it was handed is.
+        ["none", 0, ['text "In the "', 'marker "\\\\"', 'marker "\\\\"', 'text "w*"']],
+        ["none", 1, ['text "In the "', 'marker "\\\\"', 'marker "\\\\"', 'text "w*"']],
+      ] as const)(
+        "a copy of a glyph's byte pasted at a selection of its own at a cut, the editor's selection %s (spelling %i)",
+        (editorSelection, spelling, carriers) => {
+          const $copyOfBackslash = (carrier: TextNode) =>
+            $copyNode($pieceHead(carrier)).setTextContent("\\");
+          const plain = pasteInto($closer, [], $copyOfBackslash, 1, spelling, editorSelection);
+          expect(plain.carriers).toEqual(carriers);
+          const annotated = pasteInto(
+            $closer,
+            [
+              [0, 1, "a"],
+              [1, 2, "b"],
+            ],
+            (carrier) => $copyNode($pieces(carrier)[0]),
+            1,
+            spelling,
+            editorSelection,
+          );
+          expect(annotated.carriers).toEqual(plain.carriers);
+        },
+      );
+    });
+
+    describe("leaves the carrier as it is where a paste has nothing to insert", () => {
+      const $closer = (run: TextNode) => run.replace($createMarkerNode("w", "closing"));
+      const nothing = () => [];
+
+      it.each([
+        [
+          "cut at the caret, spelling 0",
+          [
+            [0, 1, "a"],
+            [1, 3, "b"],
+          ],
+          0,
+        ],
+        [
+          "cut at the caret, spelling 1",
+          [
+            [0, 1, "a"],
+            [1, 3, "b"],
+          ],
+          1,
+        ],
+        ["held whole", [[0, 3, "a"]], 0],
+      ] as const)("a caret inside a held closer, %s", (_, holds, spelling) => {
+        // Lexical's insertion returns before it splits anything when there are no nodes.
+        const plain = pasteInto($closer, [], nothing, 1, 0);
+        expect(plain.carriers).toEqual(['text "In the "', 'marker "\\\\w*"']);
+        const annotated = pasteInto($closer, holds, nothing, 1, spelling);
+        expect(annotated.carriers).toEqual(plain.carriers);
+        expect(annotated.holds.map(([text]) => text).join("")).toBe("\\w*");
+      });
+
+      it.each([
+        ["held in part", true],
+        ["held by nothing", false],
+      ] as const)("a range over an attribute run's bytes, %s", (_, isHeld) => {
+        const { editor, run, release } = setup();
+        if (isHeld) wrap(editor, run, 1, 6, "external-spelling", "a");
+        editor.update(
+          () => {
+            const pieces = $pieces(run.getLatest());
+            const last = pieces[pieces.length - 1];
+            const selection = $createRangeSelection();
+            selection.anchor.set(pieces[0].getKey(), 0, "text");
+            selection.focus.set(last.getKey(), last.getTextContentSize() - 2, "text");
+            $setSelection(selection);
+            $insertPasted(editor, []);
+          },
+          { discrete: true },
+        );
+        editor.read(() => {
+          expect($getRoot().getTextContent()).toBe("In the |grace");
+          expect($holdsByPiece(run)).toEqual(
+            isHeld
+              ? [
+                  ["|", []],
+                  ["grace", ["a"]],
+                ]
+              : [["|grace", []]],
+          );
+        });
+        release();
+      });
+    });
+
+    it("keeps no token record of the chain it was copied from", () => {
+      const { editor, release } = setup();
+      editor.update(
+        () => {
+          const pasted = $setState($createTextNode("+"), displayPieceTokenTextState, ` +${NBSP}`);
+          editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+            nodes: [pasted],
+            selection: $getSelection() ?? $createRangeSelection(),
+          });
+          expect($getState(pasted, displayPieceTokenTextState)).toBeUndefined();
+        },
+        { discrete: true },
+      );
+      release();
+    });
+
+    // A paste builds its nodes from the clipboard's JSON (`$parseSerializedNode`) in the update
+    // that inserts them, into an editor where no carrier of their class may have been cut yet (a
+    // fresh editor, another editor of the page), so the states they were copied with are read
+    // from that JSON there.
+    describe("built from the clipboard's JSON in another editor", () => {
+      /** The serialized pieces of a closing glyph `\w*` held by one annotation over its `\`,
+       * each piece as a copy writes it. */
+      function copiedPieces(): SerializedLexicalNode[] {
+        const { editor, run, release } = setup();
+        let closer!: TextNode;
+        editor.update(() => (closer = run.replace($createMarkerNode("w", "closing"))), {
+          discrete: true,
+        });
+        wrap(editor, closer, 0, 1, "external-spelling", "a");
+        const json = editor.read(() =>
+          $pieces(closer.getLatest()).map((piece) => piece.exportJSON()),
+        );
+        release();
+        return json;
+      }
+
+      /** Paste `json` into a fresh editor ({@link $paste}); the pasted nodes' keys. */
+      function pasteFresh(json: SerializedLexicalNode[]) {
+        const target = setup();
+        let keys!: NodeKey[];
+        target.editor.update(
+          () => {
+            const nodes = json.map((each) => $parseSerializedNode(each));
+            keys = nodes.map((node) => node.getKey());
+            $paste(target.editor, target.run, nodes);
+          },
+          { discrete: true },
+        );
+        return { ...target, keys };
+      }
+
+      it("holds nothing it was copied holding", () => {
+        const { editor, release } = pasteFresh(copiedPieces());
+        editor.read(() => {
+          const para = $getRoot().getFirstChild();
+          if (!$isElementNode(para)) throw new Error("no paragraph");
+          expect(para.getAllTextNodes().flatMap((node) => $displayAnnotationsOf(node))).toEqual([]);
+        });
+        expect(painted(editor)).toEqual([]);
+        release();
+      });
+
+      it("makes a head pasted without its continuation a carrier of its own, of no chain", () => {
+        const [head] = copiedPieces();
+        const { editor, keys, release } = pasteFresh([head]);
+        editor.read(() => {
+          const node = $getNodeByKey(keys[0]);
+          if (!node) throw new Error("the pasted head is gone");
+          expect($pieces(node).map((piece) => piece.getTextContent())).toEqual(["\\"]);
+          expect($getState(node, displayPieceChainState)).toBeUndefined();
+        });
+        release();
+      });
+
+      it("pastes a piece of a cut token whole, as a copy takes the token it touches whole", () => {
+        const { editor, run, release } = setup();
+        editor.update(() => run.getWritable().setMode("token"), { discrete: true });
+        wrap(editor, run, 1, 6, "external-spelling", "a");
+        const [, continuation] = editor.read(() =>
+          $pieces(run.getLatest()).map((piece) => piece.exportJSON()),
+        );
+        release();
+        const { editor: target, keys, release: releaseTarget } = pasteFresh([continuation]);
+        target.read(() => {
+          const node = $getNodeByKey(keys[0]);
+          if (!node) throw new Error("the pasted piece is gone");
+          expect(node.getTextContent()).toBe("|grace");
+          expect($getState(node, displayPieceTokenTextState)).toBeUndefined();
+        });
+        releaseTarget();
+      });
+
+      it("makes a continuation pasted without its head a carrier of its own", () => {
+        const [, continuation] = copiedPieces();
+        const { editor, keys, release } = pasteFresh([continuation]);
+        editor.read(() => {
+          const node = $getNodeByKey(keys[0]);
+          if (!node) throw new Error("the pasted continuation is gone");
+          expect($isPieceContinuation(node)).toBe(false);
+          expect($getState(node, displayPieceChainState)).toBeUndefined();
+        });
+        release();
+      });
+    });
+  });
+});
+
+describe("the first and last element an annotation paints", () => {
+  const TYPE = "external-check";
+  const START = "editor-typed-markStart-external-check";
+  const END = "editor-typed-markEnd-external-check";
+
+  function setupEdges() {
+    const editor = createEditor({
+      namespace: "DisplayAnnotationEdgesTest",
+      nodes: [TypedMarkNode, ...usjReactNodes],
+      theme: {
+        ...THEME,
+        typedMarkStart: "editor-typed-markStart",
+        typedMarkEnd: "editor-typed-markEnd",
+      },
+      onError: (error) => {
+        throw error;
+      },
+    });
+    const container = document.createElement("div");
+    lastContainer = container;
+    document.body.appendChild(container);
+    editor.setRootElement(container);
+    const { release } = acquireDisplayAnnotationIndex(editor);
+    lastRelease = release;
+    return editor;
+  }
+
+  /** The text of every element carrying the start class, and of every one carrying the end class,
+   * in document order. */
+  function edges(editor: LexicalEditor): { starts: string[]; ends: string[] } {
+    const root = editor.getRootElement();
+    const texts = (name: string) =>
+      [...(root?.getElementsByClassName(name) ?? [])].map((element) => element.textContent ?? "");
+    return { starts: texts(START), ends: texts(END) };
+  }
+
+  /** Wrap `TYPE`/`id` from `from` to `to`, each a text node and an offset into it. */
+  function wrapRange(
+    editor: LexicalEditor,
+    [fromNode, fromOffset]: [LexicalNode, number],
+    [toNode, toOffset]: [LexicalNode, number],
+    id: string,
+  ) {
+    editor.update(
+      () => {
+        const selection = $createRangeSelection();
+        selection.anchor.set(fromNode.getKey(), fromOffset, "text");
+        selection.focus.set(toNode.getKey(), toOffset, "text");
+        $wrapSelectionInTypedMarkNode(selection, TYPE, id);
+      },
+      { discrete: true },
+    );
+  }
+
+  /** `In the ` then a `\w` span holding `beginning`, in one paragraph. */
+  function $textAndSpan(): { text: TextNode; inSpan: TextNode } {
+    const text = $createTextNode("In the ");
+    const inSpan = $createTextNode("beginning");
+    $getRoot().append($createParaNode().append(text, $createCharNode("w").append(inSpan)));
+    return { text, inSpan };
+  }
+
+  it("gives an annotation painting one element both classes", () => {
+    const editor = setupEdges();
+    let text!: TextNode;
+    editor.update(() => void (text = $textAndSpan().text), { discrete: true });
+    wrapRange(editor, [text, 3], [text, 6], "a");
+    expect(edges(editor)).toEqual({ starts: ["the"], ends: ["the"] });
+  });
+
+  it("puts the start on a verse number's piece and the end on the text after it", () => {
+    const editor = setupEdges();
+    let verse!: LexicalNode;
+    let text!: TextNode;
+    editor.update(
+      () => {
+        verse = $createVerseNode("12", getVisibleOpenMarkerText("v", "12"));
+        text = $createTextNode("In the");
+        $getRoot().append($createParaNode().append(verse, text));
+      },
+      { discrete: true },
+    );
+    // `2 In`: the verse number's last digit, its trailing space and the first word.
+    wrapRange(editor, [verse, 4], [text, 2], "a");
+    expect(edges(editor)).toEqual({ starts: ["2"], ends: ["In"] });
+  });
+
+  it("puts the end inside a char span the annotation crosses into", () => {
+    const editor = setupEdges();
+    let parts!: { text: TextNode; inSpan: TextNode };
+    editor.update(() => void (parts = $textAndSpan()), { discrete: true });
+    wrapRange(editor, [parts.text, 3], [parts.inSpan, 5], "a");
+    expect(edges(editor)).toEqual({ starts: ["the "], ends: ["begin"] });
+  });
+
+  it("puts the start in the first paragraph and the end in the last", () => {
+    const editor = setupEdges();
+    let first!: TextNode;
+    let last!: TextNode;
+    editor.update(
+      () => {
+        first = $createTextNode("In the beginning");
+        last = $createTextNode("was the Word");
+        $getRoot().append(
+          $createParaNode().append(first),
+          $createParaNode().append($createTextNode("and")),
+          $createParaNode().append(last),
+        );
+      },
+      { discrete: true },
+    );
+    wrapRange(editor, [first, 7], [last, 3], "a");
+    expect(edges(editor)).toEqual({ starts: ["beginning"], ends: ["was"] });
+  });
+
+  it("gives each of two overlapping annotations of one type its own edges", () => {
+    const editor = setupEdges();
+    let text!: TextNode;
+    editor.update(() => void (text = $textAndSpan().text), { discrete: true });
+    // `a` over `In the`, then `b` over `the ` — through the mark `a` made and the space after it.
+    wrapRange(editor, [text, 0], [text, 6], "a");
+    const [marked, space] = editor.read(() => {
+      const texts = $getRoot().getAllTextNodes();
+      return [
+        texts.find((node) => node.getTextContent() === "In the"),
+        texts.find((node) => node.getTextContent() === " "),
+      ];
+    });
+    if (!marked || !space) throw new Error("the first wrap did not split `In the `");
+    wrapRange(editor, [marked, 3], [space, 1], "b");
+    // `a` is one mark holding `In ` and `b`'s mark over `the`, so it starts and ends there; `b`
+    // starts on its mark inside `a`'s and ends on the space.
+    expect(edges(editor)).toEqual({ starts: ["In the", "the"], ends: ["In the", " "] });
+  });
+
+  it("puts a decorator's edges on the sub-spans the annotation paints first and last", () => {
+    const editor = setupEdges();
+    let verse!: ImmutableVerseNode;
+    let text!: TextNode;
+    editor.update(
+      () => {
+        verse = $createImmutableVerseNode("12");
+        text = $createTextNode("In the");
+        $getRoot().append($createParaNode().append(verse, text));
+        // `2` of the number, then a mark over `In`.
+        $addDisplayAnnotation(verse, TYPE, "a", 4, 5);
+      },
+      { discrete: true },
+    );
+    wrapRange(editor, [text, 0], [text, 2], "a");
+    const paint = getDecoratorPaint(editor, verse.getKey());
+    expect(paint).toHaveLength(1);
+    expect(paint[0].classNames).toContain(START);
+    expect(paint[0].classNames).not.toContain(END);
+    expect(edges(editor)).toEqual({ starts: [], ends: ["In"] });
+
+    editor.update(() => $removeDisplayAnnotation(verse.getLatest(), TYPE, "a"), {
+      discrete: true,
+    });
+    expect(getDecoratorPaint(editor, verse.getKey())).toEqual([]);
+    expect(edges(editor)).toEqual({ starts: ["In"], ends: ["In"] });
+  });
+
+  it("keeps the end on the last element as text is typed at its end", () => {
+    const editor = setupEdges();
+    let parts!: { text: TextNode; inSpan: TextNode };
+    editor.update(() => void (parts = $textAndSpan()), { discrete: true });
+    wrapRange(editor, [parts.text, 3], [parts.inSpan, 5], "a");
+    editor.update(
+      () => {
+        const last = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === "begin");
+        if (!last) throw new Error("no mark reads `begin`");
+        last.setTextContent("beginn");
+      },
+      { discrete: true },
+    );
+    expect(edges(editor)).toEqual({ starts: ["the "], ends: ["beginn"] });
+  });
+
+  it("moves the start to the next element when the first one is deleted", () => {
+    const editor = setupEdges();
+    let parts!: { text: TextNode; inSpan: TextNode };
+    editor.update(() => void (parts = $textAndSpan()), { discrete: true });
+    wrapRange(editor, [parts.text, 3], [parts.inSpan, 5], "a");
+    editor.update(
+      () => {
+        const first = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === "the ");
+        first?.getParent()?.remove();
+      },
+      { discrete: true },
+    );
+    expect(edges(editor)).toEqual({ starts: ["begin"], ends: ["begin"] });
+  });
+
+  it("moves the edges onto a carrier piece's element when Lexical re-creates it", () => {
+    const editor = setupEdges();
+    let verse!: LexicalNode;
+    let text!: TextNode;
+    editor.update(
+      () => {
+        verse = $createVerseNode("12", getVisibleOpenMarkerText("v", "12"));
+        text = $createTextNode("In the");
+        $getRoot().append($createParaNode().append(verse, text));
+      },
+      { discrete: true },
+    );
+    wrapRange(editor, [verse, 4], [text, 2], "a");
+    const held = editor.read(() =>
+      $pieces(verse.getLatest()).find((piece) => piece.getTextContent() === "2"),
+    );
+    if (!$isTextNode(held)) throw new Error("no piece reads `2`");
+    const before = editor.getElementByKey(held.getKey());
+    // `code` changes the node's own DOM tag, so Lexical creates a new element for it.
+    editor.update(() => held.getLatest().setFormat("code"), { discrete: true });
+    expect(editor.getElementByKey(held.getKey())).not.toBe(before);
+    expect(edges(editor)).toEqual({ starts: ["2"], ends: ["In"] });
+  });
+
+  it("takes every edge class away when the annotation goes", () => {
+    const editor = setupEdges();
+    let parts!: { text: TextNode; inSpan: TextNode };
+    editor.update(() => void (parts = $textAndSpan()), { discrete: true });
+    wrapRange(editor, [parts.text, 3], [parts.inSpan, 5], "a");
+    expect(edges(editor)).toEqual({ starts: ["the "], ends: ["begin"] });
+    editor.update(
+      () => {
+        for (const node of $getRoot().getAllTextNodes()) {
+          const mark = node.getParent();
+          if (mark?.getType() === "typed-mark") {
+            for (const child of mark.getChildren()) mark.insertBefore(child);
+            mark.remove();
+          }
+        }
+      },
+      { discrete: true },
+    );
+    expect(edges(editor)).toEqual({ starts: [], ends: [] });
+  });
+
+  describe("into a collapsed note", () => {
+    /** `In the beginning` then a footnote whose caller is `+` and whose content is `a note`. */
+    function $verseEndingInNote(collapsed: boolean): {
+      text: TextNode;
+      note: LexicalNode;
+      caller: LexicalNode;
+      content: TextNode;
+    } {
+      const text = $createTextNode("In the beginning");
+      const caller = $createImmutableNoteCallerNode("+");
+      const content = $createTextNode("a note");
+      const note = $createNoteNode("f", "+", collapsed).append(caller, content);
+      $getRoot().append($createParaNode().append(text, note));
+      return { text, note, caller, content };
+    }
+
+    /** Whether the caller's element carries the end class. The caller is a decorator React would
+     * draw, so its element reads empty here. */
+    const callerEnds = (editor: LexicalEditor, caller: LexicalNode) =>
+      editor.getElementByKey(caller.getKey())?.classList.contains(END) ?? false;
+
+    const toggle = (editor: LexicalEditor, note: LexicalNode) =>
+      editor.update(
+        () => {
+          const latest = note.getLatest();
+          if ($isNoteNode(latest)) latest.toggleIsCollapsed();
+        },
+        { discrete: true },
+      );
+
+    it("puts the end on the last element the note does not hide: its caller", () => {
+      const editor = setupEdges();
+      let parts!: ReturnType<typeof $verseEndingInNote>;
+      editor.update(() => void (parts = $verseEndingInNote(true)), { discrete: true });
+      // From `beginning` over the caller to the content's `a`.
+      wrapRange(editor, [parts.text, 7], [parts.content, 1], "a");
+      expect(edges(editor)).toEqual({ starts: ["beginning"], ends: [""] });
+      expect(callerEnds(editor, parts.caller)).toBe(true);
+    });
+
+    it("moves the end into the note as it expands, and back as it collapses", () => {
+      const editor = setupEdges();
+      let parts!: ReturnType<typeof $verseEndingInNote>;
+      editor.update(() => void (parts = $verseEndingInNote(true)), { discrete: true });
+      wrapRange(editor, [parts.text, 7], [parts.content, 1], "a");
+      toggle(editor, parts.note);
+      expect(edges(editor)).toEqual({ starts: ["beginning"], ends: ["a"] });
+      expect(callerEnds(editor, parts.caller)).toBe(false);
+      toggle(editor, parts.note);
+      expect(edges(editor)).toEqual({ starts: ["beginning"], ends: [""] });
+      expect(callerEnds(editor, parts.caller)).toBe(true);
+    });
+
+    it("gives a marker glyph held inside a note its edges as the note expands, and none as it collapses", () => {
+      const editor = setupEdges();
+      let note!: LexicalNode;
+      let glyph!: LexicalNode;
+      editor.update(
+        () => {
+          glyph = $createMarkerNode("ft");
+          note = $createNoteNode("f", "+", true).append(
+            $createImmutableNoteCallerNode("+"),
+            glyph,
+            $createTextNode(`${NBSP}a note`),
+          );
+          $getRoot().append($createParaNode().append($createTextNode("In the beginning"), note));
+          // The whole glyph.
+          $addDisplayAnnotation(glyph, TYPE, "a", 0, 0);
+        },
+        { discrete: true },
+      );
+      const glyphEdges = () =>
+        [START, END].filter((name) =>
+          editor.getElementByKey(glyph.getKey())?.classList.contains(name),
+        );
+      expect(glyphEdges()).toEqual([]);
+      toggle(editor, note);
+      expect(glyphEdges()).toEqual([START, END]);
+      toggle(editor, note);
+      expect(glyphEdges()).toEqual([]);
+    });
+
+    it("gives an annotation held only inside a collapsed note no edges", () => {
+      const editor = setupEdges();
+      let parts!: ReturnType<typeof $verseEndingInNote>;
+      editor.update(() => void (parts = $verseEndingInNote(true)), { discrete: true });
+      wrapRange(editor, [parts.content, 2], [parts.content, 6], "a");
+      expect(edges(editor)).toEqual({ starts: [], ends: [] });
+      toggle(editor, parts.note);
+      expect(edges(editor)).toEqual({ starts: ["note"], ends: ["note"] });
+    });
+  });
+
+  it("paints no edge class when the theme names no edge prefix", () => {
+    const { editor, run, release } = setup();
+    wrap(editor, run, 0, 6, "external-spelling", "a");
+    const root = editor.getRootElement();
+    expect(root?.querySelector('[class*="markStart"], [class*="markEnd"]')).toBeNull();
     release();
   });
 });

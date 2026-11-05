@@ -2,7 +2,9 @@ import { $isSomeVerseNode, SomeVerseNode } from "../../../nodes/usj/node-react.u
 import {
   $editableNoteCallerContent,
   $hasAttributeRunAncestor,
+  $isEmbedContinuation,
   $isElementNodeClosing,
+  $isLegacyAttributeText,
   $isOwnParaPrefixGlyph,
   DeltaOp,
   LF,
@@ -39,7 +41,11 @@ import {
   $isParaNode,
   $isSomeChapterNode,
   $isUnknownNode,
+  $isPieceContinuation,
   $isVerseNode,
+  $logicalText,
+  $pieceHead,
+  $pieces,
   $separatorPrefixLength,
   BOOK_MARKER,
   BookNode,
@@ -50,7 +56,6 @@ import {
   ImmutableUnmatchedNode,
   MilestoneNode,
   NBSP,
-  NODE_ATTRIBUTE_PREFIX,
   NoteNode,
   ParaLikeNode,
   ParaNode,
@@ -59,12 +64,15 @@ import {
   textTypeState,
   UnknownNode,
   VERSE_MARKER,
+  $previousSiblingThroughMarks,
 } from "shared";
 
 interface OpenEmbedContext {
   node: NoteNode | UnknownNode;
   children: LexicalNode[];
   contentsOps?: DeltaOp[];
+  /** The text the embed's last text op came from. */
+  lastText?: TextNode;
 }
 
 export function $getTextOp(node: TextNode, openCharNodes?: CharNode[]): DeltaOp {
@@ -204,11 +212,14 @@ function $getNodeOps(
     ops,
   );
 
-  // is an EmbedNode
+  // is an EmbedNode (a verse or unmatched closer cut into pieces is one embed, sent from its first
+  // piece)
+  const isEmbedContinuation = $isEmbedContinuation(currentNode);
   if ($isSomeChapterNode(currentNode)) ops.push($getChapterOp(currentNode));
-  if ($isSomeVerseNode(currentNode)) ops.push($getVerseOp(currentNode));
+  if ($isSomeVerseNode(currentNode) && !isEmbedContinuation) ops.push($getVerseOp(currentNode));
   if ($isMilestoneNode(currentNode)) ops.push($getMilestoneOp(currentNode));
-  if ($isImmutableUnmatchedNode(currentNode)) ops.push($getImmutableUnmatchedOp(currentNode));
+  if ($isImmutableUnmatchedNode(currentNode) && !isEmbedContinuation)
+    ops.push($getImmutableUnmatchedOp(currentNode));
   $handleUnknownNodes(currentNode, ops, openEmbeds);
   $handleNoteNodes(currentNode, ops, openEmbeds);
 
@@ -247,6 +258,9 @@ function $handleTextNodes(
   contentOnly: boolean,
 ) {
   if (!$isTextNode(currentNode)) return;
+  // A carrier an annotation has cut into pieces (`displayPieces.state.ts`) is one node: its first
+  // piece sends the whole carrier's bytes, so the ops are those of the uncut carrier.
+  if ($isPieceContinuation(currentNode)) return;
   // An editable VerseNode's own `__text` is its marker glyph (`\v 1 `) — VerseNode extends
   // TextNode so the glyph can sit inline for caret placement, but the glyph is engine-owned
   // display, not content. The verse is already conveyed by its own embed op ($getVerseOp,
@@ -319,7 +333,7 @@ function $handleTextNodes(
   // markerEditDeletion.utils.ts); the apply side re-synthesizes the whole prefix, so its text
   // must never enter content ops.
   if ($getState(currentNode, textTypeState) === "marker-trailing-space") return;
-  let text = currentNode.getTextContent();
+  let text = $logicalText(currentNode);
   // A bare caret host (transientCaretHost.utils.ts) is collab-invisible: its insertion is never
   // emitted, so it must never appear in a delta op either. Recognized by its mark, not its text: an
   // authored zero-width-space-only run is content and must reach peers.
@@ -327,7 +341,12 @@ function $handleTextNodes(
   // An expanded note's editable caller text is presentation of the note's `caller` attribute, so
   // none of its own bytes are content; only bytes typed into a caller that waits as the user left
   // them are, as the editor→USJ conversion reads them ({@link $editableNoteCallerContent}).
-  const callerContent = $editableNoteCallerContent(currentNode);
+  const callerContent =
+    $editableNoteCallerContent(currentNode) === undefined
+      ? undefined
+      : $pieces(currentNode)
+          .map((piece) => $editableNoteCallerContent(piece) ?? "")
+          .join("");
   if (callerContent !== undefined) {
     if (!callerContent) return;
     text = callerContent;
@@ -347,7 +366,13 @@ function $handleTextNodes(
   // own lone-NBSP nodes, so `$isLoneNbspContent` (which reads the node's whole text) is asked only
   // about text that kept every byte of its node.
   let isSeparatorStripped = false;
-  if (omitsCharGlyphs && !!parentCharNode && previousSibling === parentCharNode.getFirstChild()) {
+  // The opener may be cut into pieces; its first piece is the span's first child.
+  if (
+    omitsCharGlyphs &&
+    !!parentCharNode &&
+    !!previousSibling &&
+    $pieceHead(previousSibling).is(parentCharNode.getFirstChild())
+  ) {
     const separatorLength = $separatorPrefixLength(currentNode);
     text = text.slice(separatorLength);
     isSeparatorStripped = separatorLength > 0;
@@ -366,7 +391,7 @@ function $handleTextNodes(
   // region (see AttributeRunNode.ts), so anything riding inside it is presentation, not content,
   // whether or not it happens to also carry the "attribute" state tag.
   const isNodeAttributeText =
-    text.startsWith(NODE_ATTRIBUTE_PREFIX) ||
+    $isLegacyAttributeText(currentNode) ||
     $getState(currentNode, textTypeState) === "attribute" ||
     $hasAttributeRunAncestor(currentNode);
   // An author's `~` as a span's whole text has the placeholder's shape; `$isLoneNbspContent`
@@ -397,11 +422,21 @@ function $handleTextNodes(
   textOp.insert = text;
   if (activeEmbed) {
     // A lone NBSP is a separator, spacer or placeholder of the note's layout unless it is a
-    // no-break space of the note's content (a `~` as a span's whole text, or between two spans) —
-    // the same rule the editor→USJ conversion keeps content by.
+    // no-break space of the note's content (a `~` as a span's whole text, or between two spans, or
+    // one an annotation mark split off content) — the same rule the editor→USJ conversion keeps
+    // content by.
     const isLayoutNbsp = text === NBSP && !isSeparatorStripped && !$isLoneNbspContent(currentNode);
     if (!text || isLayoutNbsp || isNodeAttributeText) return;
-    activeEmbed.contentsOps?.push(textOp);
+    // A text an annotation mark cut off the text before it joins that text's op, as a Delta
+    // pushes it: the embed is compared whole, so the texts a mark cut apart must make the ops the
+    // uncut text makes. Texts apart for any other reason (two spans) stay apart.
+    const isCutByMark =
+      activeEmbed.lastText !== undefined &&
+      !currentNode.getPreviousSibling()?.is(activeEmbed.lastText) &&
+      $previousSiblingThroughMarks(currentNode)?.is(activeEmbed.lastText);
+    if (isCutByMark && activeEmbed.contentsOps) new Delta(activeEmbed.contentsOps).push(textOp);
+    else activeEmbed.contentsOps?.push(textOp);
+    activeEmbed.lastText = currentNode;
   } else {
     // Attribute display text is presentation-only regardless of WHERE it rides — inside a char
     // span (the original, narrower rule) or, like a milestone's or a verse's \va/\vp value, as a

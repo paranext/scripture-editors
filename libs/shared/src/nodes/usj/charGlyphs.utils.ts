@@ -75,6 +75,20 @@ export function $charHasClosingGlyph(char: CharNode): boolean {
 }
 
 /**
+ * Whether `char` renders a closing glyph but not its opening one: the opener deleted, or the
+ * second half of a span Lexical split where it inserted nodes inside it. Transient either way —
+ * the marker-edit engine unwraps the span or reads it back with the half before it
+ * (`$charNodeDeletionTransform`) — so what the span's glyphs anchor (its attribute run) is left
+ * for that resolution.
+ */
+export function $charLacksOpeningGlyph(char: CharNode): boolean {
+  const first = char.getFirstChild();
+  return (
+    !($isMarkerNode(first) && first.getMarkerSyntax() === "opening") && $charHasClosingGlyph(char)
+  );
+}
+
+/**
  * The unknown attributes a span continuing `char` must be created with: `closed="false"` when
  * `char` carries the implicit-close convention, otherwise none.
  *

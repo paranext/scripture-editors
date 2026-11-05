@@ -4,32 +4,56 @@
  * one-time "destroyed" report for an annotation whose last holder — a mark or a display byte —
  * left without the host hearing of it. One acquisition per editor, reference-counted, because both
  * `AnnotationPlugin` and `CommentPlugin` need it.
+ *
+ * Painting is by element only. A text leaf is always painted whole — an editable carrier is cut
+ * into pieces where a hold ends (`displayPieces.state.ts`), so what an annotation paints on it is
+ * either all of a piece or none. A read-only decorator held in part paints sub-spans of its own
+ * rendered text, through the paint store in `decoratorPaint.ts`.
+ *
+ * Every annotation's first painted element, by document order, also gets its type's start class and
+ * its last its end class (`typedMarkEdgeClassName`) — a `<mark>`, a leaf painted whole, or a
+ * decorator's sub-span — so a host can draw one box over everything it paints.
  */
 
-import { ImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
+import {
+  $isImmutableNoteCallerNode,
+  ImmutableNoteCallerNode,
+} from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { ImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
 import { $renderedOffsetOf } from "./decoratorHolds.utils";
 import { $readDecoratorHoldableText } from "./selection.utils";
 import {
-  AnnotationHighlighter,
-  getHighlightApi,
-  LeafHighlight,
-  rangeContainsPoint,
-  rangeOverText,
-} from "./annotationHighlights";
-import { $paintIntervalsOf, $paintText, leafPaint, PaintIntervals } from "./annotationPaint.utils";
+  $paintIntervalsOf,
+  $paintSize,
+  $paintText,
+  leafPaint,
+  PaintIntervals,
+} from "./annotationPaint.utils";
 import { addClassNamesToElement, mergeRegister, removeClassNamesFromElement } from "@lexical/utils";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import {
+  BaseSelection,
+  $findMatchingParent,
+  INTERNAL_$isBlock,
   $getNearestNodeFromDOMNode,
   $getNodeByKey,
+  $getSelection,
+  $isDecoratorNode,
+  $isRangeSelection,
+  $isTextNode,
   COMMAND_PRIORITY_CRITICAL,
+  COMMAND_PRIORITY_LOW,
+  EditorState,
   HISTORIC_TAG,
+  INSERT_LINE_BREAK_COMMAND,
+  INSERT_PARAGRAPH_COMMAND,
   Klass,
+  LexicalCommand,
   LexicalEditor,
   LexicalNode,
   NodeKey,
   NodeMutation,
+  RangeSelection,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   TextNode,
   $isElementNode,
@@ -38,25 +62,42 @@ import {
 import {
   $coveredDisplayText,
   $displayAnnotationsOf,
+  $isNoteNode,
+  $isPieceContinuation,
   $isTypedMarkNode,
+  clearDecoratorPaints,
+  DECORATOR_PAINT_ATTRIBUTE,
+  DecoratorPaint,
   deleteDisplayAnnotationRegistration,
   DisplayAnnotation,
   displayAnnotationsState,
   EXTERNAL_USJ_MUTATION_TAG,
+  isDomPaintedDecorator,
+  paintedPieceKeys,
+  paintedPieceOf,
+  renderDecoratorPaint,
+  setDecoratorPaint,
   getDisplayAnnotationRegistration,
   ImmutableChapterNode,
   ImmutableTypedTextNode,
   ImmutableUnmatchedNode,
   MarkerNode,
+  NoteNode,
   registerDisplayAnnotationBasis,
+  $restatePastedPieces,
+  $isSplitCarrier,
+  $logicalOffset,
+  $splitCarrierAt,
   setDecoratorBytesReader,
   clearTypedMarkRemovalSilences,
   forgetTypedMarkCallbacks,
   listenForTypedMarkRemovalReports,
   setTypedMarkRemovalSilenced,
+  takeRemovedTypedMarks,
   takeTypedMarkRemovalReports,
   TypedIDs,
   typedMarkClassNames,
+  typedMarkEdgeClassName,
   TypedMarkNode,
   TypedMarkOnRemove,
   VerseNode,
@@ -64,6 +105,14 @@ import {
 
 /** The class every display-byte node holding an annotation is painted with. */
 export const DISPLAY_ANNOTATION_CLASS_NAME = "display-annotation";
+
+/**
+ * The attribute on the element of every piece of a cut carrier after its first (a continuation,
+ * `displayPieces.state.ts`): a style that boxes a carrier — padding, a border, a margin — applies
+ * to the carrier's head piece alone with `:not([data-piece-continuation])`, so a carrier an
+ * annotation cuts is drawn as the uncut one is.
+ */
+export const DISPLAY_PIECE_CONTINUATION_ATTRIBUTE = "data-piece-continuation";
 
 export interface DisplayAnnotationIndex {
   /** The keys of the display-byte nodes holding `type`/`id`. */
@@ -119,10 +168,94 @@ function parseIndexKey(key: string): [string, string] {
   return parsed;
 }
 
-/** Remove `displayAnnotationsState` from `node` and its whole subtree. Mutating. */
-function $stripDisplayAnnotations(node: LexicalNode): void {
-  $setState(node, displayAnnotationsState, undefined);
-  if ($isElementNode(node)) node.getChildren().forEach($stripDisplayAnnotations);
+/** Remove `displayAnnotationsState` from pasted sibling `nodes` and their whole subtrees, and
+ * make the pieces among them pieces of the paste alone (`$restatePastedPieces`): a carrier pasted
+ * whole stays one carrier, which the piece transform joins once the holds are gone, a piece
+ * pasted without its head is a carrier of its own, and a part of a cut token is the whole token,
+ * as a copy of the token takes it. Mutating (`nodes` too). */
+function $stripDisplayAnnotations(nodes: LexicalNode[]): void {
+  $restatePastedPieces(nodes);
+  for (const node of nodes) {
+    $setState(node, displayAnnotationsState, undefined);
+    if ($isElementNode(node)) $stripDisplayAnnotations(node.getChildren());
+  }
+}
+
+/**
+ * Before pasted nodes go in at the caret, split the carrier the caret is inside where the insertion
+ * splits a text (`$splitCarrierAt`): `RangeSelection.insertNodes` splits the text node at the
+ * caret, but in a carrier cut into pieces the caret may sit between two of them, where no text is
+ * left to split, and in one holding an annotation each part would re-measure the holds it copied
+ * rather than keep its own. Only what the insertion itself does first is done here: nothing for no
+ * nodes (it returns before touching the document), else a range removed. Mutating. */
+function $splitCarrierAtInsertion(
+  nodes: readonly LexicalNode[],
+  insertion: BaseSelection | null,
+): void {
+  if (nodes.length === 0 || !$isRangeSelection(insertion)) return;
+  if (!insertion.isCollapsed()) insertion.removeText();
+  // The insertion splits the text at the editor's own range selection when there is one (Lexical's
+  // `$removeTextAndSplitBlock`), else at its own anchor.
+  const current = $getSelection();
+  // Inline nodes go into the block the caret is in; with no block there the insertion refuses,
+  // splitting nothing.
+  const isInline = (pasted: LexicalNode) =>
+    !($isElementNode(pasted) || $isDecoratorNode(pasted)) || pasted.isInline();
+  $splitCarrierAtPoint($isRangeSelection(current) ? current : insertion, nodes.every(isInline));
+}
+
+/**
+ * Before a paragraph or line break goes in at a collapsed caret, split the carrier the caret is
+ * inside where the break splits a text, as {@link $splitCarrierAtInsertion} does for a paste:
+ * `RangeSelection.insertParagraph`/`insertLineBreak` split the text at the caret, so the bytes of a
+ * carrier after the caret go on as content (a glyph's tail, a verse's number moved to the next
+ * paragraph), and between two pieces of a cut carrier the break would find no text to split and
+ * leave the pieces after it the same carrier as those before. It splits the text with no block
+ * around it too (a span beside its chapter). Mutating. */
+function $splitCarrierAtBreak(): void {
+  const selection = $getSelection();
+  if ($isRangeSelection(selection) && selection.isCollapsed())
+    $splitCarrierAtPoint(selection, false);
+}
+
+/**
+ * Split the carrier `at`'s anchor is inside at the anchor, with `splitText` on its whole text
+ * (`$splitCarrierAt`), when it is cut into pieces or holds an annotation, and restate `at`'s points
+ * on the split: the end of the part before the caret. `needsBlock`: only inside a block, where an
+ * insertion of inline nodes or a paragraph break goes in at all. Mutating. */
+function $splitCarrierAtPoint(at: RangeSelection, needsBlock: boolean): void {
+  const { anchor } = at;
+  // A caret on the parent between two pieces is the end of the piece before it.
+  const node =
+    anchor.type === "text"
+      ? anchor.getNode()
+      : $isElementNode(anchor.getNode())
+        ? anchor.getNode().getChildAtIndex(anchor.offset - 1)
+        : null;
+  if (!$isTextNode(node)) return;
+  if (!$isSplitCarrier(node) && $displayAnnotationsOf(node).length === 0) return;
+  if (needsBlock && !$isElementNode($findMatchingParent(node, INTERNAL_$isBlock))) return;
+  const offset = anchor.type === "text" ? anchor.offset : node.getTextContentSize();
+  const isCollapsed = at.isCollapsed();
+  const before = $splitCarrierAt(node, $logicalOffset(node, offset));
+  if (!before) return;
+  // The split moves the editor's selection with its bytes and no other, so the point the insertion
+  // reads is restated on the split: the end of the part before the caret.
+  const points = isCollapsed ? [at.anchor, at.focus] : [at.anchor];
+  for (const point of points) point.set(before.getKey(), before.getTextContentSize(), "text");
+}
+
+/**
+ * Whether `node` is in the content a collapsed note hides: inside a note whose `isCollapsed` is set,
+ * and not its caller, the one part of it a collapsed note shows. Read from the tree, not the page,
+ * so it holds in a hidden tab too.
+ */
+function $isInCollapsedNoteContent(node: LexicalNode): boolean {
+  let child = node;
+  for (let parent = node.getParent(); parent; child = parent, parent = parent.getParent())
+    if ($isNoteNode(parent) && parent.getIsCollapsed() === true)
+      return !$isImmutableNoteCallerNode(child);
+  return false;
 }
 
 interface Entry {
@@ -179,19 +312,19 @@ function createIndex(editor: LexicalEditor): Entry {
   const wholeLeaves = new Set<NodeKey>();
   /** Extra class names the host's state adds to an annotation's painting (`selected`). */
   const stateClasses = new Map<string, Set<string>>();
-  /** Leaves whose element did not render all the text a piece paints (a decorator's portal
-   * renders after the commit that created it). */
-  const incomplete = new Set<NodeKey>();
-  /** Watches the editable content for text that changes outside a commit, so highlights move
-   * with it. */
-  let contentObserver: MutationObserver | undefined;
+  /** Each annotation's first and last painted node by document order: a mark, or a leaf painted
+   * here. The edge classes go on their elements (on a decorator painted in part, on its first or
+   * last sub-span the annotation paints). */
+  const edgesByAnnotation = new Map<string, { start: NodeKey; end: NodeKey }>();
+  /** Annotations whose first or last painted node may have moved since the last paint pass. */
+  let staleEdges = new Set<string>();
+  /** The edge class names last put on each mark's element, which Lexical owns and may re-create. */
+  const markEdges = new Map<NodeKey, { element: HTMLElement; names: string[] }>();
   /** Set once the index is released: nothing paints after that. */
   let disposed = false;
-  const highlightApi = getHighlightApi();
-  const highlighter = highlightApi
-    ? new AnnotationHighlighter(highlightApi, () => editor.getRootElement()?.parentElement ?? null)
-    : undefined;
   let emptied = new Set<string>();
+  /** Annotations a node began holding in the commit being made. */
+  let gainedHolder = new Set<string>();
   const theme = editor._config.theme;
 
   function holderCount(annotationKey: string): number {
@@ -204,7 +337,9 @@ function createIndex(editor: LexicalEditor): Entry {
   function addHolder(holders: Map<string, Set<NodeKey>>, annotationKey: string, key: NodeKey) {
     let keys = holders.get(annotationKey);
     if (!keys) holders.set(annotationKey, (keys = new Set()));
+    if (keys.has(key)) return;
     keys.add(key);
+    gainedHolder.add(annotationKey);
   }
 
   function dropHolder(holders: Map<string, Set<NodeKey>>, annotationKey: string, key: NodeKey) {
@@ -253,16 +388,14 @@ function createIndex(editor: LexicalEditor): Entry {
   }
 
   /** Whether pointer `event` on leaf `key` falls on the part annotation `annotationKey` paints
-   * there — anywhere on an element painted whole. Never for an annotation that paints nothing
-   * there, such as one held only for bytes a decorator does not show. */
+   * there — anywhere on an element painted whole, or on the sub-span of a decorator it paints.
+   * Never for an annotation that paints nothing there, such as one held only for bytes a
+   * decorator does not show. */
   function hits(key: NodeKey, annotationKey: string, event: MouseEvent): boolean {
     if (!annotationsByLeaf.get(key)?.has(annotationKey)) return false;
     if (wholeLeaves.has(key)) return true;
-    return (highlighter?.leafHighlights(key) ?? []).some(
-      (piece) =>
-        piece.annotations.includes(annotationKey) &&
-        rangeContainsPoint(piece.range, event.clientX, event.clientY),
-    );
+    const target = event.target instanceof Node ? event.target : null;
+    return paintedPieceKeys(paintedPieceOf(target) ?? null).includes(annotationKey);
   }
 
   /** The annotations `node` holds that `event` points at, each with the bytes it covers there. */
@@ -312,7 +445,7 @@ function createIndex(editor: LexicalEditor): Entry {
     );
   }
 
-  /** The class names an element or highlight painted by `annotationKeys` gets. */
+  /** The class names an element or a decorator sub-span painted by `annotationKeys` gets. */
   function classNamesFor(annotationKeys: Iterable<string>): string[] {
     const typedIds: TypedIDs = {};
     const states = new Set<string>();
@@ -330,6 +463,27 @@ function createIndex(editor: LexicalEditor): Entry {
       DISPLAY_ANNOTATION_CLASS_NAME,
       ...states,
     ].flatMap((name) => name.match(/\S+/g) ?? []);
+  }
+
+  /** The edge class names node `key` gets for each of `annotationKeys` whose first (`"start"`) or
+   * last (`"end"`) painted node it is. */
+  function edgeClassNamesFor(
+    key: NodeKey,
+    annotationKeys: Iterable<string>,
+    edges: readonly ("start" | "end")[] = ["start", "end"],
+  ): string[] {
+    const names: string[] = [];
+    for (const annotationKey of annotationKeys) {
+      const edgeKeys = edgesByAnnotation.get(annotationKey);
+      if (!edgeKeys) continue;
+      const [type] = parseIndexKey(annotationKey);
+      for (const edge of edges) {
+        if (edgeKeys[edge] !== key) continue;
+        const name = typedMarkEdgeClassName(theme, type, edge);
+        if (name) names.push(...(name.match(/\S+/g) ?? []));
+      }
+    }
+    return [...new Set(names)];
   }
 
   function paintElement(element: HTMLElement, next: string[]): void {
@@ -351,18 +505,22 @@ function createIndex(editor: LexicalEditor): Entry {
     });
   }
 
-  /** Paint leaf `key` from what every annotation paints on it: its element whole, or highlights
-   * over exactly the painted characters. */
+  /**
+   * Paint leaf `key` from what every annotation paints on it: its element whole, or — for a
+   * read-only decorator — sub-spans over exactly the painted characters. A text leaf is never
+   * painted in part: its carrier is cut where a hold ends, so a plan that is not whole there is a
+   * defect; it is painted whole and reported to the editor's error handler.
+   */
   function $repaintLeaf(key: NodeKey): void {
     const node = $getNodeByKey(key);
     const element = editor.getElementByKey(key);
     const annotationKeys = annotationsByLeaf.get(key);
     const previous = leafElement.get(key);
     if (previous && previous !== element) paintElement(previous, []);
-    incomplete.delete(key);
     if (!node || !element || !annotationKeys || annotationKeys.size === 0) {
       if (element) paintElement(element, []);
-      highlighter?.clearLeaf(key);
+      if (node && $isDecoratorNode(node)) $paintDecorator(node, element, []);
+      else setDecoratorPaint(editor, key, []);
       leafElement.delete(key);
       wholeLeaves.delete(key);
       return;
@@ -377,70 +535,132 @@ function createIndex(editor: LexicalEditor): Entry {
     const holds = $displayAnnotationsOf(node).length > 0;
     const text = $paintText(node);
     let plan = leafPaint(text.length, byAnnotation);
-    // Without a highlight API, a display byte that holds an annotation is painted whole, and a
-    // filler byte only partly painted is not painted at all.
-    if (!plan.whole && !highlighter)
-      plan = holds ? { whole: true } : { whole: false, segments: [] };
+    if (!plan.whole && !$isDecoratorNode(node)) {
+      editor._onError(
+        new Error(
+          `annotation painting: text leaf ${node.getType()} ${JSON.stringify(text)} is painted in part ` +
+            `(${JSON.stringify(plan.segments)}); its carrier should have been cut where the hold ends`,
+        ),
+      );
+      plan = { whole: true };
+    }
     if (holds) wire(element);
     if (plan.whole) {
-      highlighter?.clearLeaf(key);
       wholeLeaves.add(key);
-      paintElement(element, classNamesFor(annotationKeys));
+      $paintDecorator(node, element, []);
+      paintElement(element, [
+        ...classNamesFor(annotationKeys),
+        ...edgeClassNamesFor(key, annotationKeys),
+      ]);
       return;
     }
     wholeLeaves.delete(key);
     paintElement(element, []);
-    if (!highlighter) return;
-    const pieces: LeafHighlight[] = [];
-    for (const { start, end, annotations } of plan.segments) {
-      const range = rangeOverText(element, start, end);
-      if (!range) incomplete.add(key);
-      else
-        pieces.push({
-          classNames: classNamesFor(annotations),
-          annotations,
-          range,
-          text: text.slice(start, end),
-        });
-    }
-    highlighter.setLeaf(key, pieces);
-  }
-
-  /**
-   * Whether leaf `key`'s highlights no longer cover the text they were made for. A range over a
-   * text node collapses when the node's whole value is rewritten in place — Lexical does that for
-   * every text it reconciles in a whole-state replacement (undo, redo), and a decorator's portal
-   * does it when it re-renders after the commit — and is left behind when the node is replaced.
-   */
-  function isStale(key: NodeKey): boolean {
-    if (incomplete.has(key)) return true;
-    const element = editor.getElementByKey(key);
-    return (highlighter?.leafHighlights(key) ?? []).some(
-      ({ range, text }) =>
-        !element ||
-        !element.contains(range.startContainer) ||
-        !element.contains(range.endContainer) ||
-        range.toString() !== text,
+    const { segments } = plan;
+    // An annotation's start or end on this decorator goes on the first or last sub-span it paints.
+    const firstOf = (annotationKey: string) =>
+      segments.findIndex(({ annotations }) => annotations.includes(annotationKey));
+    const lastOf = (annotationKey: string) =>
+      segments.findLastIndex(({ annotations }) => annotations.includes(annotationKey));
+    $paintDecorator(
+      node,
+      element,
+      segments.map(({ start, end, annotations }, index) => ({
+        start,
+        end,
+        classNames: [
+          ...classNamesFor(annotations),
+          ...edgeClassNamesFor(
+            key,
+            annotations.filter((annotationKey) => firstOf(annotationKey) === index),
+            ["start"],
+          ),
+          ...edgeClassNamesFor(
+            key,
+            annotations.filter((annotationKey) => lastOf(annotationKey) === index),
+            ["end"],
+          ),
+        ],
+        annotationKeys: annotations,
+      })),
     );
   }
 
-  function $staleLeaves(): NodeKey[] {
-    return [...incomplete, ...(highlighter?.leafKeys() ?? [])].filter(isStale);
+  /**
+   * The first and last node annotation `annotationKey` paints, by the document order of their
+   * elements: its marks and the leaves painted here, leaving out one inside another of them (a
+   * carrier inside a mark of the same annotation is painted by the mark) and one a collapsed note
+   * hides ({@link $isInCollapsedNoteContent}), whose element shows nothing to draw a side on.
+   * Read after the commit, from the DOM, as {@link rangesFor} orders what it paints. Call inside a
+   * read.
+   */
+  function $edgesOf(annotationKey: string): { start: NodeKey; end: NodeKey } | undefined {
+    const painting: { key: NodeKey; element: HTMLElement }[] = [];
+    const add = (key: NodeKey) => {
+      const node = $getNodeByKey(key);
+      if (!node || $isInCollapsedNoteContent(node)) return;
+      const element = editor.getElementByKey(key);
+      if (element?.isConnected) painting.push({ key, element });
+    };
+    for (const key of marksByAnnotation.get(annotationKey) ?? []) add(key);
+    // A leaf rendering nothing is painted on its element alone.
+    for (const [key, intervals] of paintByAnnotation.get(annotationKey) ?? []) {
+      const leaf = $getNodeByKey(key);
+      if (leaf && (intervals.some(([start, end]) => end > start) || $paintSize(leaf) === 0))
+        add(key);
+    }
+    const outermost = painting.filter(
+      ({ element }) =>
+        !painting.some((other) => other.element !== element && other.element.contains(element)),
+    );
+    if (outermost.length === 0) return undefined;
+    outermost.sort((a, b) =>
+      a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+    );
+    return { start: outermost[0].key, end: outermost[outermost.length - 1].key };
   }
 
-  /** Repaint every leaf whose highlights the DOM moved out from under, outside a commit. */
-  function repaintStale(): void {
-    if (disposed) return;
-    editor.getEditorState().read(() => new Set($staleLeaves()).forEach($repaintLeaf), { editor });
+  /** Recompute the edges of every annotation in `stale`, and return the nodes whose edge classes
+   * changed: each annotation's previous and next first and last node. */
+  function $refreshEdges(stale: Iterable<string>): Set<NodeKey> {
+    const changed = new Set<NodeKey>();
+    for (const annotationKey of stale) {
+      const previous = edgesByAnnotation.get(annotationKey);
+      const next = $edgesOf(annotationKey);
+      if (previous?.start === next?.start && previous?.end === next?.end) continue;
+      for (const key of [previous?.start, previous?.end, next?.start, next?.end])
+        if (key !== undefined) changed.add(key);
+      if (next) edgesByAnnotation.set(annotationKey, next);
+      else edgesByAnnotation.delete(annotationKey);
+    }
+    return changed;
   }
 
-  function observeContent(root: HTMLElement | null): void {
-    contentObserver?.disconnect();
-    contentObserver = undefined;
-    const view = root?.ownerDocument.defaultView;
-    if (!root || !view || !highlighter) return;
-    contentObserver = new view.MutationObserver(repaintStale);
-    contentObserver.observe(root, { childList: true, characterData: true, subtree: true });
+  /** Put mark `key`'s edge classes on its current element, and take them off the one it had. */
+  function repaintMarkEdges(key: NodeKey): void {
+    const element = editor.getElementByKey(key);
+    const previous = markEdges.get(key);
+    const names = edgeClassNamesFor(key, annotationsByMark.get(key) ?? []);
+    const kept = previous?.element === element ? previous.names : [];
+    if (previous && previous.element !== element)
+      removeClassNamesFromElement(previous.element, ...previous.names);
+    if (!element || names.length === 0) {
+      if (element) removeClassNamesFromElement(element, ...kept);
+      markEdges.delete(key);
+      return;
+    }
+    removeClassNamesFromElement(element, ...kept.filter((name) => !names.includes(name)));
+    addClassNamesToElement(element, ...names);
+    markEdges.set(key, { element, names });
+  }
+
+  /** Give decorator `node` its sub-span paint: through the store for one React renders, and
+   * straight into its element for one that writes its own bytes. */
+  function $paintDecorator(node: LexicalNode, element: HTMLElement | null, paint: DecoratorPaint) {
+    if (!$isDecoratorNode(node)) return;
+    setDecoratorPaint(editor, node.getKey(), paint);
+    if (element && isDomPaintedDecorator(element))
+      renderDecoratorPaint(element, $paintText(node), paint);
   }
 
   /**
@@ -450,7 +670,12 @@ function createIndex(editor: LexicalEditor): Entry {
    */
   function $refreshPaint(dirty: Iterable<NodeKey>): void {
     const affected = new Set<NodeKey>();
-    for (const key of dirty) if (annotationsByLeaf.has(key)) affected.add(key);
+    const stale = staleEdges;
+    staleEdges = new Set();
+    for (const key of dirty) {
+      if (annotationsByLeaf.has(key)) affected.add(key);
+      annotationsByMark.get(key)?.forEach((annotationKey) => stale.add(annotationKey));
+    }
     const candidates = new Set([...keysByAnnotation.keys(), ...paintByAnnotation.keys()]);
     for (const [annotationKey, marks] of marksByAnnotation)
       if (marks.size >= 2) candidates.add(annotationKey);
@@ -464,7 +689,10 @@ function createIndex(editor: LexicalEditor): Entry {
       );
       const previous = paintByAnnotation.get(annotationKey) ?? new Map<NodeKey, PaintIntervals>();
       for (const key of new Set([...previous.keys(), ...next.keys()]))
-        if (JSON.stringify(previous.get(key)) !== JSON.stringify(next.get(key))) affected.add(key);
+        if (JSON.stringify(previous.get(key)) !== JSON.stringify(next.get(key))) {
+          affected.add(key);
+          stale.add(annotationKey);
+        }
       for (const key of previous.keys()) {
         if (next.has(key)) continue;
         const keys = annotationsByLeaf.get(key);
@@ -481,8 +709,15 @@ function createIndex(editor: LexicalEditor): Entry {
     }
     for (const [key, element] of leafElement)
       if (editor.getElementByKey(key) !== element) affected.add(key);
-    for (const key of $staleLeaves()) affected.add(key);
+    const marks = new Set<NodeKey>();
+    for (const key of $refreshEdges(stale)) {
+      if (annotationsByMark.has(key) || markEdges.has(key)) marks.add(key);
+      else affected.add(key);
+    }
     for (const key of affected) $repaintLeaf(key);
+    for (const [key, { element }] of markEdges)
+      if (editor.getElementByKey(key) !== element) marks.add(key);
+    for (const key of marks) repaintMarkEdges(key);
   }
 
   function refreshPaint(dirty: Iterable<NodeKey>): void {
@@ -503,17 +738,17 @@ function createIndex(editor: LexicalEditor): Entry {
       const element = editor.getElementByKey(key);
       if (element) whole(element);
     }
-    for (const [key, intervals] of paintByAnnotation.get(annotationKey) ?? []) {
+    for (const key of paintByAnnotation.get(annotationKey)?.keys() ?? []) {
       const element = editor.getElementByKey(key);
       if (!element) continue;
-      if (wholeLeaves.has(key) || !highlighter) {
+      if (wholeLeaves.has(key)) {
         whole(element);
         continue;
       }
-      for (const [start, end] of intervals) {
-        const range = rangeOverText(element, start, end);
-        if (range) ranges.push(range);
-      }
+      // A decorator painted in part: the sub-spans carrying this annotation.
+      for (const piece of element.querySelectorAll(`[${DECORATOR_PAINT_ATTRIBUTE}]`))
+        if (paintedPieceKeys(piece).includes(annotationKey) && piece instanceof HTMLElement)
+          whole(piece);
     }
     return ranges.sort((a, b) => a.compareBoundaryPoints(Range.START_TO_START, b));
   }
@@ -550,6 +785,12 @@ function createIndex(editor: LexicalEditor): Entry {
           }
           if (after.length > 0) annotationsByKey.set(key, after);
           else annotationsByKey.delete(key);
+          // Lexical reports every element it creates for a node as the node's mutation, a parent's
+          // re-creation included, so this sees every element a piece is drawn on.
+          const element = node && editor.getElementByKey(key);
+          if (element && $isPieceContinuation(node))
+            element.setAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE, "");
+          else element?.removeAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE);
           // A mark's own mutations miss an edit of the text inside it.
           for (let parent = node?.getParent(); parent; parent = parent.getParent())
             if ($isTypedMarkNode(parent)) $noteMarkText(parent);
@@ -572,6 +813,8 @@ function createIndex(editor: LexicalEditor): Entry {
         const mark = $isTypedMarkNode(node) ? node : undefined;
         const typedIds = mark ? Object.entries(mark.getTypedIDs()) : [];
         const after = typedIds.flatMap(([type, ids]) => ids.map((id) => indexKey(type, id)));
+        for (const annotationKey of [...(annotationsByMark.get(key) ?? []), ...after])
+          staleEdges.add(annotationKey);
         for (const annotationKey of annotationsByMark.get(key) ?? []) {
           if (after.includes(annotationKey)) continue;
           dropHolder(marksByAnnotation, annotationKey, key);
@@ -591,6 +834,32 @@ function createIndex(editor: LexicalEditor): Entry {
           }
       }
     });
+  }
+
+  /** A note collapsing or expanding hides or shows what its content paints, so the edges of every
+   * annotation painting there may move into or out of it. */
+  function onNoteMutations(mutations: Map<NodeKey, NodeMutation>): void {
+    editor.getEditorState().read(
+      () => {
+        for (const [key, mutation] of mutations) {
+          if (mutation === "destroyed") continue;
+          const note = $getNodeByKey(key);
+          if (!$isNoteNode(note)) continue;
+          const $staleUnder = (node: LexicalNode) => {
+            const nodeKey = node.getKey();
+            annotationsByMark
+              .get(nodeKey)
+              ?.forEach((annotationKey) => staleEdges.add(annotationKey));
+            annotationsByLeaf
+              .get(nodeKey)
+              ?.forEach((annotationKey) => staleEdges.add(annotationKey));
+            if ($isElementNode(node)) node.getChildren().forEach($staleUnder);
+          };
+          $staleUnder(note);
+        }
+      },
+      { editor },
+    );
   }
 
   function forget(annotationKey: string, type: string, id: string): void {
@@ -632,12 +901,29 @@ function createIndex(editor: LexicalEditor): Entry {
    * redo keeps the callbacks for the redo that brings the holders back. A settle that discards an
    * annotation's bytes, a collaborator's apply, and a selection delete that drops an emptied mark
    * without `remove()` all report.
+   *
+   * A mark Lexical drops without `remove()` (an emptied mark a selection delete takes away) cannot
+   * make its own report, so it is made here for it, with its own text — even while display bytes
+   * still hold the annotation, as a mark's own report is. Not when the annotation was handed on
+   * rather than lost: while another mark still holds it, or when a node began holding it in the
+   * same commit (a settle that re-spells a mark's bytes as a display byte, which then holds them).
+   * A cut that gives a held carrier a new piece in that commit also counts as a hand-on, so such a
+   * drop is left to the last holder's report.
    */
-  function reportDestroyed({ tags }: { tags: Set<string> }): void {
+  function reportDestroyed({
+    tags,
+    prevEditorState,
+  }: {
+    tags: Set<string>;
+    prevEditorState: EditorState;
+  }): void {
     takeMarkReports();
     const candidates = emptied;
     const heard = heardThisCommit;
     const dropped = droppedMarks;
+    const removedMarks = takeRemovedTypedMarks(editor);
+    const gained = gainedHolder;
+    gainedHolder = new Set();
     emptied = new Set();
     heardThisCommit = new Set();
     droppedMarks = new Map();
@@ -647,6 +933,17 @@ function createIndex(editor: LexicalEditor): Entry {
     }
     if (tags.has(HISTORIC_TAG)) return;
     const errors: unknown[] = [];
+    const report = (onRemove: TypedMarkOnRemove, type: string, id: string, text: string) => {
+      const annotationKey = indexKey(type, id);
+      reported.add(annotationKey);
+      setTypedMarkRemovalSilenced(editor, type, id, true);
+      for (const key of dropped.get(annotationKey) ?? []) forgetTypedMarkCallbacks(key, type, id);
+      try {
+        onRemove(type, id, "destroyed", text);
+      } catch (error) {
+        errors.push(error);
+      }
+    };
     for (const annotationKey of candidates) {
       if (holderCount(annotationKey) > 0) continue;
       const [type, id] = parseIndexKey(annotationKey);
@@ -656,14 +953,21 @@ function createIndex(editor: LexicalEditor): Entry {
       const text = coveredText.get(annotationKey) ?? "";
       forget(annotationKey, type, id);
       if (!onRemove || reported.has(annotationKey) || heard.has(annotationKey)) continue;
-      reported.add(annotationKey);
-      setTypedMarkRemovalSilenced(editor, type, id, true);
-      for (const key of dropped.get(annotationKey) ?? []) forgetTypedMarkCallbacks(key, type, id);
-      try {
-        onRemove(type, id, "destroyed", text);
-      } catch (error) {
-        errors.push(error);
-      }
+      report(onRemove, type, id, text);
+    }
+    for (const [annotationKey, keys] of dropped) {
+      if (holderCount(annotationKey) === 0 || (marksByAnnotation.get(annotationKey)?.size ?? 0) > 0)
+        continue;
+      if (gained.has(annotationKey) || reported.has(annotationKey) || heard.has(annotationKey))
+        continue;
+      const silent = keys.filter((key) => !removedMarks.has(key));
+      const onRemove = markOnRemove.get(annotationKey);
+      if (silent.length === 0 || !onRemove) continue;
+      const [type, id] = parseIndexKey(annotationKey);
+      const text = prevEditorState.read(() =>
+        silent.map((key) => $getNodeByKey(key)?.getTextContent() ?? "").join(""),
+      );
+      report(onRemove, type, id, text);
     }
     // Thrown from here, a host's error would skip the commit's later update listeners, its
     // deferred `onUpdate` callbacks and its queued updates. The editor's error handler gets it
@@ -691,39 +995,49 @@ function createIndex(editor: LexicalEditor): Entry {
           skipInitialization: false,
         })
       : () => undefined,
+    editor.hasNodes([NoteNode])
+      ? editor.registerMutationListener(NoteNode, onNoteMutations, { skipInitialization: true })
+      : () => undefined,
     listenForTypedMarkRemovalReports(editor),
     editor.registerUpdateListener(reportDestroyed),
     registerDisplayAnnotationBasis(editor, [ImmutableVerseNode, ImmutableNoteCallerNode]),
     editor.registerUpdateListener(({ dirtyLeaves, dirtyElements }) => {
-      // A rule a host inserts or a stylesheet it adopts changes no DOM an observer could see.
-      highlighter?.noticeStylesheetChanges();
       if (dirtyLeaves.size === 0 && dirtyElements.size === 0) return;
       refreshPaint([...dirtyLeaves, ...dirtyElements.keys()]);
-      // That checked every highlight against the DOM the commit (and any decorator it rendered)
-      // left, so the content observer need not check them again for those writes.
-      contentObserver?.takeRecords();
     }),
     // Also paints what the mutation listeners above found already in the document.
     editor.registerRootListener((root) => {
-      observeContent(root);
       if (root) refreshPaint([...annotationsByLeaf.keys()]);
     }),
     () => {
       disposed = true;
       listeners.abort();
-      highlighter?.dispose();
-      contentObserver?.disconnect();
+      clearDecoratorPaints(editor);
     },
     editor.registerCommand(
       SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
-      ({ nodes }) => {
+      ({ nodes, selection }) => {
         // A check result or a comment names one place; a pasted copy of its bytes is not it.
-        nodes.forEach($stripDisplayAnnotations);
+        $stripDisplayAnnotations(nodes);
+        $splitCarrierAtInsertion(nodes, selection);
         return false;
       },
       // Critical, and never handling the command, so a handler that does handle it cannot skip the
       // strip.
       COMMAND_PRIORITY_CRITICAL,
+    ),
+    ...[INSERT_PARAGRAPH_COMMAND, INSERT_LINE_BREAK_COMMAND].map(
+      (command: LexicalCommand<unknown>) =>
+        editor.registerCommand(
+          command,
+          () => {
+            $splitCarrierAtBreak();
+            return false;
+          },
+          // Low, never handling the command: after every handler that claims a break (a guard that
+          // refuses it, a split of its own) and before the generic one, whose text split this is.
+          COMMAND_PRIORITY_LOW,
+        ),
     ),
   );
 

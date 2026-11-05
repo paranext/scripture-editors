@@ -2,8 +2,8 @@
  * Which characters of which leaves an annotation paints, beyond the `<mark>` elements that paint
  * themselves: the exact ranges its display-byte carriers hold, plus the interior gaps — the bytes no
  * range can hold (a separator, a char opener's no-break space, a glyph's own edge whitespace) that
- * lie between two of its held bytes in one block, so a highlight over `12 In` has no hole after
- * the number. Its edges are never painted.
+ * lie between two of its held bytes in one block, so painting over `12 In` has no hole after the
+ * number. Its edges are never painted.
  *
  * Read-only: call inside a read or update.
  */

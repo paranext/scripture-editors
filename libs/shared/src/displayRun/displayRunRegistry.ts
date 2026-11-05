@@ -47,6 +47,13 @@ import {
 import { NBSP } from "../nodes/usj/node-constants.js";
 import { $isVerseNode } from "../nodes/usj/VerseNode.js";
 import { textTypeState } from "../nodes/collab/delta.state.js";
+import {
+  $isPieceContinuation,
+  $lastPiece,
+  $logicalPreviousSibling,
+  $pieceHead,
+  $pieces,
+} from "../nodes/features/displayPieces.state.js";
 import { $isImmutableTypedTextNode } from "../nodes/features/ImmutableTypedTextNode.js";
 import { $isMarkerNode } from "../nodes/features/MarkerNode.js";
 import { $isUnknownNode } from "../nodes/features/UnknownNode.js";
@@ -72,24 +79,27 @@ const NO_RUN: ExpectedRun = { wantsRun: false, valueText: undefined };
 const NO_PIECES: ScannedRun = {};
 
 /** The sibling a verse's run for `marker` is anchored after: the verse itself for `\va`, and
- * `\va`'s wrapper (or, while caret-grace defers the wrap, its loose closer) for `\vp`. Shared by
- * the scanner and the writer so the two can never disagree about where a run belongs. */
+ * `\va`'s wrapper (or, while caret-grace defers the wrap, its loose closer) for `\vp` — a text
+ * anchor as its last piece, so the run is scanned for and inserted after the whole carrier.
+ * Shared by the scanner and the writer so the two can never disagree about where a run belongs. */
 function $verseRunAnchor(verse: LexicalNode, marker: VerseAttributeMarker): LexicalNode {
-  if (marker === "va") return verse;
+  if (marker === "va") return $lastPiece(verse);
   const va = $verseAttributeRunPieces(verse, "va");
-  return va.wrapper ?? va.closer ?? verse;
+  return va.wrapper ?? (va.closer ? $lastPiece(va.closer) : $lastPiece(verse));
 }
 
 /** The caret arm a run graces when NO piece survives: the run's insertion point is the end of
  * its anchor or the very start of the anchor's next sibling, where a range deletion collapses
  * the caret. An ELEMENT anchor (a chapter `\cp` run's anchor is the `\ca` run's WRAPPER) has no
  * text end of its own — the collapse point is the end of its last descendant text piece (the
- * `\ca` closer glyph), so that arm is checked too. The shared reporter already graces the
- * wrapper's subtree and the live value node. */
-function $verseFlankGrace(anchor: LexicalNode): boolean {
+ * `\ca` closer glyph), so that arm is checked too. A text anchor's end is the end of its whole
+ * carrier (its last piece): a cut an annotation made inside it is inside the anchor. The shared
+ * reporter already graces the wrapper's subtree and the live value node. */
+function $verseFlankGrace(carrier: LexicalNode): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   const anchorNode = selection.anchor.getNode();
+  const anchor = $lastPiece(carrier);
   if (anchorNode.is(anchor) && selection.anchor.offset === anchor.getTextContentSize()) return true;
   if ($isElementNode(anchor)) {
     const last = anchor.getLastDescendant();
@@ -112,9 +122,10 @@ function $glyphDebrisGrace(pieces: ScannedRun): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   const anchorNode = selection.anchor.getNode();
+  const openerEnd = $lastPiece(opener);
   const atOpenerEnd =
-    anchorNode.is(opener) && selection.anchor.offset === opener.getTextContentSize();
-  if (closer) return atOpenerEnd || anchorNode.is(closer);
+    anchorNode.is(openerEnd) && selection.anchor.offset === openerEnd.getTextContentSize();
+  if (closer) return atOpenerEnd || $pieces(closer).some((piece) => anchorNode.is(piece));
   return atOpenerEnd;
 }
 
@@ -143,7 +154,7 @@ function $loosePieceMarker(node: LexicalNode): VerseAttributeMarker | undefined 
     return marker === "va" || marker === "vp" ? marker : undefined;
   }
   if (!$isTextNode(node) || $getState(node, textTypeState) !== "attribute") return undefined;
-  const previous = node.getPreviousSibling();
+  const previous = $logicalPreviousSibling(node);
   if (!$isMarkerNode(previous)) return undefined;
   const marker = previous.getMarker();
   return marker === "va" || marker === "vp" ? marker : undefined;
@@ -156,7 +167,7 @@ function $verseOfRunChain(start: LexicalNode): LexicalNode | undefined {
     previous;
     previous = previous.getPreviousSibling()
   ) {
-    if ($isVerseNode(previous)) return previous;
+    if ($isVerseNode(previous)) return $pieceHead(previous);
     if (!$isVerseRunPiece(previous)) return undefined;
   }
   return undefined;
@@ -165,7 +176,8 @@ function $verseOfRunChain(start: LexicalNode): LexicalNode | undefined {
 function verseDescriptor(marker: VerseAttributeMarker): DisplayRunDescriptor {
   return {
     kind: marker,
-    ownerPredicate: (node) => $isVerseNode(node),
+    // A verse an annotation cut into pieces is one verse: its head owns its runs.
+    ownerPredicate: (node) => $isVerseNode(node) && !$isPieceContinuation(node),
     ownerOf: (node) => {
       // A wrapper of this marker is its own walk start; a piece INSIDE one is only positioned
       // relative to its siblings within the wrapper, so the walk starts from the wrapper instead.
@@ -254,12 +266,13 @@ const charDescriptor: DisplayRunDescriptor = {
     const selection = $getSelection();
     if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
     const anchorNode = selection.anchor.getNode();
-    if (anchorNode.is(closingGlyph)) return true;
-    const lastContent = closingGlyph.getPreviousSibling();
+    if ($pieces(closingGlyph).some((piece) => anchorNode.is(piece))) return true;
+    const lastContent = $logicalPreviousSibling(closingGlyph);
+    if (lastContent === null) return false;
+    const lastContentEnd = $lastPiece(lastContent);
     return (
-      lastContent !== null &&
-      anchorNode.is(lastContent) &&
-      selection.anchor.offset === lastContent.getTextContentSize()
+      anchorNode.is(lastContentEnd) &&
+      selection.anchor.offset === lastContentEnd.getTextContentSize()
     );
   },
   settleScope: "owner",
@@ -278,7 +291,7 @@ const charDescriptor: DisplayRunDescriptor = {
 function $isLooseCatPiece(node: LexicalNode): boolean {
   if ($isMarkerNode(node)) return node.getMarker() === "cat";
   if (!$isTextNode(node) || $getState(node, textTypeState) !== "attribute") return false;
-  const previous = node.getPreviousSibling();
+  const previous = $logicalPreviousSibling(node);
   return $isMarkerNode(previous) && previous.getMarker() === "cat";
 }
 
@@ -295,7 +308,7 @@ function $noteOfCatChain(start: LexicalNode): LexicalNode | undefined {
     previous;
     previous = previous.getPreviousSibling()
   ) {
-    if (previous.is(anchor)) return parent;
+    if ($pieceHead(previous).is(anchor)) return parent;
     if (!$isLooseCatPiece(previous)) return undefined;
   }
   return undefined;
@@ -349,7 +362,10 @@ const catDescriptor: DisplayRunDescriptor = {
     glyphs: "with-value",
     glyphMarker: () => "cat",
     closerSyntax: "closing",
-    insertRunAfter: (owner) => ($isNoteNode(owner) ? $noteEditableCallerNode(owner) : undefined),
+    insertRunAfter: (owner) => {
+      const caller = $isNoteNode(owner) ? $noteEditableCallerNode(owner) : undefined;
+      return caller && $lastPiece(caller);
+    },
   },
 };
 
@@ -372,7 +388,7 @@ function $chapterLoosePieceMarker(node: LexicalNode): "ca" | "cp" | undefined {
     return marker === "ca" || marker === "cp" ? marker : undefined;
   }
   if (!$isTextNode(node) || $getState(node, textTypeState) !== "attribute") return undefined;
-  const previous = node.getPreviousSibling();
+  const previous = $logicalPreviousSibling(node);
   if (!$isMarkerNode(previous)) return undefined;
   const marker = previous.getMarker();
   return marker === "ca" || marker === "cp" ? marker : undefined;
@@ -391,7 +407,7 @@ function $chapterOfRunChain(start: LexicalNode): LexicalNode | undefined {
     previous;
     previous = previous.getPreviousSibling()
   ) {
-    if (previous.is(anchor)) return parent;
+    if ($pieceHead(previous).is(anchor)) return parent;
     if (!$isChapterRunPiece(previous)) return undefined;
   }
   return undefined;
@@ -404,12 +420,12 @@ function $chapterOfRunChain(start: LexicalNode): LexicalNode | undefined {
  * same-line byte position the chapter fragment re-tokenizes and ParatextData's own chapter-path
  * folding accepts. */
 function chapterDescriptor(marker: "ca" | "cp"): DisplayRunDescriptor {
-  const $anchor = (chapter: LexicalNode) =>
-    !$isChapterNode(chapter)
-      ? undefined
-      : marker === "ca"
-        ? $chapterGlyphTextNode(chapter)
-        : $chapterCpAnchor(chapter);
+  const $anchor = (chapter: LexicalNode) => {
+    if (!$isChapterNode(chapter)) return undefined;
+    if (marker === "cp") return $chapterCpAnchor(chapter);
+    const glyph = $chapterGlyphTextNode(chapter);
+    return glyph && $lastPiece(glyph);
+  };
   return {
     kind: marker,
     ownerPredicate: (node) => $isChapterNode(node),
