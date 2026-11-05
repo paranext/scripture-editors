@@ -409,6 +409,13 @@ refused. The public surface grew substantially; nothing was removed.
   was pasted and each line after it starts a `\p` paragraph, as a paste's line breaks start
   paragraphs anywhere else; under `"protected"` structure the lines join with one space, as they
   already did.
+- **Ctrl+V, Ctrl+Shift+V, the context menu's Paste items and `EditorRef.paste`/`pastePlainText`
+  handle a failed clipboard read.** A refused or failed read was an unhandled promise rejection; it
+  is now logged at `warn`, to the `Editor`'s `logger` (`ClipboardPlugin` and `ContextMenuPlugin`
+  take a `logger`; without one, the console). An empty clipboard pastes nothing, and nothing is
+  pasted into an editor that became read-only while the clipboard was read. The `alert` for a
+  denied clipboard permission is gone: it ran only after a read had succeeded, so it never showed.
+  Paste as Plain Text reads the clipboard once (`readText`), not twice.
 - Undoing an edit that restores a char span's separator (its no-break space after the glyph) sends
   the separator to the host as U+00A0, not a space, so the span gains no leading content space.
 - A delta applied in Standard view places the ops after an inserted char span correctly. An insert

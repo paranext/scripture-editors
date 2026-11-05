@@ -714,6 +714,29 @@ async function clickContextMenuOption(editor: LexicalEditor, title: string): Pro
   });
 }
 
+describe("ContextMenuPlugin — Paste", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(["Paste", "Paste as Plain Text"])(
+    "logs a clipboard read that fails for %s to the plugin's logger",
+    async (title) => {
+      const denied = () => Promise.reject(new Error("clipboard read denied"));
+      vi.stubGlobal("navigator", { ...navigator, clipboard: { read: denied, readText: denied } });
+      const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+      const { editor } = await baseTestEnvironment(
+        () => $getRoot().append($createParaNode("p").append($createTextNode("text"))),
+        <ContextMenuPlugin logger={logger} />,
+      );
+
+      await clickContextMenuOption(editor, title);
+      await settle();
+
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(String(logger.warn.mock.calls[0][0])).toContain("clipboard read denied");
+    },
+  );
+});
+
 describe("ContextMenuPlugin — Cut/Copy go through the empty-copy guard", () => {
   it("Copy with a collapsed caret leaves the clipboard untouched", async () => {
     const { editor, text } = await contextMenuEnvironment();
