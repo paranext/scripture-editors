@@ -272,7 +272,12 @@ function $touchesAnnotations(selection: RangeSelection): boolean {
     );
 }
 
-/** The scratch editor each live editor's uncut copies are written in, built like it. */
+/**
+ * The scratch editor each live editor's uncut copies are written in, built like it. It throws
+ * every error it meets: Lexical's `parseEditorState` hands an error to `onError` and returns the
+ * document as far as it got, and a copy written from that partial document would drop bytes
+ * without a word.
+ */
 const scratchEditors = new WeakMap<LexicalEditor, LexicalEditor>();
 
 function scratchEditorOf(editor: LexicalEditor): LexicalEditor {
@@ -301,37 +306,43 @@ function $nodeAt(path: readonly number[]): LexicalNode | undefined {
 /**
  * Every flavor a copy of `selection` writes, as the same selection in the document with no
  * annotation writes it ({@link $serializeUncut}); `undefined` when the selection touches nothing an
- * annotation puts in the tree, so the copy is the editor's own. Read-only: the live editor is
- * only read, and nothing of it is written.
+ * annotation puts in the tree, or the copy without annotations cannot be written, so the copy is
+ * the editor's own. Read-only: the live editor is only read, and nothing of it is written.
  */
 export function $uncutClipboardData(
   editor: LexicalEditor,
   selection: RangeSelection,
 ): LexicalClipboardData | undefined {
   if (!$touchesAnnotations(selection)) return undefined;
-  const anchorBlock = $blockIndex(selection.anchor);
-  const focusBlock = $blockIndex(selection.focus);
-  const { children, places } = $serializeUncut(
-    Math.min(anchorBlock, focusBlock),
-    Math.max(anchorBlock, focusBlock),
-  );
-  const anchor = $uncutPoint(selection.anchor, places);
-  const focus = $uncutPoint(selection.focus, places);
-  if (!anchor || !focus) return undefined;
-  const scratch = scratchEditorOf(editor);
-  const state: EditorState = scratch.parseEditorState({
-    root: { ...$getRoot().exportJSON(), children },
-  });
-  return state.read(
-    () => {
-      const anchorNode = $nodeAt(anchor.path);
-      const focusNode = $nodeAt(focus.path);
-      if (!anchorNode || !focusNode) return undefined;
-      const uncut = $createRangeSelection();
-      uncut.anchor.set(anchorNode.getKey(), anchor.offset, anchor.type);
-      uncut.focus.set(focusNode.getKey(), focus.offset, focus.type);
-      return $getClipboardDataFromSelection(uncut);
-    },
-    { editor: scratch },
-  );
+  try {
+    const anchorBlock = $blockIndex(selection.anchor);
+    const focusBlock = $blockIndex(selection.focus);
+    const { children, places } = $serializeUncut(
+      Math.min(anchorBlock, focusBlock),
+      Math.max(anchorBlock, focusBlock),
+    );
+    const anchor = $uncutPoint(selection.anchor, places);
+    const focus = $uncutPoint(selection.focus, places);
+    if (!anchor || !focus) return undefined;
+    const scratch = scratchEditorOf(editor);
+    const state: EditorState = scratch.parseEditorState({
+      root: { ...$getRoot().exportJSON(), children },
+    });
+    return state.read(
+      () => {
+        const anchorNode = $nodeAt(anchor.path);
+        const focusNode = $nodeAt(focus.path);
+        if (!anchorNode || !focusNode) return undefined;
+        const uncut = $createRangeSelection();
+        uncut.anchor.set(anchorNode.getKey(), anchor.offset, anchor.type);
+        uncut.focus.set(focusNode.getKey(), focus.offset, focus.type);
+        return $getClipboardDataFromSelection(uncut);
+      },
+      { editor: scratch },
+    );
+  } catch {
+    // The scratch editor throws rather than parse a partial document (see `scratchEditorOf`); a
+    // copy that fails here is still a copy, the editor's own, with the annotations' cuts in it.
+    return undefined;
+  }
 }
