@@ -375,14 +375,15 @@ refused. The public surface grew substantially; nothing was removed.
   and every pasted note's `\cat`. No paste or drop there now inserts a book (`\id`) or chapter line,
   whether it comes from the node copy, html or, under `"protected"` structure, the sanitizer (which
   had put the book line's code and title into the paragraph); a cut, and a paste over a selection,
-  keep each book and chapter line the selection runs across and remove the rest. A copy that held
+  keep each book and chapter line the selection runs across, or the chapter line it holds alone,
+  and remove the rest. A copy that held
   a chapter line splits around the document's only when pasted over a selection that holds it or
   from a caret right beside it (the start of the line after it, where a cut leaves the caret, or
   the end of the line before it): chapter 1's front matter (`\h`, `\mt1`, an introduction) goes
   before the chapter line when the document is chapter 1, and after it with the Scripture text in
   any other chapter. Pasted anywhere else, the whole copy
   goes in at the caret. A paste with no front matter (plain text, another program's html) over
-  such a selection goes after the chapter line. So Select All, cut, then paste back restores the document exactly,
+  such a selection goes after the chapter line, even where no paragraph follows it. So Select All, cut, then paste back restores the document exactly,
   front matter included, and a paste over Select All of its own copy changes nothing. A delete,
   typed text, Enter or a drag-move over such a selection, which removed both lines and typed into
   the book line, keeps them too and replaces the rest (`BookAndChapterLinesPlugin`, which `Editor`
