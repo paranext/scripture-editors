@@ -45,7 +45,10 @@ export interface OutlineSegment {
 }
 
 export interface VerseOutlineInput {
-  /** The section text's client rects, in any order; empty and zero-width rects are ignored. */
+  /**
+   * The section text's client rects, in any order. Empty rects are ignored; a zero-width one only
+   * makes its line taller (see {@link groupRectsIntoLines}).
+   */
   rects: readonly OutlineRect[];
   /**
    * The paragraph's content box (inside its padding). A section line that wraps runs to the
@@ -160,7 +163,9 @@ export function computeVerseOutlineSegments({
  * overlap vertically by more than half the shorter of the two, so a raised or taller inline on the
  * line (a verse number, a superscript note caller) stays on it, while a wrapped line — which at
  * most grazes the line above — starts a new one. Rects without width or height (caret hosts,
- * collapsed ranges) are dropped.
+ * collapsed ranges) start no line and add no width. A zero-width one with height (the caret host
+ * in an empty verse) can still make the line it sits on taller, so an empty verse's line is as tall
+ * as the text that will be typed there, not just its verse number.
  */
 export function groupRectsIntoLines(rects: readonly OutlineRect[]): OutlineRect[] {
   const lines: OutlineRect[] = [];
@@ -176,6 +181,13 @@ export function groupRectsIntoLines(rects: readonly OutlineRect[]): OutlineRect[
     } else {
       lines.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
     }
+  }
+  for (const rect of rects) {
+    if (rect.right !== rect.left || rect.bottom <= rect.top) continue;
+    const line = lines.find((l) => isOnLine(rect, l));
+    if (!line) continue;
+    line.top = Math.min(line.top, rect.top);
+    line.bottom = Math.max(line.bottom, rect.bottom);
   }
   return lines.sort((a, b) => a.top - b.top);
 }

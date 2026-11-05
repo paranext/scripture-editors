@@ -74,11 +74,46 @@ describe("groupRectsIntoLines", () => {
     const collapsed = { left: 210, right: 240, top: 60, bottom: 60 };
     expect(groupRectsIntoLines([caretHost, collapsed])).toEqual([]);
   });
+
+  it("gives an empty verse's line the text height of its caret host, not the number's", () => {
+    const caretHost = { left: 109, right: 109, top: 54, bottom: 70 };
+    expect(groupRectsIntoLines([verseNumber(0, 100), caretHost])).toEqual([
+      { left: 100, right: 109, top: 54, bottom: 70 },
+    ]);
+  });
+
+  it("lets a caret host make its line taller but never wider or shorter", () => {
+    const tallHost = { left: 300, right: 300, top: 52, bottom: 72 };
+    const shortHost = { left: 90, right: 90, top: 58, bottom: 66 };
+    expect(groupRectsIntoLines([text(0, 130, 200), tallHost, shortHost])).toEqual([
+      { left: 130, right: 200, top: 52, bottom: 72 },
+    ]);
+  });
+
+  it("doesn't let a caret host on another line stretch this one", () => {
+    const hostBelow = { left: 150, right: 150, top: 78, bottom: 94 };
+    expect(groupRectsIntoLines([verseNumber(0, 100), hostBelow])).toEqual([verseNumber(0, 100)]);
+  });
 });
 
 describe("computeVerseOutlineSegments", () => {
   it("draws nothing when the section has no visible text", () => {
     expect(computeVerseOutlineSegments({ rects: [], contentBox: CONTENT })).toEqual([]);
+  });
+
+  it("outlines an empty verse at the text's height, so typing into it doesn't resize it", () => {
+    const empty = computeVerseOutlineSegments({
+      rects: [verseNumber(0, 250), { left: 259, right: 259, top: 54, bottom: 70 }],
+      contentBox: CONTENT,
+      following: verseNumber(0, 280),
+    });
+    const typed = computeVerseOutlineSegments({
+      rects: [verseNumber(0, 250), text(0, 259, 268)],
+      contentBox: CONTENT,
+      following: verseNumber(0, 280),
+    });
+    expect(empty).toEqual([box({ left: 250, right: 259, top: 54, bottom: 70 }, true, true)]);
+    expect(typed).toEqual([box({ left: 250, right: 268, top: 54, bottom: 70 }, true, true)]);
   });
 
   it("stops a one-line section at the next verse marker, not the paragraph's edge", () => {
