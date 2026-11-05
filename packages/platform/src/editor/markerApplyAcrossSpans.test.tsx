@@ -13,7 +13,12 @@ import {
   mountInView,
   MountedEditor,
 } from "./editorViews.test-helpers";
-import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
+import {
+  ContentJsonPath,
+  MarkerContent,
+  MarkerObject,
+  Usj,
+} from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
@@ -346,5 +351,66 @@ describe("applying a marker over part of one marker glyph in standard view", () 
         expect(logs).toContainEqual(expect.stringContaining("holds only a marker's bytes"));
       },
     );
+  });
+});
+
+describe("applying a marker over text an annotation holds part of", () => {
+  // An annotation is presentation: the span a marker apply makes is the one it makes with no
+  // annotation, and the annotation keeps its bytes.
+  const TEXT = "a the Lord God b";
+  const TEXT_PATH: ContentJsonPath = "$.content[2].content[1]";
+  /** The selection every case applies the marker over: `the Lord God`. */
+  const SELECTED: [number, number] = [2, 14];
+  const holds: [string, [number, number]][] = [
+    ["inside the selection", [6, 10]],
+    ["across the selection's start", [0, 6]],
+    ["from the selection's start", [2, 6]],
+    ["across the selection's end", [10, 16]],
+    ["around the whole selection", [0, 16]],
+  ];
+
+  async function appliedOver(
+    view: string,
+    apply: (mounted: MountedEditor, marker: string) => void,
+    held: [number, number] | undefined,
+  ): Promise<{ paragraph: MarkerContent[]; heldText: string }> {
+    const mounted = await mountInView(doc([TEXT]), editorView(view), { scrRef });
+    const at = (offset: number) => ({ jsonPath: TEXT_PATH, offset });
+    if (held)
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(
+          { start: at(held[0]), end: at(held[1]) },
+          "spelling",
+          "s1",
+        );
+        await Promise.resolve();
+      });
+    await act(async () => {
+      mounted.ref.current?.setSelection({ start: at(SELECTED[0]), end: at(SELECTED[1]) });
+    });
+    act(() => apply(mounted, "nd"));
+    await settle();
+    // The new span's glyphs, which Standard view shows inside an annotation around it, are not
+    // the annotation's text.
+    const heldText = (mounted.ref.current?.getAnnotationRanges("spelling", "s1") ?? [])
+      .map((range) => range.toString())
+      .join("")
+      .replace(/\\nd\*|\\nd[\s\u00a0]/g, "");
+    const result = { paragraph: paragraphOf(mounted), heldText };
+    mounted.unmount();
+    return result;
+  }
+
+  describe.each(EDITING_VIEWS)("in $name view", ({ name: view }) => {
+    describe.each(applyPaths)("through %s", (_, apply) => {
+      it.each(holds)("makes the same span with an annotation %s", async (__, held) => {
+        const plain = await appliedOver(view, apply, undefined);
+        const annotated = await appliedOver(view, apply, held);
+
+        expect(plain.paragraph).toEqual(["a ", char("nd", "the Lord God"), " b"]);
+        expect(annotated.paragraph).toEqual(plain.paragraph);
+        expect(annotated.heldText).toBe(TEXT.slice(...held));
+      });
+    });
   });
 });
