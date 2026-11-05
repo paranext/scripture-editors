@@ -1154,6 +1154,11 @@ describe("the editor API", () => {
       expect(ref.current?.getSelection()).toEqual(numberEnd);
     }
 
+    // With the last caret elsewhere, so the location resolves rather than putting a read caret back.
+    await act(async () => {
+      lexical.update(() => $textContaining("more").select(0, 0), { discrete: true });
+      await Promise.resolve();
+    });
     await act(async () => {
       ref.current?.setSelection(numberEnd);
       await Promise.resolve();

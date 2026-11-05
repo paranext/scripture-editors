@@ -804,12 +804,19 @@ function modifyByCharacter(
   else this.setBaseAndExtent(anchorNode, anchorOffset, text, offset);
 }
 
-if (typeof Selection !== "undefined" && !("modify" in Selection.prototype))
-  Object.defineProperty(Selection.prototype, "modify", {
-    configurable: true,
-    writable: true,
-    value: modifyByCharacter,
-  });
+/**
+ * Gives jsdom {@link modifyByCharacter} unless a `modify` is already there. Installed when a
+ * keystroke case first runs rather than when this module loads, so a test file that only imports
+ * this module's corpus keeps whichever `modify` it installs itself.
+ */
+function installModifyByCharacter(): void {
+  if (typeof Selection !== "undefined" && !("modify" in Selection.prototype))
+    Object.defineProperty(Selection.prototype, "modify", {
+      configurable: true,
+      writable: true,
+      value: modifyByCharacter,
+    });
+}
 
 export async function depart(mounted: Mounted): Promise<void> {
   await act(async () => {
@@ -1733,6 +1740,7 @@ export async function runKeystrokeCase(
   $site: () => CaseSite | undefined,
   keystroke: OracleKeystroke,
 ): Promise<CaseRun | undefined> {
+  installModifyByCharacter();
   const viewOptions = pendingOracleView(view);
   let label = "";
   let applied = false;

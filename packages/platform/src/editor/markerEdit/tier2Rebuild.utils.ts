@@ -755,7 +755,12 @@ function $flattenAttributeRuns(run: LexicalNode[]): LexicalNode[] {
  * first text contributes it for all of them.
  */
 function $charOwnChildSignatureOf(node: TextNode, text: string): string {
-  const run = $textRunThroughMarks(node, $isSeparatorPrefixHostText);
+  // A caret host is left out of the signature (as the signing loop leaves it), so it is no member
+  // of the run either.
+  const run = $textRunThroughMarks(
+    node,
+    (member): member is TextNode => $isSeparatorPrefixHostText(member) && !$isCaretHost(member),
+  );
   if (run.length === 1) return charOwnChildSignatureText(text);
   if (!run[0].is(node)) return "";
   return charOwnChildSignatureText(
