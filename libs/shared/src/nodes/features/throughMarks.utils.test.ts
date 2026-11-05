@@ -162,6 +162,32 @@ describe("reading through annotation marks", () => {
     });
   });
 
+  it("collects a long paragraph's run in time linear in its length", () => {
+    // Every other text is marked, so a step from a bare text has no mark to leave. Stepping by
+    // child index costs the child's position, which makes this walk quadratic: about a second here
+    // on a fast machine, against a few milliseconds for stepping by sibling links. The bound is far
+    // above the linear cost, so only the quadratic walk can reach it.
+    const length = 6000;
+    let middle: TextNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      const para = $createParaNode();
+      for (let index = 0; index < length; index += 1) {
+        const text = $createTextNode(`t${index}`);
+        if (index === length / 2) middle = text;
+        para.append(index % 2 ? $createTypedMarkNode({ t: [`${index}`] }).append(text) : text);
+      }
+      $getRoot().append(para);
+    });
+
+    editor.getEditorState().read(() => {
+      const start = performance.now();
+      const run = $textRunThroughMarks(middle, $isPlainTextNode);
+      const elapsed = performance.now() - start;
+      expect(run).toHaveLength(length);
+      expect(elapsed).toBeLessThan(300);
+    });
+  });
+
   it("tells a range a mark splits from one that reaches across elements", () => {
     const { editor } = createBasicTestEnvironment(nodes, () => {
       $getRoot().append(
