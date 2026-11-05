@@ -13,6 +13,9 @@
  * This module holds the state and the chain primitives only. It imports nothing but Lexical and
  * the annotation state, so a node class can read its own chain without an import cycle; the
  * transform that keeps the chain normalized is in `displayPieces.utils.ts`.
+ *
+ * Read-only helpers here are safe inside `editor.update()` or either read form unless their doc
+ * says Mutating.
  */
 
 import {
@@ -324,7 +327,8 @@ function $movePoints(from: LexicalNode, to: LexicalNode, shift: number): void {
  * minus the ones it removes); a point between two joined pieces (`index` < offset ≤
  * `index - delta`, for a join) is put on the joined node where the boundary was, through `inside`.
  * Lexical moves no such point when a piece is inserted without restoring the selection, and on a
- * removal it may re-anchor one onto a neighbouring text, so the points are restated here. Mutating.
+ * removal it may re-anchor one onto a neighbouring text, so the points are restated here.
+ * Mutating: call inside `editor.update()`.
  */
 export function $keepParentPoints(
   parent: ElementNode | null,
@@ -353,7 +357,8 @@ export function $keepParentPoints(
  * Join consecutive pieces `pieces` (the first one first) into one node: the first takes every
  * later piece's text and holds (each hold restated at its offset in the joined text, ranges of one
  * annotation that then touch joined), the selection and composition move with their bytes, and
- * the later pieces are removed. Returns the first piece, writable. Mutating.
+ * the later pieces are removed. Returns the first piece, writable.
+ * Mutating: call inside `editor.update()`.
  */
 export function $joinPieces<T extends LexicalNode>(pieces: readonly T[]): T {
   const [head, ...rest] = pieces;
@@ -403,7 +408,7 @@ export function $joinPieces<T extends LexicalNode>(pieces: readonly T[]): T {
  * {@link displayPieceTokenTextState}, is no longer its carrier's), remove every piece that
  * recorded it, as Lexical removes a token whole: what is left is what removing the unsplit token
  * leaves. A node that recorded nothing (text typed in place of a piece) stays. Returns whether
- * anything was removed. Mutating.
+ * anything was removed. Mutating: call inside `editor.update()`.
  */
 export function $removeBrokenTokenPieces(node: LexicalNode): boolean {
   if (!$isTextNode(node)) return false;
@@ -427,7 +432,7 @@ export function $removeBrokenTokenPieces(node: LexicalNode): boolean {
 /**
  * Record `node`'s carrier's whole text on each of its pieces when it is a `token` carrier cut into
  * pieces, and clear the record from a carrier in one piece ({@link displayPieceTokenTextState}).
- * Writes only what changes. Mutating.
+ * Writes only what changes. Mutating: call inside `editor.update()`.
  */
 export function $recordTokenPieces(node: LexicalNode): void {
   const pieces = $pieces(node);
@@ -442,7 +447,8 @@ export function $recordTokenPieces(node: LexicalNode): void {
 /**
  * Record `node`'s carrier's chain id on each of its pieces when it is cut into more than one piece
  * — the id its head carries, or the head's key for a carrier cut for the first time — and clear it
- * from a carrier in one piece ({@link displayPieceChainState}). Writes only what changes. Mutating.
+ * from a carrier in one piece ({@link displayPieceChainState}). Writes only what changes.
+ * Mutating: call inside `editor.update()`.
  */
 export function $recordPieceChain(node: LexicalNode): void {
   const pieces = $pieces(node);
@@ -541,7 +547,8 @@ const PIECE_STATE_KEYS: ReadonlySet<string> = new Set(PIECE_STATES.map(({ key })
  * of the pasted node's type (a fresh editor, another editor on the page), `$setState(node, state,
  * undefined)` would not take: the paste would keep the holds and the chain it was copied with, and
  * a transform clearing them would run forever. Reading each state makes it known; re-reading the
- * node from its own JSON then parses it out of the unparsed record. Mutating.
+ * node from its own JSON then parses it out of the unparsed record.
+ * Mutating: call inside `editor.update()`.
  */
 function $parsePastedPieceStates(node: LexicalNode): void {
   const json = node.exportJSON();
@@ -604,7 +611,7 @@ export function $hasPieceState(node: LexicalNode | null): boolean {
  * keep a carrier apart from text a document holding no annotation merges into it — a copy pasted
  * beside it, the bytes a paste split off it. The joined text keeps every hold on its own bytes
  * ({@link $joinPieces}), and the piece transform cuts it again where a hold ends. Returns the
- * joined carrier's head. Mutating.
+ * joined carrier's head. Mutating: call inside `editor.update()`.
  */
 export function $joinMergeableNeighbours(node: LexicalNode): LexicalNode {
   let head = $pieceHead(node);
@@ -637,7 +644,7 @@ export function $joinMergeableNeighbours(node: LexicalNode): LexicalNode {
  * a part that is no carrier (the bytes split off a glyph, a verse or a caller are content). A
  * selection point in the carrier moves with its bytes; one at `offset` ends on the part before it.
  * Returns that part, or `undefined` when `offset` is not strictly inside the carrier's text.
- * Mutating.
+ * Mutating: call inside `editor.update()`.
  */
 export function $splitCarrierAt(node: LexicalNode, offset: number): TextNode | undefined {
   if (!$isTextNode(node)) return undefined;
@@ -692,7 +699,7 @@ export function $isSplitOffPiece(node: LexicalNode): boolean {
  * An element split at a cut between two pieces (Lexical's own `insertParagraph`, which a paste of
  * several lines makes with no command) moves the pieces after the cut into the new block, where
  * the carrier no annotation cuts is split by `splitText` instead. Returns the new text, or
- * `undefined` when `node` is no such piece. Mutating.
+ * `undefined` when `node` is no such piece. Mutating: call inside `editor.update()`.
  */
 export function $replaceSplitOffPieces(node: LexicalNode): TextNode | undefined {
   if (!$isTextNode(node) || !$isSplitOffPiece(node)) return undefined;
@@ -719,7 +726,7 @@ export function $replaceSplitOffPieces(node: LexicalNode): TextNode | undefined 
 
 /**
  * Join `node`'s whole carrier back into one node ({@link $joinPieces}). Returns the head; a
- * carrier in one piece is returned untouched. Mutating.
+ * carrier in one piece is returned untouched. Mutating: call inside `editor.update()`.
  */
 export function $mergePieces<T extends LexicalNode>(node: T): T {
   return $joinPieces($pieces(node));
@@ -729,7 +736,8 @@ export function $mergePieces<T extends LexicalNode>(node: T): T {
  * Join the carrier each end of the selection is in back into one node ({@link $mergePieces}), the
  * ends moving with their bytes, so an edit made at them in this update meets the carrier as one
  * text, as it does where no annotation cuts it. The piece transform cuts the carrier again where a
- * hold ends inside it once the update is done. A no-op for any other selection. Mutating.
+ * hold ends inside it once the update is done. A no-op for any other selection.
+ * Mutating: call inside `editor.update()`.
  */
 export function $joinCarriersAtSelection(): void {
   const selection = $getSelection();
@@ -744,7 +752,7 @@ export function $joinCarriersAtSelection(): void {
  * Set the whole carrier's text: the chain is joined first ({@link $mergePieces}), so a hold on any
  * piece is carried through the rewrite the way a hold on an unsplit carrier is (by the basis
  * remap), and the piece transform splits the result again where a hold ends inside it.
- * Returns the head. Mutating.
+ * Returns the head. Mutating: call inside `editor.update()`.
  */
 export function $setLogicalText<T extends LexicalNode>(node: T, text: string): T {
   const head = $mergePieces(node);

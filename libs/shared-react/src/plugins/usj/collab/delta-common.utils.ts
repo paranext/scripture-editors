@@ -492,7 +492,7 @@ export function $isOTTextNode(node: LexicalNode | null | undefined): node is Tex
  * Whether `node` is a later piece of an embed that is a text carrier — a verse or an unmatched
  * closer an annotation has cut into pieces (`displayPieces.state.ts`). The carrier is ONE embed,
  * counted on its first piece, so a later piece is neither an embed nor OT text: it contributes
- * nothing and is never addressed on its own.
+ * nothing and is never addressed on its own. Read-only: safe in any read or update.
  */
 export function $isEmbedContinuation(node: LexicalNode | null | undefined): node is TextNode {
   return $isPieceContinuation(node) && ($isSomeVerseNode(node) || $isImmutableUnmatchedNode(node));
@@ -623,7 +623,7 @@ export function $hasAttributeRunAncestor(node: LexicalNode): boolean {
  * the same exception the editor→USJ conversion makes (`precedesOpeningCharGlyph`). The glyph is
  * found through annotation marks and pieces ({@link $charSeparatorPrefixLength}), so a mark that
  * cuts the content changes nothing. The ONE definition, shared by the ops stream and the
- * delta-doc length side.
+ * delta-doc length side. Read-only: safe in any read or update.
  */
 export function $isLegacyAttributeText(node: TextNode): boolean {
   return (

@@ -493,7 +493,8 @@ function holdsOver(
  * Cut text piece `piece` at `cuts` (offsets strictly inside it, ascending) into pieces of the
  * same class: `piece` keeps the first part, each later part is a copy of it marked a continuation.
  * Each part gets exactly the holds covering it whole; the selection's points on `piece` move with
- * their bytes (a point on a cut goes with the part before it). Mutating.
+ * their bytes (a point on a cut goes with the part before it).
+ * Mutating: call inside `editor.update()`.
  */
 function $splitPiece(piece: TextNode, cuts: number[]): void {
   const text = piece.getTextContent();
@@ -533,7 +534,8 @@ function $splitPiece(piece: TextNode, cuts: number[]): void {
 
 /**
  * Normalize the carrier `node` is a piece of. The body of the piece transform; idempotent (a
- * normalized carrier is left untouched, so the transform converges). Mutating.
+ * normalized carrier is left untouched, so the transform converges).
+ * Mutating: call inside `editor.update()`.
  */
 export function $normalizeCarrierPieces(node: LexicalNode): void {
   if ($hasUpdateTag(DISPLAY_PIECES_CUT_TAG)) $ensureUndoStepFinalizer();
@@ -599,7 +601,9 @@ const undoStepFinalizers = new WeakMap<LexicalEditor, () => void>();
  * the first update that cuts or joins pieces; the root is transformed last, so it runs from that
  * update on. Registering a transform marks every node of its class dirty in an update of its own,
  * and the root always exists: registered with the editor, that update would reach the host as a
- * change of the empty document before anything is loaded. Mutating.
+ * change of the empty document before anything is loaded. Registered from inside an update, that
+ * update of its own is queued into the running one (Lexical's nested-update queue), so it adds no
+ * commit. Mutating: call inside `editor.update()`.
  */
 function $ensureUndoStepFinalizer(): void {
   const editor = $getEditor();

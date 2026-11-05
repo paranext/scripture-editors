@@ -33,7 +33,7 @@ export function $commentIdsAt(node: LexicalNode, offset: number): string[] {
  * user adds a comment in the panel, so it is an undo step of its own, like any edit of theirs: the
  * comment store does not follow undo, so joining the step before it would let an undo of the
  * user's typing take the thread's anchor with it. A no-op for a selection that is not a range.
- * Mutating.
+ * Mutating: call inside `editor.update()`.
  */
 export function $addCommentAnnotation(
   selection: BaseSelection | null | undefined,
@@ -47,7 +47,7 @@ export function $addCommentAnnotation(
 /**
  * Remove comment `id` from the marks and the display-byte nodes holding it. Tags the update
  * {@link ANNOTATION_MARKS_TAG} and is an undo step of its own, as {@link $addCommentAnnotation}
- * is. Mutating.
+ * is. Mutating: call inside `editor.update()`.
  */
 export function $removeCommentAnnotation(
   id: string,
@@ -66,7 +66,7 @@ export function $removeCommentAnnotation(
  * Select the start of comment `id` on the first of `carrierKeys`, in document order: a text point
  * at the start of the comment's own hold on a text carrier (never in front of its holdable range,
  * so past any edge separator), or an element point in front of a decorator, which has no text
- * point of its own. A no-op with no carrier. Mutating.
+ * point of its own. A no-op with no carrier. Mutating: call inside `editor.update()`.
  */
 export function $selectFirstCommentCarrier(id: string, carrierKeys: Iterable<NodeKey>): void {
   const carriers = Array.from(carrierKeys, (key) => $getNodeByKey(key)).filter(
