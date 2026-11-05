@@ -1,7 +1,6 @@
 import { $placeCaretAtParaContentStart } from "./ParaMarkerPrefixCursorGuardPlugin";
 import {
   $createRangeSelection,
-  $getNodeByKey,
   $getRoot,
   $getSelection,
   $isDecoratorNode,
@@ -179,15 +178,19 @@ function $topLevelNodeAt(point: PointType, isEnd: boolean): LexicalNode | undefi
 
 /**
  * Whether `selection` runs from one top-level line into another, at least one of them a book or
- * chapter line ({@link $isBookOrChapterLine}). Removing such a selection as Lexical does would take
- * that line with it (see {@link $removeTextKeepingBookAndChapterLines}).
+ * chapter line ({@link $isBookOrChapterLine}), or holds a hidden-marker view's chapter line, a
+ * glyph with no text to select inside it, whole. Removing such a selection as Lexical does would
+ * take that line with it (see {@link $removeTextKeepingBookAndChapterLines}).
  *
  * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
  */
 export function $selectionSpansBookOrChapterLine(selection: RangeSelection): boolean {
   if (selection.isCollapsed()) return false;
   const lines = $topLevelNodesOf(selection);
-  return !!lines && lines.length > 1 && lines.some($isBookOrChapterLine);
+  if (!lines) return false;
+  if (lines.length > 1) return lines.some($isBookOrChapterLine);
+  // A range within one line other than that glyph ends inside it, as in an edit of its text.
+  return $isSomeChapterNode(lines[0]) && $isDecoratorNode(lines[0]);
 }
 
 /**
@@ -204,14 +207,15 @@ export function $selectionSpansBookOrChapterLine(selection: RangeSelection): boo
  * (`\h`, `\mt1`, an introduction) before it; with no chapter line, the last run. It is emptied as
  * Lexical empties a range, leaving its first line, whose marker a paste of the same copy then
  * fills. When the selection ends on a chapter line, the caret goes to the content start of the
- * paragraph after it, or, when there is none, stays at the selection's start, or goes after the
- * chapter line when that start went with its run.
+ * paragraph after it, or, when there is none, right after the chapter line, so what has no front
+ * matter of its own goes in after that line there too, never into the book line or the front
+ * matter.
  *
  * Mutating: call inside `editor.update()`.
  */
 export function $removeTextKeepingBookAndChapterLines(selection: RangeSelection): void {
   const lines = $topLevelNodesOf(selection);
-  if (!lines || lines.length < 2 || !lines.some($isBookOrChapterLine)) {
+  if (!lines || !$selectionSpansBookOrChapterLine(selection)) {
     selection.removeText();
     return;
   }
@@ -253,9 +257,11 @@ export function $removeTextKeepingBookAndChapterLines(selection: RangeSelection)
 
   if (!caret) {
     const lastLine = lines[lines.length - 1];
-    caret = $getNodeByKey(start.key)?.isAttached()
-      ? start
-      : { key: $getRoot().getKey(), offset: lastLine.getIndexWithinParent() + 1, type: "element" };
+    caret = {
+      key: $getRoot().getKey(),
+      offset: lastLine.getIndexWithinParent() + 1,
+      type: "element",
+    };
     const after = lastLine.getNextSibling();
     if (!host && $isParaLikeNode(after)) {
       $placeCaretAtParaContentStart(after);
