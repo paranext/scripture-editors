@@ -724,11 +724,10 @@ refused. The public surface grew substantially; nothing was removed.
 - A note pasted in the editor opens like the one copied: clicking its caller calls
   `nodes.noteCallerOnClick`. A caller rebuilt from the editor's own node copy had no click handler,
   so the click did nothing, in every view.
-- A tab a paste inserts as Lexical's tab node is saved as a space, in every view (and in any editor
-  mounting `ClipboardPlugin`), as a paste that reads the clipboard itself already saved it: a
-  native paste (a host menu's own Paste), a drop, and html whose whitespace is preformatted. Such a
-  tab was saved as nothing, joining the words either side of it. A tab inside pasted text stays a
-  tab, as Standard view's own paste stores it.
+- A tab a paste inserts as Lexical's tab node is saved as a space, in every view, as a paste that
+  reads the clipboard itself already saved it: a native paste (a host menu's own Paste), a drop,
+  and html whose whitespace is preformatted. Such a tab was saved as nothing, joining the words
+  either side of it. A tab inside pasted text stays a tab, as Standard view's own paste stores it.
 - In the views that hide markers, an edit that arrives with no keydown (an input method composing,
   macOS Ctrl+H) over a range holding a verse marker no longer bypasses structure protection. Under
   `"protected"` it is refused instead of removing the verse; under `"guarded"` a delete arms the
