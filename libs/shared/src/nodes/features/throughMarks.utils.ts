@@ -26,6 +26,31 @@ import {
 } from "lexical";
 
 /**
+ * The first node, from `node` on in the direction `forward` names, that is not an annotation mark,
+ * where `node` is the child of `container` next to a boundary (`null` when the boundary is
+ * `container`'s edge): a mark met is entered, and at a mark's edge the walk continues past the
+ * mark, but no other element is left. Stepping goes by sibling links only — an index lookup costs
+ * the child's position in Lexical, and a caller that walks a whole paragraph with these helpers
+ * would pay that at every step. Backwards, a carrier cut into pieces is named by its first piece.
+ */
+function $stepThroughMarks(
+  container: ElementNode | null,
+  node: LexicalNode | null,
+  forward: boolean,
+): LexicalNode | null {
+  for (;;) {
+    if ($isTypedMarkNode(node)) {
+      container = node;
+      node = forward ? node.getFirstChild() : node.getLastChild();
+    } else if (node) return forward ? node : $pieceHead(node);
+    else if ($isTypedMarkNode(container)) {
+      node = forward ? container.getNextSibling() : container.getPreviousSibling();
+      container = container.getParent();
+    } else return null;
+  }
+}
+
+/**
  * The first node at or after the child boundary `index` of `parent` that is not an annotation
  * mark: a mark that starts there is entered, and a mark that ends there is left — `parent` itself
  * included, when it is a mark — but no other element is. `null` when nothing but the end of the
@@ -35,18 +60,7 @@ export function $nodeAfterBoundaryThroughMarks(
   parent: ElementNode,
   index: number,
 ): LexicalNode | null {
-  let container: ElementNode | null = parent;
-  let node: LexicalNode | null = parent.getChildAtIndex(index);
-  for (;;) {
-    if ($isTypedMarkNode(node)) {
-      container = node;
-      node = node.getFirstChild();
-    } else if (node) return node;
-    else if ($isTypedMarkNode(container)) {
-      node = container.getNextSibling();
-      container = container.getParent();
-    } else return null;
-  }
+  return $stepThroughMarks(parent, parent.getChildAtIndex(index), true);
 }
 
 /**
@@ -58,18 +72,7 @@ export function $nodeBeforeBoundaryThroughMarks(
   parent: ElementNode,
   index: number,
 ): LexicalNode | null {
-  let container: ElementNode | null = parent;
-  let node: LexicalNode | null = index > 0 ? parent.getChildAtIndex(index - 1) : null;
-  for (;;) {
-    if ($isTypedMarkNode(node)) {
-      container = node;
-      node = node.getLastChild();
-    } else if (node) return $pieceHead(node);
-    else if ($isTypedMarkNode(container)) {
-      node = container.getPreviousSibling();
-      container = container.getParent();
-    } else return null;
-  }
+  return $stepThroughMarks(parent, index > 0 ? parent.getChildAtIndex(index - 1) : null, false);
 }
 
 /**
@@ -80,7 +83,7 @@ export function $nodeBeforeBoundaryThroughMarks(
 export function $nextSiblingThroughMarks(node: LexicalNode): LexicalNode | null {
   const last = $lastPiece(node);
   const parent = last.getParent();
-  return parent ? $nodeAfterBoundaryThroughMarks(parent, last.getIndexWithinParent() + 1) : null;
+  return parent ? $stepThroughMarks(parent, last.getNextSibling(), true) : null;
 }
 
 /**
@@ -90,7 +93,7 @@ export function $nextSiblingThroughMarks(node: LexicalNode): LexicalNode | null 
 export function $previousSiblingThroughMarks(node: LexicalNode): LexicalNode | null {
   const head = $pieceHead(node);
   const parent = head.getParent();
-  return parent ? $nodeBeforeBoundaryThroughMarks(parent, head.getIndexWithinParent()) : null;
+  return parent ? $stepThroughMarks(parent, head.getPreviousSibling(), false) : null;
 }
 
 /**
