@@ -89,6 +89,7 @@ import {
   $isSplitCarrier,
   $logicalOffset,
   $splitCarrierAt,
+  $removeRangeHeldByMarks,
   setDecoratorBytesReader,
   clearTypedMarkRemovalSilences,
   forgetTypedMarkCallbacks,
@@ -1017,9 +1018,12 @@ function createIndex(editor: LexicalEditor): Entry {
     },
     editor.registerCommand(
       SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
-      ({ nodes }) => {
+      ({ nodes, selection }) => {
         // A check result or a comment names one place; a pasted copy of its bytes is not it.
         $stripDisplayAnnotations(nodes);
+        // A range a mark holds an end of is removed first, as for any paste, so no handler types
+        // over a range whose ends a mark alone puts in different parents.
+        if (nodes.length > 0 && $isRangeSelection(selection)) $removeRangeHeldByMarks(selection);
         return false;
       },
       // Critical, and never handling the command, so a handler that does handle it cannot skip the
