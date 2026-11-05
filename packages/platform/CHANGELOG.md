@@ -339,6 +339,8 @@ refused. The public surface grew substantially; nothing was removed.
   goes in by its html or plain text instead of rebuilding the other view's node shapes. The node
   copy holds no gutter marker glyph, and is not written for a selection with either end inside a
   construct the view hides (a figure, an optional break, any other unknown construct, or a table).
+  A paragraph the selection starts partway into carries the node state `startsMidParagraph` (see
+  Fixed); a node copy without it pastes as before.
   A selection across a book or chapter line, Select All among them, carries that line, and no paste
   in these views inserts one (see Fixed). Where it is written, the copy's `text/html` holds it
   too, in the attribute `data-platform-editor-node-copy` of a `<span>` around the html's own content,
@@ -384,7 +386,12 @@ refused. The public surface grew substantially; nothing was removed.
   any other chapter. Pasted anywhere else, the whole copy
   goes in at the caret. A paste with no front matter (plain text, another program's html) over
   such a selection goes after the chapter line, even where no paragraph follows it. So Select All, cut, then paste back restores the document exactly,
-  front matter included, and a paste over Select All of its own copy changes nothing. A delete,
+  front matter included, and a paste over Select All of its own copy changes nothing. A copy that
+  starts partway into a front matter line joins the line before the chapter line, as a paste joins
+  a copy's first line to the line at the caret, rather than going in as a line of its own: a cut
+  from partway into `\ip An introduction.` into verse 1, pasted back, restores the one `\ip` line
+  instead of splitting it in two. Over a selection it joins the line the selection starts partway
+  into; it never joins the book line, and a copy of whole lines still goes in as lines of their own. A delete,
   typed text, Enter or a drag-move over such a selection, which removed both lines and typed into
   the book line, keeps them too and replaces the rest (`BookAndChapterLinesPlugin`, which `Editor`
   mounts in those views), so typing over Select All goes in after the chapter line. Standard view

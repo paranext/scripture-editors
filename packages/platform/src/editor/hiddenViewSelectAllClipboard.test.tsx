@@ -8,24 +8,28 @@
  * Every paste here is what an async clipboard read delivers (Ctrl+V, the context menu's Paste):
  * html and plain text alone, the node copy riding an attribute of the html.
  */
-import { editorView, MountedEditor, mountInView } from "./editorViews.test-helpers";
+import { editorView, MountedEditor, mountInPaneRow, mountInView } from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
   $getRoot,
+  $getState,
   $isElementNode,
   $setSelection,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
   CUT_COMMAND,
+  LexicalNode,
   PASTE_COMMAND,
   SELECT_ALL_COMMAND,
 } from "lexical";
 import { $isParaLikeNode } from "shared";
 import {
   $placeCaretAtParaContentStart,
+  LEXICAL_CLIPBOARD_TYPE,
   NODE_COPY_HTML_ATTRIBUTE,
+  startsMidParagraphState,
   StructureProtectionMode,
 } from "shared-react";
 
@@ -160,15 +164,6 @@ async function drop({ lexical }: MountedEditor, store: Map<string, string>): Pro
 
 function content({ ref }: MountedEditor): MarkerContent[] {
   return ref.current?.getUsj()?.content ?? [];
-}
-
-/** The text `content` holds, every string in it in document order. */
-function textOf(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map(textOf).join("");
-  return content && typeof content === "object" && "content" in content
-    ? textOf(content.content)
-    : "";
 }
 
 const UNLOCKED: StructureProtectionMode[] = ["off", "guarded"];
@@ -462,9 +457,13 @@ describe.each(CHAPTERS)("Select All in $name", ({ front }) => {
         ]);
       });
 
-      it.runIf(front.length > 0)(
-        "cut from the front matter into the Scripture text, pasted back puts each part on its side of the chapter line",
-        async () => {
+      it.runIf(front.length > 0).each<[string, typeof ctrlV]>([
+        ["by Ctrl+V", ctrlV],
+        ["natively, with the node copy flavor", pasteFlavors],
+        ["by a drop", drop],
+      ])(
+        "cut from mid-line in the front matter into the Scripture text, put back %s, restores the document",
+        async (_route, paste) => {
           await act(async () =>
             mounted.lexical.update(
               () => {
@@ -482,14 +481,9 @@ describe.each(CHAPTERS)("Select All in $name", ({ front }) => {
           );
           const store = await copyOrCut(mounted, CUT_COMMAND);
 
-          await ctrlV(mounted, store);
+          await paste(mounted, store);
 
-          const after = content(mounted);
-          const chapterNow = after.findIndex(
-            (item) => typeof item !== "string" && item.type === "chapter",
-          );
-          expect(after.slice(chapterNow)).toEqual([CHAPTER, FIRST, SECOND]);
-          expect(textOf(after.slice(0, chapterNow))).toBe(textOf([BOOK, ...front]));
+          expect(content(mounted)).toEqual(usj.content);
         },
       );
 
@@ -702,6 +696,333 @@ describe.each(["paragraph-structure", "formatted"])(
           expect(content(mounted)).toEqual([BOOK, CHAPTER, pasted, TABLE]);
         },
       );
+    });
+  },
+);
+
+/** Selects from `anchor` to `focus`, each a point `offset` past where the first text node holding
+ * `text` holds it. */
+async function selectText(
+  { lexical }: MountedEditor,
+  anchor: [text: string, offset: number],
+  focus: [text: string, offset: number],
+): Promise<void> {
+  await act(async () =>
+    lexical.update(
+      () => {
+        const $point = ([text, offset]: [string, number]): [string, number, "text"] => {
+          const node = $getRoot()
+            .getAllTextNodes()
+            .find((textNode) => textNode.getTextContent().includes(text));
+          if (!node) throw new Error(`no text holds ${JSON.stringify(text)}`);
+          return [node.getKey(), node.getTextContent().indexOf(text) + offset, "text"];
+        };
+        const selection = $createRangeSelection();
+        selection.anchor.set(...$point(anchor));
+        selection.focus.set(...$point(focus));
+        $setSelection(selection);
+      },
+      { discrete: true },
+    ),
+  );
+  await settle();
+}
+
+/** Puts a caret `offset` past where the first text node holding `text` holds it. */
+async function caretInText(mounted: MountedEditor, text: string, offset: number): Promise<void> {
+  await selectText(mounted, [text, offset], [text, offset]);
+}
+
+const STARTS_MID_FLAG = /"startsMidParagraph":true/g;
+const STARTS_MID_FLAG_IN_HTML = /&quot;startsMidParagraph&quot;:true/g;
+
+/** `store` as a copy written before a copy said where its first paragraph started: its node copy,
+ * flavor and html attribute both, without `startsMidParagraphState`. */
+function withoutStartsMidFlag(store: Map<string, string>): Map<string, string> {
+  return new Map(
+    [...store].map(([type, data]) => [
+      type,
+      data.replace(STARTS_MID_FLAG, "").replace(STARTS_MID_FLAG_IN_HTML, ""),
+    ]),
+  );
+}
+
+/** Whether `store`'s node copy says it starts partway into its first paragraph, in both carriers. */
+function holdsStartsMidFlag(store: Map<string, string>): boolean {
+  return (
+    (store.get(LEXICAL_CLIPBOARD_TYPE) ?? "").match(STARTS_MID_FLAG)?.length === 1 &&
+    (store.get("text/html") ?? "").match(STARTS_MID_FLAG_IN_HTML)?.length === 1
+  );
+}
+
+/** The types of the nodes in the document still holding `startsMidParagraphState`. */
+function nodesHoldingStartsMidFlag({ lexical }: MountedEditor): string[] {
+  return lexical.getEditorState().read(() => {
+    const held: string[] = [];
+    const visit = (node: LexicalNode) => {
+      if ($getState(node, startsMidParagraphState)) held.push(node.getType());
+      if ($isElementNode(node)) node.getChildren().forEach(visit);
+    };
+    visit($getRoot());
+    return held;
+  });
+}
+
+/**
+ * A copy that starts partway into its first line, in chapter 1's front matter, and runs across the
+ * chapter line into the Scripture text. Pasted around the chapter line, its first line joins the
+ * line before the chapter line, as a paste joins a copy's first line to the line at the caret; a copy
+ * of whole lines goes in as lines of their own.
+ */
+describe.each(["paragraph-structure", "formatted"])(
+  "a copy from partway into a front matter line, in the %s view",
+  (viewName) => {
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [BOOK, ...FRONT_MATTER, CHAPTER, FIRST, SECOND],
+    };
+    const [HEADER, TITLE, INTRO] = FRONT_MATTER.filter(
+      (item): item is MarkerObject => typeof item !== "string",
+    );
+    /** From after "An in" in the introduction to after "fir" in verse 1. */
+    const FROM_MID_INTRO: [[string, number], [string, number]] = [
+      ["An intro", 5],
+      ["first", 3],
+    ];
+
+    describe.each(UNLOCKED)("structure %s", (mode) => {
+      let mounted: MountedEditor;
+      beforeEach(async () => {
+        mounted = await mountInView(usj, editorView(viewName), { structureProtectionMode: mode });
+      });
+      afterEach(() => mounted.unmount());
+
+      async function copyFromMidIntro(command = COPY_COMMAND): Promise<Map<string, string>> {
+        await selectText(mounted, ...FROM_MID_INTRO);
+        const store = await copyOrCut(mounted, command);
+        expect(holdsStartsMidFlag(store)).toBe(true);
+        return store;
+      }
+
+      it.each<[string, typeof ctrlV]>([
+        ["by Ctrl+V", ctrlV],
+        ["natively", pasteFlavors],
+      ])(
+        "written before the copy said so, cut and pasted back %s, puts its line in as a line of its own",
+        async (_route, paste) => {
+          const store = withoutStartsMidFlag(await copyFromMidIntro(CUT_COMMAND));
+
+          await paste(mounted, store);
+
+          expect(content(mounted)).toEqual([
+            BOOK,
+            HEADER,
+            TITLE,
+            { ...INTRO, content: ["An in"] },
+            { ...INTRO, content: ["troduction to the book."] },
+            CHAPTER,
+            FIRST,
+            SECOND,
+          ]);
+        },
+      );
+
+      it("pasted over the same range, leaves the document as it was", async () => {
+        const store = await copyFromMidIntro();
+        await selectText(mounted, ...FROM_MID_INTRO);
+
+        await ctrlV(mounted, store);
+
+        expect(content(mounted)).toEqual(usj.content);
+        expect(nodesHoldingStartsMidFlag(mounted)).toEqual([]);
+      });
+
+      it("pasted at the end of the line before the chapter line, joins that line", async () => {
+        const store = await copyFromMidIntro();
+        await caretInText(mounted, "An intro", "An introduction to the book.".length);
+
+        await ctrlV(mounted, store);
+
+        expect(content(mounted)).toEqual([
+          BOOK,
+          HEADER,
+          TITLE,
+          { ...INTRO, content: ["An introduction to the book.troduction to the book."] },
+          CHAPTER,
+          { ...FIRST, content: [FIRST.content[0], "fir"] },
+          FIRST,
+          SECOND,
+        ]);
+        expect(nodesHoldingStartsMidFlag(mounted)).toEqual([]);
+      });
+
+      it("pasted over a range from a line's start, does not join the line before it", async () => {
+        const store = await copyFromMidIntro();
+        await selectText(mounted, ["An intro", 0], ["first", 3]);
+
+        await ctrlV(mounted, store);
+
+        expect(content(mounted)).toEqual([
+          BOOK,
+          HEADER,
+          TITLE,
+          { ...INTRO, content: ["troduction to the book."] },
+          CHAPTER,
+          FIRST,
+          SECOND,
+        ]);
+        expect(nodesHoldingStartsMidFlag(mounted)).toEqual([]);
+      });
+
+      it("pasted mid-text away from the chapter line, goes in as the same copy without the flag does", async () => {
+        const store = await copyFromMidIntro();
+        const other = await mountInView(usj, editorView(viewName), {
+          structureProtectionMode: mode,
+        });
+        try {
+          await caretInText(mounted, "second", 3);
+          await caretInText(other, "second", 3);
+
+          await ctrlV(mounted, store);
+          await ctrlV(other, withoutStartsMidFlag(store));
+
+          expect(content(mounted)).toEqual(content(other));
+          expect(content(mounted)).not.toEqual(usj.content);
+          expect(nodesHoldingStartsMidFlag(mounted)).toEqual([]);
+        } finally {
+          other.unmount();
+        }
+      });
+
+      it("pasted beside a chapter line the book line comes right before, joins no book line", async () => {
+        const store = await copyFromMidIntro();
+        const bare = await mountInView(
+          { type: "USJ", version: "3.1", content: [BOOK, CHAPTER, FIRST, SECOND] },
+          editorView(viewName),
+          { structureProtectionMode: mode },
+        );
+        try {
+          await caretInText(bare, "Genesis title", "Genesis title".length);
+
+          await ctrlV(bare, store);
+
+          expect(content(bare)).toEqual([
+            BOOK,
+            { ...INTRO, content: ["troduction to the book."] },
+            CHAPTER,
+            { ...FIRST, content: [FIRST.content[0], "fir"] },
+            FIRST,
+            SECOND,
+          ]);
+          expect(nodesHoldingStartsMidFlag(bare)).toEqual([]);
+        } finally {
+          bare.unmount();
+        }
+      });
+
+      // A copy says where its first paragraph starts, and a book line is not one, so a copy that
+      // says so of a book line is not one this editor wrote; its front matter is whole lines.
+      it("that says a book line it starts with starts partway in, joins nothing", async () => {
+        await selectText(mounted, ["Genesis title", 3], ["first", 3]);
+        const store = await copyOrCut(mounted, COPY_COMMAND);
+        const nodeCopy = JSON.parse(store.get(LEXICAL_CLIPBOARD_TYPE) ?? "");
+        expect(nodeCopy.nodes[0].type).toBe("book");
+        nodeCopy.nodes[0].$ = { startsMidParagraph: true };
+        await caretInText(mounted, "first", 0);
+
+        await pasteFlavors(
+          mounted,
+          new Map([
+            [LEXICAL_CLIPBOARD_TYPE, JSON.stringify(nodeCopy)],
+            ["text/plain", store.get("text/plain") ?? ""],
+          ]),
+        );
+
+        expect(content(mounted).slice(0, 8)).toEqual([
+          BOOK,
+          ...FRONT_MATTER,
+          ...FRONT_MATTER,
+          CHAPTER,
+        ]);
+      });
+
+      it("of whole lines, says nothing of a start partway in, and its cut pasted back restores the document", async () => {
+        await selectText(mounted, ["An intro", 0], ["first", 3]);
+        const store = await copyOrCut(mounted, CUT_COMMAND);
+        expect(store.get(LEXICAL_CLIPBOARD_TYPE)).not.toMatch(STARTS_MID_FLAG);
+
+        await ctrlV(mounted, store);
+
+        expect(content(mounted)).toEqual(usj.content);
+      });
+    });
+
+    describe("structure protected", () => {
+      it("pastes a copy from partway in as it pastes the same copy without the flag", async () => {
+        const source = await mountInView(usj, editorView(viewName), {
+          structureProtectionMode: "protected",
+        });
+        const other = await mountInView(usj, editorView(viewName), {
+          structureProtectionMode: "protected",
+        });
+        try {
+          await selectText(source, ...FROM_MID_INTRO);
+          const store = await copyOrCut(source, COPY_COMMAND);
+          expect(holdsStartsMidFlag(store)).toBe(true);
+          await caretInText(source, "first", 0);
+          await caretInText(other, "first", 0);
+
+          await ctrlV(source, store);
+          await ctrlV(other, withoutStartsMidFlag(store));
+
+          expect(content(source)).not.toEqual(usj.content);
+          expect(content(source)).toEqual(content(other));
+          expect(nodesHoldingStartsMidFlag(source)).toEqual([]);
+        } finally {
+          source.unmount();
+          other.unmount();
+        }
+      });
+    });
+
+    // A view that does not hide markers never reads a hidden-marker view's node copy, so the flag
+    // changes nothing there.
+    describe.each<[string, (copyOf: Usj) => Promise<MountedEditor>, string]>([
+      ["Standard view", (doc) => mountInView(doc, editorView("standard")), "second"],
+      ["the footnotes pane's row editor", () => mountInPaneRow(NOTE), "note text"],
+    ])("pasted into %s", (_where, $mount, caretText) => {
+      it.each<[string, typeof ctrlV]>([
+        ["by Ctrl+V", ctrlV],
+        ["natively", pasteFlavors],
+      ])("%s, goes in as the same copy without the flag does", async (_route, paste) => {
+        const source = await mountInView(usj, editorView(viewName));
+        let store: Map<string, string>;
+        try {
+          await selectText(source, ...FROM_MID_INTRO);
+          store = await copyOrCut(source, COPY_COMMAND);
+          expect(holdsStartsMidFlag(store)).toBe(true);
+        } finally {
+          source.unmount();
+        }
+        const flagged = await $mount(usj);
+        const unflagged = await $mount(usj);
+        try {
+          await caretInText(flagged, caretText, 3);
+          await caretInText(unflagged, caretText, 3);
+          const before = content(flagged);
+
+          await paste(flagged, store);
+          await paste(unflagged, withoutStartsMidFlag(store));
+
+          expect(content(flagged)).not.toEqual(before);
+          expect(content(flagged)).toEqual(content(unflagged));
+          expect(nodesHoldingStartsMidFlag(flagged)).toEqual([]);
+        } finally {
+          flagged.unmount();
+          unflagged.unmount();
+        }
+      });
     });
   },
 );

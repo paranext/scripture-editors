@@ -322,6 +322,50 @@ describe("HiddenViewCopyPlugin", () => {
     }
   });
 
+  describe.each(enabledViews(["formatted", "paragraph-structure"] as const))(
+    "a %s copy across a paragraph break",
+    (viewName) => {
+      /** The top-level nodes of the node copy of the range `from`-`to`, each with its state. */
+      async function copiedStates(from: At, to: At): Promise<unknown[]> {
+        const mounted = await mountInView(matthew, editorView(viewName));
+        try {
+          await select(mounted.lexical, from, to);
+          const { store } = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+          const payload = JSON.parse(store.get(LEXICAL_FLAVOR) ?? "{}") as {
+            nodes?: SerializedNode[];
+          };
+          return (payload.nodes ?? []).map((node) => [node.type, node.$]);
+        } finally {
+          mounted.unmount();
+        }
+      }
+
+      const LINE_2_END = { text: "princes of Judah;", offset: -2 };
+      const LINE_3_PART = { text: "for out of you", offset: 2 };
+
+      it("from partway into a line, says so on that line alone", async () => {
+        expect(await copiedStates(LINE_2_END, LINE_3_PART)).toEqual([
+          ["para", { startsMidParagraph: true }],
+          ["para", undefined],
+        ]);
+      });
+
+      it("backward, from partway into a line, says so by where the selection starts", async () => {
+        expect(await copiedStates(LINE_3_PART, LINE_2_END)).toEqual([
+          ["para", { startsMidParagraph: true }],
+          ["para", undefined],
+        ]);
+      });
+
+      it("from a line's start, says nothing", async () => {
+        expect(await copiedStates({ text: "are in no way", offset: 0 }, LINE_3_PART)).toEqual([
+          ["para", undefined],
+          ["para", undefined],
+        ]);
+      });
+    },
+  );
+
   // 2 Samuel 1's first figure paragraph: text, a figure with no caption, text.
   const captionlessParagraph = (samuel.content[91] as MarkerObject).content ?? [];
   const beforeCaptionless = captionlessParagraph[0] as string;

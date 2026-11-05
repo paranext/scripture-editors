@@ -17,7 +17,12 @@ import {
   SomeSerializedParaNode,
   verseBlockSourceState,
 } from "shared";
-import { $rangeReachesIntoOpaqueBlock, HIDDEN_VIEW_CLIPBOARD_NAMESPACE } from "shared-react";
+import {
+  $paragraphSelectionStartsInside,
+  $rangeReachesIntoOpaqueBlock,
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+  startsMidParagraphState,
+} from "shared-react";
 
 /**
  * Whether a hidden-marker view's copy leaves `node`'s text out of its plain text: a paragraph's
@@ -42,7 +47,7 @@ export function $isLeftOutOfHiddenViewCopy(node: LexicalNode): boolean {
  * under protected structure). A paste of it reproduces the copy exactly: attributes, notes and
  * figures included.
  *
- * It differs from Lexical's own serialization (`$getLexicalContent`) three times:
+ * It differs from Lexical's own serialization (`$getLexicalContent`) four times:
  * - it holds no gutter marker glyph: a glyph is the view's reading aid, and
  *   `ParaMarkerPrefixGuardPlugin` builds one for each pasted paragraph;
  * - it holds every `UnknownNode` with no children the selection covers. Here every content-less
@@ -50,7 +55,10 @@ export function $isLeftOutOfHiddenViewCopy(node: LexicalNode): boolean {
  *   display children for a construct; `UnknownNode.excludeFromCopy` leaves it out of Lexical's
  *   serialization so that Standard view's two carriers agree, and a cut would then lose it;
  * - it holds the block-verse layout's paragraphs as the document has them, not as the layout cuts
- *   them to put each verse on a row ({@link rejoinVerseBlockFragments}).
+ *   them to put each verse on a row ({@link rejoinVerseBlockFragments});
+ * - a paragraph the selection starts partway into, after some of its text, says so
+ *   (`startsMidParagraphState`), so a paste that puts it before a chapter line joins it to the line
+ *   there, as a paste joins it to the line at the caret anywhere else.
  *
  * `undefined` — so a paste takes the html or plain text — when nothing is selected, and when an end
  * of the selection lies inside an opaque construct (a node copy cannot carry part of one; it would
@@ -63,9 +71,10 @@ export function $isLeftOutOfHiddenViewCopy(node: LexicalNode): boolean {
 export function $hiddenViewLexicalFlavor(selection: RangeSelection): string | undefined {
   if (selection.isCollapsed() || $rangeReachesIntoOpaqueBlock(selection)) return undefined;
   const selectedKeys = new Set(selection.getNodes().map((node) => node.getKey()));
+  const startParagraph = $paragraphSelectionStartsInside(selection);
   const copiedNodes: SerializedLexicalNode[] = [];
   for (const child of $getRoot().getChildren())
-    $appendToNodeCopy(selection, selectedKeys, child, copiedNodes);
+    $appendToNodeCopy(selection, selectedKeys, child, copiedNodes, startParagraph);
   const nodes = rejoinVerseBlockFragments(copiedNodes);
   if (nodes.length === 0) return undefined;
   return JSON.stringify({ namespace: HIDDEN_VIEW_CLIPBOARD_NAMESPACE, nodes });
@@ -75,7 +84,8 @@ export function $hiddenViewLexicalFlavor(selection: RangeSelection): string | un
  * Appends `node`'s serialization to `target` as Lexical's own node copy does (`@lexical/clipboard`'s
  * `$appendNodesToJSON`): a selected node with its selected descendants, a text node sliced to the
  * selection, and in place of an unselected or excluded element, its selected descendants. Leaves
- * out a gutter marker glyph, and keeps a childless `UnknownNode` the selection covers (see
+ * out a gutter marker glyph, keeps a childless `UnknownNode` the selection covers, and marks
+ * `startParagraph`, the paragraph the selection starts partway into (see
  * {@link $hiddenViewLexicalFlavor}).
  *
  * @returns Whether `node` itself was selected.
@@ -85,6 +95,7 @@ function $appendToNodeCopy(
   selectedKeys: Set<NodeKey>,
   node: LexicalNode,
   target: SerializedLexicalNode[],
+  startParagraph: LexicalNode | undefined,
 ): boolean {
   if ($isGutterMarkerNode(node)) return false;
   const isChildlessUnknown = $isUnknownNode(node) && node.getChildrenSize() === 0;
@@ -101,14 +112,20 @@ function $appendToNodeCopy(
   if ($isElementNode(copied))
     for (const child of copied.getChildren())
       if (
-        $appendToNodeCopy(selection, selectedKeys, child, serializedChildren) &&
+        $appendToNodeCopy(selection, selectedKeys, child, serializedChildren, startParagraph) &&
         !isIncluded &&
         $isElementNode(node) &&
         node.extractWithChild(child, selection, "clone")
       )
         isIncluded = true;
-  if (isIncluded && !isExcluded) target.push(serialized);
-  else target.push(...serializedChildren);
+  if (isIncluded && !isExcluded) {
+    if (startParagraph && node.is(startParagraph))
+      serialized[NODE_STATE_KEY] = {
+        ...serialized[NODE_STATE_KEY],
+        [startsMidParagraphState.key]: true,
+      };
+    target.push(serialized);
+  } else target.push(...serializedChildren);
   return isIncluded;
 }
 
