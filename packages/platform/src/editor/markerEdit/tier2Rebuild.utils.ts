@@ -4435,18 +4435,21 @@ export function $isTornSecondHalf(char: CharNode): boolean {
 
 /**
  * The torn second half ({@link $isTornSecondHalf}) of the span `char` opens: the nearest later span
- * of `char`'s marker in its settle scope, past whole spans of the marker the insertion put between
- * the halves, when that span is torn. `undefined` when the nearest such span that is not whole is
- * not torn, or there is none. The mirror of the pairing the deletion rules read from the second
- * half (`$firstHalfOfSplitSpan`), so both find the same two halves.
+ * of `char`'s marker that settles in `char`'s own scope, past whole spans of the marker the
+ * insertion put between the halves, when that span is torn. `undefined` when the nearest such span
+ * that is not whole is not torn, or there is none. A span in a note that is a settle scope of its
+ * own is never the other half of a span outside it. The mirror of the pairing the deletion rules
+ * read from the second half (`$firstHalfOfSplitSpan`), so both find the same two halves.
  *
  * Read-only: safe in any read or update.
  */
 function $tornSecondHalfOf(char: CharNode): CharNode | undefined {
+  const scope = $settleScopeForNode(char);
   const nodes = $settleScopeNodesInOrder(char);
   for (const node of nodes.slice(nodes.findIndex((each) => each.is(char)) + 1)) {
     if (!$isCharNode(node) || char.isParentOf(node) || node.getMarker() !== char.getMarker())
       continue;
+    if (!$settleScopeForNode(node)?.is(scope)) continue;
     const opener = node.getFirstChild();
     const hasOpener = $isMarkerNode(opener) && opener.getMarkerSyntax() === "opening";
     // A whole span between the two halves is one the insertion put there.

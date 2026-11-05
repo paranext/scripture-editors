@@ -7,6 +7,7 @@
 import {
   $isTornSecondHalf,
   $requestTier2ForNode,
+  $settleScopeForNode,
   $settleScopeNodesInOrder,
 } from "./tier2Rebuild.utils";
 import { MarkerEditContext } from "./markerEditTier1.utils";
@@ -775,14 +776,20 @@ function $needsMissingCloser(char: CharNode): boolean {
  * of its marker in its settle scope ({@link $settleScopeNodesInOrder}), in document order and past
  * whole spans the insertion put between them, when that span holds an opener and lacks the closer
  * it needs. The scope, not the parent, because a nested span's halves sit in the two halves of the
- * span around it. Read-only.
+ * span around it. Only a span that settles in `char`'s own scope pairs with it: the scope's nodes
+ * include the content of a note that is a settle scope of its own, and a span there is never the
+ * other half of a span outside the note.
+ *
+ * Read-only: safe in any read or update.
  */
 function $firstHalfOfSplitSpan(char: CharNode): CharNode | undefined {
   if (!$isTornSecondHalf(char)) return undefined;
+  const scope = $settleScopeForNode(char);
   const nodes = $settleScopeNodesInOrder(char);
   const at = nodes.findIndex((node) => node.is(char));
   for (const node of nodes.slice(0, Math.max(at, 0)).reverse()) {
     if (!$isCharNode(node) || node.getMarker() !== char.getMarker()) continue;
+    if (!$settleScopeForNode(node)?.is(scope)) continue;
     const opener = node.getFirstChild();
     const hasOpener = $isMarkerNode(opener) && opener.getMarkerSyntax() === "opening";
     // A whole span between the two halves is one the insertion put there.
