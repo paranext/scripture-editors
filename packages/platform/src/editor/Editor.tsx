@@ -1133,11 +1133,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     paste() {
       assertEditable("paste");
-      if (editorRef.current) pasteSelection(editorRef.current);
+      if (editorRef.current) pasteSelection(editorRef.current, loggerRef.current);
     },
     pastePlainText() {
       assertEditable("paste as plain text");
-      if (editorRef.current) pasteSelectionAsPlainText(editorRef.current);
+      if (editorRef.current) pasteSelectionAsPlainText(editorRef.current, loggerRef.current);
     },
     getUsj() {
       return readSettledUsj();
@@ -2127,7 +2127,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               browser delivers itself (macOS's Edit > Paste, Shift+Insert) takes what Ctrl+V takes,
               without the node copy flavor; the hidden-marker views read their own node copy from
               it (UnstorableTextPlugin, StructureKeyboardPlugin). */}
-          <ClipboardPlugin pastesAsClipboardRead={viewOptions?.markerMode !== "hidden"} />
+          <ClipboardPlugin
+            pastesAsClipboardRead={viewOptions?.markerMode !== "hidden"}
+            logger={stableLogger}
+          />
           {/* Editable marker modes require literal backslash input (the marker-edit engine and
               the `\` marker menu consume it), so neither plugin here acts in Standard view. The
               hidden-marker views take a paste or drop with `\` or `//` in it, leaving those out,
@@ -2143,7 +2146,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             logger={stableLogger}
           />
           {viewOptions?.markerMode === "visible" && <CommandMenuPlugin logger={stableLogger} />}
-          <ContextMenuPlugin options={contextMenuOptions} />
+          <ContextMenuPlugin options={contextMenuOptions} logger={stableLogger} />
           {/* Must mount before every plugin with a CRITICAL cut handler (MarkerEditPlugin,
               OpaqueBlockGuardPlugin, StructureKeyboardPlugin). Its CRITICAL fit shortens the
               selection of a limited copy or cut, and at equal priority handlers run in the order

@@ -3532,4 +3532,47 @@ describe("pasting reads the clipboard", () => {
       expect(vi.mocked(navigator.clipboard.read)).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("logs each paste's failed clipboard read to the editor's logger", async () => {
+    const denied = () => Promise.reject(new Error("clipboard read denied"));
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { read: denied, readText: denied } });
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    const ref = await createEditorRefForTesting({ logger });
+    const pressPaste = async (shiftKey: boolean) => {
+      const event = new KeyboardEvent("keydown", {
+        key: "v",
+        ctrlKey: !IS_APPLE,
+        metaKey: IS_APPLE,
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      await act(async () => editorRoot().dispatchEvent(event));
+    };
+    const chooseFromContextMenu = async (title: string) => {
+      const target = editorRoot().firstElementChild;
+      if (!target) throw new Error("expected the editor to have rendered content to right-click");
+      await act(async () => {
+        target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      });
+      const item = Array.from(
+        document.querySelectorAll<HTMLLIElement>(".typeahead-popover li"),
+      ).find((li) => li.querySelector(".text")?.textContent === title);
+      if (!item) throw new Error(`expected a "${title}" menu item`);
+      await act(async () => item.click());
+    };
+
+    await act(async () => getEditorRef(ref).paste());
+    await act(async () => getEditorRef(ref).pastePlainText());
+    await pressPaste(false);
+    await pressPaste(true);
+    await chooseFromContextMenu("Paste");
+    await chooseFromContextMenu("Paste as Plain Text");
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+
+    const clipboardWarnings = logger.warn.mock.calls.filter(([message]) =>
+      String(message).includes("clipboard read denied"),
+    );
+    expect(clipboardWarnings).toHaveLength(6);
+  });
 });

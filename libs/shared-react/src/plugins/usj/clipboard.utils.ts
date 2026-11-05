@@ -154,52 +154,73 @@ export const cutSelection = (editor: LexicalEditor) => {
   editor.dispatchCommand(CUT_COMMAND, null);
 };
 
-export const pasteSelection = (editor: LexicalEditor) => {
-  navigator.clipboard.read().then(async (items) => {
-    const permission = await navigator.permissions.query({
-      // @ts-expect-error These types are incorrect.
-      name: "clipboard-read",
-    });
-    if (permission.state === "denied") {
-      alert("Not allowed to paste from clipboard.");
-      return;
-    }
+/**
+ * Pastes at the selection what `read` gets from the clipboard, as a paste event: unless the
+ * clipboard held nothing, or the editor stopped taking a paste while it was read. A read that fails
+ * (no permission to read the clipboard, say) pastes nothing and is logged at `warn`, to `logger`,
+ * or the console when there is none.
+ */
+function pasteFromClipboardRead(
+  editor: LexicalEditor,
+  read: () => Promise<DataTransfer | undefined>,
+  logger: LoggerBasic | undefined,
+): void {
+  read().then(
+    (data) => {
+      if (!data || !editor.isEditable()) return;
+      editor.dispatchCommand(PASTE_COMMAND, new ClipboardEvent("paste", { clipboardData: data }));
+    },
+    (error: unknown) => {
+      (logger ?? console).warn(`Could not read the clipboard to paste: ${String(error)}`);
+    },
+  );
+}
 
-    const data = new DataTransfer();
-    const item = items[0];
-    for (const type of item.types) {
-      const dataString = await (await item.getType(type)).text();
-      data.setData(type, cleanupText(dataString));
-    }
-
-    const event = new ClipboardEvent("paste", {
-      clipboardData: data,
-    });
-    editor.dispatchCommand(PASTE_COMMAND, event);
-  });
+/**
+ * Pastes every flavor the clipboard holds at the selection, read with `navigator.clipboard.read()`
+ * (which returns no custom flavor), each tab in it as a space. See {@link pasteFromClipboardRead}
+ * for a failed read, an empty clipboard and an editor that stopped taking a paste.
+ *
+ * @param editor - The editor to paste into.
+ * @param logger - Where a failed clipboard read is logged; the console when omitted.
+ */
+export const pasteSelection = (editor: LexicalEditor, logger?: LoggerBasic) => {
+  pasteFromClipboardRead(
+    editor,
+    async () => {
+      const [item] = await navigator.clipboard.read();
+      if (!item) return undefined;
+      const data = new DataTransfer();
+      for (const type of item.types) {
+        const dataString = await (await item.getType(type)).text();
+        data.setData(type, cleanupText(dataString));
+      }
+      return data;
+    },
+    logger,
+  );
 };
 
-export const pasteSelectionAsPlainText = (editor: LexicalEditor) => {
-  navigator.clipboard.read().then(async () => {
-    const permission = await navigator.permissions.query({
-      // @ts-expect-error These types are incorrect.
-      name: "clipboard-read",
-    });
-
-    if (permission.state === "denied") {
-      alert("Not allowed to paste from clipboard.");
-      return;
-    }
-
-    const data = new DataTransfer();
-    const text = await navigator.clipboard.readText();
-    data.setData("text/plain", cleanupText(text));
-
-    const event = new ClipboardEvent("paste", {
-      clipboardData: data,
-    });
-    editor.dispatchCommand(PASTE_COMMAND, event);
-  });
+/**
+ * Pastes the clipboard's plain text at the selection, read with `navigator.clipboard.readText()`,
+ * each tab in it as a space. See {@link pasteFromClipboardRead} for a failed read, an empty
+ * clipboard and an editor that stopped taking a paste.
+ *
+ * @param editor - The editor to paste into.
+ * @param logger - Where a failed clipboard read is logged; the console when omitted.
+ */
+export const pasteSelectionAsPlainText = (editor: LexicalEditor, logger?: LoggerBasic) => {
+  pasteFromClipboardRead(
+    editor,
+    async () => {
+      const text = await navigator.clipboard.readText();
+      if (!text) return undefined;
+      const data = new DataTransfer();
+      data.setData("text/plain", cleanupText(text));
+      return data;
+    },
+    logger,
+  );
 };
 
 /**
