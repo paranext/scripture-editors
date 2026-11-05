@@ -409,13 +409,18 @@ refused. The public surface grew substantially; nothing was removed.
   loses its marker tokens first (`1 TR and `), with no `onUnstorableTextRemoved` report for them. A
   verse's number, a note's caller and an attribute list stay as text. A paste with neither
   (another program's) is unchanged, as are Standard and Markers views.
-- **Plain text of several lines pasted into a line with no paragraph marker keeps its line
-  breaks** in the views that hide markers. Pasted or dropped into the blank line after a chapter
-  line that nothing follows (or into text that USFM holds with no marker), `one` and `two` on two
-  lines saved as `onetwo`. Under `"off"` and `"guarded"` structure the first line now stays where it
-  was pasted and each line after it starts a `\p` paragraph, as a paste's line breaks start
-  paragraphs anywhere else; under `"protected"` structure the lines join with one space, as they
-  already did.
+- **A line with no paragraph marker keeps the breaks Enter and a paste put in it.** In the blank
+  line after a chapter line that nothing follows (or in text that USFM holds with no marker), typing
+  `one`, Enter, `two`, or pasting or dropping those two lines, showed two lines but saved `onetwo`:
+  a split of such a line (an implied paragraph) made another one, and adjacent lines with no marker
+  save as one run of text. A split now puts a `\p` paragraph after it (`ImpliedParaNode`'s
+  `insertNewAfter`), so the first line stays as it was and each line after it is a `\p` paragraph,
+  as Enter and a paste's line breaks make paragraphs anywhere else. This holds in every view: in
+  Standard view, where Enter in text with no marker also saved it run together, the new line shows
+  its `\p` marker. A paragraph marker picked from the Enter menu there
+  (`EditorRef.splitParagraphWithMarker`), which split the line but did not apply the marker, now
+  starts a paragraph of that marker. Under `"protected"` structure Enter there is refused and a
+  paste's lines join with one space, as before. Shift+Enter is unchanged.
 - **Ctrl+V, Ctrl+Shift+V, the context menu's Paste items and `EditorRef.paste`/`pastePlainText`
   handle a failed clipboard read.** A refused or failed read was an unhandled promise rejection; it
   is now logged at `warn`, to the `Editor`'s `logger` (`ClipboardPlugin` and `ContextMenuPlugin`
