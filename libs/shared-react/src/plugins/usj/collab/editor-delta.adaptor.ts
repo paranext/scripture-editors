@@ -434,8 +434,12 @@ function $handleTextNodes(
       activeEmbed.lastText !== undefined &&
       !currentNode.getPreviousSibling()?.is(activeEmbed.lastText) &&
       $previousSiblingThroughMarks(currentNode)?.is(activeEmbed.lastText);
-    if (isCutByMark && activeEmbed.contentsOps) new Delta(activeEmbed.contentsOps).push(textOp);
-    else activeEmbed.contentsOps?.push(textOp);
+    const { contentsOps } = activeEmbed;
+    // The note op holds this array, so the merged op goes back into it. A Delta's push reads only
+    // the last op of ops with no delete among them, so the merge is made on that op alone.
+    if (isCutByMark && contentsOps)
+      contentsOps.splice(-1, 1, ...new Delta(contentsOps.slice(-1)).push(textOp).ops);
+    else contentsOps?.push(textOp);
     activeEmbed.lastText = currentNode;
   } else {
     // Attribute display text is presentation-only regardless of WHERE it rides — inside a char
