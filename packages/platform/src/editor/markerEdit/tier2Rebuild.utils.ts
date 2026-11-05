@@ -4399,7 +4399,9 @@ export function $settleScopeForNode(
 /**
  * Every node a rebuild of `node`'s settle scope ({@link $settleScopeForNode}) reads, in document
  * order: the scope's subtree, and the root children after it that settle with it (a chapter's
- * `\ca`/`\cp` spans beside it at the root). Empty when `node` has no scope. Read-only.
+ * `\ca`/`\cp` spans beside it at the root). Empty when `node` has no scope.
+ *
+ * Read-only: safe in any read or update.
  */
 export function $settleScopeNodesInOrder(node: LexicalNode): LexicalNode[] {
   const scope = $settleScopeForNode(node);
@@ -4412,8 +4414,12 @@ export function $settleScopeNodesInOrder(node: LexicalNode): LexicalNode[] {
   return region.flatMap((root) => $dfs(root).map((entry) => entry.node));
 }
 
-/** Whether `char` lost its opening glyph but keeps a closing glyph of its marker: the half of a
- * span a line break tore in two that holds the closer. */
+/**
+ * Whether `char` lost its opening glyph but keeps a closing glyph of its marker: the half of a
+ * span a line break tore in two that holds the closer.
+ *
+ * Read-only: safe in any read or update.
+ */
 export function $isTornSecondHalf(char: CharNode): boolean {
   const first = char.getFirstChild();
   if ($isMarkerNode(first) && first.getMarkerSyntax() === "opening") return false;
@@ -4427,16 +4433,34 @@ export function $isTornSecondHalf(char: CharNode): boolean {
     );
 }
 
-/** The first span of `char`'s marker after it in its settle scope, when that span is the torn
- * second half of the span `char` opens ({@link $isTornSecondHalf}). Read-only. */
+/**
+ * The torn second half ({@link $isTornSecondHalf}) of the span `char` opens: the nearest later span
+ * of `char`'s marker in its settle scope, past whole spans of the marker the insertion put between
+ * the halves, when that span is torn. `undefined` when the nearest such span that is not whole is
+ * not torn, or there is none. The mirror of the pairing the deletion rules read from the second
+ * half (`$firstHalfOfSplitSpan`), so both find the same two halves.
+ *
+ * Read-only: safe in any read or update.
+ */
 function $tornSecondHalfOf(char: CharNode): CharNode | undefined {
   const nodes = $settleScopeNodesInOrder(char);
-  const after = nodes.slice(nodes.findIndex((node) => node.is(char)) + 1);
-  const next = after.find(
-    (node): node is CharNode =>
-      $isCharNode(node) && !char.isParentOf(node) && node.getMarker() === char.getMarker(),
-  );
-  return next && $isTornSecondHalf(next) ? next : undefined;
+  for (const node of nodes.slice(nodes.findIndex((each) => each.is(char)) + 1)) {
+    if (!$isCharNode(node) || char.isParentOf(node) || node.getMarker() !== char.getMarker())
+      continue;
+    const opener = node.getFirstChild();
+    const hasOpener = $isMarkerNode(opener) && opener.getMarkerSyntax() === "opening";
+    // A whole span between the two halves is one the insertion put there.
+    if (hasOpener && $hasClosingGlyph(node)) continue;
+    return $isTornSecondHalf(node) ? node : undefined;
+  }
+  return undefined;
+}
+
+/** Whether `char` holds a closing glyph among its children. */
+function $hasClosingGlyph(char: CharNode): boolean {
+  return char
+    .getChildren()
+    .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing");
 }
 
 /** Route a Tier-1-unexpressible edit to Tier 2 via its scope ({@link $settleScopeForNode}).
