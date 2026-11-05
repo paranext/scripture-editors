@@ -79,7 +79,7 @@ export function $charHasClosingGlyph(char: CharNode): boolean {
  * second half of a span Lexical split where it inserted nodes inside it. Transient either way —
  * the marker-edit engine unwraps the span or reads it back with the half before it
  * (`$charNodeDeletionTransform`) — so what the span's glyphs anchor (its attribute run) is left
- * for that resolution.
+ * for that resolution. Read-only: safe in any read or update.
  */
 export function $charLacksOpeningGlyph(char: CharNode): boolean {
   const first = char.getFirstChild();

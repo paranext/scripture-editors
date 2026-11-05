@@ -172,7 +172,8 @@ export function $restCaretThroughMarks(): void {
  * start stays at the end of the content. A start the screen has at the start of that node is
  * where it is, so `$isReadFromEnd` says whether the screen has the start at the end of a given
  * text; without it, every such start is put back. A no-op for a collapsed selection
- * ({@link $restoreCaretAtMarkEnd} restates a caret). Mutating (the selection only).
+ * ({@link $restoreCaretAtMarkEnd} restates a caret).
+ * Mutating (the selection only): call inside `editor.update()`.
  *
  * @returns Whether the start moved.
  */
@@ -204,7 +205,8 @@ export function $restoreRangeStartAtMarkEnd(
  * does with no mark; a display-byte carrier cut into pieces is one node. A collapsed caret is left
  * alone ({@link $restoreCaretAtMarkEnd} restates that); a range's start Lexical read onto the
  * start of the text after a mark from the end of the mark's content is put back there first
- * ({@link $restoreRangeStartAtMarkEnd}, with `$isReadFromEnd`). Mutating (the selection only).
+ * ({@link $restoreRangeStartAtMarkEnd}, with `$isReadFromEnd`).
+ * Mutating (the selection only): call inside `editor.update()`.
  *
  * @returns Whether an end moved.
  */
