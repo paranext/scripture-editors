@@ -132,6 +132,42 @@ describe.each(CHAPTERS)("an edit over Select All in $name", ({ front }) => {
         },
       );
 
+      describe("over a range holding the chapter line alone", () => {
+        beforeEach(async () => {
+          await act(async () =>
+            mounted.lexical.update(
+              () => {
+                const selection = $createRangeSelection();
+                selection.anchor.set($getRoot().getKey(), chapterAt, "element");
+                selection.focus.set($getRoot().getKey(), chapterAt + 1, "element");
+                $setSelection(selection);
+              },
+              { discrete: true },
+            ),
+          );
+        });
+
+        it.each(["Backspace", "Delete"])("%s keeps it", async (key) => {
+          // One press in either mode: the range holds no verse, so guarded structure arms nothing.
+          await deleteWith(mounted, "off", key);
+
+          expect(content(mounted)).toEqual(usj.content);
+        });
+
+        it("typing keeps it and goes in at the start of the line after it", async () => {
+          await press(mounted, "x", "x");
+          await settle();
+
+          expect(content(mounted)).toEqual([
+            BOOK,
+            ...front,
+            CHAPTER,
+            { ...FIRST, content: [FIRST.content[0], "xfirst ", ...FIRST.content.slice(2)] },
+            SECOND,
+          ]);
+        });
+      });
+
       it("a word delete keeps the book and chapter lines and empties the rest", async () => {
         await selectAll(mounted);
 
