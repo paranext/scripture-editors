@@ -1311,6 +1311,7 @@ async function runPlainRow(row: PlainRow, usj: Usj): Promise<void> {
         : content;
     const expected = settled(plain(pasted));
     expect(settled(contentOf(mounted)), "after the paste").toEqual(expected);
+    expect(onRemoved, "notices").not.toHaveBeenCalled();
     await undo(mounted);
     expect(contentOf(mounted), "after undoing the paste").toEqual(original);
     await redo(mounted);
