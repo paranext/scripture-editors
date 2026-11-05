@@ -7,7 +7,6 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isRootNode,
-  $isTextNode,
   LexicalNode,
   PointType,
   RangeSelection,
@@ -18,7 +17,6 @@ import {
   $isParaNode,
   $isSomeChapterNode,
   $isSynthesizedMarkerNode,
-  NBSP,
 } from "shared";
 
 /**
@@ -306,14 +304,12 @@ function $holdsOnlyGlyphBefore(line: LexicalNode, point: Snapshot): boolean {
   return $textBetween(start, $pastGutterGlyph(line)).startsWith($textBetween(start, point));
 }
 
-/** The point just past top-level `line`'s gutter marker glyph and the space after it, or its start
- * when it has none. */
+/** The point just past top-level `line`'s gutter marker glyph, whose own text ends in the space
+ * after the marker, or its start when it has none. */
 function $pastGutterGlyph(line: LexicalNode): Snapshot {
   if (!$isElementNode(line) || !$isSynthesizedMarkerNode(line.getFirstChild()))
     return $lineStart(line);
-  const next = line.getChildAtIndex(1);
-  const offset = $isTextNode(next) && next.getTextContent() === NBSP ? 2 : 1;
-  return { key: line.getKey(), offset, type: "element" };
+  return { key: line.getKey(), offset: 1, type: "element" };
 }
 
 /** The text a range from `from` to `to` holds. Read-only: the range is never made the selection. */
