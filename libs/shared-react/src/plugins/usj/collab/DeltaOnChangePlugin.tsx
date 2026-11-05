@@ -193,16 +193,22 @@ function $blockUpdateOps(node: TextNode, prevEditorState: EditorState): Delta | 
   return new Delta(start > 0 ? [{ retain: start }] : []).concat(previous.diff(current));
 }
 
-/** `block`'s ops, behind the last op of the nearest block before it that has any. */
+/**
+ * `block`'s ops, behind the last op of the nearest block before it that has any. An empty char
+ * span's `{ insert: "" }` op is left out: it has no length in delta-doc coordinates, and a diff
+ * over a zero-length op misaligns every op after it, so text typed over the span's stand-in would
+ * also delete what follows the span.
+ */
 function $blockWindow(block: LexicalNode): Delta {
+  const $ops = (node: LexicalNode) => $getParticularNodeOps(node).filter((op) => op.insert !== "");
   let context: DeltaOp[] = [];
   for (
     let before = block.getPreviousSibling();
     before && context.length === 0;
     before = before.getPreviousSibling()
   )
-    context = $getParticularNodeOps(before).slice(-1);
-  return new Delta([...context, ...$getParticularNodeOps(block)]);
+    context = $ops(before).slice(-1);
+  return new Delta([...context, ...$ops(block)]);
 }
 /** The ops between the previous state's whole delta and the current one's. */
 function getFullDiff(editor: LexicalEditor, prevEditorState: EditorState): Delta {
