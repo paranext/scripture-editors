@@ -36,9 +36,12 @@ import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
   $getRoot,
+  $getSelection,
   $isElementNode,
+  $isRangeSelection,
   $setSelection,
   COPY_COMMAND,
+  LexicalEditor,
   NodeKey,
   PASTE_COMMAND,
   TextNode,
@@ -645,6 +648,53 @@ describe("a copy of annotated text", () => {
         expect(exported, `annotated: ${isAnnotated}`).not.toContain(afterKey);
         mounted.unmount();
       }
+    },
+    120_000,
+  );
+
+  it.each(["unformatted", "standard"] as const)(
+    "is the editor's own copy when the copy without annotations cannot be written (%s view)",
+    async (view) => {
+      const usj = oracleRows(view).find(([name]) => name.startsWith("closed char span ("))?.[1];
+      if (!usj) throw new Error("no row closed char span");
+      const viewOptions = pendingOracleView(view);
+      const mounted = await mountInView(usj, viewOptions);
+      const plan = mounted.lexical.getEditorState().read(() => $planAnnotations(viewOptions));
+      for (const { id, range } of plan)
+        await act(async () => {
+          mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, id);
+          await Promise.resolve();
+        });
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const para = $getRoot().getChildren()[2];
+          if ($isElementNode(para)) para.select(0, para.getChildrenSize());
+        });
+        await drainNativeSelectionChange();
+      });
+      const expectedText = mounted.lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        return view === "standard" ? $selectionToUsfmText(selection) : selection.getTextContent();
+      });
+      const { event, getData } = copyEvent({ native: true });
+      // Every editor's, the scratch editor the copy without annotations is written in among them.
+      const editorPrototype: LexicalEditor = Object.getPrototypeOf(mounted.lexical);
+      const parse = vi.spyOn(editorPrototype, "parseEditorState").mockImplementation(() => {
+        throw new Error("the scratch document cannot be parsed");
+      });
+      try {
+        await act(async () => {
+          mounted.lexical.dispatchCommand(COPY_COMMAND, event);
+          await drainNativeSelectionChange();
+        });
+      } finally {
+        parse.mockRestore();
+      }
+      expect(mounted.logs.filter((log) => log.startsWith("E "))).toEqual([]);
+      expect(getData("text/plain")).toBe(expectedText);
+      expect(getData("application/x-lexical-editor")).not.toBe("");
+      mounted.unmount();
     },
     120_000,
   );
