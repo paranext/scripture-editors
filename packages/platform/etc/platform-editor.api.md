@@ -136,6 +136,7 @@ export interface EditorOptions {
     markerSettleDelayMs?: number;
     nodes?: UsjNodeOptions;
     onHiddenContentDelete?: HiddenContentDeleteHandler;
+    onUnstorableTextRemoved?: UnstorableTextRemovedHandler;
     structureProtectionMode?: StructureProtectionMode;
     styleInfo?: StyleInfo;
     textDirection?: TextDirection;
@@ -627,6 +628,18 @@ export type TypedMarkOnRemove = (type: string, id: string, cause: TypedMarkRemov
 
 // @public
 export type TypedMarkRemovalCause = "removed" | "destroyed";
+
+// @public
+export type UnstorableCharacter = "\\" | "//";
+
+// @public
+export interface UnstorableTextRemoved {
+    readonly removed: readonly UnstorableCharacter[];
+    readonly source: "paste" | "drop" | "typing" | "deletion";
+}
+
+// @public
+export type UnstorableTextRemovedHandler = (event: UnstorableTextRemoved) => void;
 
 // @public
 export interface UsjCssOptions {
