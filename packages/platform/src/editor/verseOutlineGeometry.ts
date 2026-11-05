@@ -102,7 +102,8 @@ export function computeVerseOutlineSegments({
   // last, when nothing follows on it); every line but its first carries on from the line above, so
   // it starts at the paragraph's inline start. Both are set to the edge exactly: under `pre-wrap`, a
   // wrapped line's hanging space measures past it. Hugged lines keep their own extent, but are cut
-  // back to the inline-end edge for the same reason.
+  // back to the inline-end edge for the same reason. A section that ends mid-line stops its padding
+  // at the next verse number, which can sit right against its text, so the outline never covers it.
   const spans = lines.map((line, i) => {
     let { left, right } = line;
     if (hugLines) {
@@ -114,7 +115,12 @@ export function computeVerseOutlineSegments({
       if (isRtl ? continues : wraps) right = contentBox.right;
       if (isRtl ? wraps : continues) left = contentBox.left;
     }
-    return { left: left - padding, right: right + padding };
+    const span = { left: left - padding, right: right + padding };
+    if (following && endsMidLine && i === last) {
+      if (isRtl) span.left = Math.max(span.left, following.right);
+      else span.right = Math.min(span.right, following.left);
+    }
+    return span;
   });
 
   // Each line owns the space from halfway up the gap above it to halfway down the gap below, so

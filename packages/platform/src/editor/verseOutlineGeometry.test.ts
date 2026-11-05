@@ -297,6 +297,17 @@ describe("computeVerseOutlineSegments", () => {
     ).toEqual([box({ left: 118, right: 302, top: 52, bottom: 72 }, true, true)]);
   });
 
+  it("stops the padding at the next verse number, so the outline never covers it", () => {
+    expect(
+      computeVerseOutlineSegments({
+        rects: [text(0, 120, 300)],
+        contentBox: CONTENT,
+        following: verseNumber(0, 300),
+        padding: 2,
+      }),
+    ).toEqual([box({ left: 118, right: 300, top: 52, bottom: 72 }, true, true)]);
+  });
+
   it("returns fresh objects, so editing one result can't change the next", () => {
     const input = { rects: [text(0, 120, 300)], contentBox: CONTENT };
     const [first] = computeVerseOutlineSegments(input);
@@ -308,6 +319,19 @@ describe("computeVerseOutlineSegments", () => {
   });
 
   describe("RTL", () => {
+    it("stops the padding at the next verse number on the left", () => {
+      // The next verse's number runs from x=171 to x=180, right up against the text.
+      expect(
+        computeVerseOutlineSegments({
+          rects: [text(0, 180, 300)],
+          contentBox: CONTENT,
+          following: verseNumber(0, 171),
+          direction: "rtl",
+          padding: 2,
+        }),
+      ).toEqual([box({ left: 180, right: 302, top: 52, bottom: 72 }, true, true)]);
+    });
+
     it("wraps a mid-line start to the left edge and ends mid-line on the right", () => {
       // The verse starts mid-line at x=380, wraps at the left edge, and the next verse follows at
       // x=250 on the second line.
