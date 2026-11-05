@@ -143,6 +143,13 @@ refused. The public surface grew substantially; nothing was removed.
   document has a chapter.
 - `MarkerMenuContext.canInsertChapter` — set in chapter 1 of a document with no chapter yet, where
   `getMarkerMenuItems` offers `\c`.
+- `EditorOptions.onUnstorableTextRemoved`, with the types `UnstorableTextRemovedHandler`,
+  `UnstorableTextRemoved` and `UnstorableCharacter`: called once per paste, drop or refused
+  keystroke in a view whose `markerMode` is `"hidden"` that removed or refused `\` or `//`, with its
+  `source` (`"paste"`, `"drop"` or `"typing"`) and what was `removed` (`"\\"` and `"//"`, each once,
+  in the order first met), so the host can tell the user why some of what they pasted, dropped or
+  typed is missing; and once per refused deletion (below), with `source` `"deletion"` and `removed`
+  `["//"]`. Never called in Standard or Markers view, or when nothing was removed or refused.
 
 ### Changed
 
@@ -285,6 +292,47 @@ refused. The public surface grew substantially; nothing was removed.
   claimed the cut ahead of that refusal and removed the range — a paragraph boundary or a verse
   marker included. It now declines, as the paste handler already did, so nothing is copied or
   removed.
+- **The views that hide markers leave `\` and `//` out of a paste, drop or typing, and keep the
+  rest.** A paste or drop whose plain text held any `\` or `/` was refused whole, without a word
+  to the user, so a URL, a date or "and/or" could not be pasted, while a paste carrying only html
+  went in unchecked. Now every `\` is removed, then every `//` (paired from the left, so `///`
+  leaves `/`), then a `/` that would touch a `/` already in the document; a lone `/` stays, and
+  `https://example.org` goes in as `https:example.org`. This covers plain text, html, the editor's
+  own node copy and, under `"protected"` structure, what `StructureKeyboardPlugin`'s sanitizer
+  inserts. A stray marker the document shows (`\*`) survives a cut and paste back through the html
+  or node copy, except under `"protected"` structure, whose sanitizer keeps no such element, and a
+  plain-text paste of it loses its `\`. Typing a `\`, or a `/` beside a `/`, is refused at the
+  keystroke; text typed without a keystroke (a virtual keyboard, autocorrect) is filtered the same
+  way, and text an input method composes is not filtered. A paste or drop left with nothing to
+  insert changes nothing. Html pasted or dropped there loses its marker glyph elements first, as it
+  already did under `"protected"` structure: a glyph is presentation, and read back it went in as
+  marker text, so a drag-move across a paragraph break in the paragraph-structure view (which
+  carries the next paragraph's gutter glyph) or a paste of a Markers-view copy would have inserted
+  text such as `q1 ` that the user never wrote. The read-only Markers view still refuses `\` and
+  `/`, and Standard view is unchanged.
+- **The views that hide markers refuse a delete that would join two `/` into `//`.** Deleting `b`
+  from `a/b/c` saved `a//c`, which USFM reads as an optional line break, so after the next load the
+  view showed `ac`. A delete whose result would put a `/` against a `/` it was not already touching
+  now does nothing, and `onUnstorableTextRemoved` is told once with `source: "deletion"`. This
+  covers Backspace and Delete and their word and line chords, the same deletes arriving without a
+  keystroke (a `beforeinput` delete or a menu), deleting a selection, a cut (which then copies
+  nothing either, except one that first asks about hidden content in the selection: that copy is
+  made before the question, so it stays on the clipboard), the removal half of a drag-move (whose drop still goes in, leaving the text in
+  both places), and a paragraph join, including guarded structure's two-step join (refused at the
+  first press) and a selected paragraph marker. The check reads what the file stores either side of
+  what goes: through annotation marks, through a character span the delete empties, and through two
+  pieces of one span that a join makes one again. An optional line break, which the view shows as
+  nothing, counts as the `//` the file stores for it, so a `/` typed, pasted or brought by a delete
+  against one is treated as making `//` too. A `//` already in the text is left alone. Under
+  `"protected"` structure a join is refused by the protection, as before. Standard view is
+  unchanged.
+- **The views that hide markers refuse a transpose that would join two `/` into `//`.** macOS
+  Ctrl+T swaps the characters either side of the caret (at the end of a line, the two before it),
+  so in `/x/` with the caret before the second `/` it would have saved `//x`, an optional line
+  break. Such a transpose (a `beforeinput` `insertTranspose`) now does nothing, keeps the caret
+  where it was, and `onUnstorableTextRemoved` is told once with `source: "typing"`. It is judged as
+  the Backspace and Delete at that caret would be, so an optional line break counts as the `//` the
+  file stores, and a character span's marker keeps two `/` apart. Any other transpose goes ahead.
 
 ### Fixed
 
@@ -559,6 +607,16 @@ refused. The public surface grew substantially; nothing was removed.
   — acts on the whole span. Lexical records that end as a child index on the span, which was read
   as a text offset, so `removeCharacterMarker()` over `\add God\add*` left `G\add od\add*`, and removing `\nd`
   from a span holding a nested one changed nothing.
+- A copy in the views that hide markers no longer carries text the view does not show. The
+  paragraph-structure view put each paragraph's gutter marker (`\q1 `) into `text/plain` and
+  `text/html`, and every such view put a hidden figure's caption into `text/plain`. A collapsed
+  note's text stays in `text/plain`, since a plain-text paste is the only way it reaches another
+  program; a copy over `copyLimit` still writes plain text alone and leaves the note text out, and
+  now leaves out gutter markers and hidden constructs too.
+- A multi-line plain-text paste or drop under `"protected"` structure in the views that hide markers
+  stays in the paragraph at the caret, its lines joined by one space (a run of line breaks counts
+  as one, a trailing one is dropped, and each tab in it becomes a space), as an html paste's
+  paragraphs are. It made a new paragraph per line, which protected structure exists to prevent.
 - In the views that hide markers, an edit that arrives with no keydown (an input method composing,
   macOS Ctrl+H) over a range holding a verse marker no longer bypasses structure protection. Under
   `"protected"` it is refused instead of removing the verse; under `"guarded"` a delete arms the

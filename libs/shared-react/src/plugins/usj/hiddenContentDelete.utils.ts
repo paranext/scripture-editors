@@ -10,6 +10,7 @@ import {
   $setSelection,
   BaseSelection,
   ElementNode,
+  LexicalEditor,
   LexicalNode,
   PointType,
   RangeSelection,
@@ -18,6 +19,39 @@ import { $isNoteNode, $isParaLikeNode, $isUnknownNode, UnknownNode } from "share
 
 /** Which way a delete keystroke removes content from a collapsed caret. */
 export type DeleteDirection = "backward" | "forward";
+
+/**
+ * What a word or line delete from `from` would take, measured the way Lexical's own `deleteWord`
+ * and `deleteLine` measure it: by extending a copy of the selection with the browser's
+ * `Selection.modify`. Returns the extended copy (collapsed where the delete reaches nothing), or
+ * `undefined` where the browser has no `Selection.modify` to measure with (jsdom).
+ *
+ * Mutating: it moves the DOM selection, and marks `live` dirty so the delete's own `modify` starts
+ * from the live caret again rather than from the probe's extent. Call inside `editor.update()` or a
+ * command handler.
+ *
+ * @param editor - The editor whose DOM selection is measured.
+ * @param from - The caret the delete will run from.
+ * @param isBackward - Whether the delete goes backward.
+ * @param granularity - A word or a (visual) line.
+ * @param live - The editor's live selection, when the delete will run from somewhere else.
+ */
+export function $probeDeleteExtent(
+  editor: LexicalEditor,
+  from: RangeSelection,
+  isBackward: boolean,
+  granularity: "word" | "line",
+  live: RangeSelection = from,
+): RangeSelection | undefined {
+  const domSelection = editor.getRootElement()?.ownerDocument.defaultView?.getSelection();
+  if (!domSelection || typeof domSelection.modify !== "function") return undefined;
+  const probe = from.clone();
+  // Dirty makes `modify` start from the probe's own points rather than the DOM's.
+  probe.dirty = true;
+  probe.modify("extend", isBackward, granularity === "line" ? "lineboundary" : "word");
+  live.dirty = true;
+  return probe;
+}
 
 /**
  * Hidden constructs lying directly against a collapsed caret, which the next delete would reach.

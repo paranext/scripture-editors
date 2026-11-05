@@ -45,6 +45,7 @@ import {
   DRAGSTART_COMMAND,
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
+  LexicalNode,
   PASTE_COMMAND,
   RangeSelection,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
@@ -57,11 +58,12 @@ import {
   $isBookNode,
   $isSomeParaNode,
   $selectParaMarker,
-  MARKER_TEXT_TYPE,
 } from "shared";
+import { removeMarkerGlyphElements } from "./clipboard.utils";
 import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
+import { $insertsNothing } from "./unstorableText.utils";
 
 /**
  * Class on an armed paragraph's gutter marker (or, when it shows none, on the paragraph) while a
@@ -123,14 +125,30 @@ function $restorerFor(selection: RangeSelection): () => void {
  *   no handlers and editing is fully native — no blocking, no two-step delete, no armed state.
  *   `"guarded"`: two-step intentional-delete behavior is active. `"protected"`: structural
  *   keystrokes and paste/drop of structural markers are blocked outright. Defaults to `"off"`.
+ * @param $filterPastedNodes - Under `"protected"`, called on the nodes an html paste or drop is
+ *   about to insert, after sanitizing, to change them in place before they go in (e.g. to remove
+ *   text the view cannot store, with `$filterUnstorablePastedNodes`). Called inside the update.
+ *   When it leaves nothing to insert (see `$insertsNothing`), nothing is inserted.
  * @returns Always `null`; this plugin renders no UI, only editor behavior and DOM signals.
  */
 export function StructureKeyboardPlugin({
   structureProtectionMode = "off",
+  $filterPastedNodes,
 }: {
   structureProtectionMode?: StructureProtectionMode;
+  $filterPastedNodes?: (
+    nodes: LexicalNode[],
+    selection: RangeSelection,
+    source: "paste" | "drop",
+  ) => void;
 }): null {
   const [editor] = useLexicalComposerContext();
+  // A ref, so a host handing a fresh filter each render does not re-register every command (which
+  // would move this plugin's handlers to the end of their priority and flip same-priority ties).
+  const filterPastedNodesRef = useRef($filterPastedNodes);
+  useEffect(() => {
+    filterPastedNodesRef.current = $filterPastedNodes;
+  }, [$filterPastedNodes]);
   const armedRef = useRef<ArmedDelete | undefined>(undefined);
   const [armed, setArmed] = useState<ArmedDelete | undefined>(undefined);
   const setArmedState = useCallback((next: ArmedDelete | undefined) => {
@@ -299,23 +317,31 @@ export function StructureKeyboardPlugin({
 
     // Sanitize a paste/drop payload: strip structural markers from the HTML and insert the rest.
     // Returns true (consume) when we handled an HTML payload; false to let the default handler run.
-    const $sanitizeAndInsert = (html: string | undefined, event: Event): boolean => {
+    const $sanitizeAndInsert = (
+      html: string | undefined,
+      event: Event,
+      source: "paste" | "drop",
+    ): boolean => {
       if (!html) return false; // plain-text-only (or empty) payload carries no markers
       // Sanitize untrusted clipboard/drop HTML before parsing — strips scripts, event
       // handlers, and javascript: URLs so they can never reach the DOM (defense in depth;
       // Lexical only reconstructs known node types, but this also clears the taint flow).
       const safeHtml = DOMPurify.sanitize(html);
       const dom = new DOMParser().parseFromString(safeHtml, "text/html");
-      // Every marker glyph is presentation, not content: a paragraph's gutter marker (a
-      // triple-clicked heading copies its `\s1`) and an inline marker glyph alike. Parsed back,
-      // each would arrive as plain text such as `\s1 ` or `\w `, and saved, as a real marker — so
-      // all of them are dropped.
-      dom
-        .querySelectorAll(`[data-text-type="${MARKER_TEXT_TYPE}"]`)
-        .forEach((glyph) => glyph.remove());
+      // Every marker glyph is presentation, not content; parsed back, each would be marker text.
+      removeMarkerGlyphElements(dom);
       const sanitized = $sanitizeNodesForProtectedStructure($generateNodesFromDOM(editor, dom));
       // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
       const selection = $getSelection();
+      if ($isRangeSelection(selection)) {
+        const hadContent = !$insertsNothing(sanitized);
+        filterPastedNodesRef.current?.(sanitized, selection, source);
+        // Filtered down to nothing: inserting nothing over a selection would still delete it.
+        if (hadContent && $insertsNothing(sanitized)) {
+          event.preventDefault();
+          return true;
+        }
+      }
       // Through the command a paste's nodes always go through, so its listeners run here too:
       // prose lands inside the caret's span, a range over several texts is replaced as typing
       // replaces it, pasted spans are recorded and display annotations stripped.
@@ -338,7 +364,7 @@ export function StructureKeyboardPlugin({
         event.preventDefault();
         return true;
       }
-      return $sanitizeAndInsert(event.clipboardData?.getData("text/html"), event);
+      return $sanitizeAndInsert(event.clipboardData?.getData("text/html"), event, "paste");
     };
 
     const $handleDrop = (event: DragEvent): boolean => {
@@ -351,7 +377,7 @@ export function StructureKeyboardPlugin({
       // With no range to land at, `$sanitizeAndInsert` inserts nothing but still claims the drop:
       // the default handler would let the browser insert the payload itself, structure and all.
       // (A selected paragraph marker has already moved the selection to the drop point.)
-      return $sanitizeAndInsert(event.dataTransfer?.getData("text/html"), event);
+      return $sanitizeAndInsert(event.dataTransfer?.getData("text/html"), event, "drop");
     };
 
     // A delete that arrives with no Backspace/Delete keydown (macOS Ctrl+H / Ctrl+D map to none,

@@ -155,7 +155,8 @@ function redispatchDropWithoutZeroWidthNoBreakSpaces(
  * literal tilde rather than the no-break space it was. A copy without a stored one, or one whose
  * plain text cannot be matched to the selection's text, is left to the view's usual handling.
  * Standard view and the Markers view copy USFM themselves; the Unformatted view's copy, which only
- * the library offers, is not respelled.
+ * the library offers, is not respelled. A range selection in a view that hides markers is copied
+ * by `HiddenViewCopyPlugin`, which respells its plain text the same way, so this writes the rest.
  */
 function $copyWithTildes(
   editor: LexicalEditor,

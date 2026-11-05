@@ -9,6 +9,7 @@ import {
   SelectionLimitOptions,
   sliceToCopyLimit,
 } from "./copyLimit.utils";
+import { $isLeftOutOfHiddenViewCopy } from "../hiddenViewCopy.utils";
 import { $selectionToUsfmViaStandardView } from "../MarkersViewCopyPlugin";
 import {
   $selectionToUsfmText,
@@ -31,6 +32,7 @@ import {
   getDOMTextNode,
   isExactShortcutMatch,
   LexicalEditor,
+  LexicalNode,
   PointType,
   RangeSelection,
   SELECT_ALL_COMMAND,
@@ -185,23 +187,26 @@ export function CopyLimitPlugin({
       return false;
     };
 
-    // Writes an over-limit copy or cut that no view-specific handler claimed (those run at HIGH)
-    // as the plain text the view shows. Lexical's own copy would also write HTML and its internal
-    // flavor, which carry text the view does not show, such as a collapsed footnote. A cut removes
-    // the range only when the plain text carries all of it: never verse or chapter markers, notes
-    // or other structure it leaves out.
+    // Writes an over-limit copy or cut that no handler ahead of it claimed (Standard view's writer
+    // and `MarkersViewCopyPlugin` run at HIGH; the hidden-marker views' `HiddenViewCopyPlugin` runs
+    // at NORMAL but is registered after this one, so this claims first) as the plain text the view
+    // shows. Lexical's own copy would also write HTML and its internal flavor, which carry text the
+    // view does not show, such as a collapsed footnote. A cut removes the range only when the plain
+    // text carries all of it: never verse or chapter markers, notes or other structure it leaves
+    // out.
     const $writePlainCopy = (event: ClipboardEvent | KeyboardEvent | null, isCut: boolean) => {
       if (limitRef.current === undefined || !isOverLimitRef.current) return false;
       isOverLimitRef.current = false;
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
       const shouldRemove = isCut && editor.isEditable() && !$selectionHoldsStructure(selection);
-      const shownText = $selectionShownText(selection, $isInCollapsedNote);
-      // A view that hides markers copies a stored no-break space as `~`, as a copy that fits does.
       const viewOptions = viewOptionsRef.current;
+      const $isHidden = hiddenTextPredicate(viewOptions);
+      const shownText = $selectionShownText(selection, $isHidden);
+      // A view that hides markers copies a stored no-break space as `~`, as a copy that fits does.
       const plainText =
         viewOptions?.markerMode === "hidden" && !viewOptions.allowInvisibleCharacters
-          ? withStoredNbspsAsTildes(shownText, $storedNbsps(selection, $isInCollapsedNote))
+          ? withStoredNbspsAsTildes(shownText, $storedNbsps(selection, $isHidden))
           : undefined;
       return $writeClipboardData(
         event && typeof event === "object" && "clipboardData" in event ? event : null,
@@ -280,8 +285,18 @@ function $copyFit(
   return {
     $size: (selection) =>
       selection.getTextContent().length + $notePreviewLength(selection.getNodes()),
-    options: { $isHidden: $isInCollapsedNote },
+    options: { $isHidden: hiddenTextPredicate(viewOptions) },
   };
+}
+
+/**
+ * Picks the nodes whose text a shortened copy in the view `viewOptions` describes leaves out: a
+ * collapsed note's text in every view, and in a hidden-marker view also what that view's own copy
+ * leaves out ({@link $isLeftOutOfHiddenViewCopy}).
+ */
+function hiddenTextPredicate(viewOptions: ViewOptions | undefined): (node: LexicalNode) => boolean {
+  if (viewOptions?.markerMode !== "hidden") return $isInCollapsedNote;
+  return (node) => $isLeftOutOfHiddenViewCopy(node) || $isInCollapsedNote(node);
 }
 
 /**
