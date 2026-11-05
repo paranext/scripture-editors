@@ -275,6 +275,15 @@ export declare interface EditorOptions {
    * {@link EditorOptions.copyLimit} is set, is refused. Unset, editing is native.
    */
   onHiddenContentDelete?: HiddenContentDeleteHandler;
+  /**
+   * Called once per paste, drop or blocked keystroke in a hidden-marker view (`view.markerMode` is
+   * `"hidden"`) that removed or refused `\` or `//`: the view cannot show what they would make (a
+   * marker, an optional line break), so they are kept out of its text. Called too, with `source`
+   * `"deletion"`, once per delete refused there because what it left would join two `/` into `//`.
+   * Use it to tell the user why some of what they pasted, dropped or typed is missing, or why a
+   * delete did nothing. Not called in Standard or Markers view.
+   */
+  onUnstorableTextRemoved?: UnstorableTextRemovedHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */
   hasExternalUI?: boolean;
   /** Is the editor enabled for spell checking. */
@@ -2270,6 +2279,42 @@ export declare type TypedMarkOnRemove = (
  * @public
  */
 export declare type TypedMarkRemovalCause = "removed" | "destroyed";
+
+/**
+ * Text a hidden-marker view keeps out of what is pasted, dropped or typed into it, because saved it
+ * would stop being text: `\` starts a USFM marker, and `//` is USFM's optional line break.
+ */
+export declare type UnstorableCharacter = "\\" | "//";
+
+/**
+ * Passed to {@link UnstorableTextRemovedHandler} when an edit's text lost unstorable characters, or
+ * a delete was refused because it would have made one.
+ */
+export declare interface UnstorableTextRemoved {
+  /**
+   * What brought the text in, or `"deletion"` for a delete refused because what it left would put
+   * a `/` against another `/` (Backspace, Delete, a word or line delete, a cut, or the removal half
+   * of a drag-move). `"typing"` also covers a refused transpose (macOS Ctrl+T) that would have put
+   * a `/` against another `/`. More sources may be added; a host that branches on this should
+   * handle values it does not know.
+   */
+  readonly source: "paste" | "drop" | "typing" | "deletion";
+  /**
+   * What was removed or refused, each kind once, in the order first met. Never empty. A refused
+   * deletion is always `["//"]`.
+   */
+  readonly removed: readonly UnstorableCharacter[];
+}
+
+/**
+ * Told once per paste, drop or refused keystroke that removed or refused unstorable text, and once
+ * per refused deletion, so the host can tell the user why some of what they pasted, dropped or
+ * typed is missing, or why a delete did nothing.
+ *
+ * Called synchronously from inside the editor command or update that made the edit: report the
+ * edit from here (show a notice, say) rather than change the editor.
+ */
+export declare type UnstorableTextRemovedHandler = (event: UnstorableTextRemoved) => void;
 
 /**
  * Options controlling {@link generateUsjCss}'s output. {@link generateUsjFontCss} takes `zoom` and
