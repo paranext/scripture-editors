@@ -34,10 +34,11 @@ import {
 } from "./unstorableText.utils";
 import { $insertDataTransferForRichText, $insertGeneratedNodes } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { mergeRegister } from "@lexical/utils";
+import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createRangeSelection,
+  $getRoot,
   $getSelection,
   $isNodeSelection,
   $isRangeSelection,
@@ -66,7 +67,13 @@ import {
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $getSelectedParaMarkerPara, $isParaLikeNode, LoggerBasic } from "shared";
+import {
+  $createParaNode,
+  $getSelectedParaMarkerPara,
+  $isImpliedParaNode,
+  $isParaLikeNode,
+  LoggerBasic,
+} from "shared";
 
 /** Logs and reports one removal. */
 function reportRemoved(
@@ -180,6 +187,39 @@ function joinLines(text: string): string {
 }
 
 /**
+ * Whether a paste at `selection` starts in a line with no paragraph marker (an implied paragraph:
+ * the blank line after a chapter line nothing follows, or text USFM holds with no marker). Lexical
+ * splits a line at a pasted line break by asking it for the line after it, and such a line answers
+ * with another one, whose text saves run together with its own: `one` and `two` pasted as two lines
+ * would save as `onetwo` ({@link $markLinesAddedToUnmarkedLine}).
+ *
+ * Read-only: call inside an update or a command handler.
+ */
+function $startsInUnmarkedLine(selection: RangeSelection): boolean {
+  const start = selection.isBackward() ? selection.focus : selection.anchor;
+  return !!$findMatchingParent(start.getNode(), $isImpliedParaNode);
+}
+
+/**
+ * Gives each line with no marker that a paste added (one not among `linesBefore`) the marker such a
+ * line reports, `\p`, the default, so it saves as a paragraph of its own, as a paste's line break
+ * makes one in any other paragraph. The line the paste started in keeps no marker, as the line a
+ * paste starts in keeps its own.
+ *
+ * Mutating: call inside an update, right after the paste went in.
+ *
+ * @param linesBefore - The keys of the top-level lines before the paste went in.
+ */
+function $markLinesAddedToUnmarkedLine(linesBefore: Set<string>): void {
+  $getRoot()
+    .getChildren()
+    .forEach((line) => {
+      if ($isImpliedParaNode(line) && !linesBefore.has(line.getKey()))
+        line.replace($createParaNode(line.getMarker()), true);
+    });
+}
+
+/**
  * Keeps text a hidden-marker view cannot store out of every paste, drop and keystroke: each `\` and
  * each `//` goes and the rest goes in (see {@link removeUnstorableText}), and the host is told once
  * per paste, drop or refused keystroke through `onRemoved`. A paste or drop left with nothing to
@@ -231,7 +271,10 @@ function joinLines(text: string): string {
  *
  * Under `"protected"` structure a plain-text paste or drop goes into the paragraph at the caret,
  * its lines joined by one space each, as protected structure's html route joins paragraphs:
- * Lexical would otherwise make each line a paragraph of its own.
+ * Lexical would otherwise make each line a paragraph of its own. Under any other structure, a
+ * plain-text paste or drop into a line with no paragraph marker (the blank line after a chapter line
+ * nothing follows) makes each line after its first a `\p` paragraph, as its line breaks make
+ * paragraphs in any other line, rather than lines with no marker, which save run together.
  *
  * A delete is refused, and reported with `source: "deletion"`, when what it leaves would put a `/`
  * against a `/` it was not already touching (see {@link $deletionJoinsSlashes}): Backspace, Delete
@@ -368,10 +411,18 @@ export function UnstorableTextPlugin({
       const keepsLines = $selectionSpansBookOrChapterLine(selection);
       const { before, after } = $textAroundSelection(selection);
       const filtered = removeUnstorableText(joinsLines ? joinLines(text) : text, before, after);
-      if (filtered.removed.length === 0 && !joinsLines && !keepsLines) return false;
+      const splitsLines = !joinsLines && /[\r\n]/.test(text);
+      const splitsUnmarkedLine = splitsLines && $startsInUnmarkedLine(selection);
+      if (filtered.removed.length === 0 && !joinsLines && !keepsLines && !splitsUnmarkedLine)
+        return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);
       if (filtered.text) {
         if (keepsLines) $removeTextKeepingBookAndChapterLines(selection);
+        // Asked again after the removal above, which moves the caret.
+        const linesBefore =
+          splitsLines && $startsInUnmarkedLine(selection)
+            ? new Set($getRoot().getChildrenKeys())
+            : undefined;
         // Lexical reads only `getData` from the transfer, and finds no flavor here but plain text,
         // so its own plain-text insertion runs on the filtered text; a real `DataTransfer` cannot
         // be constructed everywhere this runs.
@@ -379,6 +430,7 @@ export function UnstorableTextPlugin({
           getData: (type: string) => (type === "text/plain" ? filtered.text : ""),
         } as Pick<DataTransfer, "getData"> as DataTransfer;
         $insertDataTransferForRichText(plainOnly, selection, editor);
+        if (linesBefore) $markLinesAddedToUnmarkedLine(linesBefore);
       }
       if (filtered.removed.length > 0)
         reportRemoved(
