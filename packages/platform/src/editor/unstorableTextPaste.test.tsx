@@ -3,7 +3,7 @@
  * cannot store as text, and tells the host once through `onUnstorableTextRemoved`. Standard view
  * stores a pasted `\` as the marker it spells, so nothing there is filtered or reported.
  */
-import { MountedEditor, editorView, mountInView } from "./editorViews.test-helpers";
+import { MountedEditor, editorView, enabledViews, mountInView } from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -206,6 +206,101 @@ describe("pasting into Standard view", () => {
     const saved = JSON.stringify(mounted.ref.current?.getUsj());
     expect(saved).toContain("Lord");
     expect(saved).toContain('"marker":"nd"');
+  });
+});
+
+/**
+ * The views that show markers, each with structure off and protected. The Markers view's
+ * `CommandMenuPlugin` refuses, silently, every plain-text paste holding a `\\` or a `/`, and
+ * leaves a protected paste's lines to Lexical, which splits them; Standard view reads the text as
+ * USFM, and joins a protected paste's lines itself.
+ */
+const SHOWING_MARKERS = enabledViews([
+  { name: "standard", isSlashPasteRefused: false, joinsProtectedLines: true },
+  { name: "visible", isSlashPasteRefused: true, joinsProtectedLines: false },
+]).flatMap((view) =>
+  (["off", "protected"] as const).map((mode) => ({
+    ...view,
+    mode,
+    label: `${view.name}, ${mode}`,
+  })),
+);
+
+describe.each(SHOWING_MARKERS)(
+  "pasting into the $label view, which shows markers",
+  ({ name: viewName, mode, isSlashPasteRefused, joinsProtectedLines }) => {
+    it("leaves a plain-text paste's `//` to the view, telling no one", async () => {
+      const { mounted, onRemoved } = await mount(viewName, mode);
+
+      await paste(mounted, { "text/plain": "https://example.org " });
+
+      const saved = JSON.stringify(mounted.ref.current?.getUsj());
+      if (isSlashPasteRefused) expect(saved).not.toContain("example.org");
+      else expect(saved).toContain('{"type":"optbreak"}');
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+
+    it("leaves an html paste's `\\` to the view, telling no one", async () => {
+      const { mounted, onRemoved } = await mount(viewName, mode);
+
+      await paste(mounted, { "text/html": "<span>a \\nd b\\nd* </span>", "text/plain": "" });
+
+      const saved = JSON.stringify(mounted.ref.current?.getUsj());
+      expect(saved).not.toContain("a nd b");
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+
+    it("leaves a plain-text drop's `\\` to the view, telling no one", async () => {
+      const { mounted, onRemoved } = await mount(viewName, mode);
+
+      await drop(mounted, { "text/plain": "a \\nd b\\nd* " });
+
+      const saved = JSON.stringify(mounted.ref.current?.getUsj());
+      expect(saved).not.toContain("a nd b");
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+
+    it("leaves a plain-text paste's lines to the view", async () => {
+      const { mounted, onRemoved } = await mount(viewName, mode);
+
+      await paste(mounted, { "text/plain": "line one\nline two " });
+
+      expect(savedParas(mounted).join("|").includes("line one line two")).toBe(
+        joinsProtectedLines && mode === "protected",
+      );
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+  },
+);
+
+describe("pasting after the editor switches from paragraph-structure into Standard view", () => {
+  it("reads a plain-text paste's `//` as USFM, telling no one", async () => {
+    const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+    const mounted = await mountInView(usj, editorView("paragraph-structure"), {
+      onUnstorableTextRemoved: onRemoved,
+    });
+    try {
+      await mounted.rerenderWithView(editorView("standard"));
+      await act(async () =>
+        mounted.lexical.update(
+          () => {
+            const node = $getRoot()
+              .getAllTextNodes()
+              .find((text) => text.getType() === "text" && text.getTextContent() === VERSE_TEXT);
+            if (!node) throw new Error("verse text not found");
+            node.select("first ".length, "first ".length);
+          },
+          { discrete: true },
+        ),
+      );
+
+      await paste(mounted, { "text/plain": "https://example.org " });
+
+      expect(JSON.stringify(mounted.ref.current?.getUsj())).toContain('{"type":"optbreak"}');
+      expect(onRemoved).not.toHaveBeenCalled();
+    } finally {
+      mounted.unmount();
+    }
   });
 });
 
