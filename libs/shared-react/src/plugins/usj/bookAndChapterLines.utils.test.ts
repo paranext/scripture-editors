@@ -2,10 +2,14 @@ import {
   $chapterLineToSplitAt,
   $isBookOrChapterLine,
   $isFirstChapterLine,
+  $lineToJoinBeforeChapter,
+  $paragraphSelectionStartsInside,
   $pasteAroundChapterLine,
   $removeBookAndChapterLines,
   $removeTextKeepingBookAndChapterLines,
   $selectionSpansBookOrChapterLine,
+  $takeStartsMidParagraph,
+  startsMidParagraphState,
 } from "./bookAndChapterLines.utils";
 import { $createImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
 import { $createBookLine, baseTestEnvironment } from "./react-test.utils";
@@ -15,10 +19,13 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  $getState,
   $isElementNode,
   $isRangeSelection,
   $isRootNode,
   $setSelection,
+  $setState,
+  ElementNode,
   LexicalEditor,
   LexicalNode,
   RangeSelection,
@@ -348,6 +355,7 @@ describe("$pasteAroundChapterLine", () => {
     $where: () => RangeSelection,
     $copy: () => LexicalNode[],
     frontMatterCount: number,
+    $joinLine?: () => ElementNode,
   ) {
     const editor = await editorOf(CHAPTER_ONE);
     return update(editor, () => {
@@ -358,6 +366,7 @@ describe("$pasteAroundChapterLine", () => {
         nodes.slice(0, frontMatterCount),
         $line(3),
         selection,
+        $joinLine?.(),
       );
       return { isDone, lines: $lines(), caret: $caret(), left: nodes.length };
     });
@@ -380,6 +389,40 @@ describe("$pasteAroundChapterLine", () => {
       caret: "5: |",
       left: 2,
     });
+  });
+
+  it("joins the front matter's first paragraph to the join line, and puts the rest before the chapter line", async () => {
+    const result = await pasteAround(
+      () => $select($inText("first words", 0)),
+      () => [para("ip", " more")(), para("mt1", "Title")(), para("p", "pasted")()],
+      2,
+      () => $line(2) as ElementNode,
+    );
+    expect(result.lines).toEqual([
+      "book: Genesis title",
+      "h: Genesis",
+      "ip: An introduction. more",
+      "mt1: Title",
+      "\\c 1",
+      "p: first words",
+      "q1: second line",
+    ]);
+    expect(result.left).toBe(1);
+  });
+
+  it("puts the front matter in as lines of its own when the join line is not right before the chapter line", async () => {
+    const result = await pasteAround(
+      () => $select($inText("first words", 0)),
+      () => [para("ip", " more")(), para("p", "pasted")()],
+      1,
+      () => $line(1) as ElementNode,
+    );
+    expect(result.lines.slice(1, 5)).toEqual([
+      "h: Genesis",
+      "ip: An introduction.",
+      "ip:  more",
+      "\\c 1",
+    ]);
   });
 
   it("from a caret after the chapter line, is done when the copy held only front matter", async () => {
@@ -461,6 +504,158 @@ describe("$pasteAroundChapterLine", () => {
       });
     },
   );
+});
+
+describe("$paragraphSelectionStartsInside", () => {
+  it.each<[string, string | undefined, () => RangeSelection]>([
+    ["a caret", undefined, () => $select($inText("An introduction.", 3))],
+    [
+      "a range from partway into a line",
+      "ip",
+      () => $select($inText("An introduction.", 3), $inText("first words", 2)),
+    ],
+    [
+      "a backward range, by where it starts",
+      "ip",
+      () => $select($inText("first words", 2), $inText("An introduction.", 3)),
+    ],
+    [
+      "a range from a line's start, past its glyph",
+      undefined,
+      () => $select($inLine(2, 1), $inText("first words", 2)),
+    ],
+    [
+      "a range from a line's text start",
+      undefined,
+      () => $select($inText("An introduction.", 0), $inText("first words", 2)),
+    ],
+    [
+      "a range from before a line's glyph",
+      undefined,
+      () => $select($inLine(2, 0), $inText("first words", 2)),
+    ],
+    [
+      "a range from just past a verse number, which is not text",
+      undefined,
+      () => $select($inLine(4, 2), $inText("second line", 2)),
+    ],
+    ["a range from the root", undefined, () => $select($onRoot(1), $inText("first words", 2))],
+  ])("for %s, is %s", async (_what, expected, $where) => {
+    const editor = await editorOf(CHAPTER_ONE);
+    const paragraph = update(editor, () => {
+      const found = $paragraphSelectionStartsInside($where());
+      return found instanceof ParaNode ? found.getMarker() : found?.getType();
+    });
+    expect(paragraph).toBe(expected);
+  });
+});
+
+describe("$takeStartsMidParagraph", () => {
+  /** A copy of two paragraphs, the second with a span in it, `startsMidParagraphState` on each node
+   * `marked` names. */
+  function $copy(marked: ("first" | "second" | "span")[]): LexicalNode[] {
+    const span = $createCharNode("nd").append($createTextNode("Lord"));
+    const second = $createParaNode("p").append($createTextNode("the "), span);
+    const nodes = { first: para("ip", "tro")(), second, span };
+    marked.forEach((name) => $setState(nodes[name], startsMidParagraphState, true));
+    return [nodes.first, nodes.second];
+  }
+
+  /** Every node, at any depth, still holding the state. */
+  function $holding(nodes: LexicalNode[]): string[] {
+    const held: string[] = [];
+    const $visit = (node: LexicalNode) => {
+      if ($getState(node, startsMidParagraphState)) held.push(node.getType());
+      if ($isElementNode(node)) node.getChildren().forEach($visit);
+    };
+    nodes.forEach($visit);
+    return held;
+  }
+
+  it.each<[string, ("first" | "second" | "span")[], boolean]>([
+    ["the first node holds it", ["first"], true],
+    ["only a later node holds it", ["second"], false],
+    ["only a node inside a later one holds it", ["span"], false],
+    ["no node holds it", [], false],
+  ])("when %s, says %s and leaves it on no node", async (_when, marked, expected) => {
+    const editor = await editorOf(CHAPTER_ONE);
+    const result = update(editor, () => {
+      const nodes = $copy(marked);
+      return { startsMid: $takeStartsMidParagraph(nodes), holding: $holding(nodes) };
+    });
+    expect(result).toEqual({ startsMid: expected, holding: [] });
+  });
+
+  it("says false of no nodes", async () => {
+    const editor = await editorOf(CHAPTER_ONE);
+    expect(update(editor, () => $takeStartsMidParagraph([]))).toBe(false);
+  });
+});
+
+describe("$lineToJoinBeforeChapter", () => {
+  /** The line it answers for `lines`' chapter line (`chapterAt`), from `$where`, as `marker: text`. */
+  async function joinLineOf(
+    lines: Line[],
+    chapterAt: number,
+    $where: () => RangeSelection,
+  ): Promise<string | undefined> {
+    const editor = await editorOf(lines);
+    return update(editor, () => {
+      const line = $lineToJoinBeforeChapter($where(), $line(chapterAt));
+      return line && $lines()[line.getIndexWithinParent()];
+    });
+  }
+
+  it.each<[string, string | undefined, () => RangeSelection]>([
+    [
+      "a caret after the chapter line",
+      "ip: An introduction.",
+      () => $select($inText("first words", 0)),
+    ],
+    [
+      "a caret at the end of the line before it",
+      "ip: An introduction.",
+      () => $select($inText("An introduction.", 16)),
+    ],
+    [
+      "a range from partway into the line before it",
+      "ip: An introduction.",
+      () => $select($inText("An introduction.", 3), $inText("first words", 2)),
+    ],
+    [
+      "a range from partway into an earlier line",
+      "h: Genesis",
+      () => $select($inText("Genesis", 3), $inText("first words", 2)),
+    ],
+    [
+      "a range from the start of the line before it",
+      undefined,
+      () => $select($inLine(2, 1), $inText("first words", 2)),
+    ],
+    [
+      "a range from partway into a line after it",
+      undefined,
+      () => $select($inText("first words", 2), $inText("second line", 2)),
+    ],
+  ])("from %s, is %s", async (_where, expected, $where) => {
+    expect(await joinLineOf(CHAPTER_ONE, 3, $where)).toBe(expected);
+  });
+
+  it("is never the book line", async () => {
+    expect(
+      await joinLineOf([$book, chapter(), para("p", "first words", "1")], 1, () =>
+        $select($inText("first words", 0)),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("is not a line with nothing in it but its glyph", async () => {
+    expect(
+      await joinLineOf([$book, para("ip", ""), chapter(), para("p", "first words", "1")], 2, () =>
+        $select($inText("first words", 0)),
+      ),
+    ).toBeUndefined();
+  });
 });
 
 describe("$selectionSpansBookOrChapterLine", () => {

@@ -1,12 +1,17 @@
 import { $placeCaretAtParaContentStart } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { $findMatchingParent } from "@lexical/utils";
 import {
   $createRangeSelection,
   $getRoot,
   $getSelection,
+  $getState,
   $isDecoratorNode,
   $isElementNode,
   $isRangeSelection,
   $isRootNode,
+  $setState,
+  createState,
+  ElementNode,
   LexicalNode,
   PointType,
   RangeSelection,
@@ -16,8 +21,79 @@ import {
   $isParaLikeNode,
   $isParaNode,
   $isSomeChapterNode,
+  $isSomeParaNode,
   $isSynthesizedMarkerNode,
 } from "shared";
+
+/**
+ * On the first paragraph of a hidden-marker view's node copy: the copy starts partway into that
+ * paragraph, after some of its text ({@link $paragraphSelectionStartsInside}). Pasted around a
+ * chapter line, such a paragraph joins the line it goes in after ({@link $pasteAroundChapterLine}),
+ * as any paste joins a copy's first paragraph to the line at the caret; a copy of whole lines goes in
+ * as lines of their own. A copy without it is pasted as a copy of whole lines.
+ *
+ * The copy (`$hiddenViewLexicalFlavor`, platform) writes it, and the paste takes it off again
+ * ({@link $takeStartsMidParagraph}), so no node in the document keeps it.
+ */
+export const startsMidParagraphState = createState("startsMidParagraph", {
+  parse: (value) => value === true,
+});
+
+/**
+ * The paragraph `selection` starts partway into: some of its text, more than its gutter marker
+ * glyph, lies before the selection's start ({@link startsMidParagraphState}). `undefined` when the
+ * selection is collapsed, starts at a paragraph's start, or starts outside any paragraph.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+export function $paragraphSelectionStartsInside(
+  selection: RangeSelection,
+): ElementNode | undefined {
+  if (selection.isCollapsed()) return undefined;
+  const start = selection.isBackward() ? selection.focus : selection.anchor;
+  const paragraph = $findMatchingParent(start.getNode(), $isSomeParaNode);
+  if (!paragraph || $holdsOnlyGlyphBefore(paragraph, snapshotOf(start))) return undefined;
+  return paragraph;
+}
+
+/**
+ * Whether `nodes`, about to be pasted, start partway into their first paragraph
+ * ({@link startsMidParagraphState}). Takes that state off every node in them, at any depth, so no
+ * pasted node keeps it.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+export function $takeStartsMidParagraph(nodes: LexicalNode[]): boolean {
+  const startsMid = nodes.length > 0 && $getState(nodes[0], startsMidParagraphState);
+  const $clear = (node: LexicalNode) => {
+    if ($getState(node, startsMidParagraphState)) $setState(node, startsMidParagraphState, false);
+    if ($isElementNode(node)) node.getChildren().forEach($clear);
+  };
+  nodes.forEach($clear);
+  return startsMid;
+}
+
+/**
+ * The line a copy's front matter joins when its first paragraph starts partway in
+ * ({@link startsMidParagraphState}) and it is pasted around `chapter` ({@link $pasteAroundChapterLine}):
+ * the line a paste that did not split would have joined that paragraph to. From a caret, the line
+ * right before `chapter`, where the front matter goes in; over a selection, the line the selection
+ * starts partway into, which its removal leaves right before `chapter`. `undefined` when that line
+ * is not a paragraph (the book line is not one), holds nothing to join, or, over a selection, would
+ * be removed whole.
+ *
+ * Read-only: call before the selection is removed, inside an update or a command handler.
+ */
+export function $lineToJoinBeforeChapter(
+  selection: RangeSelection,
+  chapter: LexicalNode,
+): ElementNode | undefined {
+  const line = selection.isCollapsed()
+    ? chapter.getPreviousSibling()
+    : $paragraphSelectionStartsInside(selection);
+  if (!$isSomeParaNode(line) || !line.isBefore(chapter)) return undefined;
+  return $holdsOnlyGlyphBefore(line, $lineEnd(line)) ? undefined : line;
+}
 
 /**
  * Whether `node` is a book (`\id`) line or a chapter line: a `BookNode`, a chapter node (Standard
@@ -116,10 +192,16 @@ export function $isFirstChapterLine(node: LexicalNode): boolean {
  * chapter line pasted back restores the text exactly; from a caret before it, the rest goes in
  * right after `chapter`, as whole blocks.
  *
+ * A copy that starts partway into its first paragraph ({@link startsMidParagraphState}) brings
+ * that paragraph's content to `joinLine` ({@link $lineToJoinBeforeChapter}) rather than as a line of
+ * its own, so a cut from mid-line pasted back restores the line it was cut from.
+ *
  * Mutating: call inside `editor.update()`.
  *
  * @param nodes - The nodes about to be inserted, `frontMatter` among them; what this inserts is
  *   taken out.
+ * @param joinLine - The line `frontMatter`'s first paragraph joins, when the copy starts partway
+ *   into it; it joins only while `joinLine` is still the line right before `chapter`.
  * @returns Whether it inserted everything. When a node is not a block it inserts nothing, and the
  *   whole copy goes in at the caret.
  */
@@ -128,13 +210,18 @@ export function $pasteAroundChapterLine(
   frontMatter: LexicalNode[],
   chapter: LexicalNode,
   selection: RangeSelection,
+  joinLine?: ElementNode,
 ): boolean {
   const isBlock = (node: LexicalNode) =>
     ($isElementNode(node) || $isDecoratorNode(node)) && !node.isInline();
   if (!nodes.every(isBlock)) return false;
   const take = (inserted: LexicalNode[]) =>
     inserted.forEach((node) => nodes.splice(nodes.indexOf(node), 1));
-  frontMatter.forEach((node) => chapter.insertBefore(node));
+  const [first, ...others] = frontMatter;
+  const joins = !!joinLine && $isElementNode(first) && chapter.getPreviousSibling() === joinLine;
+  if (joins) joinLine.append(...first.getChildren());
+  const inserted = joins ? others : frontMatter;
+  inserted.forEach((node) => chapter.insertBefore(node));
   take(frontMatter);
   const caretLine = $topLevelNodeAt(selection.anchor, false);
   const isCaretBefore = !!caretLine && (caretLine === chapter || caretLine.isBefore(chapter));

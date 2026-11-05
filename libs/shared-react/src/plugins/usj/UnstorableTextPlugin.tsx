@@ -1,10 +1,12 @@
 import {
   $chapterLineToSplitAt,
   $isFirstChapterLine,
+  $lineToJoinBeforeChapter,
   $pasteAroundChapterLine,
   $removeBookAndChapterLines,
   $removeTextKeepingBookAndChapterLines,
   $selectionSpansBookOrChapterLine,
+  $takeStartsMidParagraph,
 } from "./bookAndChapterLines.utils";
 import {
   $nodesFromNodeCopy,
@@ -618,6 +620,8 @@ export function UnstorableTextPlugin({
       register(
         SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
         ({ nodes, selection }) => {
+          const first = nodes[0];
+          const startsMidParagraph = $takeStartsMidParagraph(nodes);
           const {
             isRemoved: isLineRemoved,
             holdsChapterLine,
@@ -641,6 +645,10 @@ export function UnstorableTextPlugin({
           // that held it or from a caret right beside it, where the user put it there: anywhere
           // else the whole copy goes in at the caret, as any paste does.
           const chapter = holdsChapterLine ? $chapterLineToSplitAt(selection) : undefined;
+          const joinLine =
+            chapter && startsMidParagraph
+              ? $lineToJoinBeforeChapter(selection, chapter)
+              : undefined;
           // Lexical goes on to insert over this same selection, which is collapsed by then.
           if ($selectionSpansBookOrChapterLine(selection))
             $removeTextKeepingBookAndChapterLines(selection);
@@ -650,7 +658,11 @@ export function UnstorableTextPlugin({
             const frontMatter = $isFirstChapterLine(chapter)
               ? beforeChapter.filter((node) => nodes.includes(node))
               : [];
-            if ($pasteAroundChapterLine(nodes, frontMatter, chapter, selection)) return true;
+            // Only the copy's own first paragraph started partway in; a book line it started in
+            // is gone, and what follows that is whole.
+            const joinsFirst = frontMatter[0] === first ? joinLine : undefined;
+            if ($pasteAroundChapterLine(nodes, frontMatter, chapter, selection, joinsFirst))
+              return true;
           }
           return false;
         },
