@@ -52,15 +52,95 @@ export const displayAnnotationsState = createState("displayAnnotations", {
   },
 });
 
+/** A range of held bytes, `[start, end)`. */
+interface HeldRange {
+  start: number;
+  end: number;
+}
+
+/** The alignment of `before` with `n` bytes inserted (`n` > 0) at, or removed (`n` < 0) from,
+ * offset `at`. */
+function alignedAround(before: string, at: number, n: number): (number | undefined)[] {
+  return Array.from(before, (_, index) => {
+    if (index < at) return index;
+    if (n < 0 && index < at - n) return undefined;
+    return index + n;
+  });
+}
+
+/**
+ * Where `after` is `before` with ONE run of bytes inserted or removed, and that run could sit at
+ * more than one offset (it slides over identical bytes: `\v` from `\v` by deleting either `\`),
+ * the offset `holds` (ranges of `before`) prefer: the one that keeps the most held bytes (a byte
+ * counts once per hold over it), then the one that inserts no byte strictly inside a hold, then
+ * the latest (where a common-prefix match puts it). `undefined` for any other kind of change.
+ */
+function singleEditOffset(
+  before: string,
+  after: string,
+  holds: readonly HeldRange[],
+): number | undefined {
+  const n = after.length - before.length;
+  if (n === 0) return undefined;
+  const shorter = Math.min(before.length, after.length);
+  let head = 0;
+  while (head < shorter && before[head] === after[head]) head++;
+  let tail = 0;
+  while (tail < shorter && before[before.length - 1 - tail] === after[after.length - 1 - tail])
+    tail++;
+  // The run can start at `at` when the bytes before it are a common prefix and the ones after it
+  // a common suffix.
+  const first = Math.max(0, Math.max(before.length, after.length) - tail - Math.abs(n));
+  if (first > head) return undefined;
+  if (first === head || holds.length === 0) return head;
+  const score = (at: number): [number, number] => {
+    let kept = 0;
+    let inside = 0;
+    for (const { start, end } of holds) {
+      if (n < 0)
+        kept += Math.max(0, end - start) - Math.max(0, Math.min(end, at - n) - Math.max(start, at));
+      else if (start < at && at < end) inside++;
+    }
+    return [kept, -inside];
+  };
+  let best = head;
+  let bestScore = score(head);
+  for (let at = head - 1; at >= first; at--) {
+    const candidate = score(at);
+    if (
+      candidate[0] > bestScore[0] ||
+      (candidate[0] === bestScore[0] && candidate[1] > bestScore[1])
+    ) {
+      best = at;
+      bestScore = candidate;
+    }
+  }
+  return best;
+}
+
 /**
  * Each byte of `before` matched to its counterpart in `after` (its index there), or `undefined` for a
- * byte `after` no longer has: a longest-common-subsequence alignment, after the common prefix and
- * suffix are matched one to one. Ties go to the earliest match. So a byte typed right beside an
- * identical one may be read as either of the two; nothing else is ambiguous. Carrier texts are short
- * (a glyph, a number, an attribute list), and the trimmed middle is what the quadratic table is
- * built for.
+ * byte `after` no longer has. When `after` is `before` with one run of bytes inserted or removed,
+ * that is the alignment, with the run placed where `holds` (ranges of `before`) prefer when it
+ * could sit at more than one offset over identical bytes: keeping the most held bytes (a rewrite
+ * that drops one of two identical bytes drops the unheld one), then inserting no byte strictly
+ * inside a hold (a byte typed beside an identical one at a hold's edge is outside it, as text typed
+ * at a mark's edge is), then where a common-prefix match puts it. A hold only chooses among those
+ * slides: bytes it lost are never matched to identical bytes elsewhere. Any other change is a
+ * longest-common-subsequence alignment after the common prefix and suffix are matched one to one,
+ * ties to the earliest match. Carrier texts are short (a glyph, a number, an attribute list), and
+ * the trimmed middle is what the quadratic table is built for.
+ *
+ * A byte typed beside an identical byte where no hold tells the two apart is still ambiguous: that
+ * is what {@link remapAnnotations}' caret is for.
  */
-export function alignCharacters(before: string, after: string): (number | undefined)[] {
+export function alignCharacters(
+  before: string,
+  after: string,
+  holds: readonly HeldRange[] = [],
+): (number | undefined)[] {
+  const single = singleEditOffset(before, after, holds);
+  if (single !== undefined) return alignedAround(before, single, after.length - before.length);
   const matched: (number | undefined)[] = new Array<number | undefined>(before.length).fill(
     undefined,
   );
@@ -98,6 +178,37 @@ export function alignCharacters(before: string, after: string): (number | undefi
   return matched;
 }
 
+/**
+ * The alignment of a pure insertion or deletion that left the caret at `caret` (an offset into
+ * `after`), when `before` and `after` are exactly that edit: an insertion of `n` bytes ending at
+ * the caret (`[caret - n, caret)` of `after`), or a deletion of `n` bytes starting at it
+ * (`[caret, caret + n)` of `before`) — where typing, Backspace and Delete leave the caret.
+ * `undefined` when the texts are not that edit.
+ */
+export function alignEditAtCaret(
+  before: string,
+  after: string,
+  caret: number,
+): (number | undefined)[] | undefined {
+  const grown = after.length - before.length;
+  if (grown > 0) {
+    const start = caret - grown;
+    if (start < 0 || caret > after.length) return undefined;
+    if (
+      after.slice(0, start) !== before.slice(0, start) ||
+      after.slice(caret) !== before.slice(start)
+    )
+      return undefined;
+    return alignedAround(before, start, grown);
+  }
+  if (grown < 0) {
+    if (caret < 0 || caret - grown > before.length) return undefined;
+    if (after !== before.slice(0, caret) + before.slice(caret - grown)) return undefined;
+    return alignedAround(before, caret, grown);
+  }
+  return undefined;
+}
+
 /** `[start, end)` through `alignment` (from {@link alignCharacters}). See {@link mapRangeThroughEdit}. */
 export function mapRangeThroughAlignment(
   alignment: readonly (number | undefined)[],
@@ -128,5 +239,32 @@ export function mapRangeThroughEdit(
   start: number,
   end: number,
 ): [number, number] | undefined {
-  return mapRangeThroughAlignment(alignCharacters(before, after), start, end);
+  return mapRangeThroughAlignment(alignCharacters(before, after, [{ start, end }]), start, end);
+}
+
+/**
+ * `held`'s ranges re-measured against `basis`, the carrier's storage text now, dropping any with no
+ * byte left (see {@link mapRangeThroughEdit}). A whole-decorator hold (`[0, 0]`) stays whole.
+ *
+ * The bytes are matched by `caret` when it is given and names the edit — the caret of a user's
+ * edit in this carrier, right after it ({@link alignEditAtCaret}): a byte typed at a hold's edge
+ * is outside the hold even beside an identical held byte, and a deleted byte is the one the user
+ * deleted. Otherwise (a rewrite, or a caret the texts do not agree with) by the hold-weighted
+ * alignment ({@link alignCharacters}): the held bytes are the ones kept.
+ */
+export function remapAnnotations(
+  held: DisplayAnnotations,
+  basis: string,
+  caret?: number,
+): DisplayAnnotation[] {
+  if (held.basis === basis) return held.annotations;
+  const ranges = held.annotations.filter((annotation) => annotation.start !== annotation.end);
+  const alignment =
+    (caret === undefined ? undefined : alignEditAtCaret(held.basis, basis, caret)) ??
+    alignCharacters(held.basis, basis, ranges);
+  return held.annotations.flatMap((annotation) => {
+    if (annotation.start === annotation.end) return [annotation];
+    const mapped = mapRangeThroughAlignment(alignment, annotation.start, annotation.end);
+    return mapped ? [{ ...annotation, start: mapped[0], end: mapped[1] }] : [];
+  });
 }

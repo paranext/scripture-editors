@@ -50,6 +50,20 @@
 
 import { separatorRemovalTokenizesIdentically } from "../../converters/usfm/usfmFragmentToUsj.js";
 import { $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
+import {
+  $lastPiece,
+  $logicalChildren,
+  $logicalNextSibling,
+  $logicalText,
+  $pieces,
+  $setLogicalText,
+} from "../features/displayPieces.state.js";
+import {
+  $nextSiblingThroughMarks,
+  $nodeAfterBoundaryThroughMarks,
+  $parentOutsideMarks,
+  $previousSiblingThroughMarks,
+} from "../features/throughMarks.utils.js";
 import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { $isCharNode, CharNode } from "./CharNode.js";
@@ -115,17 +129,9 @@ export function $charSeparatorPrefixLength(node: TextNode): 0 | 1 {
   // sides. A host can annotate a range that starts on the opening glyph (a marker location), so
   // the glyph can share the text's mark, sit in a mark of its own, or be a plain sibling of the
   // mark the text is in.
-  let child: LexicalNode = node;
-  let previous: LexicalNode | null = child.getPreviousSibling();
-  let parent = child.getParent();
-  while (parent && $isTypedMarkNode(parent)) {
-    child = parent;
-    parent = child.getParent();
-    previous ??= child.getPreviousSibling();
-  }
+  const parent = $parentOutsideMarks(node);
   if (!$isCharNode(parent)) return 0;
-  // A mark that ends right before the text hides the glyph as its last descendant.
-  while ($isTypedMarkNode(previous)) previous = previous.getLastChild();
+  const previous = $previousSiblingThroughMarks(node);
   if (!$isMarkerNode(previous) || previous.getMarkerSyntax() !== "opening") return 0;
   // Only char-span glyphs take a separator (not a milestone's display run) — the same classifier
   // $openerSeparatorGap builds one with, so reading and writing can never disagree about which
@@ -140,9 +146,7 @@ export function $charSeparatorPrefixLength(node: TextNode): 0 | 1 {
  * removing it would mean, is a question about that content.
  */
 function $contentAfterOpener(opener: MarkerNode): LexicalNode | null {
-  let node = opener.getNextSibling();
-  while ($isTypedMarkNode(node)) node = node.getFirstChild();
-  return node;
+  return $nextSiblingThroughMarks(opener);
 }
 
 /**
@@ -199,7 +203,7 @@ function $ownsOpenerSeparator(opener: MarkerNode, char: CharNode): boolean {
  */
 function $openerSeparatorGap(opener: MarkerNode, char: CharNode): "prefix" | "spacer" | undefined {
   if (!$ownsOpenerSeparator(opener, char)) return undefined;
-  const next = opener.getNextSibling();
+  const next = $logicalNextSibling(opener);
   const content = $contentAfterOpener(opener);
   if (next === null || content === null) return undefined;
   if ($isMarkerNode(content)) {
@@ -232,7 +236,8 @@ function $openerSeparatorGap(opener: MarkerNode, char: CharNode): "prefix" | "sp
 function $isRenamingGap(opener: MarkerNode): boolean {
   if (!$isSeparatorPrefixHostText($contentAfterOpener(opener))) return false;
   if ($isInLiteralOnlyBlock(opener)) return false;
-  return !separatorRemovalTokenizesIdentically(opener.getNextSibling()?.getTextContent() ?? "");
+  const next = $logicalNextSibling(opener);
+  return !separatorRemovalTokenizesIdentically(next ? $logicalText(next) : "");
 }
 
 /**
@@ -245,10 +250,11 @@ function $isRenamingGap(opener: MarkerNode): boolean {
  */
 export function $openerSeparatorGapFollowingBytes(char: CharNode): string | undefined {
   if (!char.isAttached()) return undefined;
-  for (const child of char.getChildren()) {
+  for (const child of $logicalChildren(char)) {
     if (!$isMarkerNode(child)) continue;
     if ($openerSeparatorGap(child, char) === undefined) continue;
-    return child.getNextSibling()?.getTextContent() ?? "";
+    const next = $logicalNextSibling(child);
+    return next ? $logicalText(next) : "";
   }
   return undefined;
 }
@@ -265,14 +271,15 @@ function $isCaretAtOpenerBoundary(opener: MarkerNode, char: CharNode): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   const anchorNode = selection.anchor.getNode();
-  if (anchorNode.is(opener) || anchorNode.is(char)) return true;
+  if ($pieces(opener).some((piece) => anchorNode.is(piece)) || anchorNode.is(char)) return true;
   if (selection.anchor.offset !== 0) return false;
-  for (let node = opener.getNextSibling(); node; ) {
-    if (anchorNode.is(node)) return true;
-    if (!$isTypedMarkNode(node)) return false;
-    node = node.getFirstChild();
-  }
-  return false;
+  const after = $nextSiblingThroughMarks(opener);
+  if (!after) return false;
+  // The front of a mark that starts there is the same place.
+  return (
+    anchorNode.is(after) ||
+    ($isTypedMarkNode(anchorNode) && after.is($nodeAfterBoundaryThroughMarks(anchorNode, 0)))
+  );
 }
 
 /**
@@ -297,7 +304,7 @@ export function $syncOpenerSeparators(char: CharNode): void {
   if (!char.isAttached()) return;
   if ($isDisplayOwnerPended(char)) return;
   const isEngineMounted = getPendedDisplayOwners($getEditor()) !== undefined;
-  char.getChildren().forEach((child: LexicalNode) => {
+  $logicalChildren(char).forEach((child: LexicalNode) => {
     if (!$isMarkerNode(child)) return;
     const gap = $openerSeparatorGap(child, char);
     if (gap === undefined) return;
@@ -307,10 +314,10 @@ export function $syncOpenerSeparators(char: CharNode): void {
       return;
     }
     if (gap === "spacer") {
-      child.insertAfter($createTextNode(NBSP));
+      $lastPiece(child).insertAfter($createTextNode(NBSP));
       return;
     }
-    const next = child.getNextSibling();
+    const next = $logicalNextSibling(child);
     if (!$isTextNode(next)) return;
     if (!$moveTypedBytesBehindSeparator(next)) $prefixSeparator(next);
   });
@@ -358,9 +365,10 @@ export function $moveGlyphTailBehindSeparator(opener: MarkerNode): boolean {
   if (opener.getMarkerSyntax() !== "opening" || !$isCharNode(opener.getParent())) return false;
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const text = opener.getTextContent();
+  const text = $logicalText(opener);
+  const last = $lastPiece(opener);
   const { anchor } = selection;
-  if (anchor.key !== opener.getKey() || anchor.offset !== text.length) return false;
+  if (anchor.key !== last.getKey() || anchor.offset !== last.getTextContentSize()) return false;
   const spelled = openingMarkerText(opener.getMarker(), opener.getNested());
   const tail = text.slice(spelled.length);
   if (!text.startsWith(spelled) || !/^[|\s]+$/.test(tail)) return false;
@@ -368,7 +376,7 @@ export function $moveGlyphTailBehindSeparator(opener: MarkerNode): boolean {
   if (!$isSeparatorPrefixHostText(content)) return false;
   const contentText = content.getTextContent();
   if (!contentText.startsWith(NBSP)) return false;
-  opener.setTextContent(spelled);
+  $setLogicalText(opener, spelled);
   content.setTextContent(NBSP + tail + contentText.slice(NBSP.length));
   content.select(NBSP.length + tail.length, NBSP.length + tail.length);
   return true;
@@ -385,8 +393,9 @@ export function $moveGlyphTailBehindSeparator(opener: MarkerNode): boolean {
  * Mutating: call inside `editor.update()`.
  */
 export function $insertOwedOpenerSpacer(opener: MarkerNode, char: CharNode): void {
-  if (!$isTypedMarkNode(opener.getNextSibling())) return;
-  if ($openerSeparatorGap(opener, char) === "spacer") opener.insertAfter($createTextNode(NBSP));
+  if (!$isTypedMarkNode($logicalNextSibling(opener))) return;
+  if ($openerSeparatorGap(opener, char) === "spacer")
+    $lastPiece(opener).insertAfter($createTextNode(NBSP));
 }
 
 /** Prefix `text` with the separator NBSP, keeping any selection point inside it on the same
@@ -407,14 +416,12 @@ function $prefixSeparator(text: TextNode): void {
  */
 export function $hasCaretHeldSeparatorGap(char: CharNode): boolean {
   if (!char.isAttached()) return false;
-  return char
-    .getChildren()
-    .some(
-      (child: LexicalNode) =>
-        $isMarkerNode(child) &&
-        $openerSeparatorGap(child, char) !== undefined &&
-        $isCaretAtOpenerBoundary(child, char),
-    );
+  return $logicalChildren(char).some(
+    (child: LexicalNode) =>
+      $isMarkerNode(child) &&
+      $openerSeparatorGap(child, char) !== undefined &&
+      $isCaretAtOpenerBoundary(child, char),
+  );
 }
 
 /**
@@ -428,14 +435,12 @@ export function $hasCaretHeldSeparatorGap(char: CharNode): boolean {
  */
 export function $hasUnsettledSeparatorGap(char: CharNode): boolean {
   if (!char.isAttached()) return false;
-  return char
-    .getChildren()
-    .some(
-      (child: LexicalNode) =>
-        $isMarkerNode(child) &&
-        $openerSeparatorGap(child, char) !== undefined &&
-        ($isCaretAtOpenerBoundary(child, char) || $isRenamingGap(child)),
-    );
+  return $logicalChildren(char).some(
+    (child: LexicalNode) =>
+      $isMarkerNode(child) &&
+      $openerSeparatorGap(child, char) !== undefined &&
+      ($isCaretAtOpenerBoundary(child, char) || $isRenamingGap(child)),
+  );
 }
 
 /**
@@ -448,14 +453,12 @@ export function $hasUnsettledSeparatorGap(char: CharNode): boolean {
  */
 export function $hasRenamingSeparatorGap(char: CharNode): boolean {
   if (!char.isAttached()) return false;
-  return char
-    .getChildren()
-    .some(
-      (child: LexicalNode) =>
-        $isMarkerNode(child) &&
-        $openerSeparatorGap(child, char) !== undefined &&
-        $isRenamingGap(child),
-    );
+  return $logicalChildren(char).some(
+    (child: LexicalNode) =>
+      $isMarkerNode(child) &&
+      $openerSeparatorGap(child, char) !== undefined &&
+      $isRenamingGap(child),
+  );
 }
 
 /**

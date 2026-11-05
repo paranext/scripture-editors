@@ -64,6 +64,7 @@
  *   about it — the marker-edit engine owns healing and settling.
  */
 
+import { $lastPiece, $logicalText, $pieceStart } from "../features/displayPieces.state.js";
 import { $isImmutableUnmatchedNode } from "../features/ImmutableUnmatchedNode.js";
 import { $isCanonicalMarkerNode, $isMarkerNode } from "../features/MarkerNode.js";
 import { MARKER_TRAILING_SPACE_TEXT_TYPE, textTypeState } from "../collab/delta.state.js";
@@ -138,7 +139,9 @@ export function $isGlyphTextNode(node: LexicalNode | null | undefined): boolean 
  */
 export function $isPointInMarkerGlyphText(node: LexicalNode, offset: number): boolean {
   if (!$isMarkerNode(node)) return false;
+  // The trailing edge is the end of the whole glyph, however an annotation has cut it.
   return !(
+    $lastPiece(node).is(node) &&
     offset === node.getTextContentSize() &&
     node.getMarkerSyntax() !== "opening" &&
     $isCanonicalMarkerNode(node) &&
@@ -168,18 +171,26 @@ function $glyphAtPoint(point: PointType): TextNode | undefined {
   return $isTextNode(node) && $isGlyphTextNode(node) ? node : undefined;
 }
 
+/** Where a point on glyph piece `node` sits in the whole glyph's bytes, however an annotation has
+ * cut it into pieces (`displayPieces.state.ts`), and how many bytes the whole glyph has. */
+function $offsetInGlyph(node: TextNode, offset: number): { at: number; size: number } {
+  return { at: $pieceStart(node) + offset, size: $logicalText(node).length };
+}
+
 /** The glyph node a point sits strictly between two display bytes of, if it does. */
 function $glyphAroundPoint(point: PointType): TextNode | undefined {
   const node = $glyphAtPoint(point);
   if (!node) return undefined;
-  return point.offset > 0 && point.offset < node.getTextContentSize() ? node : undefined;
+  const { at, size } = $offsetInGlyph(node, point.offset);
+  return at > 0 && at < size ? node : undefined;
 }
 
 /** The glyph node a point names one of the ENDS of, if it does. */
 function $glyphAtPointEnd(point: PointType): TextNode | undefined {
   const node = $glyphAtPoint(point);
   if (!node) return undefined;
-  return point.offset === 0 || point.offset === node.getTextContentSize() ? node : undefined;
+  const { at, size } = $offsetInGlyph(node, point.offset);
+  return at === 0 || at === size ? node : undefined;
 }
 
 function snapshotPoint(point: PointType): PointSnapshot {
@@ -245,9 +256,10 @@ export function $normalizeSelectionOutOfGlyphText(selection: RangeSelection): bo
   if (selection.isCollapsed()) {
     const glyph = $glyphAroundPoint(selection.anchor);
     if (!glyph) return false;
-    const trailingEnd = glyph.getTextContentSize();
-    selection.anchor.set(glyph.getKey(), trailingEnd, "text");
-    selection.focus.set(glyph.getKey(), trailingEnd, "text");
+    const last = $lastPiece(glyph);
+    const trailingEnd = last.getTextContentSize();
+    selection.anchor.set(last.getKey(), trailingEnd, "text");
+    selection.focus.set(last.getKey(), trailingEnd, "text");
     return true;
   }
 

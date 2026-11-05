@@ -4,7 +4,25 @@ import { AnnotationRange } from "./selection.model";
 import { $getRangeFromUsjSelection } from "./selection.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister, registerNestedElementResolver } from "@lexical/utils";
-import { $getNodeByKey, LexicalEditor, NodeKey } from "lexical";
+import {
+  $getNodeByKey,
+  $getSelection,
+  $isRangeSelection,
+  COMMAND_PRIORITY_CRITICAL,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  getDOMSelection,
+  HISTORY_MERGE_TAG,
+  INSERT_LINE_BREAK_COMMAND,
+  INSERT_PARAGRAPH_COMMAND,
+  isDOMTextNode,
+  KEY_ENTER_COMMAND,
+  LexicalCommand,
+  LexicalEditor,
+  LexicalNode,
+  NodeKey,
+  PASTE_COMMAND,
+  SELECTION_CHANGE_COMMAND,
+} from "lexical";
 import { ForwardedRef, forwardRef, useEffect, useImperativeHandle, useMemo } from "react";
 import {
   $coveredDisplayText,
@@ -13,6 +31,9 @@ import {
   $isTypedMarkNode,
   $removeDisplayAnnotation,
   $removeTypedMarkId,
+  $resolveRangeEndsThroughMarks,
+  $restoreRangeStartAtMarkEnd,
+  $restoreCaretAtMarkEnd,
   $wrapSelectionInTypedMarkNode,
   ANNOTATION_CHANGE_TAG,
   DecoratorHold,
@@ -26,6 +47,40 @@ import {
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
 } from "shared";
+
+/**
+ * Whether the screen's selection in `editor` has an end at the end of `text`: where Lexical read a
+ * range's start from, when it put that start on the start of the node after a mark.
+ */
+function isScreenEndAtTextEnd(editor: LexicalEditor): (text: LexicalNode) => boolean {
+  const domSelection = getDOMSelection(editor._window);
+  return (text) => {
+    const element = editor.getElementByKey(text.getKey());
+    if (!domSelection || !element) return false;
+    const ends = [
+      [domSelection.anchorNode, domSelection.anchorOffset],
+      [domSelection.focusNode, domSelection.focusOffset],
+    ] as const;
+    return ends.some(
+      ([node, offset]) =>
+        !!node &&
+        element.contains(node) &&
+        offset === (isDOMTextNode(node) ? node.length : node.childNodes.length),
+    );
+  };
+}
+
+/** Put a caret Lexical read past a mark's end back at the mark's content end
+ * (`$restoreCaretAtMarkEnd`), and a range's start Lexical read there from the screen
+ * (`$restoreRangeStartAtMarkEnd`), and let the command carry on. */
+function $restoreCaretBeforeCommand(editor: LexicalEditor): false {
+  const selection = $getSelection();
+  if ($isRangeSelection(selection)) {
+    $restoreCaretAtMarkEnd(selection);
+    $restoreRangeStartAtMarkEnd(selection, isScreenEndAtTextEnd(editor));
+  }
+  return false;
+}
 
 /** Forward reference for annotations. */
 export interface AnnotationRef {
@@ -136,6 +191,46 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
           });
         },
         { skipInitialization: true },
+      ),
+      // A caret at the end of a mark's content is read back from the screen onto the start of the
+      // node after the mark (a glyph, an attribute run); it is put back where it is, first, so
+      // every selection listener reads the content's end, as with no mark there. An update that
+      // inserts re-reads the caret from the screen as it starts, onto that node's start again, so
+      // each insertion puts it back too before anything inserts, and a range's start Lexical read
+      // the same way with it: the bytes go where they go with no mark there, not into the display
+      // bytes after it.
+      // Every command that acts at the caret Lexical has just read back from the screen: a
+      // selection change, an input's insertion (typed, pasted, or a paragraph or line break), and
+      // the Enter key, whose handlers act at the caret before any insertion command runs.
+      ...[
+        SELECTION_CHANGE_COMMAND,
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        PASTE_COMMAND,
+        KEY_ENTER_COMMAND,
+        INSERT_PARAGRAPH_COMMAND,
+        INSERT_LINE_BREAK_COMMAND,
+      ].map((command: LexicalCommand<unknown>) =>
+        editor.registerCommand(
+          command,
+          () => $restoreCaretBeforeCommand(editor),
+          COMMAND_PRIORITY_CRITICAL,
+        ),
+      ),
+      // A range read back from the screen with an end beside a mark is resolved as with no mark
+      // there (`$resolveRangeEndsThroughMarks`), so what a cut, copy or edit of it takes is what it
+      // takes with no mark.
+      editor.registerCommand(
+        SELECTION_CHANGE_COMMAND,
+        () => {
+          const selection = $getSelection();
+          // Lexical reads a selection from the screen only while a `selectionchange` event is being
+          // answered, and resolves its ends then; a selection set by code it leaves as set.
+          const isReadFromScreen = (editor._window ?? window).event?.type === "selectionchange";
+          if (isReadFromScreen && $isRangeSelection(selection))
+            $resolveRangeEndsThroughMarks(selection, isScreenEndAtTextEnd(editor));
+          return false;
+        },
+        COMMAND_PRIORITY_CRITICAL,
       ),
     );
   }, [editor, markNodeMap]);
@@ -259,7 +354,8 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
             { decoratorHolds: freshDecoratorHolds },
           );
         },
-        { tag: ANNOTATION_CHANGE_TAG },
+        // A host's annotation is not a user's edit: it joins the current undo step.
+        { tag: [ANNOTATION_CHANGE_TAG, HISTORY_MERGE_TAG] },
       );
     },
 
@@ -278,7 +374,8 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
         () => {
           $removeAnnotationNodes(type, id, markNodeKeys);
         },
-        { tag: ANNOTATION_CHANGE_TAG },
+        // A host's annotation is not a user's edit: it joins the current undo step.
+        { tag: [ANNOTATION_CHANGE_TAG, HISTORY_MERGE_TAG] },
       );
     },
 

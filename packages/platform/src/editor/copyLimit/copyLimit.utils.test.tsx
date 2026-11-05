@@ -16,8 +16,17 @@ import {
   $getSelection,
   $isRangeSelection,
   LexicalEditor,
+  LexicalNode,
   TextNode,
 } from "lexical";
+import {
+  $addDisplayAnnotation,
+  $chapterGlyphTextNode,
+  $isChapterNode,
+  $isVerseNode,
+  $pieces,
+  registerDisplayAnnotationBasis,
+} from "shared";
 
 /** The text of `editor`'s range selection; empty when it has none. */
 const selectedText = (editor: LexicalEditor) =>
@@ -480,6 +489,84 @@ describe("$limitSelectionLength with Standard-view glyph text", () => {
     expect(noteEnd).toBeGreaterThan(0);
     await act(async () => editor.update(() => $limitSelectionLength(noteEnd)));
     expect(selectedText(editor)).toBe(whole.slice(0, whole.indexOf("\\f")));
+  });
+});
+
+describe("$limitSelectionLength with Standard-view glyph text an annotation cuts", () => {
+  /** Renders `content` as one Standard-view paragraph (after `\c 12`), cuts the first carrier
+   * `$carrier` finds at `[start, end)` with an annotation, and selects the whole document. */
+  async function selectWholeCut(
+    content: unknown[],
+    $carrier: () => LexicalNode | undefined,
+    start: number,
+    end: number,
+  ) {
+    initializeSerialize(undefined, undefined);
+    reset();
+    const state = usjEditorAdaptor.serializeEditorState(
+      {
+        type: "USJ",
+        version: "3.1",
+        content: [
+          { type: "chapter", marker: "c", number: "12", sid: "GEN 12" },
+          { type: "para", marker: "p", content },
+        ],
+      } as unknown as Usj,
+      getViewOptions(STANDARD_VIEW_MODE),
+    );
+    const { editor } = await baseTestEnvironment(JSON.stringify({ root: state.root }));
+    registerDisplayAnnotationBasis(editor);
+    await act(async () =>
+      editor.update(() => {
+        const carrier = $carrier();
+        if (!carrier) throw new Error("expected the carrier to cut");
+        $addDisplayAnnotation(carrier, "test", "a", start, end);
+      }),
+    );
+    editor.getEditorState().read(() => {
+      const carrier = $carrier();
+      expect(carrier && $pieces(carrier).length).toBeGreaterThan(1);
+    });
+    await act(async () =>
+      editor.update(() => {
+        const root = $getRoot();
+        root.select(0, root.getChildrenSize());
+      }),
+    );
+    return { editor, whole: selectedText(editor) };
+  }
+
+  const $chapterText = () => {
+    const chapter = $getRoot().getFirstChild();
+    return $isChapterNode(chapter) ? $chapterGlyphTextNode(chapter) : undefined;
+  };
+
+  it("does not end between the pieces of a chapter line", async () => {
+    // `\c 12 ` cut around its `1`: the limit runs out in its last piece.
+    const { editor, whole } = await selectWholeCut(["abc"], $chapterText, 3, 4);
+    expect(whole).toMatch(/^\\c\s12\s/);
+    await act(async () => editor.update(() => $limitSelectionLength(4)));
+    expect(selectedText(editor)).toBe("");
+  });
+
+  it("does not end between the pieces of a verse when the text after it starts with a mark", async () => {
+    const $verse = () =>
+      $getRoot()
+        .getAllTextNodes()
+        .find((node) => $isVerseNode(node));
+    // `\v 1 ` cut around its `1`, then content whose first character is a dagesh, which joins
+    // the verse's trailing space.
+    const { editor, whole } = await selectWholeCut(
+      [{ type: "verse", marker: "v", number: "1" }, "\u05BCabc"],
+      $verse,
+      3,
+      4,
+    );
+    const verseStart = whole.indexOf("\\v");
+    const verseEnd = whole.indexOf("\u05BC");
+    expect(verseStart).toBeGreaterThan(0);
+    await act(async () => editor.update(() => $limitSelectionLength(verseEnd)));
+    expect(selectedText(editor)).toBe(whole.slice(0, verseStart));
   });
 });
 
