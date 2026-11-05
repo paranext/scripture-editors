@@ -11,6 +11,7 @@ import {
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
 import { useEffect, useRef } from "react";
+import { LoggerBasic } from "shared";
 
 /**
  * Takes the editor's copy, cut and paste shortcuts (Ctrl/Cmd+C, X, V and Shift+V), guards
@@ -24,18 +25,24 @@ import { useEffect, useRef } from "react";
  * @param pastesAsClipboardRead - Whether every paste takes only what reading the clipboard gives,
  *   as Ctrl+V does, without the node copy flavor (`application/x-lexical-editor`) a paste the
  *   browser delivers itself also carries. Defaults to `false`.
+ * @param logger - Where a paste shortcut's failed clipboard read is logged; the console when
+ *   omitted.
  */
 export function ClipboardPlugin({
   pastesAsClipboardRead = false,
+  logger,
 }: {
   pastesAsClipboardRead?: boolean;
+  logger?: LoggerBasic;
 } = {}): null {
   const [editor] = useLexicalComposerContext();
-  // A ref, so changing it does not register the paste handler again behind the others.
+  // Refs, so changing them does not register the paste handler again behind the others.
   const pastesAsClipboardReadRef = useRef(pastesAsClipboardRead);
+  const loggerRef = useRef(logger);
   useEffect(() => {
     pastesAsClipboardReadRef.current = pastesAsClipboardRead;
-  }, [pastesAsClipboardRead]);
+    loggerRef.current = logger;
+  }, [pastesAsClipboardRead, logger]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -55,8 +62,8 @@ export function ClipboardPlugin({
         cutSelection(editor);
       } else if (key.toLowerCase() === "v") {
         event.preventDefault();
-        if (shiftKey) pasteSelectionAsPlainText(editor);
-        else pasteSelection(editor);
+        if (shiftKey) pasteSelectionAsPlainText(editor, loggerRef.current);
+        else pasteSelection(editor, loggerRef.current);
       }
     };
 

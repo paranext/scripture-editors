@@ -218,6 +218,25 @@ describe("ClipboardPlugin — Ctrl+V", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(clipboardRead()).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    ["Ctrl+V", false],
+    ["Ctrl+Shift+V", true],
+  ])("logs a clipboard read that fails for %s to the plugin's logger", async (_name, shiftKey) => {
+    const denied = () => Promise.reject(new Error("clipboard read denied"));
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { read: denied, readText: denied } });
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    const { editor } = await baseTestEnvironment(
+      () => $getRoot().append($createParaNode("p").append($createTextNode("text"))),
+      <ClipboardPlugin logger={logger} />,
+    );
+
+    await pressShortcut(editor, "v", shiftKey);
+    await settle();
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(String(logger.warn.mock.calls[0][0])).toContain("clipboard read denied");
+  });
 });
 
 describe("ClipboardPlugin — a paste as reading the clipboard gives it", () => {
