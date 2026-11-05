@@ -213,16 +213,15 @@ describe.each(["standard", "paragraph-structure", "formatted"])("Enter in %s vie
       expect(savedInChapterTwo(mounted)).toEqual([p("before"), "a", p("b")]);
     });
 
-    // A line break is not a split: Lexical puts a line break node in the line, which no paragraph,
-    // marked or not, saves.
-    it("with Shift, makes no paragraph", async () => {
+    // A line break has no USFM representation, so Shift+Enter is Enter, as in Paratext 9.
+    it("with Shift, makes the `\\p` paragraph Enter makes", async () => {
       mounted = await mount(["ab"]);
       await caretInUnmarkedLine(mounted, 1);
 
       await pressEnter(mounted, true);
       await type(mounted, "x");
 
-      expect(savedInChapterTwo(mounted)).toEqual(["axb"]);
+      expect(savedInChapterTwo(mounted)).toEqual(["a", p("xb")]);
     });
 
     it("from the Enter menu, makes a paragraph of the marker picked from the text after the caret", async () => {

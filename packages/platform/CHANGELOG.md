@@ -420,7 +420,22 @@ refused. The public surface grew substantially; nothing was removed.
   its `\p` marker. A paragraph marker picked from the Enter menu there
   (`EditorRef.splitParagraphWithMarker`), which split the line but did not apply the marker, now
   starts a paragraph of that marker. Under `"protected"` structure Enter there is refused and a
-  paste's lines join with one space, as before. Shift+Enter is unchanged.
+  paste's lines join with one space, as before.
+- **Shift+Enter is Enter, and a line break is never saved as nothing.** Lexical's line break
+  (`LineBreakNode`) has no USFM representation, so the text either side of one saved run together:
+  Shift+Enter in `one|two` showed two lines and saved `onetwo`, in every view. A line break
+  requested any way (`INSERT_LINE_BREAK_COMMAND`: Shift+Enter, macOS Ctrl+O, a `beforeinput`
+  `insertLineBreak`, a typed `\n`) now runs Enter, as Paratext 9's editor does (it has no
+  Shift+Enter of its own): it splits the paragraph where Enter does, is refused where Enter is
+  refused (`"protected"` structure, inside a note outside Standard view), makes the `\fp` break
+  Enter makes in a note in Standard view, and starts a paragraph after a chapter line, where a line
+  break used to be refused. A line break a paste or drop brings in — html's `<br>`, a node copy's
+  line break — splits the paragraph as a plain-text line break does, or, where the paragraph cannot
+  be split (`"protected"` structure, a note, the `\id` line), is a space (nothing beside
+  whitespace), so pasted text stays in the span or note at the caret. In the views that hide
+  markers a pasted lone carriage return (an old Mac line ending) is a line break too; it was kept
+  in the text. The `LineBreakPlugin` in `Editor` does all of this; a view without spacing
+  (`hasSpacing: false`), whose line breaks before each verse are its layout, keeps its line breaks.
 - **Ctrl+V, Ctrl+Shift+V, the context menu's Paste items and `EditorRef.paste`/`pastePlainText`
   handle a failed clipboard read.** A refused or failed read was an unhandled promise rejection; it
   is now logged at `warn`, to the `Editor`'s `logger` (`ClipboardPlugin` and `ContextMenuPlugin`
