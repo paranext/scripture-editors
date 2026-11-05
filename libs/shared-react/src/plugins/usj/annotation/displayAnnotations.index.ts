@@ -42,6 +42,7 @@ import {
   $isRangeSelection,
   $isTextNode,
   COMMAND_PRIORITY_CRITICAL,
+  COMMAND_PRIORITY_EDITOR,
   COMMAND_PRIORITY_LOW,
   EditorState,
   HISTORIC_TAG,
@@ -1016,15 +1017,25 @@ function createIndex(editor: LexicalEditor): Entry {
     },
     editor.registerCommand(
       SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
-      ({ nodes, selection }) => {
+      ({ nodes }) => {
         // A check result or a comment names one place; a pasted copy of its bytes is not it.
         $stripDisplayAnnotations(nodes);
-        $splitCarrierAtInsertion(nodes, selection);
         return false;
       },
       // Critical, and never handling the command, so a handler that does handle it cannot skip the
       // strip.
       COMMAND_PRIORITY_CRITICAL,
+    ),
+    editor.registerCommand(
+      SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+      ({ nodes, selection }) => {
+        $splitCarrierAtInsertion(nodes, selection);
+        return false;
+      },
+      // Last, never handling the command: only when no handler inserts the nodes its own way (a
+      // range one replaces itself, which a range removed here first would leave it no range to
+      // replace) does Lexical's own insertion run, whose text split this is.
+      COMMAND_PRIORITY_EDITOR,
     ),
     ...[INSERT_PARAGRAPH_COMMAND, INSERT_LINE_BREAK_COMMAND].map(
       (command: LexicalCommand<unknown>) =>
