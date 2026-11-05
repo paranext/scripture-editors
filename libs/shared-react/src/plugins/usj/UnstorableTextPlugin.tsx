@@ -357,8 +357,10 @@ export function UnstorableTextPlugin({
     };
 
     /**
-     * Inserts a plain-text paste or drop itself when it needs filtering, or line breaks joining
-     * under protected structure. Returns whether it did; otherwise Lexical's own insertion runs.
+     * Inserts a plain-text paste or drop itself when it needs filtering, line breaks joining under
+     * protected structure, or a lone carriage return (an old Mac line ending) reading as the line
+     * break it is: Lexical's own insertion splits only at `\n` and `\r\n`, and leaves a lone `\r`
+     * in the text. Returns whether it did; otherwise Lexical's own insertion runs.
      */
     const $insertPlainTransfer = (
       data: DataTransfer,
@@ -370,9 +372,12 @@ export function UnstorableTextPlugin({
       if (!text) return false;
       const joinsLines = structureProtectionModeRef.current === "protected" && /[\r\n]/.test(text);
       const keepsLines = $selectionSpansBookOrChapterLine(selection);
+      const hasLoneReturn = /\r(?!\n)/.test(text);
       const { before, after } = $textAroundSelection(selection);
-      const filtered = removeUnstorableText(joinsLines ? joinLines(text) : text, before, after);
-      if (filtered.removed.length === 0 && !joinsLines && !keepsLines) return false;
+      const lines = hasLoneReturn ? text.replace(/\r(?!\n)/g, "\n") : text;
+      const filtered = removeUnstorableText(joinsLines ? joinLines(lines) : lines, before, after);
+      if (filtered.removed.length === 0 && !joinsLines && !keepsLines && !hasLoneReturn)
+        return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);
       if (filtered.text) {
         if (keepsLines) $removeTextKeepingBookAndChapterLines(selection);

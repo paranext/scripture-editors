@@ -32,6 +32,7 @@ import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
 import { HiddenViewCopyPlugin } from "./HiddenViewCopyPlugin";
 import { InlineRangeEditPlugin } from "./InlineRangeEditPlugin";
 import { InvisibleCharactersPlugin } from "./InvisibleCharactersPlugin";
+import { LineBreakPlugin } from "./LineBreakPlugin";
 import {
   COMMIT_PENDING_MARKERS_COMMAND,
   MarkerEditPlugin,
@@ -2191,6 +2192,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           {viewOptions?.markerMode === "hidden" && (
             <InlineRangeEditPlugin structureProtectionMode={structureProtectionMode} />
           )}
+          <LineBreakPlugin
+            viewOptions={viewOptions}
+            structureProtectionMode={structureProtectionMode}
+          />
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects
               depend on it, so a host handing over a fresh-but-equivalent logger object each
               render would re-register their command listeners at the END of Lexical's
