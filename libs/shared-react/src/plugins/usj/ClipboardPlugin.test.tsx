@@ -1,6 +1,7 @@
 import { ClipboardPlugin } from "./ClipboardPlugin";
 import { copySelection } from "./clipboard.utils";
 import { baseTestEnvironment, settle } from "./react-test.utils";
+import { objectKlassEquals } from "@lexical/utils";
 import { act } from "@testing-library/react";
 import {
   $createNodeSelection,
@@ -316,6 +317,101 @@ describe("ClipboardPlugin — a paste as reading the clipboard gives it", () => 
 
     expect(event.defaultPrevented).toBe(true);
     expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe("texthtml");
+  });
+});
+
+describe("ClipboardPlugin — a native paste the browser delivers", () => {
+  /** A paste event as the browser raises one, carrying the editor's node copy beside its html and
+   * plain text. */
+  function nativePaste(): ClipboardEvent {
+    const flavors = new Map([
+      ["application/x-lexical-editor", '{"namespace":"TestEditor","nodes":[]}'],
+      ["text/html", "<span>html</span>"],
+      ["text/plain", "plain"],
+    ]);
+    const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        types: [...flavors.keys()],
+        files: [],
+        getData: (type: string) => flavors.get(type) ?? "",
+      },
+    });
+    return event;
+  }
+
+  /** An editor with the plugin taking the node copy out, and a paste handler registered after it
+   * that records how it sees the paste and claims it. */
+  async function pasteEnvironment() {
+    const { editor } = await baseTestEnvironment(
+      () => $getRoot().append($createParaNode("p").append($createTextNode("text"))),
+      <ClipboardPlugin pastesAsClipboardRead />,
+    );
+    const seen: {
+      isClipboardEvent: boolean;
+      isClipboardEventByName: boolean;
+      isInputEvent: boolean;
+      hasClipboardData: boolean;
+      target: EventTarget | null;
+      flavor: string | undefined;
+    }[] = [];
+    editor.registerCommand(
+      PASTE_COMMAND,
+      (pasted) => {
+        seen.push({
+          isClipboardEvent: pasted instanceof ClipboardEvent,
+          isClipboardEventByName: objectKlassEquals(pasted, ClipboardEvent),
+          isInputEvent: objectKlassEquals(pasted, InputEvent),
+          hasClipboardData: "clipboardData" in pasted,
+          target: pasted.target,
+          flavor: (pasted as ClipboardEvent).clipboardData?.getData("application/x-lexical-editor"),
+        });
+        pasted.preventDefault();
+        return true;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    );
+    return { editor, seen };
+  }
+
+  it("reaches the handlers after it as the browser's own event, but for the node copy", async () => {
+    const { editor, seen } = await pasteEnvironment();
+    const root = editor.getRootElement();
+    if (!root) throw new Error("editor has no root element");
+    const event = nativePaste();
+
+    await act(async () => {
+      root.dispatchEvent(event);
+    });
+
+    // Lexical's own paste checks a paste's class by name, other handlers with `instanceof`, and a
+    // paste into an input inside a decorator by its target.
+    expect(seen).toEqual([
+      {
+        isClipboardEvent: true,
+        isClipboardEventByName: true,
+        isInputEvent: false,
+        hasClipboardData: true,
+        target: root,
+        flavor: "",
+      },
+    ]);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("is not taken at all in a read-only editor, which takes no paste", async () => {
+    const { editor, seen } = await pasteEnvironment();
+    act(() => editor.setEditable(false));
+    const root = editor.getRootElement();
+    if (!root) throw new Error("editor has no root element");
+    const event = nativePaste();
+
+    await act(async () => {
+      root.dispatchEvent(event);
+    });
+
+    expect(seen).toEqual([]);
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe("text");
   });
 });
 

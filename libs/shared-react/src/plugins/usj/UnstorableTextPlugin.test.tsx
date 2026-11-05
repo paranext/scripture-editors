@@ -27,7 +27,12 @@ import {
   TextNode,
 } from "lexical";
 import { useEffect, useState } from "react";
-import { $createMilestoneNode, $createParaNode, $isImmutableUnmatchedNode } from "shared";
+import {
+  $createImmutableChapterNode,
+  $createMilestoneNode,
+  $createParaNode,
+  $isImmutableUnmatchedNode,
+} from "shared";
 
 interface Flavors {
   [type: string]: string | undefined;
@@ -419,6 +424,52 @@ describe("UnstorableTextPlugin — paste", () => {
       });
     },
   );
+
+  describe("a node copy holding only a chapter line", () => {
+    // Lexical scrolls a paste's selection into view, measuring a DOM range jsdom cannot measure.
+    const originalRangeRect = Range.prototype.getBoundingClientRect;
+    beforeAll(() => {
+      Range.prototype.getBoundingClientRect = () => new DOMRect();
+    });
+    afterAll(() => {
+      Range.prototype.getBoundingClientRect = originalRangeRect;
+    });
+
+    // Every flavor of a copy holds the same text, so its html or plain text would put in only the
+    // chapter number: the document has its own chapter line.
+    it.each<StructureProtectionMode>(["off", "guarded", "protected"])(
+      "changes nothing over a selection, not falling back to its html or plain text (%s)",
+      async (structureProtectionMode) => {
+        const { editor, onRemoved } = await environment("keep this", {
+          anchor: 0,
+          focus: 4,
+          structureProtectionMode,
+          withStructureKeyboard: "filtered",
+        });
+        let chapterLine: unknown;
+        editor.update(
+          () => {
+            chapterLine = $createImmutableChapterNode("2").exportJSON();
+          },
+          { discrete: true },
+        );
+        const event = pasteEvent({
+          "application/x-lexical-editor": lexicalFlavor([chapterLine]),
+          "text/html": "<span>2</span>",
+          "text/plain": "2",
+        });
+
+        const isClaimed = await dispatch(editor, () =>
+          editor.dispatchCommand(PASTE_COMMAND, event),
+        );
+
+        expect(isClaimed).toBe(true);
+        expect(event.preventDefault).toHaveBeenCalled();
+        expect(readParas(editor)).toEqual(["keep this"]);
+        expect(onRemoved).not.toHaveBeenCalled();
+      },
+    );
+  });
 
   it("pastes a node copy from another editor's namespace as its plain text, filtered", async () => {
     const { editor, onRemoved } = await environment("x");
