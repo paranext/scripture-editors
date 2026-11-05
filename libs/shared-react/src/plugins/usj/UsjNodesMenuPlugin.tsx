@@ -197,7 +197,7 @@ function toHarnessOptionItem(
  * The IN-EDITOR marker menu for editable marker modes (standard view): a document-first
  * `\`/Enter menu mounted by `UsjNodesMenuPlugin` in place of the legacy typeahead when
  * `editableHarness` is supplied. This is the real marker menu for every host that does not
- * bring its own UI — the repo's demos. A host that does
+ * bring its own UI, e.g. `demos/platform` with "Has external UI" unchecked. A host that does
  * (`EditorOptions.hasExternalUI`, e.g. Platform.Bible, which renders marker menus through its
  * own overlay service) never mounts the plugin, so none of this runs there.
  *

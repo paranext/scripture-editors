@@ -4,7 +4,7 @@ All notable changes to `@eten-tech-foundation/scripture-utilities` are recorded 
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Entries under **Unreleased** describe changes that are committed but not yet published. Move them
+Entries under **Unreleased** describe changes that are committed but not yet released. Move them
 under a version heading when that version of this package is released. (The `Publish` workflow
 tags the release but does not edit this file; see the README's "Releasing" section.)
 
