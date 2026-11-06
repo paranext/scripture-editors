@@ -12,7 +12,8 @@
  *
  * This module holds the state and the chain primitives only. It imports nothing but Lexical and
  * the annotation state, so a node class can read its own chain without an import cycle; the
- * transform that keeps the chain normalized is in `displayPieces.utils.ts`.
+ * transform that keeps the chain normalized is `$normalizeCarrierPieces` in
+ * `displayAnnotations.utils.ts`.
  *
  * Read-only helpers here are safe inside `editor.update()` or either read form unless their doc
  * says Mutating.
@@ -228,12 +229,7 @@ export function $deferToPieceHead(node: LexicalNode): boolean {
  * pieces before it, plus `offset`. `offset` itself for a carrier in one piece.
  */
 export function $logicalOffset(node: LexicalNode, offset: number): number {
-  let start = 0;
-  for (const piece of $pieces(node)) {
-    if (piece.is(node)) break;
-    start += piece.getTextContentSize();
-  }
-  return start + offset;
+  return $pieceStart(node) + offset;
 }
 
 /**
@@ -305,11 +301,6 @@ export function $textHolds(node: LexicalNode): DisplayAnnotation[] {
   return held ? remapAnnotations(held, node.getTextContent(), $caretOffsetIn(node)) : [];
 }
 
-/** The holds stored on text piece `piece`, measured against its current text. */
-function $pieceHolds(piece: LexicalNode): DisplayAnnotation[] {
-  return $textHolds(piece);
-}
-
 /** Move the selection's text points on `from` to `to`, `shift` bytes further in. */
 function $movePoints(from: LexicalNode, to: LexicalNode, shift: number): void {
   const selection = $getSelection();
@@ -367,7 +358,7 @@ export function $joinPieces<T extends LexicalNode>(pieces: readonly T[]): T {
   let text = "";
   for (const piece of pieces) {
     const offset = text.length;
-    for (const held of $pieceHolds(piece))
+    for (const held of $textHolds(piece))
       annotations.push({ ...held, start: held.start + offset, end: held.end + offset });
     text += piece.getTextContent();
   }
@@ -527,7 +518,7 @@ export function $restatePastedPieces(nodes: LexicalNode[]): void {
   }
 }
 
-/** The node states a cut or a hold puts on a text: everything a text no annotation holds lacks. */
+/** The node states a cut or a hold puts on a node: everything a node no annotation holds lacks. */
 const PIECE_STATES = [
   displayPieceContinuationState,
   displayPieceChainState,
@@ -536,7 +527,17 @@ const PIECE_STATES = [
 ] as const;
 
 /** The keys of {@link PIECE_STATES}. */
-const PIECE_STATE_KEYS: ReadonlySet<string> = new Set(PIECE_STATES.map(({ key }) => key));
+export const PIECE_STATE_KEYS: ReadonlySet<string> = new Set(PIECE_STATES.map(({ key }) => key));
+
+/** Whether `node` carries any of {@link PIECE_STATES}, a text or a decorator alike. */
+export function $carriesPieceState(node: LexicalNode): boolean {
+  return (
+    $getState(node, displayPieceContinuationState) !== undefined ||
+    $getState(node, displayPieceChainState) !== undefined ||
+    $getState(node, displayPieceTokenTextState) !== undefined ||
+    $getState(node, displayAnnotationsState) !== undefined
+  );
+}
 
 /**
  * Make the piece and hold states ({@link PIECE_STATES}) that `node`, built from a clipboard's JSON
@@ -814,13 +815,7 @@ function joinSerializedChain(pieces: readonly SerializedLexicalNode[]): Serializ
     text += serializedText(piece) ?? "";
   }
   const state: { [key: string]: unknown } = Object.fromEntries(
-    Object.entries(head[NODE_STATE_KEY] ?? {}).filter(
-      ([key]) =>
-        key !== displayPieceContinuationState.key &&
-        key !== displayPieceChainState.key &&
-        key !== displayPieceTokenTextState.key &&
-        key !== displayAnnotationsState.key,
-    ),
+    Object.entries(head[NODE_STATE_KEY] ?? {}).filter(([key]) => !PIECE_STATE_KEYS.has(key)),
   );
   const joined = coalesceAnnotations(annotations);
   if (joined.length > 0) state[displayAnnotationsState.key] = { basis: text, annotations: joined };

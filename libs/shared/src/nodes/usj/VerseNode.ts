@@ -113,9 +113,7 @@ export class VerseNode extends TextNode {
   setMarker(marker: VerseMarker): this {
     if (this.__marker === marker) return this;
 
-    const self = this.getWritable();
-    self.__marker = marker;
-    return self;
+    return this.$writeEveryPiece((piece) => (piece.__marker = marker));
   }
 
   getMarker(): VerseMarker {

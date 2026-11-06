@@ -539,12 +539,13 @@ function createIndex(editor: LexicalEditor): Entry {
     const text = $paintText(node);
     let plan = leafPaint(text.length, byAnnotation);
     if (!plan.whole && !$isDecoratorNode(node)) {
-      editor._onError(
-        new Error(
-          `annotation painting: text leaf ${node.getType()} ${JSON.stringify(text)} is painted in part ` +
-            `(${JSON.stringify(plan.segments)}); its carrier should have been cut where the hold ends`,
-        ),
+      const error = new Error(
+        `annotation painting: text leaf ${node.getType()} ${JSON.stringify(text)} is painted in part ` +
+          `(${JSON.stringify(plan.segments)}); its carrier should have been cut where the hold ends`,
       );
+      // Thrown from this update listener, the error would leave the rest of the commit unpainted
+      // and skip its later listeners (`reportDestroyed` defers its errors for the same reason).
+      queueMicrotask(() => editor._onError(error));
       plan = { whole: true };
     }
     if (holds) wire(element);
@@ -613,10 +614,13 @@ function createIndex(editor: LexicalEditor): Entry {
       if (leaf && (intervals.some(([start, end]) => end > start) || $paintSize(leaf) === 0))
         add(key);
     }
-    const outermost = painting.filter(
-      ({ element }) =>
-        !painting.some((other) => other.element !== element && other.element.contains(element)),
-    );
+    const elements = new Set(painting.map(({ element }) => element));
+    const isInsideAnother = (element: HTMLElement) => {
+      for (let parent = element.parentElement; parent; parent = parent.parentElement)
+        if (elements.has(parent)) return true;
+      return false;
+    };
+    const outermost = painting.filter(({ element }) => !isInsideAnother(element));
     if (outermost.length === 0) return undefined;
     outermost.sort((a, b) =>
       a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
@@ -1057,6 +1061,10 @@ function createIndex(editor: LexicalEditor): Entry {
         ),
     ),
   );
+
+  // The mutation listeners' initialization above found every holder already in the document; none
+  // of them began holding in the commit `reportDestroyed` next reads.
+  gainedHolder = new Set();
 
   return {
     index: {

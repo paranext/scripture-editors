@@ -44,7 +44,7 @@ export type SerializedImmutableChapterNode = Spread<
   SerializedLexicalNode
 >;
 
-export class ImmutableChapterNode extends DecoratorNode<string> {
+export class ImmutableChapterNode extends DecoratorNode<null> {
   __marker: ChapterMarker;
   __number: string;
   __showMarker?: boolean;
