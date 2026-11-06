@@ -3450,3 +3450,129 @@ describe("options.copyLimit", () => {
     expect(selectedTextLength(lexical)).toBe(verseTextLength);
   });
 });
+
+describe("pasting reads the clipboard", () => {
+  // jsdom has no async clipboard API. A read that never settles is enough: these tests assert only
+  // that a paste reached it, not what that read would paste.
+  beforeEach(() => {
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { read: vi.fn(() => new Promise(() => undefined)) },
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function editorRoot(): HTMLElement {
+    const root = document.querySelector<HTMLElement>(".editor-input");
+    if (!root) throw new Error("Editor root not found");
+    return root;
+  }
+
+  /** Mounts the editor with `options` and a caret in the verse's text, where a paste lands. */
+  async function createEditorWithCaret(
+    options: EditorOptions,
+  ): Promise<RefObject<EditorRef | null>> {
+    const ref = await createEditorRefForTesting({ options });
+    await act(async () =>
+      getEditorRef(ref).setSelection({
+        start: { jsonPath: versePath, offset: 3 },
+        end: { jsonPath: versePath, offset: 3 },
+      }),
+    );
+    return ref;
+  }
+
+  describe.each([
+    ["a hidden-marker view", undefined],
+    ["Standard view", getViewOptions(STANDARD_VIEW_MODE)],
+  ])("in %s", (_name, view) => {
+    it("Ctrl/Cmd+V", async () => {
+      await createEditorWithCaret(view ? { view } : {});
+      const root = editorRoot();
+      await act(async () => root.focus());
+      const event = new KeyboardEvent("keydown", {
+        key: "v",
+        ctrlKey: !IS_APPLE,
+        metaKey: IS_APPLE,
+        bubbles: true,
+        cancelable: true,
+      });
+
+      await act(async () => root.dispatchEvent(event));
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(vi.mocked(navigator.clipboard.read)).toHaveBeenCalledTimes(1);
+    });
+
+    it("the context menu's Paste", async () => {
+      await createEditorWithCaret(view ? { view } : {});
+      const target = editorRoot().firstElementChild;
+      if (!target) throw new Error("expected the editor to have rendered content to right-click");
+      await act(async () => {
+        target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      });
+      const paste = Array.from(
+        document.querySelectorAll<HTMLLIElement>(".typeahead-popover li"),
+      ).find((li) => li.querySelector(".text")?.textContent === "Paste");
+      if (!paste) throw new Error('expected a "Paste" menu item');
+
+      await act(async () => paste.click());
+
+      expect(vi.mocked(navigator.clipboard.read)).toHaveBeenCalledTimes(1);
+    });
+
+    it("EditorRef.paste()", async () => {
+      const ref = await createEditorWithCaret(view ? { view } : {});
+
+      await act(async () => getEditorRef(ref).paste());
+
+      expect(vi.mocked(navigator.clipboard.read)).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("logs each paste's failed clipboard read to the editor's logger", async () => {
+    const denied = () => Promise.reject(new Error("clipboard read denied"));
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { read: denied, readText: denied } });
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    const ref = await createEditorRefForTesting({ logger });
+    const pressPaste = async (shiftKey: boolean) => {
+      const event = new KeyboardEvent("keydown", {
+        key: "v",
+        ctrlKey: !IS_APPLE,
+        metaKey: IS_APPLE,
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      await act(async () => editorRoot().dispatchEvent(event));
+    };
+    const chooseFromContextMenu = async (title: string) => {
+      const target = editorRoot().firstElementChild;
+      if (!target) throw new Error("expected the editor to have rendered content to right-click");
+      await act(async () => {
+        target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      });
+      const item = Array.from(
+        document.querySelectorAll<HTMLLIElement>(".typeahead-popover li"),
+      ).find((li) => li.querySelector(".text")?.textContent === title);
+      if (!item) throw new Error(`expected a "${title}" menu item`);
+      await act(async () => item.click());
+    };
+
+    await act(async () => getEditorRef(ref).paste());
+    await act(async () => getEditorRef(ref).pastePlainText());
+    await pressPaste(false);
+    await pressPaste(true);
+    await chooseFromContextMenu("Paste");
+    await chooseFromContextMenu("Paste as Plain Text");
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+
+    const clipboardWarnings = logger.warn.mock.calls.filter(([message]) =>
+      String(message).includes("clipboard read denied"),
+    );
+    expect(clipboardWarnings).toHaveLength(6);
+  });
+});

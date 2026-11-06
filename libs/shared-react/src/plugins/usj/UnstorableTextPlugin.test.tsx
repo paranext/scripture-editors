@@ -1,6 +1,10 @@
 // Should only be used on nodes that are initialized in the test environment.
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
+import {
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+  MARKER_VIEW_CLIPBOARD_NAMESPACE,
+} from "./clipboard.utils";
 import { baseTestEnvironment, updateSelection } from "./react-test.utils";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
@@ -23,7 +27,12 @@ import {
   TextNode,
 } from "lexical";
 import { useEffect, useState } from "react";
-import { $createParaNode, $isImmutableUnmatchedNode } from "shared";
+import {
+  $createImmutableChapterNode,
+  $createMilestoneNode,
+  $createParaNode,
+  $isImmutableUnmatchedNode,
+} from "shared";
 
 interface Flavors {
   [type: string]: string | undefined;
@@ -55,8 +64,9 @@ function dropEvent(flavors: Flavors): DragEvent {
   return { dataTransfer: transfer(flavors), preventDefault: vi.fn() } as unknown as DragEvent;
 }
 
-/** A node copy as Lexical writes it to the clipboard. */
-function lexicalFlavor(nodes: unknown[], namespace = "TestEditor"): string {
+/** A node copy as a hidden-marker view writes it to the clipboard; another `namespace` for another
+ * editor's (the test editor's own, `"TestEditor"`, stands for Standard view's). */
+function lexicalFlavor(nodes: unknown[], namespace = HIDDEN_VIEW_CLIPBOARD_NAMESPACE): string {
   return JSON.stringify({ namespace, nodes });
 }
 
@@ -100,11 +110,13 @@ async function environment(
     focus = anchor,
     structureProtectionMode = "off",
     withStructureKeyboard,
+    removesMarkerTokens = true,
   }: {
     anchor?: number;
     focus?: number;
     structureProtectionMode?: StructureProtectionMode;
     withStructureKeyboard?: "filtered" | "unfiltered";
+    removesMarkerTokens?: boolean;
   } = {},
 ) {
   const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
@@ -127,6 +139,9 @@ async function environment(
         <StructureKeyboardPlugin
           structureProtectionMode={structureProtectionMode}
           $filterPastedNodes={withStructureKeyboard === "filtered" ? $filterPastedNodes : undefined}
+          nodeCopyNamespace={HIDDEN_VIEW_CLIPBOARD_NAMESPACE}
+          removesMarkerTokens={removesMarkerTokens}
+          logger={logger}
         />
       )}
       <UnstorableTextPlugin
@@ -164,6 +179,35 @@ describe("UnstorableTextPlugin — paste", () => {
     expect(onRemoved).toHaveBeenCalledTimes(1);
     expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["//"] });
     expect(logger.info).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a paste into an input inside a decorator node to that input", async () => {
+    const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+    let textNode: TextNode;
+    let milestone: LexicalNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        textNode = $createTextNode("see ");
+        milestone = $createMilestoneNode("ts");
+        $getRoot().append($createParaNode("p").append(textNode, milestone));
+      },
+      <UnstorableTextPlugin onRemoved={onRemoved} />,
+    );
+    updateSelection(editor, textNode!, 4);
+    // An input a decorator renders, holding the focus as it does while the user types in it.
+    const input = document.createElement("input");
+    editor.getElementByKey(milestone!.getKey())!.append(input);
+    input.focus();
+    const event = Object.assign(pasteEvent({ "text/plain": "https://example.org" }), {
+      target: input,
+    });
+
+    const isClaimed = await dispatch(editor, () => editor.dispatchCommand(PASTE_COMMAND, event));
+
+    expect(isClaimed).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(readParas(editor)).toEqual(["see "]);
+    expect(onRemoved).not.toHaveBeenCalled();
   });
 
   it("drops a pasted slash that would touch the document's slash", async () => {
@@ -215,6 +259,216 @@ describe("UnstorableTextPlugin — paste", () => {
       .read(() => $getRoot().getAllTextNodes().some($isImmutableUnmatchedNode));
     expect(hasUnmatched).toBe(true);
     expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["\\"] });
+  });
+
+  it("pastes a node copy tagged with the editor's own namespace by its html, not its nodes", async () => {
+    const { editor, onRemoved } = await environment("x");
+    const event = pasteEvent({
+      "application/x-lexical-editor": lexicalFlavor(
+        [{ type: "unmatched", version: 2, marker: "*" }],
+        "TestEditor",
+      ),
+      "text/html": "<span>ab</span>",
+      "text/plain": "ab",
+    });
+
+    const isClaimed = await dispatch(editor, () => editor.dispatchCommand(PASTE_COMMAND, event));
+
+    expect(isClaimed).toBe(true);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(readParas(editor)).toEqual(["xab"]);
+    const hasUnmatched = editor
+      .getEditorState()
+      .read(() => $getRoot().getAllTextNodes().some($isImmutableUnmatchedNode));
+    expect(hasUnmatched).toBe(false);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  describe.each(["off", "protected"] as StructureProtectionMode[])(
+    "a marker-showing view's copy goes in without its marker tokens (%s)",
+    (structureProtectionMode) => {
+      const markerViewCopy = (html: string, plain: string) => ({
+        "application/x-lexical-editor": lexicalFlavor([], MARKER_VIEW_CLIPBOARD_NAMESPACE),
+        "text/html": html,
+        "text/plain": plain,
+      });
+      const options = { structureProtectionMode, withStructureKeyboard: "filtered" } as const;
+
+      it("from its html", async () => {
+        const { editor, onRemoved } = await environment("x", options);
+        const event = pasteEvent(markerViewCopy("<span>1 \\ft TR\\ft*</span>", "1 \\ft TR\\ft*"));
+
+        await dispatch(editor, () => editor.dispatchCommand(PASTE_COMMAND, event));
+
+        expect(readParas(editor)).toEqual(["x1 TR"]);
+        expect(onRemoved).not.toHaveBeenCalled();
+      });
+
+      it("from its plain text, when it has no html", async () => {
+        const { editor, onRemoved } = await environment("x", options);
+        const event = pasteEvent(markerViewCopy("", "1 \\ft TR\\ft*"));
+
+        await dispatch(editor, () => editor.dispatchCommand(PASTE_COMMAND, event));
+
+        expect(readParas(editor)).toEqual(["x1 TR"]);
+        expect(onRemoved).not.toHaveBeenCalled();
+      });
+
+      it("from a drop", async () => {
+        const { editor, onRemoved } = await environment("x", options);
+        const flavors = markerViewCopy("<span>1 \\ft TR\\ft*</span>", "1 \\ft TR\\ft*");
+
+        await dispatch(editor, () =>
+          structureProtectionMode === "protected"
+            ? editor.dispatchCommand(DROP_COMMAND, dropEvent(flavors))
+            : editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, dropInputEvent(flavors)),
+        );
+
+        expect(readParas(editor)).toEqual(["x1 TR"]);
+        expect(onRemoved).not.toHaveBeenCalled();
+      });
+
+      it("and changes nothing when it holds nothing else", async () => {
+        const { editor, onRemoved } = await environment("abc", { ...options, anchor: 1, focus: 2 });
+        const event = pasteEvent(markerViewCopy("<span>\\ft </span>", "\\ft "));
+
+        const isClaimed = await dispatch(editor, () =>
+          editor.dispatchCommand(PASTE_COMMAND, event),
+        );
+
+        expect(isClaimed).toBe(true);
+        expect(event.preventDefault).toHaveBeenCalled();
+        expect(readParas(editor)).toEqual(["abc"]);
+        expect(onRemoved).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  it("leaves another editor's node copy to the `\\` filter", async () => {
+    const { editor, onRemoved } = await environment("x");
+    const event = pasteEvent({
+      "application/x-lexical-editor": lexicalFlavor([], "TestEditor"),
+      "text/plain": "\\v 9 y",
+    });
+
+    await dispatch(editor, () => editor.dispatchCommand(PASTE_COMMAND, event));
+
+    expect(readParas(editor)).toEqual(["xv 9 y"]);
+    expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["\\"] });
+  });
+
+  it("protected structure leaves a marker-showing view's html alone unless asked to remove its tokens", async () => {
+    const { editor } = await environment("x", {
+      structureProtectionMode: "protected",
+      withStructureKeyboard: "unfiltered",
+      removesMarkerTokens: false,
+    });
+    const event = pasteEvent({
+      "application/x-lexical-editor": lexicalFlavor([], MARKER_VIEW_CLIPBOARD_NAMESPACE),
+      "text/html": "<span>\\ft y</span>",
+      "text/plain": "\\ft y",
+    });
+
+    await dispatch(editor, () => editor.dispatchCommand(PASTE_COMMAND, event));
+
+    // The marker's name stays. Its `\\` goes all the same: the sanitizer inserts through
+    // `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, which this plugin filters.
+    expect(readParas(editor)).toEqual(["xft y"]);
+  });
+
+  describe.each(["off", "protected"] as StructureProtectionMode[])(
+    "a node copy that makes no nodes goes in by its html or plain text (%s)",
+    (structureProtectionMode) => {
+      it.each([
+        ["an unregistered type", [serializedText("a"), { type: "no-such-node", version: 1 }]],
+        ["a null entry", [serializedText("a"), null]],
+        ["no nodes", []],
+      ])("%s", async (_name, nodes) => {
+        const { editor, logger } = await environment("x", {
+          structureProtectionMode,
+          withStructureKeyboard: "filtered",
+        });
+        const event = pasteEvent({
+          "application/x-lexical-editor": lexicalFlavor(nodes),
+          "text/html": "<span>html</span>",
+          "text/plain": "plain",
+        });
+
+        const isClaimed = await dispatch(editor, () =>
+          editor.dispatchCommand(PASTE_COMMAND, event),
+        );
+
+        expect(isClaimed).toBe(true);
+        expect(event.preventDefault).toHaveBeenCalled();
+        expect(readParas(editor)).toEqual(["xhtml"]);
+        if (nodes.length > 0) expect(logger.warn).toHaveBeenCalled();
+      });
+
+      it("with plain text alone", async () => {
+        const { editor } = await environment("x", {
+          structureProtectionMode,
+          withStructureKeyboard: "filtered",
+        });
+
+        await dispatch(editor, () =>
+          editor.dispatchCommand(
+            PASTE_COMMAND,
+            pasteEvent({
+              "application/x-lexical-editor": lexicalFlavor([{ type: "no-such-node", version: 1 }]),
+              "text/plain": "plain",
+            }),
+          ),
+        );
+
+        expect(readParas(editor)).toEqual(["xplain"]);
+      });
+    },
+  );
+
+  describe("a node copy holding only a chapter line", () => {
+    // Lexical scrolls a paste's selection into view, measuring a DOM range jsdom cannot measure.
+    const originalRangeRect = Range.prototype.getBoundingClientRect;
+    beforeAll(() => {
+      Range.prototype.getBoundingClientRect = () => new DOMRect();
+    });
+    afterAll(() => {
+      Range.prototype.getBoundingClientRect = originalRangeRect;
+    });
+
+    // Every flavor of a copy holds the same text, so its html or plain text would put in only the
+    // chapter number: the document has its own chapter line.
+    it.each<StructureProtectionMode>(["off", "guarded", "protected"])(
+      "changes nothing over a selection, not falling back to its html or plain text (%s)",
+      async (structureProtectionMode) => {
+        const { editor, onRemoved } = await environment("keep this", {
+          anchor: 0,
+          focus: 4,
+          structureProtectionMode,
+          withStructureKeyboard: "filtered",
+        });
+        let chapterLine: unknown;
+        editor.update(
+          () => {
+            chapterLine = $createImmutableChapterNode("2").exportJSON();
+          },
+          { discrete: true },
+        );
+        const event = pasteEvent({
+          "application/x-lexical-editor": lexicalFlavor([chapterLine]),
+          "text/html": "<span>2</span>",
+          "text/plain": "2",
+        });
+
+        const isClaimed = await dispatch(editor, () =>
+          editor.dispatchCommand(PASTE_COMMAND, event),
+        );
+
+        expect(isClaimed).toBe(true);
+        expect(event.preventDefault).toHaveBeenCalled();
+        expect(readParas(editor)).toEqual(["keep this"]);
+        expect(onRemoved).not.toHaveBeenCalled();
+      },
+    );
   });
 
   it("pastes a node copy from another editor's namespace as its plain text, filtered", async () => {
@@ -273,7 +527,8 @@ describe("UnstorableTextPlugin — paste", () => {
 
   it.each([
     ["a blank line", "a\n\nb", "[a b]"],
-    ["Windows line breaks and a trailing one", "line one\r\nline two\n", "[line one line two]"],
+    ["Windows line breaks and a trailing one", "line one\r\nline two\n", "[line one line two ]"],
+    ["a leading one beside a space", "\n line", "[ line]"],
     ["a tab alongside a line break", "a\tb\nc", "[a b c]"],
   ])(
     "joins the lines of a plain-text paste with one space when structure is protected: %s",
@@ -352,6 +607,35 @@ describe("UnstorableTextPlugin — paste", () => {
     );
 
     expect(readParas(editor)).toEqual(["xa v 9 b"]);
+    expect(onRemoved).toHaveBeenCalledTimes(1);
+    expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["\\"] });
+  });
+
+  it("pastes a protected node copy from it rather than its html, through the filter", async () => {
+    const { editor, onRemoved } = await environment("x", {
+      structureProtectionMode: "protected",
+      withStructureKeyboard: "filtered",
+    });
+
+    await dispatch(editor, () =>
+      editor.dispatchCommand(
+        PASTE_COMMAND,
+        pasteEvent({
+          "application/x-lexical-editor": lexicalFlavor([
+            serializedText("a\\b "),
+            { type: "unmatched", version: 2, marker: "*" },
+          ]),
+          "text/html": "<p>html</p>",
+          "text/plain": "a\\b \\*",
+        }),
+      ),
+    );
+
+    expect(readParas(editor)).toEqual(["xab \\*"]);
+    const hasUnmatched = editor
+      .getEditorState()
+      .read(() => $getRoot().getAllTextNodes().some($isImmutableUnmatchedNode));
+    expect(hasUnmatched).toBe(true);
     expect(onRemoved).toHaveBeenCalledTimes(1);
     expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["\\"] });
   });

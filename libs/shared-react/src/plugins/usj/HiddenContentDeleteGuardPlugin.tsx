@@ -16,6 +16,7 @@ import {
   DeleteDirection,
   HiddenRun,
 } from "./hiddenContentDelete.utils";
+import { LEXICAL_CLIPBOARD_TYPE, withoutMarkerTokens } from "./clipboard.utils";
 import { hasCommandCharacter } from "./CommandMenuPlugin";
 import { $confineRangeToProtectedNote } from "./NoteShellCaretGuardPlugin";
 import { $selectionReachesIntoOpaqueBlock, isEditingKey } from "./OpaqueBlockGuardPlugin";
@@ -663,7 +664,9 @@ function preventAndClaim(event: Event | null): true {
 /**
  * Whether a paste would insert nothing, leaving nothing to ask about: a clipboard of files alone, or
  * plain text alone that is nothing but text the view cannot store (`\` and `//`), which
- * `UnstorableTextPlugin` removes, inserting nothing, after this plugin has run. A node copy or html
+ * `UnstorableTextPlugin` removes, inserting nothing, after this plugin has run; or a
+ * marker-showing view's copy of nothing but marker tokens ({@link withoutMarkerTokens}), which that
+ * plugin and protected structure's sanitizer claim, changing nothing. Any other node copy or html
  * goes in as nodes, so it is asked about.
  */
 function pasteInsertsNothing(event: PasteCommandType): boolean {
@@ -671,7 +674,8 @@ function pasteInsertsNothing(event: PasteCommandType): boolean {
   const data = event.clipboardData;
   if (!data) return false;
   if (Array.from(data.types).every((type) => type === "Files")) return true;
-  if (data.getData("text/html") || data.getData("application/x-lexical-editor")) return false;
+  if (!withoutMarkerTokens(data)) return true;
+  if (data.getData("text/html") || data.getData(LEXICAL_CLIPBOARD_TYPE)) return false;
   const text = data.getData("text/plain");
   return text !== "" && removeUnstorableText(text).text === "";
 }

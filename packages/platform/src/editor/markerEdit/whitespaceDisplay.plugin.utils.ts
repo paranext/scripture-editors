@@ -13,9 +13,8 @@
  */
 
 import { $getLexicalContent, copyToClipboard, LexicalClipboardData } from "@lexical/clipboard";
-import { mergeRegister } from "@lexical/utils";
+import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
-  $getCharacterOffsets,
   $getEditor,
   $getSelection,
   $getState,
@@ -31,6 +30,7 @@ import {
   LexicalEditor,
   LexicalNode,
   PasteCommandType,
+  PointType,
   RangeSelection,
   TextNode,
 } from "lexical";
@@ -42,6 +42,7 @@ import {
   $isLoneNbspContent,
   $isMarkerNode,
   $isNoteNode,
+  $isSomeChapterNode,
   $isTypedMarkNode,
   $isUnknownNode,
   ATTRIBUTE_NBSP_SPELLING,
@@ -60,6 +61,7 @@ import {
   $opaqueBlockAncestor,
   $selectionReachesIntoOpaqueBlock,
   $shouldBlockSelectionReplacement,
+  MARKER_TEXT_HTML_ATTRIBUTE,
 } from "shared-react";
 import {
   isCopyFromOutsideEditor,
@@ -799,9 +801,12 @@ function $insertPastedTextIntoAttributeContext(
  * a fixed sanctioned MIME allow-list (`text/plain`, `text/html`, and a short list of others) —
  * the private `application/x-lexical-editor` flavor Lexical writes on copy is not one of them, so
  * the `DataTransfer` `pasteSelection` (`clipboard.utils.ts`) rebuilds from `navigator.clipboard.
- * read()` can never contain it. A real Ctrl+V — even a same-editor paste of the editor's own
- * copy — therefore always rides `text/html`/`text/plain` like any external source. A BLANKET
- * NBSP→`~` mapping would corrupt a same-editor paste of its own copy: every display-NBSP (the
+ * read()` can never contain it. Standard view's Ctrl+V and context-menu Paste read the clipboard
+ * that way, so they — even a same-editor paste of the editor's own copy — ride
+ * `text/html`/`text/plain` like any external source. A paste the browser runs itself, such as a
+ * host menu's own Paste, does carry the node copy, but in every view that shows markers
+ * `ClipboardPlugin`'s `pastesAsClipboardRead` (set by `Editor`) takes it away before this handler
+ * runs, so that paste rides the same flavors too. A BLANKET NBSP→`~` mapping would corrupt a same-editor paste of its own copy: every display-NBSP (the
  * separator after `\f`/`\fr`/`\ft`) would become a literal `~`, turning recognized markers into
  * unknown-marker soup, and a browser-hop `\nd …\nd*` paste would come back with an unmatched
  * closer. `normalizePastedNbsp` above uses a positional rule instead, so only genuine data-NBSPs
@@ -815,8 +820,9 @@ function $insertPastedTextIntoAttributeContext(
  * otherwise split it — the split has to happen here. A single-line payload is one `insertText`.
  *
  * Declines (returns `false`, lets Lexical's own paste handling run) when: the payload carries a
- * same-namespace Lexical flavor (the sync `ClipboardEvent` path — a null-payload dispatch or a
- * live native paste event that still has it — keeps the exact node-tree fast path); a
+ * same-namespace Lexical flavor, which keeps the exact node-tree fast path (no paste in the mounted
+ * `Editor` still carries it here, as `pastesAsClipboardRead` removes it first; a caller that does
+ * not set that option can deliver one); a
  * structure-protected document's selection is one `StructureKeyboardPlugin` refuses to replace
  * ({@link $shouldBlockSelectionReplacement} — a range spanning a paragraph boundary, or one
  * containing a verse marker, the mutable `VerseNode`'s own caret included); or no text can be
@@ -854,9 +860,9 @@ function $insertPastedTextIntoAttributeContext(
  * and (see `attributeContextPasteFidelity.test.tsx`'s "root cause" describe) merges the run, the
  * closing glyph, and even the FOLLOWING paragraph's own sibling text into one plain node: the
  * attribute display and the closing marker both vanish, and the pasted bytes end up loose in body
- * content. The suspension covers: (1) a live native paste event that still carries a
- * same-namespace `application/x-lexical-editor` flavor, which unlike the
- * reconstructed-`DataTransfer` path can still reach a handler; (2) a
+ * content. The suspension covers: (1) a paste that still carries a same-namespace
+ * `application/x-lexical-editor` flavor, which only a caller without `pastesAsClipboardRead` can
+ * deliver; (2) a
  * multi-line plain-text payload, which the ordinary external-paste pipeline below would split into
  * real paragraphs via `INSERT_PARAGRAPH_COMMAND` — inside an attribute run that is exactly as
  * destructive as the rich-paste shape; (3) a marker-bearing payload (`\c 5`) landing wholly INSIDE
@@ -1020,6 +1026,11 @@ function $insertTransferForStandardView(
   return true;
 }
 
+/** Whether `selection` starts in the book (`\id`) line. */
+function $isInBookLine(selection: RangeSelection): boolean {
+  return !!$findMatchingParent(selection.anchor.getNode(), $isBookNode);
+}
+
 /**
  * Inserts an external paste's resolved text at `selection` the way {@link $handlePasteForStandardView}
  * does: `\c`/`\id` tokens dropped ({@link stripPastedChapterAndBookId}), NBSPs normalized
@@ -1056,8 +1067,9 @@ export function $insertPastedText(
   const lines = normalized.split("\n");
   // A protected document never gains a paragraph from a paste: each newline becomes a single space
   // and the payload goes in as one insertion, so the block structure the user sees is exactly the
-  // one they had. Every byte-level rule above still applied.
-  if (isStructureProtected) {
+  // one they had. Every byte-level rule above still applied. Nor does the book (`\id`) line, where
+  // the replay's paragraph breaks go nowhere and its lines would run together into one word.
+  if (isStructureProtected || $isInBookLine(selection)) {
     selection.insertText(lines.join(" "));
     return;
   }
@@ -1209,13 +1221,25 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
   if (nodes.length === 0) return "";
   const firstNode = nodes[0];
   const lastNode = nodes[nodes.length - 1];
-  const { anchor, focus } = selection;
-  const isBefore = anchor.isBefore(focus);
-  const [anchorOffset, focusOffset] = $getCharacterOffsets(selection);
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
   let text = "";
   let prevWasElement = true;
-  for (const node of nodes) {
+  for (const [index, node] of nodes.entries()) {
+    if (end.type === "element" && $startsAtOrAfterElementPoint(node, end)) continue;
+    // A leaf other than text, which is sliced below, contributes nothing from before the start.
+    if (
+      start.type === "element" &&
+      !$isElementNode(node) &&
+      !$isTextNode(node) &&
+      $liesBeforeElementPoint(node, start)
+    )
+      continue;
     if ($isElementNode(node) && !node.isInline()) {
+      // For a range with an end on the root, `getNodes` can list a block after its own content,
+      // whose line has started already.
+      if (index > 0 && node.isParentOf(nodes[index - 1])) continue;
       if (!prevWasElement && $startsBlockLine(node)) text += "\n";
       prevWasElement = !node.isEmpty();
       continue;
@@ -1226,20 +1250,9 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
         text += (node === firstNode ? "" : " ") + $noteCallerText(node);
     } else if ($isTextNode(node)) {
       let nodeText = node.getTextContent();
-      if (node === firstNode) {
-        if (node === lastNode) {
-          if (
-            anchor.type !== "element" ||
-            focus.type !== "element" ||
-            focus.offset === anchor.offset
-          )
-            nodeText =
-              anchorOffset < focusOffset
-                ? nodeText.slice(anchorOffset, focusOffset)
-                : nodeText.slice(focusOffset, anchorOffset);
-        } else nodeText = isBefore ? nodeText.slice(anchorOffset) : nodeText.slice(focusOffset);
-      } else if (node === lastNode) {
-        nodeText = isBefore ? nodeText.slice(0, focusOffset) : nodeText.slice(0, anchorOffset);
+      if (node === firstNode || node === lastNode) {
+        const from = $offsetInText(node, start);
+        nodeText = nodeText.slice(from, Math.max(from, $offsetInText(node, end)));
       }
       text += $isNoteInternalDisplaySeparator(node)
         ? ""
@@ -1252,6 +1265,58 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
     }
   }
   return respellNbspToUsfm(text, nbspSpelling);
+}
+
+/**
+ * Where `point` falls in text node `node`, as an offset into its text: the point's own offset when
+ * it is a text point on `node`, otherwise 0 when it lies before `node` and the text's length when it
+ * lies after. An element point is placed by the child it stands before, where Lexical's
+ * `$getCharacterOffsets` answers 0 for any element point short of its element's end — so a range
+ * ending on the root between two paragraphs would read as taking none of the last one's text.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+function $offsetInText(node: TextNode, point: PointType): number {
+  const length = node.getTextContentSize();
+  if (point.type === "text") {
+    if (point.key === node.getKey()) return point.offset;
+    return point.getNode().isBefore(node) ? 0 : length;
+  }
+  return $liesBeforeElementPoint(node, point) ? length : 0;
+}
+
+/** Whether leaf `node` lies wholly before element point `point`. */
+function $liesBeforeElementPoint(node: LexicalNode, point: PointType): boolean {
+  const element = point.getNode();
+  if (!$isElementNode(element)) return false;
+  const after = element.getChildAtIndex(point.offset);
+  if (after === null) return element.isParentOf(node) || node.isBefore(element);
+  return (
+    after !== node && !($isElementNode(after) && after.isParentOf(node)) && node.isBefore(after)
+  );
+}
+
+/**
+ * Whether `node` starts at or after element point `point`. `RangeSelection.getNodes` reaches past
+ * an end on the root between two paragraphs into the next one, whose block and first child are no
+ * part of the range.
+ */
+function $startsAtOrAfterElementPoint(node: LexicalNode, point: PointType): boolean {
+  const element = point.getNode();
+  if (!$isElementNode(element)) return false;
+  const after = element.getChildAtIndex(point.offset);
+  if (after === null)
+    return (
+      node !== element &&
+      !element.isParentOf(node) &&
+      !($isElementNode(node) && node.isParentOf(element)) &&
+      element.isBefore(node)
+    );
+  return (
+    node === after ||
+    ($isElementNode(after) && after.isParentOf(node)) ||
+    (!($isElementNode(node) && node.isParentOf(after)) && after.isBefore(node))
+  );
 }
 
 /**
@@ -1283,27 +1348,35 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
  * `&`, `<` and `>` are escaped, `&` first so an escape's own ampersand is not escaped twice. USFM
  * needs nothing else escaped here: the bytes live in a text node, where quotes and backslashes are
  * literal.
+ *
+ * The first block carries `MARKER_TEXT_HTML_ATTRIBUTE`, which tells a hidden-marker view reading the
+ * clipboard that this is text with its markers showing, so its marker tokens are not words
+ * (`withoutMarkerTokens`). It changes none of the bytes.
  */
 export function usfmToClipboardHtml(usfm: string): string {
   return usfm
     .split("\n")
     .map((line) => line.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"))
-    .map((line) =>
-      line ? `<p><span style="white-space: pre-wrap;">${line}</span></p>` : "<p></p>",
-    )
+    .map((line, index) => {
+      const open = index === 0 ? `<p ${MARKER_TEXT_HTML_ATTRIBUTE}>` : "<p>";
+      return `${open}${line ? `<span style="white-space: pre-wrap;">${line}</span>` : ""}</p>`;
+    })
     .join("");
 }
 
 /**
- * Whether any node of `selection` is, or sits inside, a `BookNode` or `ChapterNode` — a structure
- * USFM allows once per book, which a paste must never duplicate.
+ * Whether any node of `selection` is, or sits inside, a `BookNode` or a chapter node (Standard
+ * view's `ChapterNode`, the hidden-marker views' `ImmutableChapterNode`) — a structure USFM allows
+ * once per book, which a paste must never duplicate.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
  */
 function $selectionTouchesBookOrChapter(selection: RangeSelection): boolean {
   return selection
     .getNodes()
     .some((node) =>
       [node, ...node.getParents()].some(
-        (ancestor) => $isBookNode(ancestor) || $isChapterNode(ancestor),
+        (ancestor) => $isBookNode(ancestor) || $isSomeChapterNode(ancestor),
       ),
     );
 }
@@ -1429,6 +1502,9 @@ export function $handleCopyForStandardView(
  * `copyLimit` code units of the plain text are written, with nothing removed. While it is set, a
  * browser copy whose page selection runs outside the editor is declined, for the page guard.
  *
+ * `$removeRange` is how a cut removes the range, `RangeSelection.removeText` unless a view needs
+ * otherwise.
+ *
  * Mutating when `isCut`: call inside `editor.update()` — in practice, from a `COPY_COMMAND` or
  * `CUT_COMMAND` handler.
  */
@@ -1439,6 +1515,7 @@ export function $writeCopyPayload(
   data: LexicalClipboardData,
   isCut: boolean,
   copyLimit?: number,
+  $removeRange: (range: RangeSelection) => void = (range) => range.removeText(),
 ): boolean {
   const limit = normalizeCopyLimit(copyLimit);
   if (limit !== undefined && isCopyFromOutsideEditor(editor, event)) return false;
@@ -1461,7 +1538,7 @@ export function $writeCopyPayload(
     event,
     editor,
     data,
-    isCut && editor.isEditable() ? () => selection.removeText() : undefined,
+    isCut && editor.isEditable() ? () => $removeRange(selection) : undefined,
   );
 }
 

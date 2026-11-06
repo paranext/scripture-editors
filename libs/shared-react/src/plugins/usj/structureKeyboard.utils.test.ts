@@ -38,6 +38,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $createBookNode,
   $createCaretHostNode,
   $createChapterNode,
   $createCharNode,
@@ -933,6 +934,19 @@ describe("$sanitizeNodesForProtectedStructure", () => {
       const chapter = $createChapterNode("1");
       const result = $sanitizeNodesForProtectedStructure([chapter]);
       expect(result).toHaveLength(0);
+    });
+  });
+
+  it("removes a book line and a paragraph tagged id, text and all", async () => {
+    const { editor } = await baseTestEnvironment();
+    await sutUpdate(editor, () => {
+      const result = $sanitizeNodesForProtectedStructure([
+        $createBookNode("GEN").append($createTextNode("Genesis title")),
+        $createParaNode("id").append($createTextNode("GEN Genesis title")),
+        $createImmutableChapterNode("1"),
+        $createParaNode("p").append($createTextNode("kept")),
+      ]);
+      expect(result.map((node) => node.getTextContent())).toEqual(["kept"]);
     });
   });
 

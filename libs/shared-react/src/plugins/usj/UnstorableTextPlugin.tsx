@@ -1,4 +1,21 @@
-import { removeMarkerGlyphElements } from "./clipboard.utils";
+import {
+  $chapterLineToSplitAt,
+  $isFirstChapterLine,
+  $lineToJoinBeforeChapter,
+  $pasteAroundChapterLine,
+  $removeBookAndChapterLines,
+  $removeTextKeepingBookAndChapterLines,
+  $selectionSpansBookOrChapterLine,
+  $takeStartsMidParagraph,
+} from "./bookAndChapterLines.utils";
+import {
+  $nodesFromNodeCopy,
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+  nodeCopyIn,
+  removeMarkerGlyphElements,
+  withoutMarkerTokens,
+  withoutNodeCopy,
+} from "./clipboard.utils";
 import { DeleteGranularity, deleteChordOf } from "./HiddenContentDeleteGuardPlugin";
 import { $probeDeleteExtent } from "./hiddenContentDelete.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
@@ -17,9 +34,9 @@ import {
   JudgedDeletion,
   removeUnstorableText,
 } from "./unstorableText.utils";
-import { $insertDataTransferForRichText } from "@lexical/clipboard";
+import { $insertDataTransferForRichText, $insertGeneratedNodes } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { mergeRegister } from "@lexical/utils";
+import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createRangeSelection,
@@ -38,9 +55,10 @@ import {
   DELETE_CHARACTER_COMMAND,
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
+  isDOMNode,
+  isSelectionCapturedInDecoratorInput,
   KEY_DOWN_COMMAND,
   LexicalCommand,
-  LexicalEditor,
   LexicalNode,
   PASTE_COMMAND,
   PASTE_TAG,
@@ -50,10 +68,7 @@ import {
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $getSelectedParaMarkerPara, $isParaLikeNode, LoggerBasic } from "shared";
-
-/** The clipboard flavor Lexical writes its own node copy to. */
-const LEXICAL_CLIPBOARD_TYPE = "application/x-lexical-editor";
+import { $getSelectedParaMarkerPara, $isBookNode, $isParaLikeNode, LoggerBasic } from "shared";
 
 /** Logs and reports one removal. */
 function reportRemoved(
@@ -133,27 +148,13 @@ function isShortcutChord(event: KeyboardEvent): boolean {
 }
 
 /**
- * The flavor Lexical inserts `data` from (`$insertDataTransferForRichText`): a node copy from an
- * editor of this namespace first, then html, then plain text.
+ * The flavor `data` is inserted from in a hidden-marker view: a node copy from a hidden-marker view
+ * ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}) first, then html, then plain text, as Lexical's
+ * `$insertDataTransferForRichText` picks once any other node copy is hidden from it
+ * ({@link withoutNodeCopy}).
  */
-function insertionRoute(data: DataTransfer, editor: LexicalEditor): "lexical" | "html" | "plain" {
-  const lexicalString = data.getData(LEXICAL_CLIPBOARD_TYPE);
-  if (lexicalString) {
-    try {
-      const payload: unknown = JSON.parse(lexicalString);
-      if (
-        payload &&
-        typeof payload === "object" &&
-        "namespace" in payload &&
-        "nodes" in payload &&
-        payload.namespace === editor._config.namespace &&
-        Array.isArray(payload.nodes)
-      )
-        return "lexical";
-    } catch {
-      // Unreadable: Lexical falls through to html and plain text too.
-    }
-  }
+function insertionRoute(data: DataTransfer): "lexical" | "html" | "plain" {
+  if (nodeCopyIn(data, HIDDEN_VIEW_CLIPBOARD_NAMESPACE)) return "lexical";
   const html = data.getData("text/html");
   // Lexical skips html identical to the plain text.
   return html && html !== data.getData("text/plain") ? "html" : "plain";
@@ -169,15 +170,19 @@ function htmlWithoutMarkerGlyphs(html: string): string | undefined {
 }
 
 /**
- * Plain text as protected structure inserts it, in the paragraph at the caret: each run of line
- * breaks becomes one space, except a trailing one, which goes, since under protection it would
- * only split the paragraph; and each tab becomes a space.
+ * Plain text as it goes into one paragraph, where its lines cannot split it (protected structure,
+ * the `\id` line): each tab becomes a space, and each run of line breaks one space, or nothing
+ * where whitespace is already beside it — in the text, or in the document at the caret (`before`,
+ * `after`). A run at the text's start or end is judged the same way, so it neither joins the
+ * pasted text to a word at the caret nor doubles a space there. With nothing stored beside it (a
+ * paragraph's edge, a span's edge), a run is still a space: the text there may be a word.
  */
-function joinLines(text: string): string {
-  return text
-    .replace(/[\r\n]+$/, "")
-    .replace(/[\r\n]+/g, " ")
-    .replace(/\t/g, " ");
+function joinLines(text: string, before: string, after: string): string {
+  return text.replace(/\t/g, " ").replace(/[\r\n]+/g, (run, offset: number, whole: string) => {
+    const previous = offset > 0 ? whole[offset - 1] : before;
+    const next = offset + run.length < whole.length ? whole[offset + run.length] : after;
+    return /\s/.test(previous) || /\s/.test(next) ? "" : " ";
+  });
 }
 
 /**
@@ -186,16 +191,38 @@ function joinLines(text: string): string {
  * per paste, drop or refused keystroke through `onRemoved`. A paste or drop left with nothing to
  * insert changes nothing. A delete that would make a `//` out of two `/` is refused (below).
  *
- * Covers each route Lexical inserts by: a node copy from an editor of this namespace and html
- * (through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`), and plain text, pasted (`PASTE_COMMAND`) or
- * dropped (`CONTROLLED_TEXT_INSERTION_COMMAND` with an `insertFromDrop` event). Under `"protected"`
- * structure, `StructureKeyboardPlugin` takes html pastes and drops first and inserts them through
- * that command too; give it {@link $filterUnstorablePastedNodes} as its `$filterPastedNodes` so a
- * drop it inserts is reported as a drop.
+ * Reads a node copy (`application/x-lexical-editor`, or an attribute of the html: see
+ * {@link nodeCopyIn}) only from a hidden-marker view, which tags it
+ * {@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}: pasted, it goes in exactly as copied, attributes, notes
+ * and figures included. A node copy from any other view, such as Standard view, whose node shapes
+ * differ, is passed over for its html or plain text. A copy from a view that shows markers, known by
+ * that node copy or by a mark on its html, is USFM, so its marker tokens go first
+ * ({@link withoutMarkerTokens}), unreported: they are markup, not text the user was asked to type. A
+ * `\` in any other paste could be anything, so it goes alone, and is reported.
+ *
+ * Covers each route a paste or drop inserts by: a node copy and html (through
+ * `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`), and plain text, pasted (`PASTE_COMMAND`) or dropped
+ * (`CONTROLLED_TEXT_INSERTION_COMMAND` with an `insertFromDrop` event). Under `"protected"`
+ * structure, `StructureKeyboardPlugin` takes node copies, html pastes and drops first and inserts
+ * them through that command too; give it {@link $filterUnstorablePastedNodes} as its
+ * `$filterPastedNodes` so a drop it inserts is reported as a drop.
  *
  * Html pasted or dropped loses every marker glyph element (`data-text-type="marker"`) before it is
  * parsed, as protected structure's sanitizer drops them: a glyph is presentation, and parsed back
  * it would be marker text. A node copy is not touched.
+ *
+ * No paste or drop inserts a book (`\id`) or chapter line, from a node copy or from html
+ * ({@link $removeBookAndChapterLines}): the chapter document has its own, and a copy of Select All
+ * carries both. Such a copy splits around the document's chapter line only over a selection that
+ * held that line or from a caret right beside it ({@link $chapterLineToSplitAt}): what it held
+ * before its chapter line, chapter 1's front matter, goes before the document's, and the rest after
+ * ({@link $pasteAroundChapterLine}); in a chapter other than chapter 1, that front matter goes after
+ * the chapter line with the rest. A copy that starts partway into its first paragraph joins that
+ * paragraph to the line a paste that did not split would have joined it to
+ * ({@link $lineToJoinBeforeChapter}). Any other paste puts it all at the caret. A paste over a
+ * selection that runs across a book or chapter line keeps it, and replaces the rest of the
+ * selection ({@link $removeTextKeepingBookAndChapterLines}), whichever flavor it inserts; what has
+ * no front matter of its own (plain text, another program's html) goes after the chapter line.
  *
  * Typing a `\` is refused, and so is typing a `/` that would touch a `/` beside it (over a
  * selection, one outside it); a lone `/` goes in. A keystroke is refused at its `keydown`
@@ -210,9 +237,11 @@ function joinLines(text: string): string {
  * Ctrl+T, a `beforeinput` `insertTranspose`) that would put a `/` against a `/` is refused, and
  * reported as typing.
  *
- * Under `"protected"` structure a plain-text paste or drop goes into the paragraph at the caret,
- * its lines joined by one space each, as protected structure's html route joins paragraphs:
- * Lexical would otherwise make each line a paragraph of its own.
+ * Under `"protected"` structure, and on the `\id` line in any, a plain-text paste or drop goes into
+ * the paragraph at the caret, its lines joined by a space, as protected structure's html route joins
+ * paragraphs: Lexical would otherwise make each line a paragraph of its own, and on the `\id` line
+ * run them together. A line break at either end, or beside a space, adds no second space and joins
+ * no two words ({@link joinLines}).
  *
  * A delete is refused, and reported with `source: "deletion"`, when what it leaves would put a `/`
  * against a `/` it was not already touching (see {@link $deletionJoinsSlashes}): Backspace, Delete
@@ -334,23 +363,37 @@ export function UnstorableTextPlugin({
     };
 
     /**
-     * Inserts a plain-text paste or drop itself when it needs filtering, or line breaks joining
-     * under protected structure. Returns whether it did; otherwise Lexical's own insertion runs.
+     * Inserts a plain-text paste or drop itself when it needs filtering, line breaks joining (under
+     * protected structure, or on the `\id` line), or a lone carriage return (an old Mac line ending) reading as the line
+     * break it is: Lexical's own insertion splits only at `\n` and `\r\n`, and leaves a lone `\r`
+     * in the text. Returns whether it did; otherwise Lexical's own insertion runs.
      */
     const $insertPlainTransfer = (
       data: DataTransfer,
       source: UnstorableTextRemoved["source"],
     ): boolean => {
       const selection = $getSelection();
-      if (!$isRangeSelection(selection) || insertionRoute(data, editor) !== "plain") return false;
+      if (!$isRangeSelection(selection) || insertionRoute(data) !== "plain") return false;
       const text = data.getData("text/plain") || data.getData("text/uri-list");
       if (!text) return false;
-      const joinsLines = structureProtectionModeRef.current === "protected" && /[\r\n]/.test(text);
+      const joinsLines =
+        /[\r\n]/.test(text) &&
+        (structureProtectionModeRef.current === "protected" ||
+          !!$findMatchingParent(selection.anchor.getNode(), $isBookNode));
+      const keepsLines = $selectionSpansBookOrChapterLine(selection);
+      const hasLoneReturn = /\r(?!\n)/.test(text);
       const { before, after } = $textAroundSelection(selection);
-      const filtered = removeUnstorableText(joinsLines ? joinLines(text) : text, before, after);
-      if (filtered.removed.length === 0 && !joinsLines) return false;
+      const lines = hasLoneReturn ? text.replace(/\r(?!\n)/g, "\n") : text;
+      const filtered = removeUnstorableText(
+        joinsLines ? joinLines(lines, before, after) : lines,
+        before,
+        after,
+      );
+      if (filtered.removed.length === 0 && !joinsLines && !keepsLines && !hasLoneReturn)
+        return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);
       if (filtered.text) {
+        if (keepsLines) $removeTextKeepingBookAndChapterLines(selection);
         // Lexical reads only `getData` from the transfer, and finds no flavor here but plain text,
         // so its own plain-text insertion runs on the filtered text; a real `DataTransfer` cannot
         // be constructed everywhere this runs.
@@ -380,7 +423,7 @@ export function UnstorableTextPlugin({
       source: UnstorableTextRemoved["source"],
     ): boolean => {
       const selection = $getSelection();
-      if (!selection || insertionRoute(data, editor) !== "html") return false;
+      if (!selection || insertionRoute(data) !== "html") return false;
       const html = htmlWithoutMarkerGlyphs(data.getData("text/html"));
       if (html === undefined) return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);
@@ -492,6 +535,43 @@ export function UnstorableTextPlugin({
       [DELETE_LINE_COMMAND, "line"],
     ];
 
+    /**
+     * Inserts a paste or drop itself where a hidden-marker view has to, and returns whether it did;
+     * otherwise Lexical's own insertion runs:
+     * - a node copy from a hidden-marker view ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}), which
+     *   Lexical does not read (its namespace is not the editor's). It goes in as Lexical inserts its
+     *   own node copy, through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, so the filter there sees
+     *   it;
+     * - a transfer with any other node copy — another view's, such as Standard view's (tagged with
+     *   the editor's own namespace), or one that makes no nodes ({@link $nodesFromNodeCopy}) — by
+     *   its html or plain text, so another view's node shapes are never rebuilt here;
+     * - a marker-showing view's copy, known by its node copy or its html's mark, without its marker
+     *   tokens ({@link withoutMarkerTokens}), changing nothing if nothing else is left;
+     * - plain text or html that the filter or the glyph strip changes.
+     */
+    const $insertTransfer = (
+      transfer: DataTransfer,
+      source: UnstorableTextRemoved["source"],
+    ): boolean => {
+      const selection = $getSelection();
+      if (!selection) return false;
+      const nodeCopy = nodeCopyIn(transfer, HIDDEN_VIEW_CLIPBOARD_NAMESPACE);
+      const nodes = nodeCopy && $nodesFromNodeCopy(nodeCopy, loggerRef.current);
+      if (nodes) {
+        if (source === "paste") $addUpdateTag(PASTE_TAG);
+        $insertGeneratedNodes(editor, nodes, selection);
+        return true;
+      }
+      const stripped = withoutMarkerTokens(transfer);
+      if (!stripped) return true;
+      const data = withoutNodeCopy(stripped);
+      if ($insertPlainTransfer(data, source) || $insertHtmlWithoutGlyphs(data, source)) return true;
+      if (data === transfer) return false;
+      if (source === "paste") $addUpdateTag(PASTE_TAG);
+      $insertDataTransferForRichText(data, selection, editor);
+      return true;
+    };
+
     /** Registers `listener` for `command`, acting only while the plugin is enabled. */
     const register = <P,>(
       command: LexicalCommand<P>,
@@ -508,6 +588,13 @@ export function UnstorableTextPlugin({
       register(
         SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
         ({ nodes, selection }) => {
+          const first = nodes[0];
+          const startsMidParagraph = $takeStartsMidParagraph(nodes);
+          const {
+            isRemoved: isLineRemoved,
+            holdsChapterLine,
+            beforeChapter,
+          } = $removeBookAndChapterLines(nodes);
           const removed = $filterUnstorablePastedNodes(
             nodes,
             selection,
@@ -516,7 +603,36 @@ export function UnstorableTextPlugin({
             loggerRef.current,
           );
           // Claimed only when nothing is left: inserting nothing over a selection would delete it.
-          return (removed.length > 0 || isInsertingWithoutGlyphs) && $insertsNothing(nodes);
+          if (
+            (removed.length > 0 || isLineRemoved || isInsertingWithoutGlyphs) &&
+            $insertsNothing(nodes)
+          )
+            return true;
+          if (!$isRangeSelection(selection)) return false;
+          // A copy holding a chapter line splits around the document's, but only over a selection
+          // that held it or from a caret right beside it, where the user put it there: anywhere
+          // else the whole copy goes in at the caret, as any paste does.
+          const chapter = holdsChapterLine ? $chapterLineToSplitAt(selection) : undefined;
+          const joinLine =
+            chapter && startsMidParagraph
+              ? $lineToJoinBeforeChapter(selection, chapter)
+              : undefined;
+          // Lexical goes on to insert over this same selection, which is collapsed by then.
+          if ($selectionSpansBookOrChapterLine(selection))
+            $removeTextKeepingBookAndChapterLines(selection);
+          if (chapter) {
+            // Only chapter 1 has lines before its chapter line; in any other chapter the copy's
+            // front matter is more text, and goes after the chapter line with the rest.
+            const frontMatter = $isFirstChapterLine(chapter)
+              ? beforeChapter.filter((node) => nodes.includes(node))
+              : [];
+            // Only the copy's own first paragraph started partway in; a book line it started in
+            // is gone, and what follows that is whole.
+            const joinsFirst = frontMatter[0] === first ? joinLine : undefined;
+            if ($pasteAroundChapterLine(nodes, frontMatter, chapter, selection, joinsFirst))
+              return true;
+          }
+          return false;
         },
         // Critical, so a handler that does insert the nodes cannot insert them unfiltered.
         COMMAND_PRIORITY_CRITICAL,
@@ -526,13 +642,16 @@ export function UnstorableTextPlugin({
         (event: PasteCommandType) => {
           const data = "clipboardData" in event ? event.clipboardData : null;
           if (!data) return false;
-          if (!$insertPlainTransfer(data, "paste") && !$insertHtmlWithoutGlyphs(data, "paste"))
+          // A paste into an input inside a decorator is that input's own, as Lexical's paste
+          // leaves it.
+          if (isDOMNode(event.target) && isSelectionCapturedInDecoratorInput(event.target))
             return false;
+          if (!$insertTransfer(data, "paste")) return false;
           event.preventDefault();
           return true;
         },
         // Below the guards that refuse a paste outright, and below protected structure's
-        // sanitizer, which takes html pastes first.
+        // sanitizer, which takes node copies and html pastes first.
         COMMAND_PRIORITY_NORMAL,
       ),
       register(
@@ -541,12 +660,11 @@ export function UnstorableTextPlugin({
           if (typeof payload === "string" || payload.inputType !== "insertFromDrop") return false;
           const data = payload.dataTransfer;
           if (!data) return false;
-          if ($insertPlainTransfer(data, "drop")) return true;
           isDropping = true;
           queueMicrotask(() => {
             isDropping = false;
           });
-          return $insertHtmlWithoutGlyphs(data, "drop");
+          return $insertTransfer(data, "drop");
         },
         // Below the guards that refuse an insertion outright (several at HIGH), above Lexical's own.
         COMMAND_PRIORITY_NORMAL,

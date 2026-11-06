@@ -11,8 +11,8 @@
  * Lexical has no block to split, so a paragraph or line break requested there would land at the end
  * of the document instead. Every split is therefore handled here before Lexical attempts it. A
  * paragraph split starts a new paragraph after the chapter line, which is what Enter after `\c N`
- * does in the USFM text; a line break is refused, since a chapter line cannot hold one; and a paste
- * or a drop goes in as the user would type it, its lines starting paragraphs after the chapter line.
+ * does in the USFM text (a line break is run as Enter, see `LineBreakPlugin`); and a paste or a drop
+ * goes in as the user would type it, its lines starting paragraphs after the chapter line.
  * Second: an INLINE insertion (a note, a character marker, a verse, a milestone — anything built on
  * `RangeSelection.insertNodes`) throws when the caret is on a chapter line, because Lexical requires
  * a block `ElementNode` ancestor to splice into and a chapter line is not one.
@@ -104,26 +104,6 @@ export function $splitOnChapterLine(marker: string, viewOptions: ViewOptions | u
   if (showParaMarkerPrefix(viewOptions)) $setParaMarkerWithPrefix(para, marker);
   else para.selectStart();
   return true;
-}
-
-/**
- * Handles a line break requested at a chapter line, which is refused: a chapter line cannot hold
- * one, and a line break has no USFM representation of its own. A selection lying wholly on one
- * chapter line is left as it is — deleting it for a line break that is then refused would only take
- * bytes out of the marker.
- *
- * Mutating: call from an `INSERT_LINE_BREAK_COMMAND` handler that runs before Lexical's own.
- *
- * @returns Whether the line break was refused — the caret is on a chapter line, so the command is
- *   claimed.
- */
-export function $refuseLineBreakOnChapterLine(): boolean {
-  const selection = $getSelection();
-  if ($isRangeSelection(selection) && !selection.isCollapsed()) {
-    const anchorLine = $chapterLineOf(selection.anchor.getNode());
-    if (anchorLine?.is($chapterLineOf(selection.focus.getNode()))) return true;
-  }
-  return $chapterLineAtCaret() !== undefined;
 }
 
 /**
