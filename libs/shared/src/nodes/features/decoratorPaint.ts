@@ -118,7 +118,7 @@ export function isDomPaintedDecorator(element: HTMLElement): boolean {
 }
 
 /** The annotation keys a painted sub-span carries, or none for any other node. */
-export function paintedPieceKeys(node: Node | null): readonly string[] {
+export function paintedSubSpanKeys(node: Node | null): readonly string[] {
   if (!(node instanceof Element)) return [];
   const raw = node.getAttribute(DECORATOR_PAINT_ATTRIBUTE);
   if (!raw) return [];
@@ -135,10 +135,36 @@ export function paintedPieceKeys(node: Node | null): readonly string[] {
 }
 
 /** The painted sub-span `node` is in, if any. */
-export function paintedPieceOf(node: Node | null): Element | undefined {
+export function paintedSubSpanOf(node: Node | null): Element | undefined {
   const element = node instanceof Element ? node : node?.parentElement;
   return element?.closest(`[${DECORATOR_PAINT_ATTRIBUTE}]`) ?? undefined;
 }
+
+/**
+ * `text` cut into the runs `paint` names, in order: each a plain run, or a painted one with the
+ * segment that paints it, with the offset in `text` it starts at. Each segment is clamped to `text` and to the end of the one before it, so
+ * every byte of `text` is in exactly one run.
+ */
+export function paintRuns(
+  text: string,
+  paint: DecoratorPaint,
+): { start: number; text: string; segment?: DecoratorPaintSegment }[] {
+  const runs: { start: number; text: string; segment?: DecoratorPaintSegment }[] = [];
+  let at = 0;
+  for (const segment of paint) {
+    const start = Math.max(at, Math.min(segment.start, text.length));
+    const end = Math.max(start, Math.min(segment.end, text.length));
+    if (start > at) runs.push({ start: at, text: text.slice(at, start) });
+    if (end > start) runs.push({ start, text: text.slice(start, end), segment });
+    at = end;
+  }
+  if (at < text.length) runs.push({ start: at, text: text.slice(at) });
+  return runs;
+}
+
+/** Records on a DOM-painted element what {@link renderDecoratorPaint} last wrote, so an unchanged
+ * paint writes nothing. */
+const PAINTED_ATTRIBUTE = "data-painted";
 
 /**
  * Write `text` into `element` as plain text with each segment of `paint` wrapped in a sub-span
@@ -150,32 +176,25 @@ export function renderDecoratorPaint(
   text: string,
   paint: DecoratorPaint,
 ): void {
+  // `null`, as `getAttribute` reads an attribute that is not there.
   const wanted = paint.length > 0 ? paintSignature(text, paint) : null;
   if (element.getAttribute(PAINTED_ATTRIBUTE) === wanted && element.textContent === text) return;
   element.replaceChildren();
-  let at = 0;
   const document = element.ownerDocument;
-  for (const segment of paint) {
-    const start = Math.max(at, Math.min(segment.start, text.length));
-    const end = Math.max(start, Math.min(segment.end, text.length));
-    if (start > at) element.append(document.createTextNode(text.slice(at, start)));
-    if (end > start) {
-      const span = document.createElement("span");
-      span.setAttribute(DECORATOR_PAINT_ATTRIBUTE, JSON.stringify(segment.annotationKeys));
-      for (const className of segment.classNames) span.classList.add(className);
-      span.textContent = text.slice(start, end);
-      element.append(span);
+  for (const run of paintRuns(text, paint)) {
+    if (!run.segment) {
+      element.append(document.createTextNode(run.text));
+      continue;
     }
-    at = end;
+    const span = document.createElement("span");
+    span.setAttribute(DECORATOR_PAINT_ATTRIBUTE, JSON.stringify(run.segment.annotationKeys));
+    for (const className of run.segment.classNames) span.classList.add(className);
+    span.textContent = run.text;
+    element.append(span);
   }
-  if (at < text.length) element.append(document.createTextNode(text.slice(at)));
   if (wanted !== null) element.setAttribute(PAINTED_ATTRIBUTE, wanted);
   else element.removeAttribute(PAINTED_ATTRIBUTE);
 }
-
-/** Records on a DOM-painted element what {@link renderDecoratorPaint} last wrote, so an unchanged
- * paint writes nothing. */
-const PAINTED_ATTRIBUTE = "data-painted";
 
 function paintSignature(text: string, paint: DecoratorPaint): string {
   return JSON.stringify([text, paint.map((s) => [s.start, s.end, s.classNames, s.annotationKeys])]);

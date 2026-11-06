@@ -224,7 +224,9 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
         () => {
           const selection = $getSelection();
           // Lexical reads a selection from the screen only while a `selectionchange` event is being
-          // answered, and resolves its ends then; a selection set by code it leaves as set.
+          // answered, and resolves its ends then; a selection set by code it leaves as set. This
+          // relies on Lexical dispatching the command synchronously from its `selectionchange`
+          // handler, so `window.event` is still that event here.
           const isReadFromScreen = (editor._window ?? window).event?.type === "selectionchange";
           if (isReadFromScreen && $isRangeSelection(selection))
             $resolveRangeEndsThroughMarks(selection, isScreenEndAtTextEnd(editor));

@@ -390,11 +390,15 @@ export interface EditorRef {
    * `<mark>` gets (`<typedMark>-<type>`, `<typedMarkOverlap>-<type>` where two ids of a type
    * overlap, `annotationId-<id>`); a display byte gets `display-annotation` too. An editable
    * display byte held in part is cut at the hold's edges into pieces of its own kind, so the held
-   * part is its own element and is painted whole; a read-only glyph held in part paints a sub-span
-   * of its text. So every host class rule — background, border, padding, font, `:hover`,
+   * part is its own element and is painted whole (every piece after the first carries
+   * `data-piece-continuation`, so a style that boxes the glyph can apply to its first piece alone
+   * with `:not([data-piece-continuation])`); a read-only glyph held in part paints a sub-span of
+   * its text. So every host class rule — background, border, padding, font, `:hover`,
    * `::selection` — applies to everything an annotation paints. The first element it paints, in
    * document order, also gets `<typedMarkStart>-<type>` and the last `<typedMarkEnd>-<type>`, so
-   * a box style can put its inline sides only there and draw one box over every element. Find
+   * a box style can put its inline sides only there and draw one box over every element; a
+   * paragraph marker drawn in the gutter and a collapsed note's hidden content are left out of
+   * that order, since neither is beside the rest of the box. Find
    * painted annotations with {@link EditorRef.getAnnotationRanges}, which lists every element it
    * paints, rather than by class alone.
    *
@@ -446,8 +450,10 @@ export interface EditorRef {
    * editor's error handler, which rethrows it, in a later microtask.
    *
    * Setting or removing an annotation through this method or {@link EditorRef.removeAnnotation}
-   * adds no undo step: an undo that reverts the edit it was set on reverts it too, silently — a
-   * host re-sets annotations from its own state on the next change, as it does after a reload. A
+   * adds no undo step: an undo that reverts the edit before it reverts the set or the removal too,
+   * silently — an annotation set then is gone, and one removed then is back, with no report either
+   * way. A host re-applies its own annotations on the next change, as it does after a reload:
+   * setting the ones it holds and removing any it no longer holds. A
    * comment the user adds or deletes in `Marginal`'s comment panel is not set through this method:
    * it is the user's own edit, an undo step of its own.
    *

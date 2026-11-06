@@ -328,6 +328,17 @@ function $skipsEnginePass(editor: LexicalEditor, node: LexicalNode): boolean {
 }
 
 /**
+ * The key of the node the caret's live end is in, for the departure clocks: the head of a carrier
+ * an annotation cuts into pieces, so moving between its pieces is no departure, and it names the
+ * node the carrier's pend is recorded on. Read through marks ({@link $caretPlaceThroughMarks}): a
+ * caret at the start of a node right after a mark is in the text node before the mark, as the
+ * same caret with no mark there is.
+ */
+function $caretCarrierKey(selection: RangeSelection): NodeKey {
+  return $pieceHead($caretPlaceThroughMarks(selection.focus).node).getKey();
+}
+
+/**
  * Sync and pend every run `node` owns (the shared `$syncAndPendDisplayRun` helper,
  * displayRunSync.utils.ts): the sync leaves a caret-held divergence alone, and the matching pend
  * lets caret departure settle it ($resolvePendingMarkers) — without it a run would silently
@@ -349,17 +360,6 @@ function $skipsEnginePass(editor: LexicalEditor, node: LexicalNode): boolean {
  * as a divergence, so `$caretHoldsRunSite` reports it caret-held and this pends it for the
  * departure settle to finish.
  */
-/**
- * The key of the node the caret's live end is in, for the departure clocks: the head of a carrier
- * an annotation cuts into pieces, so moving between its pieces is no departure, and it names the
- * node the carrier's pend is recorded on. Read through marks ({@link $caretPlaceThroughMarks}): a
- * caret at the start of a node right after a mark is in the text node before the mark, as the
- * same caret with no mark there is.
- */
-function $caretCarrierKey(selection: RangeSelection): NodeKey {
-  return $pieceHead($caretPlaceThroughMarks(selection.focus).node).getKey();
-}
-
 function $syncAndPendOwner(
   node: VerseNode | MilestoneNode | NoteNode | ChapterNode,
   context: MarkerEditContext,

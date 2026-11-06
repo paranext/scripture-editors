@@ -3,7 +3,7 @@ import { $createChapterNode, $isChapterNode } from "../usj/ChapterNode.js";
 import { $createCharNode, CharNode } from "../usj/CharNode.js";
 import { usjBaseNodes } from "../usj/index.js";
 import { getEditableCallerText, getVisibleOpenMarkerText } from "../usj/markerText.utils.js";
-import { $createNoteNode } from "../usj/NoteNode.js";
+import { $createNoteNode, NoteNode } from "../usj/NoteNode.js";
 import { NBSP } from "../usj/node-constants.js";
 import { $createParaNode, ParaNode } from "../usj/ParaNode.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
@@ -80,8 +80,8 @@ function $span(): { char: CharNode; opener: MarkerNode; run: TextNode; closer: M
     "attribute",
   );
   const closer = $createMarkerNode("w", "closing");
-  const char = $createCharNode("w").append(opener, content, run, closer);
-  $getRoot().append($createParaNode().append(char));
+  const char = $createCharNode("w");
+  $getRoot().append($createParaNode().append(char.append(opener, content, run, closer)));
   return { char, opener, run, closer };
 }
 
@@ -460,8 +460,8 @@ describe("carrier pieces", () => {
     let keys!: string[];
     editor.update(
       () => {
-        const para = $createParaNode().append($createTextNode("a "));
-        $getRoot().append(para);
+        const para = $createParaNode();
+        $getRoot().append(para.append($createTextNode("a ")));
         for (const json of copied) {
           // Pasted alone, each is a carrier of its own.
           const node = $parseSerializedNode(json);
@@ -890,8 +890,8 @@ describe("a token carrier cut into pieces", () => {
   /** A para of `a`, a token `\f` glyph cut into `\` | `f` by a hold on its `\`, and `b`. */
   function $tokenGlyph(): { para: LexicalNode; glyph: MarkerNode } {
     const glyph = $createMarkerNode("f").setMode("token");
-    const para = $createParaNode().append($createTextNode("a"), glyph, $createTextNode("b"));
-    $getRoot().append(para);
+    const para = $createParaNode();
+    $getRoot().append(para.append($createTextNode("a"), glyph, $createTextNode("b")));
     $addDisplayAnnotation(glyph, "check", "a", 0, 1);
     return { para, glyph };
   }
@@ -920,14 +920,14 @@ describe("a token carrier cut into pieces", () => {
     ["its last piece", 2],
   ])("goes whole when text is typed in place of %s, keeping the typed text", (_, index) => {
     const editor = mount();
-    let note!: LexicalNode;
+    let note!: NoteNode;
     let caller!: TextNode;
     editor.update(
       () => {
         // A protected note shell's caller: a token in the note's caller slot.
         caller = $createTextNode(getEditableCallerText("+")).setMode("token");
-        note = $createNoteNode("f", "+").append($createMarkerNode("f"), caller);
-        $getRoot().append($createParaNode().append(note));
+        note = $createNoteNode("f", "+");
+        $getRoot().append($createParaNode().append(note.append($createMarkerNode("f"), caller)));
         $addDisplayAnnotation(caller, "check", "a", 1, 2);
       },
       { discrete: true },

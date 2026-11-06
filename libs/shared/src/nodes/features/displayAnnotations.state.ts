@@ -23,6 +23,16 @@ export interface DisplayAnnotation {
   undisplayed?: boolean;
 }
 
+/** One key for annotation `type`/`id`: JSON, so no character of either can make two pairs meet. */
+export function annotationKey(type: string, id: string): string {
+  return JSON.stringify([type, id]);
+}
+
+/** Orders annotation ranges by start, then by end. */
+export function compareAnnotationRanges(a: DisplayAnnotation, b: DisplayAnnotation): number {
+  return a.start - b.start || a.end - b.end;
+}
+
 /** A carrier's annotations, and the text their stored offsets were measured against: a text
  * carrier's text, or a decorator's holdable bytes. */
 export interface DisplayAnnotations {

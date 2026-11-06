@@ -570,6 +570,8 @@ function $unmarkedParent(node: LexicalNode): ElementNode {
  * whole of it; an element point names the element and how many items stand in front of it. An
  * element point in front of a later piece is inside that piece's carrier, and is named so; one in
  * a mark is named by the text it touches.
+ *
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
  */
 export function $describeLogicalPoint(node: LexicalNode, offset: number): string {
   if ($isTypedMarkNode(node)) {
@@ -602,7 +604,11 @@ export function $describeLogicalPoint(node: LexicalNode, offset: number): string
   return `${parent.getType()}>${text}#${index}@${start + $logicalOffset(node, offset)}`;
 }
 
-/** The current selection, each end described by {@link $describeLogicalPoint}. */
+/**
+ * The current selection, each end described by {@link $describeLogicalPoint}.
+ *
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
+ */
 export function $describeLogicalSelection(): string {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return "no selection";

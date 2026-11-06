@@ -920,8 +920,8 @@ describe("a carrier cut into pieces", () => {
       first = $createVerseNode("1", "\\v 1 ");
       second = $createVerseNode("2", "\\v 2 ");
       third = $createVerseNode("3", "\\v 3 ");
-      para = $createParaNode("p").append(first, second, third, $createTextNode("text"));
-      $getRoot().append(para);
+      para = $createParaNode("p");
+      $getRoot().append(para.append(first, second, third, $createTextNode("text")));
     });
     /** For every caret in verse 2 (as `[logical offset, node, offset]`): the verse each direction
      * finds beside it, and the delete each direction would arm, by verse number or `para` (`-`:

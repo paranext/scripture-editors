@@ -20,6 +20,8 @@
  */
 
 import {
+  annotationKey,
+  compareAnnotationRanges,
   DisplayAnnotation,
   DisplayAnnotations,
   displayAnnotationsState,
@@ -44,6 +46,15 @@ import {
   SerializedLexicalNode,
   TextNode,
 } from "lexical";
+
+/**
+ * The attribute on the element of every piece of a cut carrier after its first (a continuation,
+ * {@link displayPieceContinuationState}): a style that boxes a carrier — padding, a border, a
+ * margin — applies to the carrier's head piece alone with `:not([data-piece-continuation])`, so a
+ * carrier an annotation cuts is drawn as the uncut one is. An exported `<unmatched>` element
+ * carries it too, so a paste reads a later piece of one closer as part of it.
+ */
+export const DISPLAY_PIECE_CONTINUATION_ATTRIBUTE = "data-piece-continuation";
 
 /** `true` on every piece of a carrier but its first. */
 export const displayPieceContinuationState = createState("displayPieceContinuation", {
@@ -256,11 +267,11 @@ export function $isSplitCarrier(node: LexicalNode): boolean {
 
 /** The annotations in `annotations` as sorted JSON `[type, id]` keys, one per annotation. */
 export function pieceHoldKeys(annotations: readonly DisplayAnnotation[]): string[] {
-  return [...new Set(annotations.map((a) => JSON.stringify([a.type, a.id])))].sort();
+  return [...new Set(annotations.map((a) => annotationKey(a.type, a.id)))].sort();
 }
 
 function sortedAnnotations(annotations: DisplayAnnotation[]): DisplayAnnotation[] {
-  return [...annotations].sort((a, b) => a.start - b.start || a.end - b.end);
+  return [...annotations].sort(compareAnnotationRanges);
 }
 
 /** `annotations` with every two ranges of one annotation that touch or overlap joined. */
@@ -767,7 +778,7 @@ export function $setLogicalText<T extends LexicalNode>(node: T, text: string): T
   const writable = head.setTextContent(text);
   if (!held) return writable;
   const annotations = remapAnnotations({ basis: before, annotations: held }, text).sort(
-    (a, b) => a.start - b.start || a.end - b.end,
+    compareAnnotationRanges,
   );
   $setState(
     writable,

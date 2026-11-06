@@ -2105,12 +2105,15 @@ describe("a display-byte carrier an annotation cut into pieces", () => {
     const build = (cut: boolean) =>
       mount(() => {
         const caller = $createTextNode(` +x${NBSP}`).toggleUnmergeable();
-        const note = $createNoteNode("f", "+", false).append(
-          $createMarkerNode("f"),
-          caller,
-          $createCharNode("ft").append($createTextNode("body")),
+        $getRoot().append(
+          $createParaNode().append(
+            $createNoteNode("f", "+", false).append(
+              $createMarkerNode("f"),
+              caller,
+              $createCharNode("ft").append($createTextNode("body")),
+            ),
+          ),
         );
-        $getRoot().append($createParaNode().append(note));
         if (cut) $cut(caller, 1, 2);
       });
     const read = (editor: LexicalEditor) =>
@@ -2199,8 +2202,10 @@ describe("a display-byte carrier an annotation cut into pieces", () => {
     const editor = mount(() => {
       const opener = $createMarkerNode("add");
       const closer = $createMarkerNode("add", "closing");
-      char = $createCharNode("add").append(opener, $createTextNode(`${NBSP}word`), closer);
-      $getRoot().append($createParaNode().append(char));
+      char = $createCharNode("add");
+      $getRoot().append(
+        $createParaNode().append(char.append(opener, $createTextNode(`${NBSP}word`), closer)),
+      );
       $cut(opener, 1, 3);
       $cut(closer, 4, 5);
     });

@@ -1,9 +1,10 @@
 import { LexicalEditor, NodeKey } from "lexical";
-import { Fragment, ReactElement, ReactNode, useCallback, useSyncExternalStore } from "react";
+import { Fragment, ReactNode, useCallback, useSyncExternalStore } from "react";
 import {
   DECORATOR_PAINT_ATTRIBUTE,
   DecoratorPaint,
   getDecoratorPaint,
+  paintRuns,
   subscribeDecoratorPaint,
 } from "shared";
 
@@ -32,24 +33,17 @@ export function DecoratorPaintedText({
 }): ReactNode {
   const paint = useDecoratorPaint(editor, nodeKey);
   if (paint.length === 0) return text;
-  const parts: ReactElement[] = [];
-  let at = 0;
-  paint.forEach((segment, index) => {
-    const start = Math.max(at, Math.min(segment.start, text.length));
-    const end = Math.max(start, Math.min(segment.end, text.length));
-    if (start > at) parts.push(<Fragment key={`t${index}`}>{text.slice(at, start)}</Fragment>);
-    if (end > start)
-      parts.push(
-        <span
-          key={`p${index}`}
-          className={segment.classNames.join(" ")}
-          {...{ [DECORATOR_PAINT_ATTRIBUTE]: JSON.stringify(segment.annotationKeys) }}
-        >
-          {text.slice(start, end)}
-        </span>,
-      );
-    at = end;
-  });
-  if (at < text.length) parts.push(<Fragment key="tail">{text.slice(at)}</Fragment>);
-  return parts;
+  return paintRuns(text, paint).map(({ start, text: runText, segment }) =>
+    segment ? (
+      <span
+        key={start}
+        className={segment.classNames.join(" ")}
+        {...{ [DECORATOR_PAINT_ATTRIBUTE]: JSON.stringify(segment.annotationKeys) }}
+      >
+        {runText}
+      </span>
+    ) : (
+      <Fragment key={start}>{runText}</Fragment>
+    ),
+  );
 }

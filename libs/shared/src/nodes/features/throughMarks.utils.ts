@@ -300,22 +300,6 @@ export function $isRangeSplitByMarks(selection: RangeSelection): boolean {
 }
 
 /**
- * Remove `selection`'s range when its ends sit in different parents only because of annotation
- * marks ({@link $isRangeSplitByMarks}), leaving a collapsed caret, so that an insertion replacing
- * the range types at that caret instead of through Lexical's range `insertText`, which climbs out
- * of such a range. `RangeSelection.removeText` walks the range node by node and climbs nothing.
- *
- * Mutating: call inside `editor.update()`, before the insertion that replaces the range.
- *
- * @returns Whether the range was removed.
- */
-export function $removeRangeSplitByMarks(selection: RangeSelection): boolean {
-  if (selection.isCollapsed() || !$isRangeSplitByMarks(selection)) return false;
-  selection.removeText();
-  return true;
-}
-
-/**
  * Where a caret goes once a range starting at an edge of an annotation mark's text is removed: at
  * that edge of the text when it is still there — where Lexical types beside the mark, outside it, as
  * at any mark's edge — or else, the mark gone with its text, at the place the outermost mark it

@@ -64,6 +64,7 @@ import {
   EXTERNAL_USJ_MUTATION_TAG,
   getDisplayAnnotationRegistration,
   textTypeState,
+  NoteNode,
   TypedMarkNode,
   TypedMarkOnClick,
   TypedMarkOnMouseEnter,
@@ -562,8 +563,8 @@ describe("the display-annotation index", () => {
     editor.update(
       () => {
         glyph = $createMarkerNode("tr");
-        row = $createImmutableTableRowNode("tr").append(glyph);
-        $getRoot().append(row);
+        row = $createImmutableTableRowNode("tr");
+        $getRoot().append(row.append(glyph));
       },
       { discrete: true },
     );
@@ -1956,8 +1957,8 @@ describe("the first and last element an annotation paints", () => {
       const text = $createTextNode("In the beginning");
       const caller = $createImmutableNoteCallerNode("+");
       const content = $createTextNode("a note");
-      const note = $createNoteNode("f", "+", collapsed).append(caller, content);
-      $getRoot().append($createParaNode().append(text, note));
+      const note = $createNoteNode("f", "+", collapsed);
+      $getRoot().append($createParaNode().append(text, note.append(caller, content)));
       return { text, note, caller, content };
     }
 
@@ -2000,17 +2001,22 @@ describe("the first and last element an annotation paints", () => {
 
     it("gives a marker glyph held inside a note its edges as the note expands, and none as it collapses", () => {
       const editor = setupEdges();
-      let note!: LexicalNode;
+      let note!: NoteNode;
       let glyph!: LexicalNode;
       editor.update(
         () => {
           glyph = $createMarkerNode("ft");
-          note = $createNoteNode("f", "+", true).append(
-            $createImmutableNoteCallerNode("+"),
-            glyph,
-            $createTextNode(`${NBSP}a note`),
+          note = $createNoteNode("f", "+", true);
+          $getRoot().append(
+            $createParaNode().append(
+              $createTextNode("In the beginning"),
+              note.append(
+                $createImmutableNoteCallerNode("+"),
+                glyph,
+                $createTextNode(`${NBSP}a note`),
+              ),
+            ),
           );
-          $getRoot().append($createParaNode().append($createTextNode("In the beginning"), note));
           // The whole glyph.
           $addDisplayAnnotation(glyph, TYPE, "a", 0, 0);
         },

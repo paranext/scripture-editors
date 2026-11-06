@@ -14,6 +14,10 @@
  * they are, and no piece or hold state; that tree is read into a scratch editor, the selection
  * restated on it, and the copy written there. The live editor is only read. A selection touching
  * nothing an annotation puts in the tree is copied by Lexical as it stands.
+ *
+ * `joinSerializedPieces` joins piece chains the same way but keeps their holds and does not say
+ * where each live node went; this walk also joins the texts a mark cut, drops every hold, and
+ * records each node's place so the selection can be restated on the scratch tree.
  */
 
 import { $getClipboardDataFromSelection, LexicalClipboardData } from "@lexical/clipboard";

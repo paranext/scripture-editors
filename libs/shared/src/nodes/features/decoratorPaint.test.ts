@@ -3,8 +3,8 @@ import {
   DECORATOR_PAINT_ATTRIBUTE,
   DecoratorPaint,
   getDecoratorPaint,
-  paintedPieceKeys,
-  paintedPieceOf,
+  paintedSubSpanKeys,
+  paintedSubSpanOf,
   renderDecoratorPaint,
   setDecoratorPaint,
   subscribeDecoratorPaint,
@@ -101,7 +101,7 @@ describe("renderDecoratorPaint", () => {
       ["mark-check", "annotationId-a"],
       ["mark-check", "annotationId-a", "annotationId-b"],
     ]);
-    expect(spans.map(paintedPieceKeys)).toEqual([[KEY_A], [KEY_A, KEY_B]]);
+    expect(spans.map(paintedSubSpanKeys)).toEqual([[KEY_A], [KEY_A, KEY_B]]);
     expect([...element.childNodes].map((child) => child.textContent)).toEqual([
       "\\v ",
       "1",
@@ -109,15 +109,15 @@ describe("renderDecoratorPaint", () => {
       " ",
     ]);
     // A text inside a sub-span is in that sub-span; the plain text around them is in none.
-    expect(paintedPieceOf(spans[0].firstChild)).toBe(spans[0]);
-    expect(paintedPieceOf(element.firstChild)).toBeUndefined();
-    expect(paintedPieceKeys(element)).toEqual([]);
+    expect(paintedSubSpanOf(spans[0].firstChild)).toBe(spans[0]);
+    expect(paintedSubSpanOf(element.firstChild)).toBeUndefined();
+    expect(paintedSubSpanKeys(element)).toEqual([]);
   });
 
   it("reads no annotation keys from a paint attribute that is not a JSON list", () => {
     const element = document.createElement("span");
     element.setAttribute(DECORATOR_PAINT_ATTRIBUTE, "not json");
-    expect(paintedPieceKeys(element)).toEqual([]);
+    expect(paintedSubSpanKeys(element)).toEqual([]);
   });
 
   it("writes nothing when the element already shows that paint", () => {

@@ -20,6 +20,8 @@ import { $isMarkerTrailingSeparator } from "../usj/node.utils.js";
 import { $isNoteNode } from "../usj/NoteNode.js";
 import { $isVerseNode, VerseNode } from "../usj/VerseNode.js";
 import {
+  annotationKey,
+  compareAnnotationRanges,
   DisplayAnnotation,
   DisplayAnnotations,
   displayAnnotationsState,
@@ -215,7 +217,7 @@ export function $displayAnnotationsOf(node: LexicalNode): DisplayAnnotation[] {
 /** Store `annotations` on `node` in the order their bytes come (a whole hold first), so a reader
  * that joins them gets them in document order. */
 function $writeAnnotations(node: LexicalNode, annotations: DisplayAnnotation[]): void {
-  const ordered = [...annotations].sort((a, b) => a.start - b.start || a.end - b.end);
+  const ordered = [...annotations].sort(compareAnnotationRanges);
   $setState(
     node,
     displayAnnotationsState,
@@ -414,9 +416,6 @@ const registrations = new WeakMap<LexicalEditor, Map<string, DisplayAnnotationRe
 
 /** A type or id may itself contain the NUL character a delimiter join would use, so the key is
  * JSON, not a joined string. */
-function registrationKey(type: string, id: string): string {
-  return JSON.stringify([type, id]);
-}
 
 /**
  * Record `type`/`id` for the active editor: callbacks given here replace the ones held. Call
@@ -433,7 +432,7 @@ export function $registerDisplayAnnotation(
     byKey = new Map();
     registrations.set(editor, byKey);
   }
-  const key = registrationKey(type, id);
+  const key = annotationKey(type, id);
   const previous = byKey.get(key);
   const defined = Object.fromEntries(
     Object.entries(callbacks).filter(([, callback]) => callback !== undefined),
@@ -446,7 +445,7 @@ export function getDisplayAnnotationRegistration(
   type: string,
   id: string,
 ): DisplayAnnotationRegistration | undefined {
-  return registrations.get(editor)?.get(registrationKey(type, id));
+  return registrations.get(editor)?.get(annotationKey(type, id));
 }
 
 export function deleteDisplayAnnotationRegistration(
@@ -454,7 +453,7 @@ export function deleteDisplayAnnotationRegistration(
   type: string,
   id: string,
 ): void {
-  registrations.get(editor)?.delete(registrationKey(type, id));
+  registrations.get(editor)?.delete(annotationKey(type, id));
 }
 
 // ---------------------------------------------------------------------------------------------

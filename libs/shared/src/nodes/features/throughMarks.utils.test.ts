@@ -455,12 +455,14 @@ describe("removing a range that starts at a mark's edge", () => {
     editor.update(
       () => {
         const held = $createTextNode("b");
-        const para = $createParaNode().append(
-          $createTextNode("a "),
-          $createMarkerNode("w"),
-          $createTypedMarkNode({ t: ["1"] }).append(held),
+        const para = $createParaNode();
+        $getRoot().append(
+          para.append(
+            $createTextNode("a "),
+            $createMarkerNode("w"),
+            $createTypedMarkNode({ t: ["1"] }).append(held),
+          ),
         );
-        $getRoot().append(para);
         held.select(0, 1);
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) throw new Error("no range selection");
@@ -489,12 +491,14 @@ describe("removing part of a mark's text from the mark's edge", () => {
     editor.update(
       () => {
         const held = $createTextNode("bc");
-        const para = $createParaNode().append(
-          $createTextNode("a "),
-          $createMarkerNode("w"),
-          isMarked ? $createTypedMarkNode({ t: ["1"] }).append(held) : held,
+        const para = $createParaNode();
+        $getRoot().append(
+          para.append(
+            $createTextNode("a "),
+            $createMarkerNode("w"),
+            isMarked ? $createTypedMarkNode({ t: ["1"] }).append(held) : held,
+          ),
         );
-        $getRoot().append(para);
         held.select(start, end);
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) throw new Error("no range selection");

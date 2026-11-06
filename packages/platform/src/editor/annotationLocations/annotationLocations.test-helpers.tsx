@@ -289,6 +289,8 @@ function paintedWhole(painted: Element[], element: Element): boolean {
  * painted character is whitespace (an interior gap's fill, {@link GAP_FILL}); a decorator with no
  * hold it displays counts as painted when anything of it is. The paint is read from the DOM, never
  * from the model; only the holds a decorator's paint is graded against are read from the model.
+ *
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
  */
 export function $paintedIndexes(
   lexical: LexicalEditor,
