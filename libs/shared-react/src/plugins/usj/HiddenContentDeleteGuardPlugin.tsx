@@ -21,7 +21,11 @@ import { $confineRangeToProtectedNote } from "./NoteShellCaretGuardPlugin";
 import { $selectionReachesIntoOpaqueBlock, isEditingKey } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
-import { removeUnstorableText } from "./unstorableText.utils";
+import {
+  $deletionJoinsSlashes,
+  $textAroundSelection,
+  removeUnstorableText,
+} from "./unstorableText.utils";
 import {
   $moveCaretPastGutterGlyph,
   $narrowSelectionPastGutterGlyph,
@@ -149,8 +153,9 @@ interface DeleteExtent {
  * @param copyLimit - The editor's `copyLimit`.
  * @param refusesCommandCharacters - Whether `CommandMenuPlugin` refuses, after this plugin, any
  *   paste whose plain text holds a `\` or `/` (the Markers view). Otherwise `UnstorableTextPlugin`
- *   removes only `\` and `//` from what is pasted. Either way a paste it leaves with nothing to
- *   insert is not asked about.
+ *   removes only `\` and `//` from what is pasted, and refuses a cut that would join two `/`.
+ *   Either way a paste it leaves with nothing to insert is not asked about, and neither is a cut it
+ *   refuses.
  * @param onHiddenContentDelete - Asks the user; see {@link HiddenContentDeleteHandler}. Without it
  *   this plugin does nothing and editing is native.
  * @param logger - Where handler failures, dropped answers, and long-open questions are reported.
@@ -542,7 +547,7 @@ export function HiddenContentDeleteGuardPlugin({
       if (!selection || selection.isCollapsed()) return false;
       const insertsNothing = refusesCommandCharactersRef.current
         ? pasteIsRefusedForCommandCharacter(event, structureProtectionModeRef.current)
-        : pasteInsertsNothing(event);
+        : pasteInsertsNothing(event, $textAroundSelection(selection));
       if ($isProtectedFromReplacement(selection) || insertsNothing) return false;
       const hidden = $hiddenNodesInSelection(selection);
       if (hidden.length === 0) return false;
@@ -565,6 +570,9 @@ export function HiddenContentDeleteGuardPlugin({
       if (selection.isCollapsed()) return false;
       const hidden = $hiddenNodesInSelection(selection);
       if (hidden.length === 0) return false;
+      // `UnstorableTextPlugin` refuses this cut after this plugin, so asking would only lead to that
+      // refusal.
+      if (!refusesCommandCharactersRef.current && $cutJoinsSlashes(selection)) return false;
       // A copy limit shortens what the copy takes, so the copy and the removal could not be kept
       // to the same text.
       if (copyLimitRef.current !== undefined) return preventAndClaim(event);
@@ -663,17 +671,32 @@ function preventAndClaim(event: Event | null): true {
 /**
  * Whether a paste would insert nothing, leaving nothing to ask about: a clipboard of files alone, or
  * plain text alone that is nothing but text the view cannot store (`\` and `//`), which
- * `UnstorableTextPlugin` removes, inserting nothing, after this plugin has run. A node copy or html
- * goes in as nodes, so it is asked about.
+ * `UnstorableTextPlugin` removes, inserting nothing, after this plugin has run: judged, as it judges
+ * it, against the document characters `around` the selection, so a lone `/` that would touch a `/`
+ * there counts. A node copy or html goes in as nodes, so it is asked about.
  */
-function pasteInsertsNothing(event: PasteCommandType): boolean {
+function pasteInsertsNothing(
+  event: PasteCommandType,
+  around: { before: string; after: string },
+): boolean {
   if (typeof ClipboardEvent === "undefined" || !(event instanceof ClipboardEvent)) return false;
   const data = event.clipboardData;
   if (!data) return false;
   if (Array.from(data.types).every((type) => type === "Files")) return true;
   if (data.getData("text/html") || data.getData("application/x-lexical-editor")) return false;
   const text = data.getData("text/plain");
-  return text !== "" && removeUnstorableText(text).text === "";
+  return text !== "" && removeUnstorableText(text, around.before, around.after).text === "";
+}
+
+/**
+ * Whether cutting `selection` would put a `/` against a `/`, which `UnstorableTextPlugin` refuses
+ * (see {@link $deletionJoinsSlashes}).
+ */
+function $cutJoinsSlashes(selection: RangeSelection): boolean {
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  return $deletionJoinsSlashes({ kind: "range", start, end });
 }
 
 /**
