@@ -13,7 +13,7 @@
  */
 
 import { $getLexicalContent, copyToClipboard, LexicalClipboardData } from "@lexical/clipboard";
-import { mergeRegister } from "@lexical/utils";
+import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $getEditor,
   $getSelection,
@@ -1026,6 +1026,11 @@ function $insertTransferForStandardView(
   return true;
 }
 
+/** Whether `selection` starts in the book (`\id`) line. */
+function $isInBookLine(selection: RangeSelection): boolean {
+  return !!$findMatchingParent(selection.anchor.getNode(), $isBookNode);
+}
+
 /**
  * Inserts an external paste's resolved text at `selection` the way {@link $handlePasteForStandardView}
  * does: `\c`/`\id` tokens dropped ({@link stripPastedChapterAndBookId}), NBSPs normalized
@@ -1062,8 +1067,9 @@ export function $insertPastedText(
   const lines = normalized.split("\n");
   // A protected document never gains a paragraph from a paste: each newline becomes a single space
   // and the payload goes in as one insertion, so the block structure the user sees is exactly the
-  // one they had. Every byte-level rule above still applied.
-  if (isStructureProtected) {
+  // one they had. Every byte-level rule above still applied. Nor does the book (`\id`) line, where
+  // the replay's paragraph breaks go nowhere and its lines would run together into one word.
+  if (isStructureProtected || $isInBookLine(selection)) {
     selection.insertText(lines.join(" "));
     return;
   }
