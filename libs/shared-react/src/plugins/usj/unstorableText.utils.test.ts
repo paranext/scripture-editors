@@ -616,6 +616,22 @@ describe("$deletionJoinsSlashes", () => {
     ).toBe(false);
   });
 
+  it("keeps a note a range runs out of, so its text stays apart from the paragraph's", async () => {
+    // From after `y/` inside the note to just before `/b`: the note keeps `y/`, and its closing
+    // marker stands between that and `/b`. The paragraph's `a/ ` before the note is not touched.
+    const $note = () => $createNoteNode("f", "+").append($createTextNode("y/z"));
+    expect(
+      await judge(
+        () => [[$createTextNode("a/ "), $note(), $createTextNode("/b")]],
+        ([para]) => ({
+          kind: "range",
+          start: $at($text(para, "y/z"), 2),
+          end: $at($text(para, "/b"), 0),
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it("joins a `/` to an optional line break, which the file stores as a bare `//`", async () => {
     // `a/ ///b` loads as `a/ `, an optional break, then `/b`: the view shows `a/ /b`. Deleting the
     // space would save `a////b`, which reads back as two optional breaks.
