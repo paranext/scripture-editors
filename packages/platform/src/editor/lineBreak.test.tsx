@@ -839,6 +839,118 @@ describe.each(HIDDEN_VIEW_MODES)("in $view view with structure $mode", ({ view, 
   });
 });
 
+describe.each(VIEW_MODES)("in $view view with structure $mode", ({ view, mode }) => {
+  /** Split as Enter splits, or joined where protected structure refuses the split. */
+  const splitOrJoined = (split: [string, string][], joined: string): [string, string][] =>
+    mode === "protected" ? [["q1", joined]] : split;
+
+  const PLAIN_TEXT_ROUTES: [string, (mounted: MountedEditor, text: string) => Promise<void>][] = [
+    ["pasted", (mounted, text) => paste(mounted, { "text/plain": text })],
+    ["dropped", (mounted, text) => drop(mounted, { "text/plain": text })],
+  ];
+
+  describe.each(PLAIN_TEXT_ROUTES)("plain text %s", (_route, insert) => {
+    it.each<[string, string, [string, string], [string, string][], string]>([
+      [
+        "ending in a line break",
+        "x\n",
+        [VERSE_TEXT, "first "],
+        [
+          ["q1", "first x"],
+          ["q1", "verse text"],
+        ],
+        "first x verse text",
+      ],
+      [
+        "starting with a line break",
+        "\nx",
+        [VERSE_TEXT, "first"],
+        [
+          ["q1", "first"],
+          ["q1", "x verse text"],
+        ],
+        "first x verse text",
+      ],
+      [
+        "ending in a Windows line break",
+        "x\r\n",
+        [VERSE_TEXT, "first "],
+        [
+          ["q1", "first x"],
+          ["q1", "verse text"],
+        ],
+        "first x verse text",
+      ],
+      [
+        "starting with a line break beside a space",
+        "\nx",
+        [VERSE_TEXT, "first "],
+        [
+          ["q1", "first "],
+          ["q1", "xverse text"],
+        ],
+        "first xverse text",
+      ],
+      [
+        "ending in a line break beside a space",
+        "x\n",
+        [VERSE_TEXT, "first"],
+        [
+          ["q1", "firstx"],
+          // The split drops the new paragraph's leading space.
+          ["q1", "verse text"],
+        ],
+        "firstx verse text",
+      ],
+      [
+        "holding a line break beside a space",
+        "x \ny",
+        [VERSE_TEXT, "first "],
+        [
+          ["q1", "first x "],
+          ["q1", "yverse text"],
+        ],
+        "first x yverse text",
+      ],
+    ])(
+      "%s never joins two words nor makes a double space",
+      async (_name, text, [needle, after], split, joined) => {
+        const mounted = await mountInView(DOCUMENT, editorView(view), {
+          structureProtectionMode: mode,
+        });
+        try {
+          await caretAt(mounted, needle, after);
+          await insert(mounted, text);
+
+          expect(savedParagraphs(mounted)).toEqual(splitOrJoined(split, joined));
+        } finally {
+          mounted.unmount();
+        }
+      },
+    );
+
+    it("holding a line break, on the \\id line, joins its lines with a space", async () => {
+      const book: MarkerObject = { ...BOOK, content: ["test book"] };
+      const mounted = await mountInView(
+        { ...DOCUMENT, content: [book, ...DOCUMENT.content.slice(1)] },
+        editorView(view),
+        { structureProtectionMode: mode },
+      );
+      try {
+        await caretAt(mounted, "test book", "test ");
+        await insert(mounted, "x\ny");
+
+        expect(saved(mounted)?.slice(0, 2)).toEqual([
+          { ...book, content: ["test x ybook"] },
+          { type: "chapter", marker: "c", number: "1" },
+        ]);
+      } finally {
+        mounted.unmount();
+      }
+    });
+  });
+});
+
 describe.each(enabledViews(["formatted"]))("in %s view", (view) => {
   // Splitting the paragraph under a live composition would lose the input method's place in it.
   it.each<[string, (mounted: MountedEditor) => Promise<void>]>([

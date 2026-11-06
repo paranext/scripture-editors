@@ -1241,8 +1241,8 @@ function expectHiddenViewPlainCopy(text: string, copied: Item[]): void {
  * S5), not a loss this suite can hold the paste to.
  *
  * Under `protected` structure the lines go into the paragraph at the caret instead
- * (`UnstorableTextPlugin`): each run of line breaks becomes one space, a trailing one goes, and
- * each tab becomes a space.
+ * (`UnstorableTextPlugin`): each tab becomes a space, and each run of line breaks one space, or
+ * nothing where whitespace is already beside it, in the text or in the string at the caret.
  */
 function plainFragment(
   content: Item[],
@@ -1251,10 +1251,16 @@ function plainFragment(
   protection: StructureProtectionMode,
 ): Item[] {
   if (protection === "protected" && /[\r\n]/.test(text)) {
-    const joined = text
-      .replace(/[\r\n]+$/, "")
-      .replace(/[\r\n]+/g, " ")
-      .replace(/\t/g, " ");
+    const host = itemAt(content, at.path);
+    const caretText = typeof host === "string" ? host : "";
+    const before = caretText[at.offset - 1] ?? "";
+    const after = caretText[at.offset] ?? "";
+    const spaced = text.replace(/\t/g, " ");
+    const joined = spaced.replace(/[\r\n]+/g, (run, offset: number) => {
+      const previous = offset > 0 ? spaced[offset - 1] : before;
+      const next = spaced[offset + run.length] ?? after;
+      return /\s/.test(previous) || /\s/.test(next) ? "" : " ";
+    });
     return wrapLike(content, at.path, joined);
   }
   const lines = text.split(/\r?\n/);

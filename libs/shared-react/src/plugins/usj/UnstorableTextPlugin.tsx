@@ -36,7 +36,7 @@ import {
 } from "./unstorableText.utils";
 import { $insertDataTransferForRichText, $insertGeneratedNodes } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { mergeRegister } from "@lexical/utils";
+import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createRangeSelection,
@@ -68,7 +68,7 @@ import {
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $getSelectedParaMarkerPara, $isParaLikeNode, LoggerBasic } from "shared";
+import { $getSelectedParaMarkerPara, $isBookNode, $isParaLikeNode, LoggerBasic } from "shared";
 
 /** Logs and reports one removal. */
 function reportRemoved(
@@ -170,15 +170,19 @@ function htmlWithoutMarkerGlyphs(html: string): string | undefined {
 }
 
 /**
- * Plain text as protected structure inserts it, in the paragraph at the caret: each run of line
- * breaks becomes one space, except a trailing one, which goes, since under protection it would
- * only split the paragraph; and each tab becomes a space.
+ * Plain text as it goes into one paragraph, where its lines cannot split it (protected structure,
+ * the `\id` line): each tab becomes a space, and each run of line breaks one space, or nothing
+ * where whitespace is already beside it — in the text, or in the document at the caret (`before`,
+ * `after`). A run at the text's start or end is judged the same way, so it neither joins the
+ * pasted text to a word at the caret nor doubles a space there. With nothing stored beside it (a
+ * paragraph's edge, a span's edge), a run is still a space: the text there may be a word.
  */
-function joinLines(text: string): string {
-  return text
-    .replace(/[\r\n]+$/, "")
-    .replace(/[\r\n]+/g, " ")
-    .replace(/\t/g, " ");
+function joinLines(text: string, before: string, after: string): string {
+  return text.replace(/\t/g, " ").replace(/[\r\n]+/g, (run, offset: number, whole: string) => {
+    const previous = offset > 0 ? whole[offset - 1] : before;
+    const next = offset + run.length < whole.length ? whole[offset + run.length] : after;
+    return /\s/.test(previous) || /\s/.test(next) ? "" : " ";
+  });
 }
 
 /**
@@ -233,9 +237,11 @@ function joinLines(text: string): string {
  * Ctrl+T, a `beforeinput` `insertTranspose`) that would put a `/` against a `/` is refused, and
  * reported as typing.
  *
- * Under `"protected"` structure a plain-text paste or drop goes into the paragraph at the caret,
- * its lines joined by one space each, as protected structure's html route joins paragraphs:
- * Lexical would otherwise make each line a paragraph of its own.
+ * Under `"protected"` structure, and on the `\id` line in any, a plain-text paste or drop goes into
+ * the paragraph at the caret, its lines joined by a space, as protected structure's html route joins
+ * paragraphs: Lexical would otherwise make each line a paragraph of its own, and on the `\id` line
+ * run them together. A line break at either end, or beside a space, adds no second space and joins
+ * no two words ({@link joinLines}).
  *
  * A delete is refused, and reported with `source: "deletion"`, when what it leaves would put a `/`
  * against a `/` it was not already touching (see {@link $deletionJoinsSlashes}): Backspace, Delete
@@ -357,8 +363,8 @@ export function UnstorableTextPlugin({
     };
 
     /**
-     * Inserts a plain-text paste or drop itself when it needs filtering, line breaks joining under
-     * protected structure, or a lone carriage return (an old Mac line ending) reading as the line
+     * Inserts a plain-text paste or drop itself when it needs filtering, line breaks joining (under
+     * protected structure, or on the `\id` line), or a lone carriage return (an old Mac line ending) reading as the line
      * break it is: Lexical's own insertion splits only at `\n` and `\r\n`, and leaves a lone `\r`
      * in the text. Returns whether it did; otherwise Lexical's own insertion runs.
      */
@@ -370,12 +376,19 @@ export function UnstorableTextPlugin({
       if (!$isRangeSelection(selection) || insertionRoute(data) !== "plain") return false;
       const text = data.getData("text/plain") || data.getData("text/uri-list");
       if (!text) return false;
-      const joinsLines = structureProtectionModeRef.current === "protected" && /[\r\n]/.test(text);
+      const joinsLines =
+        /[\r\n]/.test(text) &&
+        (structureProtectionModeRef.current === "protected" ||
+          !!$findMatchingParent(selection.anchor.getNode(), $isBookNode));
       const keepsLines = $selectionSpansBookOrChapterLine(selection);
       const hasLoneReturn = /\r(?!\n)/.test(text);
       const { before, after } = $textAroundSelection(selection);
       const lines = hasLoneReturn ? text.replace(/\r(?!\n)/g, "\n") : text;
-      const filtered = removeUnstorableText(joinsLines ? joinLines(lines) : lines, before, after);
+      const filtered = removeUnstorableText(
+        joinsLines ? joinLines(lines, before, after) : lines,
+        before,
+        after,
+      );
       if (filtered.removed.length === 0 && !joinsLines && !keepsLines && !hasLoneReturn)
         return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);
