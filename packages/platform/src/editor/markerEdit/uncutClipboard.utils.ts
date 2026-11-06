@@ -43,6 +43,7 @@ import {
   displayPieceChainState,
   displayPieceContinuationState,
   displayPieceTokenTextState,
+  LoggerBasic,
 } from "shared";
 
 /** The node states a hold or a cut puts on a node: none of them is in the uncut document. */
@@ -307,11 +308,13 @@ function $nodeAt(path: readonly number[]): LexicalNode | undefined {
  * Every flavor a copy of `selection` writes, as the same selection in the document with no
  * annotation writes it ({@link $serializeUncut}); `undefined` when the selection touches nothing an
  * annotation puts in the tree, or the copy without annotations cannot be written, so the copy is
- * the editor's own. Read-only: the live editor is only read, and nothing of it is written.
+ * the editor's own. A copy that cannot be written is reported to `logger` as a warning. Read-only:
+ * the live editor is only read, and nothing of it is written.
  */
 export function $uncutClipboardData(
   editor: LexicalEditor,
   selection: RangeSelection,
+  logger?: LoggerBasic,
 ): LexicalClipboardData | undefined {
   if (!$touchesAnnotations(selection)) return undefined;
   try {
@@ -340,9 +343,14 @@ export function $uncutClipboardData(
       },
       { editor: scratch },
     );
-  } catch {
+  } catch (error) {
     // The scratch editor throws rather than parse a partial document (see `scratchEditorOf`); a
     // copy that fails here is still a copy, the editor's own, with the annotations' cuts in it.
+    logger?.warn(
+      "[uncutClipboard] the copy without annotations could not be written; copying the editor's " +
+        "own copy, which carries the annotations' cuts.",
+      error,
+    );
     return undefined;
   }
 }

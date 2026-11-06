@@ -1278,7 +1278,12 @@ export function MarkerEditPlugin({
             editor.registerCommand(
               DRAGSTART_COMMAND,
               (event) => {
-                $setStandardViewDragData(event, editor, getNbspSpelling(context.viewOptions));
+                $setStandardViewDragData(
+                  event,
+                  editor,
+                  getNbspSpelling(context.viewOptions),
+                  context.logger,
+                );
                 return false;
               },
               COMMAND_PRIORITY_LOW,
@@ -1297,6 +1302,7 @@ export function MarkerEditPlugin({
                   false,
                   copyLimitRef.current,
                   getNbspSpelling(context.viewOptions),
+                  context.logger,
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -1313,6 +1319,7 @@ export function MarkerEditPlugin({
                   true,
                   copyLimitRef.current,
                   getNbspSpelling(context.viewOptions),
+                  context.logger,
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -1578,6 +1585,7 @@ export function MarkerEditPlugin({
               event && typeof event === "object" && "clipboardData" in event ? event : null,
               editor,
               command === CUT_COMMAND,
+              context.logger,
             ),
           COMMAND_PRIORITY_LOW,
         ),

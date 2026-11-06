@@ -61,6 +61,7 @@ import {
   textTypeState,
   $logicalText,
   $removeRangeHeldByMarks,
+  LoggerBasic,
 } from "shared";
 import {
   $hasCopyableSelection,
@@ -992,15 +993,17 @@ export function $handleDropForStandardView(
  * @param event The drag's `dragstart` event.
  * @param editor The editor.
  * @param nbspSpelling What a stored NBSP displays as (`getNbspSpelling`).
+ * @param logger Where a copy without annotations that cannot be written is reported.
  */
 export function $setStandardViewDragData(
   event: DragEvent,
   editor: LexicalEditor,
   nbspSpelling: string,
+  logger?: LoggerBasic,
 ): void {
   const { dataTransfer } = event;
   if (!dataTransfer) return;
-  const data = $getStandardViewClipboardData(editor, nbspSpelling);
+  const data = $getStandardViewClipboardData(editor, nbspSpelling, logger);
   if (!data) return;
   dataTransfer.clearData();
   for (const type of ["text/plain", "text/html"] as const) {
@@ -1400,6 +1403,7 @@ function $selectionTouchesBookOrChapter(selection: RangeSelection): boolean {
 export function $getStandardViewClipboardData(
   editor: LexicalEditor,
   nbspSpelling = "~",
+  logger?: LoggerBasic,
 ): LexicalClipboardData | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return undefined;
@@ -1412,7 +1416,7 @@ export function $getStandardViewClipboardData(
   // An annotated selection's internal flavor is written as the document with no annotation
   // writes it.
   const lexical =
-    $uncutClipboardData(editor, selection)?.["application/x-lexical-editor"] ??
+    $uncutClipboardData(editor, selection, logger)?.["application/x-lexical-editor"] ??
     $getLexicalContent(editor);
   // The internal flavor is the editor's own nodes, so it holds the stand-in for a stored no-break
   // space (`NBSP_STAND_IN`) as it is, and the stand-in must not leave the editor. Without the
@@ -1458,6 +1462,7 @@ export function $handleCopyForStandardView(
   isCut: boolean,
   copyLimit?: number,
   nbspSpelling = "~",
+  logger?: LoggerBasic,
 ): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) {
@@ -1467,7 +1472,7 @@ export function $handleCopyForStandardView(
     // content and is therefore declined here — and one shared function is what keeps them agreeing.
     return isNullPayloadDispatch && !$hasCopyableSelection();
   }
-  const data = $getStandardViewClipboardData(editor, nbspSpelling);
+  const data = $getStandardViewClipboardData(editor, nbspSpelling, logger);
   if (!data) return false;
   if (copyLimit !== undefined) delete data["application/x-lexical-editor"];
   return $writeCopyPayload(event, editor, selection, data, isCut, copyLimit);
@@ -1537,10 +1542,11 @@ export function $copyWithoutAnnotations(
   event: ClipboardEvent | null,
   editor: LexicalEditor,
   isCut: boolean,
+  logger?: LoggerBasic,
 ): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-  const data = $uncutClipboardData(editor, selection);
+  const data = $uncutClipboardData(editor, selection, logger);
   if (!data) return false;
   return $writeClipboardData(
     event,

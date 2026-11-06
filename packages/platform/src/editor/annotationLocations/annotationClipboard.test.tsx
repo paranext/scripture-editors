@@ -692,6 +692,10 @@ describe("a copy of annotated text", () => {
         parse.mockRestore();
       }
       expect(mounted.logs.filter((log) => log.startsWith("E "))).toEqual([]);
+      expect(
+        mounted.logs.filter((log) => log.startsWith("W [uncutClipboard]")),
+        "the fallback is reported as a warning",
+      ).toHaveLength(1);
       expect(getData("text/plain")).toBe(expectedText);
       expect(getData("application/x-lexical-editor")).not.toBe("");
       mounted.unmount();
