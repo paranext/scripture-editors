@@ -343,10 +343,25 @@ type Piece =
 
 /** The paragraph (or note) `point` is in, or `undefined` when it is in neither. */
 function $containerOf(point: PointType): ElementNode | undefined {
-  let node: LexicalNode | null = point.getNode();
+  return $containerOfNode(point.getNode());
+}
+
+/** The paragraph (or note) `node` is, or is in; `undefined` when it is in neither. */
+function $containerOfNode(start: LexicalNode | null): ElementNode | undefined {
+  let node = start;
   while (node && !($isElementNode(node) && (!node.isInline() || $isNoteNode(node))))
     node = node.getParent();
   return node && !$isRootNode(node) ? node : undefined;
+}
+
+/**
+ * The paragraph a note `container` is in, and any other container as it is. A range that runs
+ * across a note's edge takes only the note's text on its side: the note stays, its markers between
+ * what is left either side, so the range is judged in the paragraph, where the note is an atom it
+ * starts or ends inside.
+ */
+function $outsideNote(container: ElementNode): ElementNode | undefined {
+  return $isNoteNode(container) ? $containerOfNode(container.getParent()) : container;
 }
 
 /**
@@ -600,8 +615,9 @@ export function $deletionJoinsSlashes(deletion: JudgedDeletion): boolean {
     ]);
   }
   if (deletion.kind === "range") {
-    const first = $containerOf(deletion.start);
-    const last = $containerOf(deletion.end);
+    let first = $containerOf(deletion.start);
+    let last = $containerOf(deletion.end);
+    if (first && last && !first.is(last)) [first, last] = [$outsideNote(first), $outsideNote(last)];
     if (!first || !last || !$holdsSlash(first, last)) return false;
     const boundaries: Boundary[] = [
       { which: "start", point: deletion.start },
