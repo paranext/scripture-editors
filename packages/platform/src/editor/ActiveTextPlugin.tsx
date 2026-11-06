@@ -2,6 +2,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { $dfs, mergeRegister } from "@lexical/utils";
 import {
   $getNearestNodeFromDOMNode,
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $isElementNode,
@@ -23,6 +24,8 @@ import {
   $isImmutableTypedTextNode,
   $isMarkerNode,
   $isParaLikeNode,
+  CategoryType,
+  getMarker,
   ParaLikeNode,
   ZWSP,
 } from "shared";
@@ -219,8 +222,9 @@ export interface VerseSection {
  * The caret is read from the selection's anchor, as the toolbar's verse reference and paragraph
  * style do, so a range selection's two ends don't pick different paragraphs. The section is not the
  * toolbar's verse, though: a line that carries on the previous paragraph's verse (a `\q2` after a
- * `\q1`) is this paragraph's intro here, while the toolbar names the verse it continues; and the
- * toolbar looks only one char span deep for a nested verse.
+ * `\q1`) is this paragraph's intro here, while the toolbar names the verse it continues
+ * ({@link $getActiveVerseSections} follows the verse there); and the toolbar looks only one char
+ * span deep for a nested verse.
  *
  * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
  * command handler.
@@ -244,6 +248,91 @@ export function $getActiveVerseSection(): VerseSection | undefined {
       : order[activeIndex]
     )?.getKey(),
   };
+}
+
+/** Paragraph categories that hold running text, so a verse carries on through them. */
+const RUNNING_TEXT_CATEGORIES = new Set([
+  CategoryType.Paragraphs,
+  CategoryType.Poetry,
+  CategoryType.Lists,
+]);
+
+/** Whether `node` is a paragraph of running text (`\p`, `\q2`, `\li`…), not a heading or title. */
+function $isRunningTextPara(node: LexicalNode | null | undefined): node is ParaLikeNode {
+  if (!$isParaLikeNode(node)) return false;
+  const category = getMarker(node.getMarker())?.category;
+  return category !== undefined && RUNNING_TEXT_CATEGORIES.has(category);
+}
+
+/**
+ * The caret's whole verse, as one {@link VerseSection} per paragraph it runs through, in document
+ * order. A verse carries on past its paragraph's end into the running-text paragraphs after it (a
+ * `\q1`'s verse through the `\q2` lines below it, or a `\p` break mid-verse) up to the next verse
+ * marker, stopping at a heading, a table or a chapter. So the caret on any of those lines gets the
+ * same sections. A carried-on paragraph's piece is its intro (no `verseKey`), and one with nothing
+ * but whitespace (a stanza break) is left out.
+ *
+ * Elsewhere it is just {@link $getActiveVerseSection}'s section: in a heading, in text before the
+ * chapter's first verse, or in a verse that ends in its own paragraph. Undefined where that is.
+ *
+ * Read-only, like {@link $getActiveVerseSection}.
+ */
+export function $getActiveVerseSections(): VerseSection[] | undefined {
+  const section = $getActiveVerseSection();
+  if (!section) return undefined;
+  const para = $getNodeByKey(section.paraKey);
+  const sections = [section];
+  if (!$isParaLikeNode(para)) return sections;
+
+  // An intro in running text carries on the verse last opened in the paragraphs before it.
+  if (!section.verseKey) {
+    if (!$isRunningTextPara(para)) return sections;
+    const before: VerseSection[] = [];
+    let previous = para.getPreviousSibling();
+    for (; $isParaLikeNode(previous); previous = previous.getPreviousSibling()) {
+      const order = $descendantsInOrder(previous);
+      const lastVerse = order.findLast($isSomeVerseNode);
+      if (lastVerse) {
+        const verseKey = lastVerse.getKey();
+        before.unshift({
+          paraKey: previous.getKey(),
+          verseKey,
+          nextVerseKey: undefined,
+          startKey: verseKey,
+        });
+        break;
+      }
+      if (!$isRunningTextPara(previous)) return sections;
+      const startKey = $introStart(previous, order, order.length)?.getKey();
+      if (startKey)
+        before.unshift({
+          paraKey: previous.getKey(),
+          verseKey: undefined,
+          nextVerseKey: undefined,
+          startKey,
+        });
+    }
+    if (!before[0]?.verseKey) return sections;
+    sections.unshift(...before);
+  }
+
+  // A verse that runs to its paragraph's end carries on through the running text after it.
+  if (section.nextVerseKey) return sections;
+  for (let next = para.getNextSibling(); $isRunningTextPara(next); next = next.getNextSibling()) {
+    const order = $descendantsInOrder(next);
+    const nextVerse = order.find($isSomeVerseNode);
+    const end = nextVerse ? $indexIn(order, nextVerse) : order.length;
+    const startKey = $introStart(next, order, end)?.getKey();
+    if (startKey)
+      sections.push({
+        paraKey: next.getKey(),
+        verseKey: undefined,
+        nextVerseKey: nextVerse?.getKey(),
+        startKey,
+      });
+    if (nextVerse) break;
+  }
+  return sections;
 }
 
 /**
@@ -360,7 +449,42 @@ export function measureVerseSection(
   editor: LexicalEditor,
   section: VerseSection,
 ): VerseOutlineInput | undefined {
-  if (!section.startKey || (!section.verseKey && !section.nextVerseKey)) return undefined;
+  if (!section.verseKey && !section.nextVerseKey) return undefined;
+  return measurePiece(editor, section);
+}
+
+/**
+ * Measures a verse that runs through several paragraphs ({@link $getActiveVerseSections}) as one
+ * outline: every piece's rects together, inside the content boxes of all their paragraphs, ending
+ * at the next verse marker in the last. Its direction is the first paragraph's, and it hugs its
+ * lines if any paragraph is centered or end-aligned. A piece with nothing visible adds nothing.
+ *
+ * A single section is measured as {@link measureVerseSection} measures it, so a paragraph without
+ * verse markers is still left to the whole-paragraph outline. Returns undefined when no piece has
+ * anything to outline. Reads the DOM, with the same timing as {@link measureVerseSection}.
+ */
+export function measureVerseSections(
+  editor: LexicalEditor,
+  sections: readonly VerseSection[],
+): VerseOutlineInput | undefined {
+  if (sections.length === 1) return measureVerseSection(editor, sections[0]);
+  const pieces = sections.flatMap((section) => measurePiece(editor, section) ?? []);
+  if (pieces.length === 0) return undefined;
+  return {
+    rects: pieces.flatMap((piece) => piece.rects),
+    contentBox: {
+      left: Math.min(...pieces.map((piece) => piece.contentBox.left)),
+      right: Math.max(...pieces.map((piece) => piece.contentBox.right)),
+    },
+    following: pieces.at(-1)?.following,
+    direction: pieces[0].direction,
+    hugLines: pieces.some((piece) => piece.hugLines),
+  };
+}
+
+/** {@link measureVerseSection} for any section, one of a verse's several pieces included. */
+function measurePiece(editor: LexicalEditor, section: VerseSection): VerseOutlineInput | undefined {
+  if (!section.startKey) return undefined;
   const paraEl = editor.getElementByKey(section.paraKey);
   const startEl = editor.getElementByKey(section.startKey) ?? undefined;
   const nextEl = section.nextVerseKey

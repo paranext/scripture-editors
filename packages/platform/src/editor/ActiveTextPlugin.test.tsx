@@ -56,12 +56,14 @@ import {
 import {
   $getActiveVerseKey,
   $getActiveVerseSection,
+  $getActiveVerseSections,
   $getEmptyVerseStatus,
   $getParaFromSelection,
   ACTIVE_EMPTY_CLASS,
   ActiveTextPlugin,
   EMPTY_CLASS,
   measureVerseSection,
+  measureVerseSections,
 } from "./ActiveTextPlugin";
 import { $createMarkerPrefix } from "./markerEdit/markerEditDeletion.utils";
 
@@ -836,6 +838,178 @@ describe("$getActiveVerseSection", () => {
   });
 });
 
+describe("$getActiveVerseSections", () => {
+  /** A Paragraph Structure view paragraph with the given marker and content. */
+  function $para(marker: string, ...children: LexicalNode[]) {
+    return $createParaNode(marker).append(
+      ...$createParaMarkerPrefixNodes("gutter-hidden", marker),
+      ...children,
+    );
+  }
+
+  /** `\q1 \v 1 Blessed, \q2 nor stand, \q2 nor sit; \q1 \v 2 But`, with the caret in `caretIn`. */
+  function setUpPoetry(caretIn: "v1" | "stand" | "sit" | "v2") {
+    let k!: { [name: string]: string };
+    let v2Key!: string;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      const v1 = $verseFor("gutter-hidden", "1");
+      const v2 = $verseFor("gutter-hidden", "2");
+      const blessed = $createTextNode("Blessed,");
+      const stand = $createTextNode("nor stand,");
+      const sit = $createTextNode("nor sit;");
+      const but = $createTextNode("But");
+      const q1 = $para("q1", v1, blessed);
+      const standPara = $para("q2", stand);
+      const sitPara = $para("q2", sit);
+      const q1b = $para("q1", v2, but);
+      $getRoot().append(q1, standPara, sitPara, q1b);
+      k = {
+        q1: q1.getKey(),
+        v1: v1.getKey(),
+        stand: stand.getKey(),
+        standPara: standPara.getKey(),
+        sit: sit.getKey(),
+        sitPara: sitPara.getKey(),
+        q1b: q1b.getKey(),
+      };
+      v2Key = v2.getKey();
+      ({ v1: blessed, stand, sit, v2: but })[caretIn].select(1, 1);
+    });
+    return { editor, k, v2Key };
+  }
+
+  it.each(["v1", "stand", "sit"] as const)(
+    "outlines verse 1 across all its poetry lines, with the caret in %s",
+    (caretIn) => {
+      const { editor, k } = setUpPoetry(caretIn);
+
+      editor.getEditorState().read(() => {
+        expect($getActiveVerseSections()).toEqual([
+          { paraKey: k.q1, verseKey: k.v1, nextVerseKey: undefined, startKey: k.v1 },
+          { paraKey: k.standPara, verseKey: undefined, nextVerseKey: undefined, startKey: k.stand },
+          { paraKey: k.sitPara, verseKey: undefined, nextVerseKey: undefined, startKey: k.sit },
+        ]);
+      });
+    },
+  );
+
+  it("keeps a verse that starts its paragraph to that paragraph when nothing follows it", () => {
+    const { editor, k, v2Key } = setUpPoetry("v2");
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toEqual([
+        { paraKey: k.q1b, verseKey: v2Key, nextVerseKey: undefined, startKey: v2Key },
+      ]);
+    });
+  });
+
+  it("ends at the next verse when it comes partway through a continuing line", () => {
+    let k!: { [name: string]: string };
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      const v1 = $verseFor("gutter-hidden", "1");
+      const v2 = $verseFor("gutter-hidden", "2");
+      const blessed = $createTextNode("Blessed,");
+      const stand = $createTextNode("nor stand, ");
+      const q1 = $para("q1", v1, blessed);
+      const q2 = $para("q2", stand, v2, $createTextNode("But"));
+      $getRoot().append(q1, q2);
+      k = { q1: q1.getKey(), v1: v1.getKey(), q2: q2.getKey(), stand: stand.getKey() };
+      k.v2 = v2.getKey();
+      blessed.select(1, 1);
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toEqual([
+        { paraKey: k.q1, verseKey: k.v1, nextVerseKey: undefined, startKey: k.v1 },
+        { paraKey: k.q2, verseKey: undefined, nextVerseKey: k.v2, startKey: k.stand },
+      ]);
+    });
+  });
+
+  it("stops at a section heading, both ways", () => {
+    let k!: { [name: string]: string };
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      const v1 = $verseFor("gutter-hidden", "1");
+      const one = $createTextNode("one");
+      const more = $createTextNode("more");
+      const p1 = $para("p", v1, one);
+      const p2 = $para("p", more, $verseFor("gutter-hidden", "2"));
+      $getRoot().append(p1, $para("s", $createTextNode("Heading")), p2);
+      k = { p1: p1.getKey(), v1: v1.getKey(), p2: p2.getKey(), more: more.getKey() };
+      one.select(1, 1);
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toEqual([
+        { paraKey: k.p1, verseKey: k.v1, nextVerseKey: undefined, startKey: k.v1 },
+      ]);
+    });
+
+    editor.update(() => $getNodeByKey<TextNode>(k.more)?.select(1, 1), { discrete: true });
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toEqual([$getActiveVerseSection()]);
+    });
+  });
+
+  it("carries a verse across a stanza break, which adds nothing of its own", () => {
+    let k!: { [name: string]: string };
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      const v1 = $verseFor("gutter-hidden", "1");
+      const blessed = $createTextNode("Blessed,");
+      const stand = $createTextNode("nor stand,");
+      const q1 = $para("q1", v1, blessed);
+      const q2 = $para("q2", stand);
+      $getRoot().append(q1, $para("b"), q2);
+      k = { q1: q1.getKey(), v1: v1.getKey(), q2: q2.getKey(), stand: stand.getKey() };
+      stand.select(1, 1);
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toEqual([
+        { paraKey: k.q1, verseKey: k.v1, nextVerseKey: undefined, startKey: k.v1 },
+        { paraKey: k.q2, verseKey: undefined, nextVerseKey: undefined, startKey: k.stand },
+      ]);
+    });
+  });
+
+  it("leaves a heading, and text before the first verse, to their own paragraph", () => {
+    let heading!: TextNode;
+    let intro!: TextNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      heading = $createTextNode("Heading");
+      intro = $createTextNode("Before any verse");
+      $getRoot().append(
+        $para("p", intro),
+        $para("p", $createTextNode("still before")),
+        $para("s", heading),
+        $para("p", $verseFor("gutter-hidden", "1"), $createTextNode("one")),
+      );
+      heading.select(1, 1);
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toEqual([$getActiveVerseSection()]);
+    });
+
+    editor.update(() => $getNodeByKey<TextNode>(intro.getKey())?.select(1, 1), {
+      discrete: true,
+    });
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toEqual([$getActiveVerseSection()]);
+    });
+  });
+
+  it("returns undefined where there is no section", () => {
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      $getRoot().append($para("p", $verseFor("gutter-hidden", "1")));
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toBeUndefined();
+    });
+  });
+});
+
 describe("measureVerseSection", () => {
   // jsdom has no layout: stand in for `Range.getClientRects()`, keeping the range it was asked of.
   const textRects = [new DOMRect(110, 24, 180, 16)];
@@ -1124,6 +1298,122 @@ describe("measureVerseSection", () => {
 
     expect(measureVerseSection(editor, section)).toBeUndefined();
     expect(measured).toBeUndefined();
+  });
+
+  describe("measureVerseSections", () => {
+    /**
+     * `\q1 \v 1 one`, `\q2 two \v 2 three`, with the caret in verse 1. Each paragraph's text measures
+     * as one line, the `\q2`'s below the `\q1`'s and indented; its verse 2 sits after its text.
+     */
+    function setUpPoetry() {
+      let q1!: ParaNode;
+      let q2!: ParaNode;
+      let v2!: SomeVerseNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        const one = $createTextNode("one");
+        v2 = $verseFor("gutter-hidden", "2");
+        q1 = $createParaNode("q1").append(
+          ...$createParaMarkerPrefixNodes("gutter-hidden", "q1"),
+          $verseFor("gutter-hidden", "1"),
+          one,
+        );
+        q2 = $createParaNode("q2").append(
+          ...$createParaMarkerPrefixNodes("gutter-hidden", "q2"),
+          $createTextNode("two "),
+          v2,
+          $createTextNode("three"),
+        );
+        $getRoot().append(q1, q2);
+        one.select(1, 1);
+      });
+      const sections = editor.getEditorState().read($getActiveVerseSections);
+      const q1El = editor.getElementByKey(q1.getKey());
+      const q2El = editor.getElementByKey(q2.getKey());
+      const v2El = editor.getElementByKey(v2.getKey());
+      if (!sections || !q1El || !q2El || !v2El)
+        throw new Error("expected the verse to be rendered");
+      q1El.getBoundingClientRect = () => new DOMRect(100, 20, 400, 24);
+      q2El.getBoundingClientRect = () => new DOMRect(100, 44, 400, 24);
+      q2El.style.paddingLeft = "30px";
+      v2El.getBoundingClientRect = () => new DOMRect(200, 46, 9, 13);
+      const lines = new Map([
+        [q1El, new DOMRect(110, 24, 180, 16)],
+        [q2El, new DOMRect(130, 48, 60, 16)],
+      ]);
+      clientRects = (range) => {
+        if (range.startContainer.nodeType === Node.TEXT_NODE) return [];
+        const para = [...lines.keys()].find((el) => el.contains(range.startContainer));
+        const line = para && lines.get(para);
+        return line ? [line] : [];
+      };
+      return { editor, sections, q1El, q2El };
+    }
+
+    it("measures a verse's lines in every paragraph it runs through as one outline", () => {
+      const { editor, sections } = setUpPoetry();
+      expect(sections).toHaveLength(2);
+
+      const measurement = measureVerseSections(editor, sections);
+
+      expect(measurement?.rects).toContainEqual({ left: 110, right: 290, top: 24, bottom: 40 });
+      expect(measurement?.rects).toContainEqual({ left: 130, right: 190, top: 48, bottom: 64 });
+      expect(measurement?.contentBox).toEqual({ left: 100, right: 500 });
+      expect(measurement?.following).toEqual({ left: 200, right: 209, top: 46, bottom: 59 });
+      expect(measurement?.direction).toBe("ltr");
+      expect(measurement?.hugLines).toBe(false);
+    });
+
+    it("hugs the lines when any of the paragraphs is centered", () => {
+      const { editor, sections, q2El } = setUpPoetry();
+      q2El.style.textAlign = "center";
+
+      expect(measureVerseSections(editor, sections)?.hugLines).toBe(true);
+    });
+
+    it("leaves out a piece with nothing to measure", () => {
+      const { editor, sections, q2El } = setUpPoetry();
+      const lines = clientRects;
+      clientRects = (range) =>
+        q2El.contains(range.startContainer) || typeof lines !== "function" ? [] : lines(range);
+
+      const measurement = measureVerseSections(editor, sections);
+
+      expect(measurement?.rects).not.toContainEqual(
+        expect.objectContaining({ left: 130, right: 190 }),
+      );
+      expect(measurement?.following).toBeUndefined();
+    });
+
+    it("measures a single section as measureVerseSection does", () => {
+      const { editor, section } = setUp(1);
+
+      expect(measureVerseSections(editor, [section])).toEqual(measureVerseSection(editor, section));
+    });
+
+    it("still leaves a heading on its own to the whole-paragraph outline", () => {
+      let heading!: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        heading = $createTextNode("Heading");
+        $getRoot().append(
+          $createParaNode("s").append(
+            ...$createParaMarkerPrefixNodes("gutter-hidden", "s"),
+            heading,
+          ),
+        );
+        heading.select(1, 1);
+      });
+      const sections = editor.getEditorState().read($getActiveVerseSections);
+      if (!sections) throw new Error("expected the heading's section");
+
+      expect(measureVerseSections(editor, sections)).toBeUndefined();
+    });
+
+    it("measures nothing when no piece has anything visible", () => {
+      const { editor, sections } = setUpPoetry();
+      clientRects = [];
+
+      expect(measureVerseSections(editor, sections)).toBeUndefined();
+    });
   });
 });
 

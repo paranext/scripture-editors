@@ -29894,6 +29894,7 @@ function MK() {
     startKey: (i < 0 ? wK(t, n, s) : n[i])?.getKey()
   };
 }
+A.Paragraphs, A.Poetry, A.Lists;
 function PK() {
   const e = M(), t = yr(e);
   if (t) {
