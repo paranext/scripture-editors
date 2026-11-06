@@ -8,7 +8,6 @@ import {
   DELETE_CHARACTER_COMMAND,
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
-  INSERT_LINE_BREAK_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
   REMOVE_TEXT_COMMAND,
 } from "lexical";
@@ -48,6 +47,8 @@ function $removeKeepingLines(): boolean {
  *
  * Mount it only for `markerMode: "hidden"`. Standard view shows these lines as marker text the
  * user edits, which its own engine judges.
+ *
+ * A requested line break needs nothing here: `LineBreakPlugin` runs it as Enter.
  */
 export function BookAndChapterLinesPlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -70,7 +71,6 @@ export function BookAndChapterLinesPlugin(): null {
         COMMAND_PRIORITY_LOW,
       ),
       editor.registerCommand(INSERT_PARAGRAPH_COMMAND, $clearForInsertion, COMMAND_PRIORITY_LOW),
-      editor.registerCommand(INSERT_LINE_BREAK_COMMAND, $clearForInsertion, COMMAND_PRIORITY_LOW),
     );
   }, [editor]);
 
