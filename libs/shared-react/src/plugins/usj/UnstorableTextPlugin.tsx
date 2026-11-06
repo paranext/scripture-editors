@@ -42,9 +42,12 @@ import { $findMatchingParent, IS_APPLE, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createRangeSelection,
+  $getNodeByKey,
   $getSelection,
+  $isElementNode,
   $isNodeSelection,
   $isRangeSelection,
+  $isTextNode,
   $setSelection,
   BaseSelection,
   CommandListener,
@@ -64,6 +67,7 @@ import {
   KEY_DOWN_COMMAND,
   LexicalCommand,
   LexicalNode,
+  NodeKey,
   PASTE_COMMAND,
   PASTE_TAG,
   PasteCommandType,
@@ -226,6 +230,70 @@ function $isAtOrInside(caret: PointType, range: RangeSelection): boolean {
   );
 }
 
+/** A place in the document a removal before it cannot move: the start or end of a node, or just
+ * before one. */
+interface StablePlace {
+  key: NodeKey;
+  edge: "start" | "end" | "before";
+}
+
+/**
+ * The place of caret `point` as a {@link StablePlace}, for a removal before it: a caret partway into
+ * a text node splits the node there and is the start of its second part. `undefined` partway into
+ * text that cannot be split, such as display text.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $stablePlaceAt(point: PointType): StablePlace | undefined {
+  const node = point.getNode();
+  if (point.type === "text" && $isTextNode(node)) {
+    if (point.offset === 0) return { key: node.getKey(), edge: "start" };
+    if (point.offset >= node.getTextContentSize()) return { key: node.getKey(), edge: "end" };
+    if (!node.isSimpleText()) return undefined;
+    const [, after] = node.splitText(point.offset);
+    return { key: after.getKey(), edge: "start" };
+  }
+  if (!$isElementNode(node)) return undefined;
+  const child = node.getChildAtIndex(point.offset);
+  return child ? { key: child.getKey(), edge: "before" } : { key: node.getKey(), edge: "end" };
+}
+
+/**
+ * A caret at `place`, or `undefined` when its node is gone.
+ *
+ * Read-only: call inside `editor.update()`, an editor read, or a command handler; the selection it
+ * returns is not set as the editor's.
+ */
+function $caretAtPlace(place: StablePlace): RangeSelection | undefined {
+  const node = $getNodeByKey(place.key);
+  if (!node?.isAttached()) return undefined;
+  const caret = $createRangeSelection();
+  if (place.edge === "before") {
+    const parent = node.getParent();
+    if (!parent) return undefined;
+    const index = node.getIndexWithinParent();
+    caret.anchor.set(parent.getKey(), index, "element");
+    caret.focus.set(parent.getKey(), index, "element");
+    return caret;
+  }
+  const [type, size] = $isTextNode(node)
+    ? (["text", node.getTextContentSize()] as const)
+    : (["element", $isElementNode(node) ? node.getChildrenSize() : 0] as const);
+  const offset = place.edge === "start" ? 0 : size;
+  caret.anchor.set(node.getKey(), offset, type);
+  caret.focus.set(node.getKey(), offset, type);
+  return caret;
+}
+
+/** A `beforeinput` event of `inputType`, as the browser's drag-move fires, carrying `data` if
+ * given. */
+function dragInputEvent(inputType: "deleteByDrag" | "insertFromDrop", data?: DataTransfer) {
+  const event = new InputEvent("beforeinput", { inputType, cancelable: true });
+  // Set as a property: not every environment takes `dataTransfer` from the event's init.
+  if (data) Object.defineProperty(event, "dataTransfer", { value: data });
+  return event;
+}
+
 /**
  * Plain text as it goes into one paragraph, where its lines cannot split it (protected structure,
  * the `\id` line): each tab becomes a space, and each run of line breaks one space, or nothing
@@ -247,7 +315,8 @@ function joinLines(text: string, before: string, after: string): string {
  * each `//` goes and the rest goes in (see {@link removeUnstorableText}), and the host is told once
  * per paste, drop or refused keystroke through `onRemoved`. A paste or drop left with nothing to
  * insert changes nothing. A delete that would make a `//` out of two `/` is refused, and so is a
- * drag-move that would lose a character where it lands (below).
+ * drag-move that would lose a character where it lands (below); any other move within the editor is
+ * made here.
  *
  * Reads a node copy (`application/x-lexical-editor`, or an attribute of the html: see
  * {@link nodeCopyIn}) only from a hidden-marker view, which tags it
@@ -315,11 +384,14 @@ function joinLines(text: string, before: string, after: string): string {
  * or against an optional line break) is refused whole at its drop (`DROP_COMMAND`), and reported
  * with `source: "move"`: the browser removes the dragged text before it inserts it, and the filter
  * above would then leave that character out, so it would be gone from both places. The drop is
- * judged as its insertion will be, at the place the drop lands ({@link $selectionAtDropPoint}), and
- * a drop at or inside what was dragged, which puts it back as it was, is not judged. A drag is a
- * move when it started in editable content of the editor's document (this editor or another) and
- * the copy key (Ctrl; Option on macOS) is not held; a copy-drop, and a drop from another document
- * or program, remove nothing, so they are only filtered.
+ * judged as its insertion will be, at the place the drop lands ({@link $selectionAtDropPoint}). A
+ * move within this editor that loses nothing is made here, in the same update, rather than by the
+ * browser, whose own insertion lands at the start of the drop point's text node whenever the
+ * removal changed that node; a drop at or inside what was dragged, which would put it back as it
+ * was, changes nothing. A drag is a move when it started in editable content of the editor's
+ * document (this editor or another) and the copy key (Ctrl; Option on macOS) is not held; a
+ * copy-drop, a drop from another document or program, and a move from elsewhere in the document
+ * that loses nothing are left to the browser, and only filtered.
  *
  * Mount it whatever the view, and say with `isEnabled` whether it acts: its handlers are
  * registered once, so a view that starts or stops hiding markers leaves them where they are among
@@ -730,13 +802,58 @@ export function UnstorableTextPlugin({
     };
 
     /**
-     * Refuses a drag-move whose text would lose a character where it is dropped (see
-     * {@link $unstorableInDrop}), and reports it once: the browser removes the dragged text before
-     * it inserts it, and the insertion's filter would then leave that character out, so it would be
-     * gone from both places. Refused here, at the drop, nothing is removed. A drop at or inside
-     * what was dragged puts it back where it was, so it is not judged.
+     * Moves the text `dragged` selects to the caret `at` in this update, as the browser's drag-move
+     * does: through the commands Lexical dispatches for its removal (`REMOVE_TEXT_COMMAND`, with a
+     * `deleteByDrag` event) and then its insertion (`CONTROLLED_TEXT_INSERTION_COMMAND`, with an
+     * `insertFromDrop` event carrying `data`), so every guard and filter judges them as it judges the
+     * browser's own. The browser's own move inserts at the start of the drop point's text node
+     * whenever the removal changed that node: in Chromium, Lexical replaces a changed text node's
+     * data whole, which moves every DOM range in it, the drop point among them, to its start. So a
+     * drop after `dragged` is first held at a place the removal cannot move
+     * ({@link $stablePlaceAt}); one before it is not moved by a removal after it. Where that place
+     * is gone, the insertion goes where the removal left the caret, putting the text back.
+     *
+     * A removal a guard refuses leaves the text where it was while the insertion still goes in, as
+     * with the browser's own move.
+     *
+     * Mutating: call inside `editor.update()` (a command handler runs inside one), with `dragged`
+     * the editor's selection.
+     *
+     * @returns Whether it moved the text; `false`, changing nothing, for a drop after `dragged`
+     *   partway into text that cannot be split, such as display text.
      */
-    const $refuseLossyMove = (event: DragEvent): boolean => {
+    const $moveDragged = (
+      data: DataTransfer,
+      dragged: RangeSelection,
+      at: RangeSelection,
+    ): boolean => {
+      const start = dragged.isBackward() ? dragged.focus : dragged.anchor;
+      const isBefore = at.anchor.isBefore(start);
+      const place = isBefore ? undefined : $stablePlaceAt(at.anchor);
+      if (!isBefore && !place) return false;
+      editor.dispatchCommand(REMOVE_TEXT_COMMAND, dragInputEvent("deleteByDrag"));
+      const caret = place ? $caretAtPlace(place) : at;
+      if (caret) $setSelection(caret);
+      editor.dispatchCommand(
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        dragInputEvent("insertFromDrop", data),
+      );
+      return true;
+    };
+
+    /**
+     * Takes a drag-move's drop (see {@link dragMoveSource}) before the browser acts on it:
+     * - a move whose text would lose a character where it is dropped (see
+     *   {@link $unstorableInDrop}) is refused, and reported once: the browser removes the dragged
+     *   text before it inserts it, and the insertion's filter would then leave that character out,
+     *   so it would be gone from both places. Refused here, nothing is removed;
+     * - a move within this editor is made here ({@link $moveDragged}), so that it lands where it was
+     *   dropped and was judged;
+     * - a drop at or inside what was dragged, which would put it back as it was, changes nothing.
+     *
+     * A move from elsewhere in the document that loses nothing is left to the browser.
+     */
+    const $onDrop = (event: DragEvent): boolean => {
       const data = event.dataTransfer;
       const source = dragMoveSource(event);
       if (!data || !source || !isJudgingDeletes()) return false;
@@ -744,12 +861,19 @@ export function UnstorableTextPlugin({
       if (!at) return false;
       // At the drop, the selection is still what the drag started from.
       const dragged = $getSelection();
-      if (source === "here" && $isRangeSelection(dragged) && $isAtOrInside(at.anchor, dragged))
-        return false;
+      const isFromHere = source === "here" && $isRangeSelection(dragged) && !dragged.isCollapsed();
+      if (isFromHere && $isAtOrInside(at.anchor, dragged)) {
+        event.preventDefault();
+        return true;
+      }
       const removed = $unstorableInDrop(data, at);
-      if (removed.length === 0) return false;
+      if (removed.length > 0) {
+        event.preventDefault();
+        reportRemoved({ source: "move", removed }, onRemovedRef.current, loggerRef.current);
+        return true;
+      }
+      if (!isFromHere || !$moveDragged(data, dragged, at)) return false;
       event.preventDefault();
-      reportRemoved({ source: "move", removed }, onRemovedRef.current, loggerRef.current);
       return true;
     };
 
@@ -837,7 +961,7 @@ export function UnstorableTextPlugin({
       ),
       // Below the guards that refuse a drop outright, and below protected structure's sanitizer,
       // which inserts a drop itself, removing nothing; above Lexical's own.
-      register(DROP_COMMAND, $refuseLossyMove, COMMAND_PRIORITY_NORMAL),
+      register(DROP_COMMAND, $onDrop, COMMAND_PRIORITY_NORMAL),
       register(
         CONTROLLED_TEXT_INSERTION_COMMAND,
         (payload) => {
@@ -905,7 +1029,7 @@ export function UnstorableTextPlugin({
       // ahead of the copy that performs it (NORMAL).
       register(CUT_COMMAND, $onSelectionRemoval, COMMAND_PRIORITY_HIGH),
       // A drag-move's removal of its source (`deleteByDrag`), after the guards that narrow it and
-      // ahead of Lexical's own. The drop's insertion is an input event of its own, so a refused
+      // ahead of Lexical's own. The drop's insertion is a command of its own, so a refused
       // removal leaves the dragged text in both places rather than losing any. A composition's
       // removal is left alone, as composed text is.
       register(

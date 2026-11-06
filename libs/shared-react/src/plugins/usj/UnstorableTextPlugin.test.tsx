@@ -823,28 +823,52 @@ describe("UnstorableTextPlugin — drag-move", () => {
     expect(onRemoved).toHaveBeenCalledWith({ source: "move", removed: ["//"] });
   });
 
-  it("leaves a move that keeps all of itself to the browser, telling no one", async () => {
+  it("makes a move within the editor that keeps all of itself, at the drop point, telling no one", async () => {
     const { editor, onRemoved } = await environment("a/b c d", { anchor: 1, focus: 2 });
     dispatchDragStart(editor.getRootElement()!);
 
-    const { event } = await dropAt(editor, 5, SLASH);
+    const { event, isClaimed } = await dropAt(editor, 5, SLASH);
 
-    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(isClaimed).toBe(true);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(readParas(editor)).toEqual(["ab c/ d"]);
     expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("makes a move to a drop point before the dragged text", async () => {
+    const { editor, onRemoved } = await environment("a b/c d", { anchor: 3, focus: 5 });
+    dispatchDragStart(editor.getRootElement()!);
+
+    await dropAt(editor, 1, { "text/plain": "/c" });
+
+    expect(readParas(editor)).toEqual(["a/c b d"]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("leaves the text where it was, and inserts it at the drop point too, when its removal is refused", async () => {
+    // Removing `b` would join `a/` and `/c`.
+    const { editor, onRemoved } = await environment("a/b/c d", { anchor: 2, focus: 3 });
+    dispatchDragStart(editor.getRootElement()!);
+
+    await dropAt(editor, 6, { "text/plain": "b" });
+
+    expect(readParas(editor)).toEqual(["a/b/c bd"]);
+    expect(onRemoved).toHaveBeenCalledWith({ source: "deletion", removed: ["//"] });
   });
 
   it.each([
     ["at its end", 2],
     ["at its start", 1],
   ])(
-    "leaves a drop of what was dragged %s, where it goes back as it was, to the browser",
+    "changes nothing for a drop of what was dragged %s, where it would go back as it was",
     async (_where, offset) => {
       const { editor, onRemoved } = await environment("a/b", { anchor: 1, focus: 2 });
       dispatchDragStart(editor.getRootElement()!);
 
       const { event } = await dropAt(editor, offset, SLASH);
 
-      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(readParas(editor)).toEqual(["a/b"]);
       expect(onRemoved).not.toHaveBeenCalled();
     },
   );
