@@ -527,7 +527,8 @@ describe("UnstorableTextPlugin — paste", () => {
 
   it.each([
     ["a blank line", "a\n\nb", "[a b]"],
-    ["Windows line breaks and a trailing one", "line one\r\nline two\n", "[line one line two]"],
+    ["Windows line breaks and a trailing one", "line one\r\nline two\n", "[line one line two ]"],
+    ["a leading one beside a space", "\n line", "[ line]"],
     ["a tab alongside a line break", "a\tb\nc", "[a b c]"],
   ])(
     "joins the lines of a plain-text paste with one space when structure is protected: %s",
