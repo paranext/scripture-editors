@@ -436,6 +436,16 @@ refused. The public surface grew substantially; nothing was removed.
   markers a pasted lone carriage return (an old Mac line ending) is a line break too; it was kept
   in the text. The `LineBreakPlugin` in `Editor` does all of this; a view without spacing
   (`hasSpacing: false`), whose line breaks before each verse are its layout, keeps its line breaks.
+- **Text inserted as one string holding a line break no longer keeps it as a character.**
+  Dictation, autocorrect or a text replacement, a yank, an extension's insertion or a `beforeinput`
+  `insertText` could insert text holding `\n`, `\r\n`, a lone `\r`, U+2028 or U+2029 through
+  `CONTROLLED_TEXT_INSERTION_COMMAND`; it stayed in the text, showed as two lines and saved as a
+  space (U+2028 and U+2029 as invisible characters). Each such line break now goes in as a pasted
+  one does: in the views that hide markers the paragraph splits there, or, where it cannot
+  (`"protected"` structure, a note, the `\id` line), it is a space (nothing beside whitespace);
+  `UnstorableTextPlugin` still judges and reports the text once, whole. In Standard view it goes in
+  as a plain-text paste of it does, where Standard's paste on the `\id` line now joins the lines
+  with a space instead of running them together. Text an input method is composing is left alone.
 - **Ctrl+V, Ctrl+Shift+V, the context menu's Paste items and `EditorRef.paste`/`pastePlainText`
   handle a failed clipboard read.** A refused or failed read was an unhandled promise rejection; it
   is now logged at `warn`, to the `Editor`'s `logger` (`ClipboardPlugin` and `ContextMenuPlugin`
