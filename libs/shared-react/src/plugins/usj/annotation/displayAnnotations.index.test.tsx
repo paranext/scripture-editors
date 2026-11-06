@@ -872,6 +872,37 @@ describe("the display-annotation index", () => {
     release();
   });
 
+  it("reports a mark a selection delete empties in the first commit after the index is acquired again", () => {
+    const { editor, release } = setup();
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    let word!: TextNode;
+    editor.update(
+      () => {
+        $getRoot().clear();
+        ({ word } = $markThenCarrier(onRemove));
+      },
+      { discrete: true },
+    );
+    // Acquired over a document that already holds the annotation: finding its holders there is
+    // not a carrier beginning to hold it in the next commit.
+    release();
+    const again = acquireDisplayAnnotationIndex(editor);
+    lastRelease = again.release;
+
+    editor.update(
+      () => {
+        const selection = $createRangeSelection();
+        selection.anchor.set(word.getKey(), 0, "text");
+        selection.focus.set(word.getKey(), word.getTextContentSize(), "text");
+        selection.removeText();
+      },
+      { discrete: true },
+    );
+
+    expect(onRemove.mock.calls).toEqual([["external-spelling", "m", "destroyed", "alpha"]]);
+    again.release();
+  });
+
   it("reports nothing when a mark is dropped in the commit a carrier begins holding its annotation", () => {
     const { editor, release } = setup();
     const onRemove = vi.fn<TypedMarkOnRemove>();

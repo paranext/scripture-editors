@@ -34,6 +34,7 @@ import {
   $keepParentPoints,
   $logicalText,
   $pieceHead,
+  $pieceStart,
   $pieces,
   $recordPieceChain,
   $recordTokenPieces,
@@ -147,11 +148,7 @@ export function $carrierHoldableRange(node: LexicalNode): [number, number] {
     high = low === text.length ? low : text.trimEnd().length;
   }
   // Restate the carrier's range in the piece's own offsets.
-  let offset = 0;
-  for (const piece of $pieces(node)) {
-    if (piece.is(node)) break;
-    offset += piece.getTextContentSize();
-  }
+  const offset = $pieceStart(node);
   const size = node.getTextContentSize();
   const clamp = (at: number) => Math.min(Math.max(at - offset, 0), size);
   const from = clamp(low);

@@ -114,6 +114,12 @@ describe("renderDecoratorPaint", () => {
     expect(paintedPieceKeys(element)).toEqual([]);
   });
 
+  it("reads no annotation keys from a paint attribute that is not a JSON list", () => {
+    const element = document.createElement("span");
+    element.setAttribute(DECORATOR_PAINT_ATTRIBUTE, "not json");
+    expect(paintedPieceKeys(element)).toEqual([]);
+  });
+
   it("writes nothing when the element already shows that paint", () => {
     const element = document.createElement("span");
     renderDecoratorPaint(element, "\\v 12 ", PAINT);

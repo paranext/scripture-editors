@@ -20,7 +20,6 @@ import { $getClipboardDataFromSelection, LexicalClipboardData } from "@lexical/c
 import {
   $createRangeSelection,
   $getRoot,
-  $getState,
   $isElementNode,
   $isRootNode,
   $isTextNode,
@@ -36,23 +35,13 @@ import {
   SerializedLexicalNode,
 } from "lexical";
 import {
+  $carriesPieceState,
   $isPieceContinuation,
   $isTypedMarkNode,
   $pieceHead,
-  displayAnnotationsState,
-  displayPieceChainState,
-  displayPieceContinuationState,
-  displayPieceTokenTextState,
   LoggerBasic,
+  PIECE_STATE_KEYS,
 } from "shared";
-
-/** The node states a hold or a cut puts on a node: none of them is in the uncut document. */
-const ANNOTATION_STATE_KEYS: ReadonlySet<string> = new Set([
-  displayAnnotationsState.key,
-  displayPieceChainState.key,
-  displayPieceContinuationState.key,
-  displayPieceTokenTextState.key,
-]);
 
 /** Lexical's `unmergeable` text detail flag. */
 const IS_UNMERGEABLE = 1 << 1;
@@ -79,9 +68,9 @@ interface UncutTree {
 function exportWithoutAnnotations(node: LexicalNode): SerializedNode {
   const json: SerializedNode = node.exportJSON();
   const state = json[NODE_STATE_KEY];
-  if (!state || !Object.keys(state).some((key) => ANNOTATION_STATE_KEYS.has(key))) return json;
+  if (!state || !Object.keys(state).some((key) => PIECE_STATE_KEYS.has(key))) return json;
   const kept = Object.fromEntries(
-    Object.entries(state).filter(([key]) => !ANNOTATION_STATE_KEYS.has(key)),
+    Object.entries(state).filter(([key]) => !PIECE_STATE_KEYS.has(key)),
   );
   const { [NODE_STATE_KEY]: _annotated, ...rest } = json;
   return Object.keys(kept).length > 0 ? { ...rest, [NODE_STATE_KEY]: kept } : rest;
@@ -251,16 +240,6 @@ function $uncutPoint(point: PointType, places: Map<NodeKey, Place>): UncutPoint 
   return $isElementNode(node) ? $elementPoint(node, point.offset, places) : undefined;
 }
 
-/** Whether `node` carries a state a hold or a cut puts on a node. */
-function $hasAnnotationState(node: LexicalNode): boolean {
-  return (
-    $getState(node, displayAnnotationsState) !== undefined ||
-    $getState(node, displayPieceChainState) !== undefined ||
-    $getState(node, displayPieceContinuationState) !== undefined ||
-    $getState(node, displayPieceTokenTextState) !== undefined
-  );
-}
-
 /** Whether `selection` touches anything an annotation puts in the tree: a mark, a piece, a hold. */
 function $touchesAnnotations(selection: RangeSelection): boolean {
   return selection
@@ -269,7 +248,7 @@ function $touchesAnnotations(selection: RangeSelection): boolean {
       (node) =>
         $isTypedMarkNode(node) ||
         node.getParents().some($isTypedMarkNode) ||
-        $hasAnnotationState(node),
+        $carriesPieceState(node),
     );
 }
 

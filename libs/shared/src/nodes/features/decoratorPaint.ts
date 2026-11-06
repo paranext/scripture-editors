@@ -122,7 +122,13 @@ export function paintedPieceKeys(node: Node | null): readonly string[] {
   if (!(node instanceof Element)) return [];
   const raw = node.getAttribute(DECORATOR_PAINT_ATTRIBUTE);
   if (!raw) return [];
-  const parsed: unknown = JSON.parse(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Read on pointer events, where a throw would stop every annotation's callbacks for the event.
+    return [];
+  }
   return Array.isArray(parsed)
     ? parsed.filter((key): key is string => typeof key === "string")
     : [];
