@@ -30,9 +30,32 @@ import {
   ZWSP,
 } from "shared";
 import { $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-react";
-import { OutlineRect, VerseOutlineInput } from "./verseOutlineGeometry";
+import {
+  computeVerseOutlineSegments,
+  OutlineRect,
+  VerseOutlineInput,
+} from "./verseOutlineGeometry";
+import { OutlineCornerStyle, outlinePathData } from "./verseOutlinePath";
 
+/** Outlines the whole paragraph, where there is no verse to outline (a heading, say). */
 const ACTIVE_CLASS = "psc-active-text";
+/** The overlay the active verse's outline is drawn in, beside the editor's root element. */
+export const VERSE_OUTLINE_CLASS = "psc-verse-outline";
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
+// How the active verse's outline is drawn.
+/** How far (px) the outline's line stands off the text. */
+const OUTLINE_PADDING_PX = 2;
+const OUTLINE_STROKE_PX = 2.5;
+const OUTLINE_CORNERS: OutlineCornerStyle = "outward";
+const OUTLINE_CORNER_RADIUS_PX = 4;
+/**
+ * Outline each line of the verse to its own text, stepping at every line, instead of running the
+ * outline's sides straight down between the verse's first and last line. Centered and end-aligned
+ * paragraphs are always hugged.
+ */
+const OUTLINE_HUGS_LINES = false;
+
 export const EMPTY_CLASS = "psc-empty-text";
 /**
  * Replaces {@link EMPTY_CLASS} on the empty verse the cursor is in. Its ellipsis is hidden but keeps
@@ -42,8 +65,10 @@ export const EMPTY_CLASS = "psc-empty-text";
 export const ACTIVE_EMPTY_CLASS = "psc-empty-text-active";
 
 /**
- * Plugin that outlines the paragraph under the cursor and marks individual verses with no
- * body content as empty. No-op unless `viewOptions.hasActiveTextFocusBox` is true.
+ * Plugin that outlines the verse under the cursor — across every line and paragraph it runs
+ * through — and marks individual verses with no body content as empty. Where there is no verse to
+ * outline (a heading, text before the first verse, a table) it outlines the whole paragraph
+ * instead. No-op unless `viewOptions.hasActiveTextFocusBox` is true.
  */
 export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | undefined }): null {
   const [editor] = useLexicalComposerContext();
@@ -66,7 +91,93 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
       }
     }
 
+    let overlay: SVGSVGElement | undefined;
+    let outlinePath: SVGPathElement | undefined;
+
+    /** Draws the active verse's outline, if there is one to draw. Returns whether it drew one. */
+    function drawVerseOutline(): boolean {
+      const root = editor.getRootElement();
+      const host = overlay?.parentElement;
+      const sections = isBlurredRef.current
+        ? undefined
+        : editor.getEditorState().read($getActiveVerseSections);
+      const measurement = sections && measureVerseSections(editor, sections);
+      const segments =
+        measurement &&
+        computeVerseOutlineSegments({
+          ...measurement,
+          // The line is drawn centred on the outline, so it stops half its width short of the next
+          // verse number to stay off it.
+          following: measurement.following && {
+            ...measurement.following,
+            left: measurement.following.left - OUTLINE_STROKE_PX / 2,
+            right: measurement.following.right + OUTLINE_STROKE_PX / 2,
+          },
+          hugLines: measurement.hugLines || OUTLINE_HUGS_LINES,
+          padding: OUTLINE_PADDING_PX,
+        });
+      const d = segments
+        ? outlinePathData(segments, OUTLINE_CORNERS, OUTLINE_CORNER_RADIUS_PX)
+        : "";
+      if (!d || !root || !host || !overlay || !outlinePath) {
+        overlay?.style.setProperty("display", "none");
+        return false;
+      }
+      // From the viewport's coordinates to the overlay's: its host's padding box, which scrolls with
+      // the text, in the host's own (unzoomed) CSS px.
+      const origin = host.getBoundingClientRect();
+      const zoom = host.currentCSSZoom || 1;
+      outlinePath.setAttribute("d", d);
+      outlinePath.setAttribute(
+        "transform",
+        `translate(${host.scrollLeft - host.clientLeft} ${host.scrollTop - host.clientTop}) ` +
+          `scale(${1 / zoom}) translate(${-origin.left} ${-origin.top})`,
+      );
+      // The overlay sits beside the root, so it doesn't inherit the root's accent colour.
+      const accent = getComputedStyle(root).getPropertyValue("--scripture-accent").trim();
+      if (accent) overlay.style.setProperty("--scripture-accent", accent);
+      overlay.style.removeProperty("display");
+      return true;
+    }
+
+    /**
+     * Outlines what the cursor is in: its verse, or else its whole paragraph. Call once the DOM is
+     * committed and the empty-verse classes are set, since they change verse numbers' widths.
+     */
+    function showActiveText(): void {
+      const isDrawn = drawVerseOutline();
+      const paraKey =
+        isBlurredRef.current || isDrawn
+          ? undefined
+          : editor.getEditorState().read($getActiveParaKey);
+      if (paraKey !== activeKeyRef.current) setActivePara(paraKey);
+    }
+
+    // A resize rewraps the text, so the outline is measured again.
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(showActiveText);
+
     const unsubscribers = [
+      editor.registerRootListener((root, previousRoot) => {
+        if (previousRoot) resizeObserver?.unobserve(previousRoot);
+        overlay?.remove();
+        overlay = undefined;
+        outlinePath = undefined;
+        if (!root?.parentElement) return;
+        overlay = root.ownerDocument.createElementNS(SVG_NAMESPACE, "svg");
+        overlay.classList.add(VERSE_OUTLINE_CLASS);
+        overlay.setAttribute("aria-hidden", "true");
+        overlay.style.setProperty("display", "none");
+        outlinePath = root.ownerDocument.createElementNS(SVG_NAMESPACE, "path");
+        outlinePath.setAttribute("stroke-width", String(OUTLINE_STROKE_PX));
+        overlay.append(outlinePath);
+        root.after(overlay);
+        resizeObserver?.observe(root);
+      }),
+      () => {
+        resizeObserver?.disconnect();
+        overlay?.remove();
+      },
       // Clicking the ellipsis placeholder (rendered as ::after on the empty verse span) hits the
       // verse element itself, which is a decorator node — Lexical's default cursor placement leaves
       // the user with no obvious caret inside the empty verse's section. Move the caret to the slot
@@ -106,8 +217,7 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
         COMMAND_PRIORITY_LOW,
       ),
       editor.registerUpdateListener(({ editorState }) => {
-        const { newActiveKey, activeVerseKey, emptyKeys, nonEmptyKeys } = editorState.read(() => {
-          const newActiveKey = $getActiveParaKey();
+        const { activeVerseKey, emptyKeys, nonEmptyKeys } = editorState.read(() => {
           const emptyKeys: string[] = [];
           const nonEmptyKeys: string[] = [];
           $getRoot()
@@ -121,12 +231,10 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
           // Only an empty verse's classes depend on the active verse, and only while focused.
           const activeVerseKey =
             emptyKeys.length > 0 && !isBlurredRef.current ? $getActiveVerseKey() : undefined;
-          return { newActiveKey, activeVerseKey, emptyKeys, nonEmptyKeys };
+          return { activeVerseKey, emptyKeys, nonEmptyKeys };
         });
 
         const isFocused = !isBlurredRef.current;
-        const activeParaKey = isFocused ? newActiveKey : undefined;
-        if (activeParaKey !== activeKeyRef.current) setActivePara(activeParaKey);
 
         // The active verse (the one whose section currently contains the cursor) hides its
         // ellipsis placeholder while the user is positioned to type there, and shows it again on
@@ -142,12 +250,13 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
         nonEmptyKeys.forEach((key) =>
           editor.getElementByKey(key)?.classList.remove(EMPTY_CLASS, ACTIVE_EMPTY_CLASS),
         );
+        showActiveText();
       }),
       editor.registerCommand(
         BLUR_COMMAND,
         () => {
           isBlurredRef.current = true;
-          setActivePara(undefined);
+          showActiveText();
           return false;
         },
         COMMAND_PRIORITY_LOW,
@@ -156,8 +265,7 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
         FOCUS_COMMAND,
         () => {
           isBlurredRef.current = false;
-          const newActiveKey = editor.getEditorState().read($getActiveParaKey);
-          if (newActiveKey !== activeKeyRef.current) setActivePara(newActiveKey);
+          showActiveText();
           return false;
         },
         COMMAND_PRIORITY_LOW,
@@ -167,7 +275,7 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
     // Initial sync: registerUpdateListener does not fire on registration, so a mount with an
     // already-focused editor (route reload, focus restored by browser) would otherwise leave the
     // active outline missing until the user moves the cursor.
-    setActivePara(editor.getEditorState().read($getActiveParaKey));
+    showActiveText();
 
     return mergeRegister(...unsubscribers);
   }, [editor, isEnabled]);

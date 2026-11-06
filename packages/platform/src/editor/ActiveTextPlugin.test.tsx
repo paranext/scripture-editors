@@ -64,6 +64,7 @@ import {
   EMPTY_CLASS,
   measureVerseSection,
   measureVerseSections,
+  VERSE_OUTLINE_CLASS,
 } from "./ActiveTextPlugin";
 import { $createMarkerPrefix } from "./markerEdit/markerEditDeletion.utils";
 
@@ -1736,5 +1737,119 @@ describe("ActiveTextPlugin with editable verse markers", () => {
       expect(selection.anchor.key).toBe(v2.getKey());
       expect(selection.anchor.offset).toBe(1);
     });
+  });
+});
+
+describe("ActiveTextPlugin verse outline", () => {
+  const hadClientRects = Object.prototype.hasOwnProperty.call(Range.prototype, "getClientRects");
+  const originalClientRects = Range.prototype.getClientRects;
+  beforeEach(() => {
+    // A stand-in layout: each section's text is one line, and a paragraph is 400px wide.
+    Range.prototype.getClientRects = function (this: Range) {
+      const rects =
+        this.startContainer.nodeType === Node.TEXT_NODE ? [] : [new DOMRect(110, 24, 180, 16)];
+      return rects as unknown as DOMRectList;
+    };
+    const getBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.tagName === "P"
+        ? new DOMRect(100, 20, 400, 24)
+        : getBoundingClientRect.call(this);
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (hadClientRects) Range.prototype.getClientRects = originalClientRects;
+    else delete (Range.prototype as Partial<Range>).getClientRects;
+  });
+
+  /** `\p \v 1 one \v 2 two` then `\s Heading`, with the caret in `caretIn` once focused. */
+  async function setUp(caretIn: "one" | "heading") {
+    let para!: ParaNode;
+    let headingPara!: ParaNode;
+    let one!: TextNode;
+    let heading!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        one = $createTextNode("one");
+        heading = $createTextNode("Heading");
+        para = $createParaNode("p").append(
+          $createImmutableVerseNode("1"),
+          one,
+          $createImmutableVerseNode("2"),
+          $createTextNode("two"),
+        );
+        headingPara = $createParaNode("s").append(heading);
+        $getRoot().append(para, headingPara);
+      },
+      <ActiveTextPlugin viewOptions={getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE)} />,
+    );
+    await focusEditor(editor);
+    await act(async () => {
+      editor.update(() => (caretIn === "one" ? one : heading).select(1, 1));
+    });
+    const overlay = editor.getRootElement()?.nextElementSibling;
+    if (!(overlay instanceof SVGSVGElement)) throw new Error("expected the outline overlay");
+    return { editor, para, headingPara, overlay };
+  }
+
+  it("outlines the caret's verse in an overlay beside the root, not the whole paragraph", async () => {
+    const { editor, para, overlay } = await setUp("one");
+
+    expect(overlay.classList.contains(VERSE_OUTLINE_CLASS)).toBe(true);
+    expect(overlay.style.display).toBe("");
+    expect(overlay.querySelector("path")?.getAttribute("d")).toMatch(/^M.*Z$/);
+    expect(editor.getElementByKey(para.getKey())?.classList.contains("psc-active-text")).toBe(
+      false,
+    );
+  });
+
+  it("stops the outline's line short of a next verse number that sits right against the text", async () => {
+    const { editor, para, overlay } = await setUp("one");
+    // Verse 2's number starts where verse 1's text (x 110–290) ends.
+    const v2Key = editor.getEditorState().read(() => para.getChildAtIndex(2)?.getKey());
+    const v2El = v2Key && editor.getElementByKey(v2Key);
+    if (!v2El) throw new Error("expected verse 2 to be rendered");
+    v2El.getBoundingClientRect = () => new DOMRect(290, 26, 9, 13);
+
+    await act(async () => {
+      editor.update(() => para.getChildAtIndex<TextNode>(1)?.select(2, 2));
+    });
+
+    // Half the 2.5px line short of x=290, where the padding alone would reach x=292.
+    expect(overlay.querySelector("path")?.getAttribute("d")).toContain("288.75,");
+  });
+
+  it("boxes a heading's whole paragraph, with no verse outline", async () => {
+    const { editor, headingPara, overlay } = await setUp("heading");
+
+    expect(overlay.style.display).toBe("none");
+    expect(
+      editor.getElementByKey(headingPara.getKey())?.classList.contains("psc-active-text"),
+    ).toBe(true);
+  });
+
+  it("hides the outline while the editor is blurred", async () => {
+    const { editor, overlay } = await setUp("one");
+
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
+    });
+    expect(overlay.style.display).toBe("none");
+
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, new FocusEvent("focus"));
+    });
+    expect(overlay.style.display).toBe("");
+  });
+
+  it("leaves a paragraph box, not an outline, where there is no layout to measure", async () => {
+    Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+    const { editor, para, overlay } = await setUp("one");
+
+    expect(overlay.style.display).toBe("none");
+    expect(editor.getElementByKey(para.getKey())?.classList.contains("psc-active-text")).toBe(true);
   });
 });
