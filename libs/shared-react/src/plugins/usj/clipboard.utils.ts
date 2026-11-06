@@ -392,8 +392,9 @@ function transferWith(data: DataTransfer, overrides: { [type: string]: string })
  * them, reads the same transfer, and the event's target and `preventDefault` stay its own.
  *
  * Registered at `COMMAND_PRIORITY_CRITICAL`. Handlers of one priority run in the order they were
- * registered, so register it before every other paste handler: one registered earlier would see the
- * paste twice.
+ * registered, so register it before every other paste handler: one registered earlier sees the
+ * paste twice, which only a filter that passes on a paste it does not change, and dispatches one it
+ * changes again, can take.
  *
  * @param editor - The editor.
  * @param isEnabled - Whether pastes leave the flavor unread, asked on each paste.
