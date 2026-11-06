@@ -166,15 +166,19 @@ export function StructureKeyboardPlugin({
   logger?: LoggerBasic;
 }): null {
   const [editor] = useLexicalComposerContext();
-  // Refs, so a host handing a fresh filter or logger each render does not re-register every
-  // command (which would move this plugin's handlers to the end of their priority and flip
-  // same-priority ties).
+  // Refs, so a host handing a fresh filter or logger each render, or a view switch changing how a
+  // paste is read, does not re-register every command (which would move this plugin's handlers to
+  // the end of their priority and flip same-priority ties).
   const filterPastedNodesRef = useRef($filterPastedNodes);
+  const nodeCopyNamespaceRef = useRef(nodeCopyNamespace);
+  const removesMarkerTokensRef = useRef(removesMarkerTokens);
   const loggerRef = useRef(logger);
   useEffect(() => {
     filterPastedNodesRef.current = $filterPastedNodes;
+    nodeCopyNamespaceRef.current = nodeCopyNamespace;
+    removesMarkerTokensRef.current = removesMarkerTokens;
     loggerRef.current = logger;
-  }, [$filterPastedNodes, logger]);
+  }, [$filterPastedNodes, nodeCopyNamespace, removesMarkerTokens, logger]);
   const armedRef = useRef<ArmedDelete | undefined>(undefined);
   const [armed, setArmed] = useState<ArmedDelete | undefined>(undefined);
   const setArmedState = useCallback((next: ArmedDelete | undefined) => {
@@ -398,7 +402,7 @@ export function StructureKeyboardPlugin({
       event: Event,
       source: "paste" | "drop",
     ): boolean => {
-      const stripped = data && removesMarkerTokens ? withoutMarkerTokens(data) : data;
+      const stripped = data && removesMarkerTokensRef.current ? withoutMarkerTokens(data) : data;
       if (data && !stripped) {
         event.preventDefault();
         return true;
@@ -417,10 +421,9 @@ export function StructureKeyboardPlugin({
         event.preventDefault();
         return true;
       }
+      const namespace = nodeCopyNamespaceRef.current;
       const nodeCopy =
-        nodeCopyNamespace && event.clipboardData
-          ? nodeCopyIn(event.clipboardData, nodeCopyNamespace)
-          : undefined;
+        namespace && event.clipboardData ? nodeCopyIn(event.clipboardData, namespace) : undefined;
       const nodes = nodeCopy && $nodesFromNodeCopy(nodeCopy, loggerRef.current);
       if (nodes) return $insertSanitized(nodes, event, "paste");
       return $sanitizeAndInsertTransfer(event.clipboardData, event, "paste");
@@ -574,7 +577,7 @@ export function StructureKeyboardPlugin({
       ),
       editor.registerUpdateListener(clearStaleLatch),
     );
-  }, [editor, structureProtectionMode, nodeCopyNamespace, removesMarkerTokens, setArmedState]);
+  }, [editor, structureProtectionMode, setArmedState]);
 
   // Publish the armed state onto the editor root: the class gates the CSS blink to armed markers,
   // and the data attributes let the host app render a localized destructive hint. The `verse-`
