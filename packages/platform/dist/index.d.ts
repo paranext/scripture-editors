@@ -2288,28 +2288,30 @@ export declare type UnstorableCharacter = "\\" | "//";
 
 /**
  * Passed to {@link UnstorableTextRemovedHandler} when an edit's text lost unstorable characters, or
- * a delete was refused because it would have made one.
+ * a delete or a drag-move was refused because it would have made or lost one.
  */
 export declare interface UnstorableTextRemoved {
   /**
    * What brought the text in, or `"deletion"` for a delete refused because what it left would put
    * a `/` against another `/` (Backspace, Delete, a word or line delete, a cut, or the removal half
-   * of a drag-move). `"typing"` also covers a refused transpose (macOS Ctrl+T) that would have put
+   * of a drag-move), or `"move"` for a drag-move refused whole, before anything was removed,
+   * because the dragged text would have lost some of itself where it was dropped (a `/` landing
+   * against a `/`). `"typing"` also covers a refused transpose (macOS Ctrl+T) that would have put
    * a `/` against another `/`. More sources may be added; a host that branches on this should
    * handle values it does not know.
    */
-  readonly source: "paste" | "drop" | "typing" | "deletion";
+  readonly source: "paste" | "drop" | "typing" | "deletion" | "move";
   /**
    * What was removed or refused, each kind once, in the order first met. Never empty. A refused
-   * deletion is always `["//"]`.
+   * deletion is always `["//"]`; a refused move names what the drop would have removed.
    */
   readonly removed: readonly UnstorableCharacter[];
 }
 
 /**
  * Told once per paste, drop or refused keystroke that removed or refused unstorable text, and once
- * per refused deletion, so the host can tell the user why some of what they pasted, dropped or
- * typed is missing, or why a delete did nothing.
+ * per refused deletion or drag-move, so the host can tell the user why some of what they pasted,
+ * dropped or typed is missing, or why a delete or a move did nothing.
  *
  * Called synchronously from inside the editor command or update that made the edit: report the
  * edit from here (show a notice, say) rather than change the editor.
