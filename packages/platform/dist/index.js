@@ -29383,27 +29383,31 @@ function Ax(e) {
   for (const n of e) t = P(t) ? t.getChildAtIndex(n) : null;
   return t ?? void 0;
 }
-function i_(e, t) {
+function i_(e, t, n) {
   if (HB(t))
     try {
-      const n = Cx(t.anchor), r = Cx(t.focus), { children: i, places: s } = VB(
-        Math.min(n, r),
-        Math.max(n, r)
-      ), o = vx(t.anchor, s), a = vx(t.focus, s);
-      if (!o || !a) return;
-      const c = GB(e);
-      return c.parseEditorState({
-        root: { ...Ne().exportJSON(), children: i }
+      const r = Cx(t.anchor), i = Cx(t.focus), { children: s, places: o } = VB(
+        Math.min(r, i),
+        Math.max(r, i)
+      ), a = vx(t.anchor, o), c = vx(t.focus, o);
+      if (!a || !c) return;
+      const l = GB(e);
+      return l.parseEditorState({
+        root: { ...Ne().exportJSON(), children: s }
       }).read(
         () => {
-          const u = Ax(o.path), d = Ax(a.path);
-          if (!u || !d) return;
-          const f = br();
-          return f.anchor.set(u.getKey(), o.offset, o.type), f.focus.set(d.getKey(), a.offset, a.type), PT(f);
+          const d = Ax(a.path), f = Ax(c.path);
+          if (!d || !f) return;
+          const p = br();
+          return p.anchor.set(d.getKey(), a.offset, a.type), p.focus.set(f.getKey(), c.offset, c.type), PT(p);
         },
-        { editor: c }
+        { editor: l }
       );
-    } catch {
+    } catch (r) {
+      n?.warn(
+        "[uncutClipboard] the copy without annotations could not be written; copying the editor's own copy, which carries the annotations' cuts.",
+        r
+      );
       return;
     }
 }
@@ -29895,15 +29899,15 @@ function _F(e, t, n, r, i) {
     i
   );
 }
-function EF(e, t, n) {
-  const { dataTransfer: r } = e;
-  if (!r) return;
-  const i = T_(t, n);
-  if (i) {
-    r.clearData();
-    for (const s of ["text/plain", "text/html"]) {
-      const o = i[s];
-      o && r.setData(s, o);
+function EF(e, t, n, r) {
+  const { dataTransfer: i } = e;
+  if (!i) return;
+  const s = T_(t, n, r);
+  if (s) {
+    i.clearData();
+    for (const o of ["text/plain", "text/html"]) {
+      const a = s[o];
+      a && i.setData(o, a);
     }
   }
 }
@@ -30004,26 +30008,26 @@ function OF(e) {
     )
   );
 }
-function T_(e, t = "~") {
-  const n = E();
-  if (!_(n) || n.isCollapsed()) return;
-  const r = cy(n, t), i = {
-    "text/plain": r,
-    "text/html": x_(r)
+function T_(e, t = "~", n) {
+  const r = E();
+  if (!_(r) || r.isCollapsed()) return;
+  const i = cy(r, t), s = {
+    "text/plain": i,
+    "text/html": x_(i)
   };
-  if (uo() || OF(n)) return i;
-  const s = i_(e, n)?.["application/x-lexical-editor"] ?? tP(e);
-  return s && !$F(s) && (i["application/x-lexical-editor"] = s), i;
+  if (uo() || OF(r)) return s;
+  const o = i_(e, r, n)?.["application/x-lexical-editor"] ?? tP(e);
+  return o && !$F(o) && (s["application/x-lexical-editor"] = o), s;
 }
 function $F(e) {
   return e.includes(ka) || /\\u001a/i.test(e);
 }
-function Mx(e, t, n, r, i = "~") {
-  const s = E();
-  if (!_(s) || s.isCollapsed())
+function Mx(e, t, n, r, i = "~", s) {
+  const o = E();
+  if (!_(o) || o.isCollapsed())
     return (!e || !("clipboardData" in e)) && !oA();
-  const o = T_(t, i);
-  return o ? (r !== void 0 && delete o["application/x-lexical-editor"], C_(e, t, s, o, n, r)) : !1;
+  const a = T_(t, i, s);
+  return a ? (r !== void 0 && delete a["application/x-lexical-editor"], C_(e, t, o, a, n, r)) : !1;
 }
 function C_(e, t, n, r, i, s) {
   const o = fh(s);
@@ -30038,15 +30042,15 @@ function C_(e, t, n, r, i, s) {
     i && t.isEditable() ? () => n.removeText() : void 0
   );
 }
-function RF(e, t, n) {
-  const r = E();
-  if (!_(r) || r.isCollapsed()) return !1;
-  const i = i_(t, r);
-  return i ? qc(
+function RF(e, t, n, r) {
+  const i = E();
+  if (!_(i) || i.isCollapsed()) return !1;
+  const s = i_(t, i, r);
+  return s ? qc(
     e,
     t,
-    i,
-    n && t.isEditable() ? () => r.removeText() : void 0
+    s,
+    n && t.isEditable() ? () => i.removeText() : void 0
   ) : !1;
 }
 function qc(e, t, n, r) {
@@ -32986,7 +32990,12 @@ function Qz({
         // Never claims the drag: the plugins that refuse one run ahead of this at HIGH.
         o.registerCommand(
           ac,
-          (A) => (EF(A, o, _t(h.viewOptions)), !1),
+          (A) => (EF(
+            A,
+            o,
+            _t(h.viewOptions),
+            h.logger
+          ), !1),
           At
         ),
         o.registerCommand(
@@ -33001,7 +33010,8 @@ function Qz({
             o,
             !1,
             f.current,
-            _t(h.viewOptions)
+            _t(h.viewOptions),
+            h.logger
           ),
           Qe
         ),
@@ -33017,7 +33027,8 @@ function Qz({
               o,
               !0,
               f.current,
-              _t(h.viewOptions)
+              _t(h.viewOptions),
+              h.logger
             )
           ),
           Qe
@@ -33141,7 +33152,8 @@ function Qz({
           (N) => RF(
             N && typeof N == "object" && "clipboardData" in N ? N : null,
             o,
-            A === xn
+            A === xn,
+            h.logger
           ),
           At
         )
