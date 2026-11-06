@@ -753,6 +753,180 @@ describe("UnstorableTextPlugin — drop", () => {
   });
 });
 
+/**
+ * A drag's `dragstart` at `source`, carrying no data, as jsdom's drag events do; `isRefused` for one
+ * a handler cancelled, which starts no drag.
+ */
+function dispatchDragStart(source: EventTarget, isRefused = false): void {
+  const event = new DragEvent("dragstart", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: transfer({}) });
+  if (isRefused) event.preventDefault();
+  source.dispatchEvent(event);
+}
+
+/**
+ * A drop of `flavors` at `offset` in the editor's one text node: jsdom has no `caretRangeFromPoint`,
+ * so it answers with that place while the drop is dispatched. `withCopyKey` holds the key a
+ * copy-drop is made with (Ctrl; Option on macOS).
+ */
+async function dropAt(
+  editor: LexicalEditor,
+  offset: number,
+  flavors: Flavors,
+  { withCopyKey = false } = {},
+): Promise<{ event: DragEvent; isClaimed: boolean }> {
+  const key = editor.getEditorState().read(() => $getRoot().getAllTextNodes()[0].getKey());
+  const domText = editor.getElementByKey(key)!.firstChild!;
+  const range = document.createRange();
+  range.setStart(domText, offset);
+  const event = dropEvent(flavors);
+  Object.assign(event, { clientX: 1, clientY: 1, ctrlKey: withCopyKey, altKey: withCopyKey });
+  Object.defineProperty(document, "caretRangeFromPoint", {
+    configurable: true,
+    value: () => range,
+  });
+  try {
+    const isClaimed = await dispatch(editor, () => editor.dispatchCommand(DROP_COMMAND, event));
+    return { event, isClaimed };
+  } finally {
+    Reflect.deleteProperty(document, "caretRangeFromPoint");
+  }
+}
+
+describe("UnstorableTextPlugin — drag-move", () => {
+  const SLASH = { "text/html": "<span>/</span>", "text/plain": "/" };
+
+  it("refuses a move whose `/` would land against a `/`, before anything is removed, and says so once", async () => {
+    // The `/` after `a` selected, as a drag of it leaves it.
+    const { editor, onRemoved, logger } = await environment("a/b c/ d", { anchor: 1, focus: 2 });
+    dispatchDragStart(editor.getRootElement()!);
+
+    const { event, isClaimed } = await dropAt(editor, 6, SLASH);
+
+    expect(isClaimed).toBe(true);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(readParas(editor)).toEqual(["a/b c/ d"]);
+    expect(onRemoved).toHaveBeenCalledTimes(1);
+    expect(onRemoved).toHaveBeenCalledWith({ source: "move", removed: ["//"] });
+    expect(logger.info).toHaveBeenCalledWith(
+      "UnstorableTextPlugin: refused a drag-move whose drop would remove //.",
+    );
+  });
+
+  it("refuses a move of plain text the same way", async () => {
+    const { editor, onRemoved } = await environment("x/ a /b", { anchor: 0, focus: 2 });
+    dispatchDragStart(editor.getRootElement()!);
+
+    const { isClaimed } = await dropAt(editor, 5, { "text/plain": "x/" });
+
+    expect(isClaimed).toBe(true);
+    expect(onRemoved).toHaveBeenCalledWith({ source: "move", removed: ["//"] });
+  });
+
+  it("leaves a move that keeps all of itself to the browser, telling no one", async () => {
+    const { editor, onRemoved } = await environment("a/b c d", { anchor: 1, focus: 2 });
+    dispatchDragStart(editor.getRootElement()!);
+
+    const { event } = await dropAt(editor, 5, SLASH);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["at its end", 2],
+    ["at its start", 1],
+  ])(
+    "leaves a drop of what was dragged %s, where it goes back as it was, to the browser",
+    async (_where, offset) => {
+      const { editor, onRemoved } = await environment("a/b", { anchor: 1, focus: 2 });
+      dispatchDragStart(editor.getRootElement()!);
+
+      const { event } = await dropAt(editor, offset, SLASH);
+
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(onRemoved).not.toHaveBeenCalled();
+    },
+  );
+
+  it("leaves a copy-drop, which removes nothing, to the drop's filter", async () => {
+    const { editor, onRemoved } = await environment("a/b c/ d", { anchor: 1, focus: 2 });
+    dispatchDragStart(editor.getRootElement()!);
+
+    const { event } = await dropAt(editor, 6, SLASH, { withCopyKey: true });
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("leaves a drop with no drag started in the document, from another program, to the drop's filter", async () => {
+    const { editor, onRemoved } = await environment("a c/ d", { anchor: 0 });
+
+    const { event } = await dropAt(editor, 4, SLASH);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("leaves a drop after a drag that was refused at its start, which started no drag", async () => {
+    const { editor, onRemoved } = await environment("a/b c/ d", { anchor: 1, focus: 2 });
+    dispatchDragStart(editor.getRootElement()!, true);
+
+    const { event } = await dropAt(editor, 6, SLASH);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it.each(["dragend", "drop"])(
+    "forgets a drag once a %s ends it, so a later drop from another program is not a move",
+    async (ending) => {
+      const { editor, onRemoved } = await environment("a/b c/ d", { anchor: 1, focus: 2 });
+      dispatchDragStart(editor.getRootElement()!);
+      document.dispatchEvent(new Event(ending, { bubbles: true }));
+
+      const { event } = await dropAt(editor, 6, SLASH);
+
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(onRemoved).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a move from editable content outside the editor, judged where it lands", async () => {
+    const { editor, onRemoved } = await environment("a c/ d", { anchor: 0 });
+    const other = document.createElement("div");
+    // jsdom does not compute `isContentEditable`.
+    Object.defineProperty(other, "isContentEditable", { value: true });
+    document.body.append(other);
+    try {
+      dispatchDragStart(other);
+
+      const { isClaimed } = await dropAt(editor, 4, SLASH);
+
+      expect(isClaimed).toBe(true);
+      expect(onRemoved).toHaveBeenCalledWith({ source: "move", removed: ["//"] });
+    } finally {
+      other.remove();
+    }
+  });
+
+  it("leaves a drag from content no one can edit, which the browser copies, to the drop's filter", async () => {
+    const { editor, onRemoved } = await environment("a c/ d", { anchor: 0 });
+    const other = document.createElement("div");
+    document.body.append(other);
+    try {
+      dispatchDragStart(other);
+
+      const { event } = await dropAt(editor, 4, SLASH);
+
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(onRemoved).not.toHaveBeenCalled();
+    } finally {
+      other.remove();
+    }
+  });
+});
+
 describe("UnstorableTextPlugin — typing", () => {
   it("refuses a typed `\\`, says it was typing, and logs it", async () => {
     const { editor, onRemoved, logger } = await environment("x");
@@ -905,6 +1079,16 @@ describe("UnstorableTextPlugin — disabled, as a view that shows markers mounts
     );
 
     expect(readParas(editor).join("|")).toContain("a\\b");
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("lets a drag-move whose `/` would land against a `/` through", async () => {
+    const { editor, onRemoved } = await switchableEnvironment("a/b c/ d", { anchor: 1, focus: 2 });
+    dispatchDragStart(editor.getRootElement()!);
+
+    const { event } = await dropAt(editor, 6, { "text/plain": "/" });
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
     expect(onRemoved).not.toHaveBeenCalled();
   });
 
