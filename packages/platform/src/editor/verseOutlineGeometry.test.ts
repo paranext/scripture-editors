@@ -136,34 +136,56 @@ describe("computeVerseOutlineSegments", () => {
     ).toEqual([box({ left: 250, right: 360, top: 78, bottom: 94 }, true, true)]);
   });
 
-  it("outlines a paragraph's only verse as one box to the paragraph's end", () => {
-    // The last line is ragged, but nothing follows the section on it.
+  it("ends a paragraph's only verse where its text ends, not at the paragraph's edge", () => {
+    // Nothing follows the section, but the blank after its last line is left out.
     expect(
       computeVerseOutlineSegments({
         rects: [verseNumber(0, 100), text(0, 109, 488), text(1, 100, 493), text(2, 100, 310)],
         contentBox: CONTENT,
       }),
-    ).toEqual([box({ left: 100, right: 500, top: 54, bottom: 118 }, true, true)]);
+    ).toEqual([
+      box({ left: 100, right: 493, top: 54, bottom: between(2) }, true, false),
+      box({ left: 100, right: 310, top: between(2), bottom: 118 }, false, true),
+      edge(310, 493, between(2)),
+    ]);
   });
 
-  it("ends at the line break when the next verse opens the following line", () => {
+  it("runs the inline-end side straight down at the longest line, not stepping at each", () => {
+    expect(
+      computeVerseOutlineSegments({
+        rects: [verseNumber(0, 100), text(0, 109, 470), text(1, 100, 493), text(2, 100, 480)],
+        contentBox: CONTENT,
+        following: verseNumber(3, 100),
+      }),
+    ).toEqual([
+      box({ left: 100, right: 493, top: 54, bottom: between(2) }, true, false),
+      box({ left: 100, right: 480, top: between(2), bottom: 118 }, false, true),
+      edge(480, 493, between(2)),
+    ]);
+  });
+
+  it("ends where the text ends when the next verse opens the following line", () => {
     expect(
       computeVerseOutlineSegments({
         rects: [verseNumber(0, 100), text(0, 109, 488), text(1, 100, 470)],
         contentBox: CONTENT,
         following: verseNumber(2, 100),
       }),
-    ).toEqual([box({ left: 100, right: 500, top: 54, bottom: 94 }, true, true)]);
+    ).toEqual([
+      box({ left: 100, right: 488, top: 54, bottom: between(1) }, true, false),
+      box({ left: 100, right: 470, top: between(1), bottom: 94 }, false, true),
+      edge(470, 488, between(1)),
+    ]);
   });
 
-  it("closes a mid-line verse on its own line when the next verse opens the following line", () => {
+  it("closes a mid-line verse at its text when the next verse opens the following line", () => {
     expect(
       computeVerseOutlineSegments({
         rects: [verseNumber(0, 250), text(0, 259, 470)],
         contentBox: CONTENT,
         following: verseNumber(1, 100),
       }),
-    ).toEqual([box({ left: 250, right: 500, top: 54, bottom: 70 }, true, true)]);
+    ).toEqual([box({ left: 250, right: 470, top: 54, bottom: 70 }, true, true)]);
   });
 
   it("draws a Z for a section that starts mid-line, with a step under the line before it", () => {
@@ -174,9 +196,11 @@ describe("computeVerseOutlineSegments", () => {
         following: verseNumber(3, 100),
       }),
     ).toEqual([
-      box({ left: 250, right: 500, top: 54, bottom: between(1) }, true, false),
-      box({ left: 100, right: 500, top: between(1), bottom: 118 }, false, true),
+      box({ left: 250, right: 495, top: 54, bottom: between(1) }, true, false),
+      box({ left: 100, right: 495, top: between(1), bottom: between(2) }, false, false),
       edge(100, 250, between(1)),
+      box({ left: 100, right: 480, top: between(2), bottom: 118 }, false, true),
+      edge(480, 495, between(2)),
     ]);
   });
 
@@ -188,9 +212,9 @@ describe("computeVerseOutlineSegments", () => {
         following: verseNumber(2, 304),
       }),
     ).toEqual([
-      box({ left: 100, right: 500, top: 54, bottom: between(2) }, true, false),
+      box({ left: 100, right: 495, top: 54, bottom: between(2) }, true, false),
       box({ left: 100, right: 300, top: between(2), bottom: 118 }, false, true),
-      edge(300, 500, between(2)),
+      edge(300, 495, between(2)),
     ]);
   });
 
@@ -202,15 +226,15 @@ describe("computeVerseOutlineSegments", () => {
         following: verseNumber(2, 304),
       }),
     ).toEqual([
-      box({ left: 250, right: 500, top: 54, bottom: between(1) }, true, false),
-      box({ left: 100, right: 500, top: between(1), bottom: between(2) }, false, false),
+      box({ left: 250, right: 495, top: 54, bottom: between(1) }, true, false),
+      box({ left: 100, right: 495, top: between(1), bottom: between(2) }, false, false),
       edge(100, 250, between(1)),
       box({ left: 100, right: 300, top: between(2), bottom: 118 }, false, true),
-      edge(300, 500, between(2)),
+      edge(300, 495, between(2)),
     ]);
   });
 
-  it("takes in a hanging first line that starts left of the content box", () => {
+  it("runs the inline-start side straight down from a hanging first line", () => {
     // `\q1` style: the first line hangs 30px into the margin; the second starts at the content box.
     expect(
       computeVerseOutlineSegments({
@@ -219,9 +243,24 @@ describe("computeVerseOutlineSegments", () => {
         following: verseNumber(2, 70),
       }),
     ).toEqual([
-      box({ left: 70, right: 500, top: 54, bottom: between(1) }, true, false),
-      box({ left: 100, right: 500, top: between(1), bottom: 94 }, false, true),
-      edge(70, 100, between(1)),
+      box({ left: 70, right: 480, top: 54, bottom: between(1) }, true, false),
+      box({ left: 70, right: 260, top: between(1), bottom: 94 }, false, true),
+      edge(260, 480, between(1)),
+    ]);
+  });
+
+  it("steps in at a first-line indent and runs straight down after it", () => {
+    expect(
+      computeVerseOutlineSegments({
+        rects: [verseNumber(0, 130), text(0, 139, 490), text(1, 100, 260)],
+        contentBox: CONTENT,
+        following: verseNumber(1, 264),
+      }),
+    ).toEqual([
+      box({ left: 130, right: 490, top: 54, bottom: between(1) }, true, false),
+      box({ left: 100, right: 260, top: between(1), bottom: 94 }, false, true),
+      edge(100, 130, between(1)),
+      edge(260, 490, between(1)),
     ]);
   });
 
@@ -279,9 +318,9 @@ describe("computeVerseOutlineSegments", () => {
         following: verseNumber(1, 164),
       }),
     ).toEqual([
-      box({ left: 400, right: 500, top: 54, bottom: between(1) }, true, false),
+      box({ left: 400, right: 480, top: 54, bottom: between(1) }, true, false),
       box({ left: 100, right: 160, top: between(1), bottom: 94 }, false, true),
-      edge(400, 500, between(1)),
+      edge(400, 480, between(1)),
       edge(100, 160, between(1)),
     ]);
   });
@@ -332,9 +371,9 @@ describe("computeVerseOutlineSegments", () => {
       ).toEqual([box({ left: 180, right: 302, top: 52, bottom: 72 }, true, true)]);
     });
 
-    it("wraps a mid-line start to the left edge and ends mid-line on the right", () => {
-      // The verse starts mid-line at x=380, wraps at the left edge, and the next verse follows at
-      // x=250 on the second line.
+    it("wraps a mid-line start down the left side and ends mid-line on the right", () => {
+      // The verse starts mid-line at x=380, wraps at x=112, and the next verse follows at x=250 on
+      // the second line.
       expect(
         computeVerseOutlineSegments({
           rects: [verseNumber(0, 371), text(0, 112, 371), text(1, 250, 500)],
@@ -343,9 +382,9 @@ describe("computeVerseOutlineSegments", () => {
           direction: "rtl",
         }),
       ).toEqual([
-        box({ left: 100, right: 380, top: 54, bottom: between(1) }, true, false),
+        box({ left: 112, right: 380, top: 54, bottom: between(1) }, true, false),
         box({ left: 250, right: 500, top: between(1), bottom: 94 }, false, true),
-        edge(100, 250, between(1)),
+        edge(112, 250, between(1)),
         edge(380, 500, between(1)),
       ]);
     });
@@ -360,9 +399,9 @@ describe("computeVerseOutlineSegments", () => {
           direction: "rtl",
         }),
       ).toEqual([
-        box({ left: 100, right: 200, top: 54, bottom: between(1) }, true, false),
+        box({ left: 112, right: 200, top: 54, bottom: between(1) }, true, false),
         box({ left: 430, right: 500, top: between(1), bottom: 94 }, false, true),
-        edge(100, 200, between(1)),
+        edge(112, 200, between(1)),
         edge(430, 500, between(1)),
       ]);
     });
@@ -383,14 +422,18 @@ describe("computeVerseOutlineSegments", () => {
       ]);
     });
 
-    it("runs a last line with nothing after it to the left edge", () => {
+    it("ends a last line with nothing after it where its text ends", () => {
       expect(
         computeVerseOutlineSegments({
           rects: [text(0, 112, 500), text(1, 300, 500)],
           contentBox: CONTENT,
           direction: "rtl",
         }),
-      ).toEqual([box({ left: 100, right: 500, top: 54, bottom: 94 }, true, true)]);
+      ).toEqual([
+        box({ left: 112, right: 500, top: 54, bottom: between(1) }, true, false),
+        box({ left: 300, right: 500, top: between(1), bottom: 94 }, false, true),
+        edge(112, 300, between(1)),
+      ]);
     });
   });
 });

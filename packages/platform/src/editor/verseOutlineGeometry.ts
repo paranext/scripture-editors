@@ -51,21 +51,20 @@ export interface VerseOutlineInput {
    */
   rects: readonly OutlineRect[];
   /**
-   * The paragraph's content box (inside its padding). A section line that wraps runs to the
-   * content box's inline-end edge, and a line that continues the section from the line above starts
-   * at its inline-start edge, so ragged line ends don't make the outline ragged.
+   * The paragraph's content box (inside its padding). No line's inline end reaches past it, though
+   * a wrapped line's hanging space measures past it under `pre-wrap`.
    */
   contentBox: { left: number; right: number };
   /**
    * The box of what follows the section — the next verse marker. When it sits on the section's last
-   * line, the section ends mid-line there and the outline stops at its text. Otherwise (or when
-   * nothing follows) the section has that line to itself, so it too runs to the inline-end edge.
+   * line, the section ends mid-line there, and the outline's padding stops at it.
    */
   following?: OutlineRect;
   direction?: "ltr" | "rtl";
   /**
-   * Outline each line's own text, without running lines out to the content box — for centered or
-   * end-aligned paragraphs, whose lines don't start at the inline-start edge.
+   * Outline each line's own text, stepping at every line whose ends differ — for centered or
+   * end-aligned paragraphs, whose lines share neither edge. Otherwise the sides between the
+   * section's first and last line run straight.
    */
   hugLines?: boolean;
   /** How far (px) the outline stands off the text on every side. */
@@ -77,8 +76,10 @@ const SAME_EDGE_PX = 0.5;
 
 /**
  * Computes the outline for a verse section from its text's client rects: one box per run of lines
- * that share their left and right edges, plus an edge piece wherever two runs' widths differ. The
- * result is a closed outline; only its four outermost corners round. A short section that wraps
+ * that share their left and right edges, plus an edge piece wherever two runs' widths differ. It
+ * starts where the section's text starts and ends where it ends, so it never takes in blank space
+ * after the text, and (unless hugging) its sides run straight down between the two. The result is
+ * a closed outline; only its four outermost corners round. A short section that wraps
  * without its two lines overlapping (it starts late on one line and ends early on the next) comes
  * out as two closed pieces that meet at no more than a corner, with square corners where they do.
  *
@@ -98,22 +99,29 @@ export function computeVerseOutlineSegments({
   const isRtl = direction === "rtl";
   const last = lines.length - 1;
   const endsMidLine = following !== undefined && isOnLine(following, lines[last]);
-  // Every line but the section's last wraps, so it runs to the paragraph's inline end (as does the
-  // last, when nothing follows on it); every line but its first carries on from the line above, so
-  // it starts at the paragraph's inline start. Both are set to the edge exactly: under `pre-wrap`, a
-  // wrapped line's hanging space measures past it. Hugged lines keep their own extent, but are cut
-  // back to the inline-end edge for the same reason. A section that ends mid-line stops its padding
-  // at the next verse number, which can sit right against its text, so the outline never covers it.
-  const spans = lines.map((line, i) => {
+  // Under `pre-wrap` a wrapped line's hanging space measures past the content box, so every line's
+  // inline end is cut back to it first.
+  const clamped = lines.map(({ left, right }) =>
+    isRtl
+      ? { left: Math.max(left, contentBox.left), right }
+      : { left, right: Math.min(right, contentBox.right) },
+  );
+  const outer = {
+    left: Math.min(...clamped.map((line) => line.left)),
+    right: Math.max(...clamped.map((line) => line.right)),
+  };
+  // Unless hugging, the section starts where its first line's text starts and ends where its last
+  // line's text ends; every other side runs straight down at the section's furthest extent, so the
+  // outline neither steps at each ragged line end nor takes in blank space past the text. A section
+  // that ends mid-line stops its padding at the next verse number, which can sit right against its
+  // text, so the outline never covers it.
+  const spans = clamped.map((line, i) => {
     let { left, right } = line;
-    if (hugLines) {
-      if (isRtl) left = Math.max(left, contentBox.left);
-      else right = Math.min(right, contentBox.right);
-    } else {
-      const wraps = i < last || !endsMidLine;
-      const continues = i > 0;
-      if (isRtl ? continues : wraps) right = contentBox.right;
-      if (isRtl ? wraps : continues) left = contentBox.left;
+    if (!hugLines) {
+      const isStart = i === 0;
+      const isEnd = i === last;
+      if (isRtl ? !isEnd : !isStart) left = outer.left;
+      if (isRtl ? !isStart : !isEnd) right = outer.right;
     }
     const span = { left: left - padding, right: right + padding };
     if (following && endsMidLine && i === last) {

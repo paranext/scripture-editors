@@ -849,7 +849,10 @@ describe("measureVerseSection", () => {
     Range.prototype.getClientRects = function (this: Range) {
       // The section's own range is measured first; whitespace runs may be measured after it.
       measured ??= this.cloneRange();
-      const rects = typeof clientRects === "function" ? clientRects(this) : clientRects;
+      if (typeof clientRects === "function") return clientRects(this) as unknown as DOMRectList;
+      // Fixed rects are the section's; a whitespace run's own range (which starts in its text node)
+      // measures as nothing, so no hanging space is dropped from them.
+      const rects = this.startContainer.nodeType === Node.TEXT_NODE ? [] : clientRects;
       return rects as unknown as DOMRectList;
     };
   });
@@ -1031,7 +1034,7 @@ describe("measureVerseSection", () => {
     ]);
   });
 
-  it("drops a centered paragraph's hanging spaces, but keeps them where lines run to the edge", () => {
+  it("drops a line's hanging space, whatever the paragraph's alignment", () => {
     const { editor, section, paraEl } = setUp(1);
     editor.update(
       () => {
@@ -1047,7 +1050,6 @@ describe("measureVerseSection", () => {
 
     expect(measureVerseSection(editor, section)?.rects).toEqual([
       { left: 110, right: 290, top: 24, bottom: 40 },
-      { left: 290, right: 294, top: 24, bottom: 40 },
     ]);
 
     paraEl.style.textAlign = "center";

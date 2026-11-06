@@ -385,13 +385,11 @@ export function measureVerseSection(
   const direction = style.direction === "rtl" ? "rtl" : "ltr";
   const hugLines = !isStartAligned(style.textAlign, direction);
 
-  let rects = Array.from(range.getClientRects(), toOutlineRect);
-  // Under `pre-wrap` the space a line wraps at hangs past its text as a rect of its own. Lines that
-  // run to the content box ignore it; hugged lines would be a space wider on one side, so drop it.
-  if (hugLines) {
-    const spaces = whitespaceRects(range);
-    rects = rects.filter((rect) => !spaces.some((space) => isSameRect(rect, space)));
-  }
+  // Under `pre-wrap` the space a line wraps at hangs past its text as a rect of its own. The outline
+  // ends where the text ends, so drop it.
+  const measured = Array.from(range.getClientRects(), toOutlineRect);
+  const spaces = whitespaceRects(range);
+  const rects = measured.filter((rect) => !spaces.some((space) => isSameRect(rect, space)));
   if (!rects.some((rect) => rect.right > rect.left && rect.bottom > rect.top)) return undefined;
 
   // A section that opens at its verse number takes in the number's margin box, so its margin sits
