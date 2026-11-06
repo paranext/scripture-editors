@@ -1,15 +1,18 @@
 /**
- * A drag-move in a hidden-marker view never loses what was dragged. The browser removes the dragged
- * text first (`deleteByDrag`) and then inserts it at the drop point (`insertFromDrop`), where the
- * insertion leaves out a `/` that would touch a `/` (or an optional line break, stored as `//`)
- * beside it. So a move whose text would lose any character at the drop point is refused at the
- * drop, before anything is removed, and the host is told once (`source: "move"`). A copy-drop
- * (Ctrl held; Option on macOS) and a drop from outside the document remove nothing, so they keep
- * the insertion's filter.
+ * A drag-move in a hidden-marker view never loses what was dragged, and lands where it was dropped.
+ * A move removes the dragged text first (`deleteByDrag`) and then inserts it at the drop point
+ * (`insertFromDrop`), where the insertion leaves out a `/` that would touch a `/` (or an optional
+ * line break, stored as `//`) beside it. So a move whose text would lose any character at the drop
+ * point is refused at the drop, before anything is removed, and the host is told once
+ * (`source: "move"`). A move within the editor that loses nothing is made by the editor itself, in
+ * one undo step, at the drop point. A copy-drop (Ctrl held; Option on macOS), a drop from outside
+ * the document, and a move from other editable content of the document that loses nothing are left
+ * to the browser, and the insertion's filter.
  *
  * jsdom has no native drag and drop: each test dispatches the `dragstart` and `drop` the browser
- * would, answers `caretRangeFromPoint` with the drop point, and, for a drop no handler refused,
- * replays the browser's removal and insertion as the commands Lexical dispatches for them.
+ * would, answers `caretRangeFromPoint` with the drop point, and, for a drop the editor did not take,
+ * replays the browser's removal (for a move) and insertion as the commands Lexical dispatches for
+ * them.
  */
 import { MountedEditor, editorView, mountInView } from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -23,6 +26,7 @@ import {
   LexicalEditor,
   REMOVE_TEXT_COMMAND,
   TextNode,
+  UNDO_COMMAND,
 } from "lexical";
 import { StructureProtectionMode, UnstorableTextRemovedHandler } from "shared-react";
 
@@ -105,8 +109,9 @@ interface DragMove {
   to: At;
   /** Where it is dropped, in the text before the drag. */
   dropAt: At;
-  /** The same place once the dragged text is gone, where the browser inserts it. */
-  landAt: At;
+  /** The same place once the dragged text is gone, where the browser inserts it; left out for a
+   * drop the editor takes. */
+  landAt?: At;
   flavors: Flavors;
   /** Held for a copy-drop: Ctrl, or Option on macOS. */
   isCopy?: boolean;
@@ -115,9 +120,9 @@ interface DragMove {
 }
 
 /**
- * Drags `from`…`to` and drops it at `dropAt`, as the browser does. Returns whether the drop was
- * refused (its default prevented), in which case nothing more happens; otherwise the browser's
- * removal of the dragged text (for a move) and its insertion at `landAt` follow.
+ * Drags `from`…`to` and drops it at `dropAt`, as the browser does. Returns whether the editor took
+ * the drop (prevented its default), in which case the browser does nothing more; otherwise the
+ * browser's removal of the dragged text (for a move) and its insertion at `landAt` follow.
  */
 async function dragAndDrop(mounted: MountedEditor, move: DragMove): Promise<boolean> {
   const { lexical } = mounted;
@@ -152,6 +157,7 @@ async function dragAndDrop(mounted: MountedEditor, move: DragMove): Promise<bool
       root.dispatchEvent(drop);
     });
     if (drop.defaultPrevented) return true;
+    if (!move.landAt) throw new Error("the editor left the drop to the browser, with no landAt");
 
     const isMove = !!source && !move.isCopy;
     if (isMove)
@@ -225,7 +231,7 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
       it("refuses a lone `/` dropped against a `/`, keeping it where it was", async () => {
         const { mounted, onRemoved } = await mount(viewName, mode, "a/b c/ d");
 
-        const isRefused = await dragAndDrop(mounted, {
+        const isTaken = await dragAndDrop(mounted, {
           from: { text: "a/b c/ d", offset: 1 },
           to: { text: "a/b c/ d", offset: 2 },
           dropAt: { text: "a/b c/ d", offset: 6 },
@@ -234,7 +240,7 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
         });
 
         expect(savedParas(mounted)).toEqual(["a/b c/ d"]);
-        expect(isRefused).toBe(true);
+        expect(isTaken).toBe(true);
         expect(onRemoved).toHaveBeenCalledTimes(1);
         expect(onRemoved).toHaveBeenCalledWith(REFUSED_MOVE);
       });
@@ -242,7 +248,7 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
       it("refuses text ending in `/` dropped before a `/`", async () => {
         const { mounted, onRemoved } = await mount(viewName, mode, "x/ a /b");
 
-        const isRefused = await dragAndDrop(mounted, {
+        const isTaken = await dragAndDrop(mounted, {
           from: { text: "x/ a /b", offset: 0 },
           to: { text: "x/ a /b", offset: 2 },
           dropAt: { text: "x/ a /b", offset: 5 },
@@ -251,41 +257,76 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
         });
 
         expect(savedParas(mounted)).toEqual(["x/ a /b"]);
-        expect(isRefused).toBe(true);
+        expect(isTaken).toBe(true);
         expect(onRemoved).toHaveBeenCalledWith(REFUSED_MOVE);
       });
 
-      it("moves a `/` that touches no `/` where it lands, telling no one", async () => {
+      it("moves a `/` that touches no `/` to where it was dropped after it, telling no one", async () => {
         const { mounted, onRemoved } = await mount(viewName, mode, "a/b c d");
 
-        const isRefused = await dragAndDrop(mounted, {
+        const isTaken = await dragAndDrop(mounted, {
           from: { text: "a/b c d", offset: 1 },
           to: { text: "a/b c d", offset: 2 },
           dropAt: { text: "a/b c d", offset: 5 },
-          landAt: { text: "ab c d", offset: 4 },
           flavors: flavorsOf("/"),
         });
 
-        expect(isRefused).toBe(false);
         expect(savedParas(mounted)).toEqual(["ab c/ d"]);
+        expect(isTaken).toBe(true);
         expect(onRemoved).not.toHaveBeenCalled();
       });
 
-      it("lets a `/` dropped at its own edge go back where it was, telling no one", async () => {
-        const { mounted, onRemoved } = await mount(viewName, mode, "a/b");
+      it("moves text to where it was dropped before it", async () => {
+        const { mounted, onRemoved } = await mount(viewName, mode, "a b/c d");
 
-        const isRefused = await dragAndDrop(mounted, {
-          from: { text: "a/b", offset: 1 },
-          to: { text: "a/b", offset: 2 },
-          dropAt: { text: "a/b", offset: 2 },
-          landAt: { text: "ab", offset: 1 },
+        const isTaken = await dragAndDrop(mounted, {
+          from: { text: "a b/c d", offset: 3 },
+          to: { text: "a b/c d", offset: 5 },
+          dropAt: { text: "a b/c d", offset: 1 },
+          flavors: flavorsOf("/c"),
+        });
+
+        expect(savedParas(mounted)).toEqual(["a/c b d"]);
+        expect(isTaken).toBe(true);
+        expect(onRemoved).not.toHaveBeenCalled();
+      });
+
+      it("undoes a move in one step", async () => {
+        const { mounted } = await mount(viewName, mode, "a/b c d");
+        await dragAndDrop(mounted, {
+          from: { text: "a/b c d", offset: 1 },
+          to: { text: "a/b c d", offset: 2 },
+          dropAt: { text: "a/b c d", offset: 5 },
           flavors: flavorsOf("/"),
         });
 
-        expect(isRefused).toBe(false);
-        expect(savedParas(mounted)).toEqual(["a/b"]);
-        expect(onRemoved).not.toHaveBeenCalled();
+        await act(async () => {
+          mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined);
+        });
+
+        expect(savedParas(mounted)).toEqual(["a/b c d"]);
       });
+
+      it.each([
+        ["end", 2],
+        ["start", 1],
+      ])(
+        "leaves a `/` dropped at its own %s where it was, telling no one",
+        async (_edge, offset) => {
+          const { mounted, onRemoved } = await mount(viewName, mode, "a/b");
+
+          const isTaken = await dragAndDrop(mounted, {
+            from: { text: "a/b", offset: 1 },
+            to: { text: "a/b", offset: 2 },
+            dropAt: { text: "a/b", offset },
+            flavors: flavorsOf("/"),
+          });
+
+          expect(savedParas(mounted)).toEqual(["a/b"]);
+          expect(isTaken).toBe(true);
+          expect(onRemoved).not.toHaveBeenCalled();
+        },
+      );
 
       it("refuses a `/` dropped against an optional line break, which the file stores as `//`", async () => {
         const { mounted, onRemoved } = await mount(
@@ -296,7 +337,7 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
           " d",
         );
 
-        const isRefused = await dragAndDrop(mounted, {
+        const isTaken = await dragAndDrop(mounted, {
           from: { text: "a/b c", offset: 1 },
           to: { text: "a/b c", offset: 2 },
           dropAt: { text: "a/b c", offset: 5 },
@@ -305,7 +346,7 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
         });
 
         expect(savedParas(mounted)).toEqual(["a/b c| d"]);
-        expect(isRefused).toBe(true);
+        expect(isTaken).toBe(true);
         expect(onRemoved).toHaveBeenCalledWith(REFUSED_MOVE);
       });
 
@@ -318,7 +359,7 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
         document.body.append(otherEditor);
 
         try {
-          const isRefused = await dragAndDrop(mounted, {
+          const isTaken = await dragAndDrop(mounted, {
             from: { text: "a c/ d", offset: 0 },
             to: { text: "a c/ d", offset: 0 },
             dropAt: { text: "a c/ d", offset: 4 },
@@ -328,7 +369,7 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
           });
 
           expect(savedParas(mounted)).toEqual(["a c/ d"]);
-          expect(isRefused).toBe(true);
+          expect(isTaken).toBe(true);
           expect(onRemoved).toHaveBeenCalledWith(REFUSED_MOVE);
         } finally {
           otherEditor.remove();
@@ -338,7 +379,7 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
       it("filters a copy-drop as any drop, since it removes nothing", async () => {
         const { mounted, onRemoved } = await mount(viewName, mode, "a/b c/ d");
 
-        const isRefused = await dragAndDrop(mounted, {
+        const isTaken = await dragAndDrop(mounted, {
           from: { text: "a/b c/ d", offset: 1 },
           to: { text: "a/b c/ d", offset: 2 },
           dropAt: { text: "a/b c/ d", offset: 6 },
@@ -347,7 +388,7 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
           isCopy: true,
         });
 
-        expect(isRefused).toBe(false);
+        expect(isTaken).toBe(false);
         expect(savedParas(mounted)).toEqual(["a/b c/ d"]);
         expect(onRemoved).toHaveBeenCalledWith({ source: "drop", removed: ["//"] });
       });
@@ -355,7 +396,7 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
       it("filters a drop from another program as any drop", async () => {
         const { mounted, onRemoved } = await mount(viewName, mode, "a c/ d");
 
-        const isRefused = await dragAndDrop(mounted, {
+        const isTaken = await dragAndDrop(mounted, {
           from: { text: "a c/ d", offset: 0 },
           to: { text: "a c/ d", offset: 0 },
           dropAt: { text: "a c/ d", offset: 4 },
@@ -364,7 +405,7 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
           dragSource: null,
         });
 
-        expect(isRefused).toBe(false);
+        expect(isTaken).toBe(false);
         expect(savedParas(mounted)).toEqual(["a c/x d"]);
         expect(onRemoved).toHaveBeenCalledWith({ source: "drop", removed: ["//"] });
       });
