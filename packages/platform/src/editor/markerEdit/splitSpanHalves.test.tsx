@@ -31,7 +31,11 @@ import { describe, expect, it } from "vitest";
 describe("a whole span of the same marker put between a torn span's halves", () => {
   it("settles the halves into one span that spells its attribute once", async () => {
     const mounted = await mountInView(
-      twoParaUsj(["a ", { type: "char", marker: "w", lemma: "g", content: ["grace"] }, " b"]),
+      twoParaUsj([
+        "a ",
+        { type: "char", marker: "w", ...{ lemma: "g" }, content: ["grace"] },
+        " b",
+      ]),
       pendingOracleView("standard"),
     );
     await act(async () => {
