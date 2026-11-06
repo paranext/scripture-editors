@@ -12,6 +12,7 @@ import { HiddenContentDeleteGuardPlugin } from "./HiddenContentDeleteGuardPlugin
 import { baseTestEnvironment, pressKey, sutUpdate, updateSelection } from "./react-test.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
+import { UnstorableTextPlugin } from "./UnstorableTextPlugin";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { act } from "@testing-library/react";
 import {
@@ -1880,5 +1881,82 @@ describe("HiddenContentDeleteGuardPlugin", () => {
         expect.stringContaining("q2"),
       );
     });
+  });
+});
+
+describe("HiddenContentDeleteGuardPlugin beside UnstorableTextPlugin", () => {
+  let first: TextNode;
+  let last: TextNode;
+  // `a/x`, a hidden figure, `y/b`: removing everything from `x` to `y` puts `a/` against `/b`.
+  const $init = () => {
+    first = $createTextNode("a/x");
+    last = $createTextNode("y/b");
+    $getRoot().append($createParaNode("p").append(first, $createFigureNode(), last));
+  };
+
+  async function environment(handler: HiddenContentDeleteHandler) {
+    const onRemoved = vi.fn();
+    const { editor } = await guardedEnvironment($init, handler, {
+      children: <UnstorableTextPlugin onRemoved={onRemoved} />,
+    });
+    return { editor, onRemoved };
+  }
+
+  it("does not ask about a cut that would join two `/`, which is refused instead", async () => {
+    const handler = answering("delete");
+    const { editor, onRemoved } = await environment(handler);
+    updateSelection(editor, first!, 2, last!, 1);
+
+    const cut = clipboardEvent("cut");
+    await act(async () => {
+      editor.dispatchCommand(CUT_COMMAND, cut);
+    });
+    await settle();
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(onRemoved).toHaveBeenCalledWith({ source: "deletion", removed: ["//"] });
+    expect(cut.clipboardData?.setData).not.toHaveBeenCalled();
+    expect(readTree(editor)).toEqual(["a/x[figure: caption]y/b"]);
+  });
+
+  it("asks about a cut over the same hidden content that joins nothing", async () => {
+    const handler = answering("keep");
+    const { editor, onRemoved } = await environment(handler);
+    updateSelection(editor, first!, 2, last!, 2);
+
+    await act(async () => {
+      editor.dispatchCommand(CUT_COMMAND, clipboardEvent("cut"));
+    });
+    await settle();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("does not ask about a `/` pasted where it would touch a `/` outside the selection", async () => {
+    const handler = answering("delete");
+    const { editor } = await environment(handler);
+    updateSelection(editor, first!, 2, last!, 1);
+
+    await act(async () => {
+      editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "/"));
+    });
+    await settle();
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(readTree(editor)).toEqual(["a/x[figure: caption]y/b"]);
+  });
+
+  it("asks about a paste that keeps a character between the two `/`", async () => {
+    const handler = answering("keep");
+    const { editor } = await environment(handler);
+    updateSelection(editor, first!, 2, last!, 1);
+
+    await act(async () => {
+      editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "/q/"));
+    });
+    await settle();
+
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });
