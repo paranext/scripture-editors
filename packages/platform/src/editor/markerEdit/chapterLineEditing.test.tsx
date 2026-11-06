@@ -489,6 +489,20 @@ describe("a caret on the chapter line", () => {
     POETRY_PARA,
   ];
 
+  // Dictation, autocorrect or an extension can insert one string holding a line break.
+  it.each([
+    ["\\n", "aa\nbb"],
+    ["\\r\\n", "aa\r\nbb"],
+    ["a lone \\r", "aa\rbb"],
+    ["U+2028", "aa\u2028bb"],
+  ])("takes typed text holding a line break (%s) as a multi-line paste", async (_name, text) => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await onChapterLine(lexical, () =>
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text),
+    );
+    expect(ref.current?.getUsj()?.content).toEqual(TYPED_AA_BB);
+  });
+
   it("takes a multi-line paste as it would be typed", async () => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
     await onChapterLine(lexical, () =>

@@ -1,16 +1,20 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
+  $addUpdateTag,
+  $createLineBreakNode,
   $createRangeSelection,
   $createTextNode,
   $getNodeByKey,
   $getSelection,
+  $hasUpdateTag,
   $isElementNode,
   $isLineBreakNode,
   $isRangeSelection,
   $setSelection,
   COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
   INSERT_LINE_BREAK_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
   KEY_DOWN_COMMAND,
@@ -20,10 +24,12 @@ import {
   LineBreakNode,
   PointType,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+  TextNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
 import { $isNoteNode, $isSomeParaNode } from "shared";
 import { StructureProtectionMode, ViewOptions } from "shared-react";
+import { LINE_BREAK_IN_TEXT } from "./lineBreakText.utils";
 
 /**
  * Runs Enter as the keyboard delivers it, without Shift: `KEY_DOWN_COMMAND` first (structure
@@ -73,8 +79,19 @@ function $snapshotPoints(): [PointSnapshot, PointSnapshot] | undefined {
   ];
 }
 
+/** Whether `point` names a node in the document, and a place in it. */
+function $isPointInDocument(point: PointSnapshot): boolean {
+  const node = $getNodeByKey(point.key);
+  if (!node?.isAttached()) return false;
+  // A split moves what followed the line break out of its paragraph, so an element point past it
+  // can be left past the paragraph's end.
+  return (
+    point.type !== "element" || ($isElementNode(node) && point.offset <= node.getChildrenSize())
+  );
+}
+
 /**
- * Puts back the points {@link $snapshotPoints} took, when the nodes they name are still in the
+ * Puts back the points {@link $snapshotPoints} took, when the places they name are still in the
  * document.
  *
  * Mutating: call inside `editor.update()`, a command handler or a transform.
@@ -82,7 +99,7 @@ function $snapshotPoints(): [PointSnapshot, PointSnapshot] | undefined {
 function $restorePoints(points: [PointSnapshot, PointSnapshot] | undefined): void {
   if (!points) return;
   const [anchor, focus] = points;
-  if (!$getNodeByKey(anchor.key)?.isAttached() || !$getNodeByKey(focus.key)?.isAttached()) return;
+  if (!$isPointInDocument(anchor) || !$isPointInDocument(focus)) return;
   const selection = $createRangeSelection();
   selection.anchor.set(anchor.key, anchor.offset, anchor.type);
   selection.focus.set(focus.key, focus.offset, focus.type);
@@ -174,6 +191,52 @@ function $spaceLineBreaksAmong(nodes: LexicalNode[]): void {
 }
 
 /**
+ * Tags an update that inserts text holding a line break, so that only there does
+ * {@link $breakTextAtLineBreak} act: never on a load, nor on text the user did not just insert.
+ */
+const TEXT_WITH_LINE_BREAK_TAG = "platform-text-with-line-break";
+
+/**
+ * Makes the first line break written in `node`'s text (see {@link LINE_BREAK_IN_TEXT}) a line break
+ * node, which the `LineBreakNode` transform then splits the paragraph at, or makes a space; the text
+ * after it is a node of its own, so this runs again for any further line break. Only in an update
+ * tagged {@link TEXT_WITH_LINE_BREAK_TAG}.
+ *
+ * Mutating: call from a `TextNode` transform.
+ */
+function $breakTextAtLineBreak(node: TextNode): void {
+  if (!$hasUpdateTag(TEXT_WITH_LINE_BREAK_TAG)) return;
+  const match = LINE_BREAK_IN_TEXT.exec(node.getTextContent());
+  if (!match) return;
+  const parts = node.splitText(match.index, match.index + match[0].length);
+  const written = parts[match.index === 0 ? 0 : 1];
+  const lineBreak = $createLineBreakNode();
+  written.insertAfter(lineBreak);
+  // A point in the written line break moves past it before the text goes: removing the text would
+  // otherwise leave the point on the line break node, which holds none.
+  const selection = $getSelection();
+  if ($isRangeSelection(selection))
+    for (const point of [selection.anchor, selection.focus])
+      if (point.key === written.getKey())
+        point.set(
+          lineBreak.getParentOrThrow().getKey(),
+          lineBreak.getIndexWithinParent() + 1,
+          "element",
+        );
+  written.remove();
+}
+
+/**
+ * The text of an insertion that a replacement or a yank carries (`insertReplacementText`,
+ * `insertFromYank`), as data or as a transfer's plain text; `undefined` for any other insertion.
+ */
+function replacementText(payload: InputEvent): string | undefined {
+  if (payload.inputType !== "insertReplacementText" && payload.inputType !== "insertFromYank")
+    return undefined;
+  return payload.data ?? payload.dataTransfer?.getData("text/plain");
+}
+
+/**
  * A line break (`LineBreakNode`) has no USFM representation: no paragraph saves one, so the text
  * either side of it saved run together. USFM's own `//` is an optional break a typesetter may use,
  * not a line break, and the views that hide markers cannot store it. So the editor holds no line
@@ -186,9 +249,21 @@ function $spaceLineBreaksAmong(nodes: LexicalNode[]): void {
  * - **Any other line break becomes a paragraph split**, as a line break of pasted plain text does:
  *   one pasted or dropped html brings in (`<br>`), or a node copy holds. Where a split is not
  *   allowed it becomes a space, or nothing beside whitespace (see {@link $replaceLineBreak}).
+ * - **So does a line break written inside inserted text** ({@link LINE_BREAK_IN_TEXT}): one string
+ *   that dictation, autocorrect, a text replacement, a yank or an extension inserts through
+ *   `CONTROLLED_TEXT_INSERTION_COMMAND`. The text goes in whole, through every handler of that
+ *   command — `UnstorableTextPlugin`'s filter judges and reports it once, as one string — and then
+ *   each line break in it is split at, or made a space, as above. A replacement or yank is inserted
+ *   as the string it carries, since Lexical's insertion of a transfer splits at `\n` alone, under
+ *   protected structure and in a note too. A `beforeinput` `insertText` holding one, which the
+ *   browser would otherwise put into the page itself, is inserted through the command. Text being
+ *   composed by an input method is left alone, as the filter leaves it (Lexical runs no transform
+ *   on the node being composed, and a commit, `insertFromComposition`, is not re-inserted):
+ *   splitting a paragraph under a live composition would lose its place.
  *
  * A view without spacing (`hasSpacing: false`) puts a line break before each verse as its layout,
- * and its saving skips them, so its line breaks are left alone: only the first rule applies there.
+ * and its saving skips them, so its line breaks are left alone: only the first rule applies there,
+ * and a line break written in inserted text stays in the text.
  *
  * Registered at `COMMAND_PRIORITY_HIGH`, below the guards that refuse or ask about a line break at
  * `CRITICAL` (inside a note, over hidden content, the note shell), which treat one as they treat a
@@ -213,39 +288,85 @@ export function LineBreakPlugin({
   }, [structureProtectionMode]);
   const hasSpacing = !!viewOptions?.hasSpacing;
 
-  useEffect(
-    () =>
-      mergeRegister(
-        editor.registerCommand(
-          INSERT_LINE_BREAK_COMMAND,
-          () => {
-            $runEnter(editor);
-            return true;
-          },
-          COMMAND_PRIORITY_HIGH,
-        ),
-        // Critical, and never handling the command, so a handler that does insert the nodes
-        // cannot insert a line break where the paragraph cannot take one.
-        editor.registerCommand(
-          SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
-          ({ nodes, selection }) => {
-            if (
-              $isRangeSelection(selection) &&
-              !$canSplitAt(selection.anchor.getNode(), isProtectedRef.current)
-            )
-              $spaceLineBreaksAmong(nodes);
-            return false;
-          },
-          COMMAND_PRIORITY_CRITICAL,
-        ),
-        hasSpacing
-          ? editor.registerNodeTransform(LineBreakNode, (lineBreak) =>
-              $replaceLineBreak(lineBreak, isProtectedRef.current),
-            )
-          : () => undefined,
+  useEffect(() => {
+    // Set while text holding a line break goes back in, so it is not claimed again.
+    let isReinserting = false;
+
+    /**
+     * Claims a `beforeinput` `insertText` holding a line break, which the browser would put into
+     * the page itself, and inserts it through `CONTROLLED_TEXT_INSERTION_COMMAND`. Not a lone
+     * `\n` or `\n\n`, which Lexical runs as a line break and a paragraph break.
+     */
+    const onBeforeInput = (event: InputEvent) => {
+      if (event.inputType !== "insertText" || event.isComposing || editor.isComposing()) return;
+      if (event.data === "\n" || event.data === "\n\n") return;
+      const text = event.data ?? event.dataTransfer?.getData("text/plain");
+      if (!text || !LINE_BREAK_IN_TEXT.test(text)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+    };
+
+    return mergeRegister(
+      editor.registerCommand(
+        INSERT_LINE_BREAK_COMMAND,
+        () => {
+          $runEnter(editor);
+          return true;
+        },
+        COMMAND_PRIORITY_HIGH,
       ),
-    [editor, hasSpacing],
-  );
+      // Critical, and never handling the command, so a handler that does insert the nodes
+      // cannot insert a line break where the paragraph cannot take one.
+      editor.registerCommand(
+        SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+        ({ nodes, selection }) => {
+          if (
+            $isRangeSelection(selection) &&
+            !$canSplitAt(selection.anchor.getNode(), isProtectedRef.current)
+          )
+            $spaceLineBreaksAmong(nodes);
+          return false;
+        },
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      // Critical, so the text goes back in within this update, where its tag is: dispatched from
+      // outside an update, each priority's handlers run in an update of their own. Every handler
+      // sees the text again, whole, in the re-dispatch.
+      editor.registerCommand(
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        (payload) => {
+          // Text being composed goes back in too, harmlessly: Lexical runs no transform on the node
+          // being composed, so its line break stays where the input method put it.
+          if (isReinserting) return false;
+          const text = typeof payload === "string" ? payload : replacementText(payload);
+          if (!text || !LINE_BREAK_IN_TEXT.test(text)) return false;
+          $addUpdateTag(TEXT_WITH_LINE_BREAK_TAG);
+          isReinserting = true;
+          try {
+            editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+          } finally {
+            isReinserting = false;
+          }
+          return true;
+        },
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerRootListener((root, previousRoot) => {
+        previousRoot?.removeEventListener("beforeinput", onBeforeInput, true);
+        root?.addEventListener("beforeinput", onBeforeInput, true);
+      }),
+      () => editor.getRootElement()?.removeEventListener("beforeinput", onBeforeInput, true),
+      hasSpacing
+        ? mergeRegister(
+            editor.registerNodeTransform(TextNode, $breakTextAtLineBreak),
+            editor.registerNodeTransform(LineBreakNode, (lineBreak) =>
+              $replaceLineBreak(lineBreak, isProtectedRef.current),
+            ),
+          )
+        : () => undefined,
+    );
+  }, [editor, hasSpacing]);
 
   return null;
 }
