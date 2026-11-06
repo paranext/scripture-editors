@@ -446,6 +446,13 @@ refused. The public surface grew substantially; nothing was removed.
   `UnstorableTextPlugin` still judges and reports the text once, whole. In Standard view it goes in
   as a plain-text paste of it does, where Standard's paste on the `\id` line now joins the lines
   with a space instead of running them together. Text an input method is composing is left alone.
+- **A plain-text paste or drop whose lines are joined no longer joins two words or doubles a
+  space.** Under `"protected"` structure in the views that hide markers, `UnstorableTextPlugin`
+  dropped a trailing line break (`x` and a line break pasted before `verse` saved `xverse`) and made
+  a leading one, or one beside a space, a second space. Each run of line breaks is now one space,
+  or nothing where whitespace is already beside it, in the pasted text or at the caret. On the `\id`
+  line its lines are joined the same way under every structure protection; they used to run
+  together (`xy`).
 - **Ctrl+V, Ctrl+Shift+V, the context menu's Paste items and `EditorRef.paste`/`pastePlainText`
   handle a failed clipboard read.** A refused or failed read was an unhandled promise rejection; it
   is now logged at `warn`, to the `Editor`'s `logger` (`ClipboardPlugin` and `ContextMenuPlugin`
