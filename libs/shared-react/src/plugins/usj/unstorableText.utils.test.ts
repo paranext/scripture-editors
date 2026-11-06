@@ -25,6 +25,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $createCaretHostNode,
   $createCharNode,
   $createGutterMarkerNode,
   $createImmutableTypedTextNode,
@@ -539,6 +540,29 @@ describe("$deletionJoinsSlashes", () => {
         }),
       ),
     ).toBe(true);
+  });
+
+  it("reads past a caret host, which saves as nothing, but not past an authored zero-width space", async () => {
+    expect(
+      await judge(
+        () => [[$createTextNode("a/x"), $createCaretHostNode(), $createTextNode("/b")]],
+        ([para]) => ({ kind: "character", caret: $at($text(para, "a/x"), 3), isBackward: true }),
+      ),
+    ).toBe(true);
+    // Bold, so it stays a text node of its own, as a zero-width-space run does where the text
+    // around it is split.
+    expect(
+      await judge(
+        () => [
+          [
+            $createTextNode("a/x"),
+            $createTextNode("\u200B").toggleFormat("bold"),
+            $createTextNode("/b"),
+          ],
+        ],
+        ([para]) => ({ kind: "character", caret: $at($text(para, "a/x"), 3), isBackward: true }),
+      ),
+    ).toBe(false);
   });
 
   it("does not join a paragraph to one it leaves a letter against", async () => {

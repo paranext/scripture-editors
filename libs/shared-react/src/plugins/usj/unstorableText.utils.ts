@@ -13,8 +13,8 @@ import {
 } from "lexical";
 import {
   $hasAllSameCharAttributes,
+  $isCaretHost,
   $isCharNode,
-  $isCursorPlaceholderOnlyText,
   $isGutterMarkerNode,
   $isNoteNode,
   $isParaLikeNode,
@@ -330,9 +330,10 @@ interface Span {
 /**
  * A stretch of a paragraph as the file stores it, in order: stored text, an edge of a character
  * span, an atom (anything else the file stores: a verse, a note, a hidden construct, a decorator),
- * or a boundary. Annotation marks, gutter glyphs and cursor placeholders save as nothing, so they
- * leave no piece. An atom the file stores as bare text, an optional line break, carries that
- * `text`: a delete takes it whole, but a `/` it is brought against still makes `///`.
+ * or a boundary. Annotation marks, gutter glyphs and caret hosts save as nothing, so they leave no
+ * piece; an authored zero-width space is text. An atom the file stores as bare text, an optional
+ * line break, carries that `text`: a delete takes it whole, but a `/` it is brought against still
+ * makes `///`.
  */
 type Piece =
   | { kind: "text"; text: string; isRemoved: boolean }
@@ -380,7 +381,7 @@ function $readPieces(container: ElementNode, boundaries: Boundary[], isInRange =
       visitChildren(node);
       return;
     }
-    if ($isGutterMarkerNode(node) || $isCursorPlaceholderOnlyText(node)) {
+    if ($isGutterMarkerNode(node) || $isCaretHost(node)) {
       placeWhere(({ point }) => point.key === node.getKey());
       return;
     }
@@ -576,7 +577,7 @@ function $holdsSlash(...containers: ElementNode[]): boolean {
  * hidden-marker view must not save: `//` is USFM's optional line break, which those views hide.
  *
  * Reads what the file stores on either side of what goes: through annotation marks, gutter glyphs
- * and cursor placeholders, which save as nothing; through a character span the delete empties,
+ * and caret hosts, which save as nothing; through a character span the delete empties,
  * which goes with its last child; and through the edges of two pieces of one span that a join
  * brings back together, which `CharNodePlugin` makes one span again. Any other span edge that
  * stays keeps the two apart (its marker is between them in the file), and so does anything else
