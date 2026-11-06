@@ -69,14 +69,15 @@ import {
   $isTypedMarkNode,
   clearDecoratorPaints,
   DECORATOR_PAINT_ATTRIBUTE,
+  DISPLAY_PIECE_CONTINUATION_ATTRIBUTE,
   DecoratorPaint,
   deleteDisplayAnnotationRegistration,
   DisplayAnnotation,
   displayAnnotationsState,
   EXTERNAL_USJ_MUTATION_TAG,
   isDomPaintedDecorator,
-  paintedPieceKeys,
-  paintedPieceOf,
+  paintedSubSpanKeys,
+  paintedSubSpanOf,
   renderDecoratorPaint,
   setDecoratorPaint,
   getDisplayAnnotationRegistration,
@@ -90,6 +91,8 @@ import {
   $isSplitCarrier,
   $logicalOffset,
   $splitCarrierAt,
+  // The index keys its maps by the shared annotation key; locals name one `annotationKey`.
+  annotationKey as indexKey,
   $removeRangeHeldByMarks,
   setDecoratorBytesReader,
   clearTypedMarkRemovalSilences,
@@ -109,13 +112,7 @@ import {
 /** The class every display-byte node holding an annotation is painted with. */
 export const DISPLAY_ANNOTATION_CLASS_NAME = "display-annotation";
 
-/**
- * The attribute on the element of every piece of a cut carrier after its first (a continuation,
- * `displayPieces.state.ts`): a style that boxes a carrier — padding, a border, a margin — applies
- * to the carrier's head piece alone with `:not([data-piece-continuation])`, so a carrier an
- * annotation cuts is drawn as the uncut one is.
- */
-export const DISPLAY_PIECE_CONTINUATION_ATTRIBUTE = "data-piece-continuation";
+export { DISPLAY_PIECE_CONTINUATION_ATTRIBUTE } from "shared";
 
 export interface DisplayAnnotationIndex {
   /** The keys of the display-byte nodes holding `type`/`id`. */
@@ -149,10 +146,6 @@ const CARRIER_KLASSES: Klass<LexicalNode>[] = [
 ];
 
 const EMPTY: ReadonlySet<NodeKey> = new Set();
-
-function indexKey(type: string, id: string): string {
-  return JSON.stringify([type, id]);
-}
 
 function isTypeIdPair(value: unknown): value is [string, string] {
   return (
@@ -398,7 +391,7 @@ function createIndex(editor: LexicalEditor): Entry {
     if (!annotationsByLeaf.get(key)?.has(annotationKey)) return false;
     if (wholeLeaves.has(key)) return true;
     const target = event.target instanceof Node ? event.target : null;
-    return paintedPieceKeys(paintedPieceOf(target) ?? null).includes(annotationKey);
+    return paintedSubSpanKeys(paintedSubSpanOf(target) ?? null).includes(annotationKey);
   }
 
   /** The annotations `node` holds that `event` points at, each with the bytes it covers there. */
@@ -755,7 +748,7 @@ function createIndex(editor: LexicalEditor): Entry {
       }
       // A decorator painted in part: the sub-spans carrying this annotation.
       for (const piece of element.querySelectorAll(`[${DECORATOR_PAINT_ATTRIBUTE}]`))
-        if (paintedPieceKeys(piece).includes(annotationKey) && piece instanceof HTMLElement)
+        if (paintedSubSpanKeys(piece).includes(annotationKey) && piece instanceof HTMLElement)
           whole(piece);
     }
     return ranges.sort((a, b) => a.compareBoundaryPoints(Range.START_TO_START, b));

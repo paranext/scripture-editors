@@ -13,13 +13,14 @@ import {
   Spread,
   TextNode,
 } from "lexical";
-import { $isPieceContinuation, $logicalText, $mergePieces } from "./displayPieces.state.js";
+import {
+  $isPieceContinuation,
+  $logicalText,
+  $mergePieces,
+  DISPLAY_PIECE_CONTINUATION_ATTRIBUTE,
+} from "./displayPieces.state.js";
 
 export const UNMATCHED_TAG_NAME = "unmatched";
-/** Marks an exported `<unmatched>` element as a later piece of one closer
- * (`displayPieces.state.ts`): it pastes as nothing when the element before it is the same closer's,
- * and as the whole closer when the copy began inside it. */
-const PIECE_CONTINUATION_ATTRIBUTE = "data-piece-continuation";
 export const IMMUTABLE_UNMATCHED_VERSION = 2;
 
 export type SerializedImmutableUnmatchedNode = Spread<
@@ -156,7 +157,7 @@ export class ImmutableUnmatchedNode extends TextNode {
     // text sees the closer's bytes once; a later piece is tagged so the import makes one closer.
     const element = document.createElement(UNMATCHED_TAG_NAME);
     element.setAttribute("data-marker", this.getMarker());
-    if ($isPieceContinuation(this)) element.setAttribute(PIECE_CONTINUATION_ATTRIBUTE, "");
+    if ($isPieceContinuation(this)) element.setAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE, "");
     element.classList.add(INVALID_CLASS_NAME);
     element.textContent = this.getTextContent();
     return { element };
@@ -201,7 +202,7 @@ function $convertImmutableUnmatchedElement(element: HTMLElement): DOMConversionO
   const marker = element.getAttribute("data-marker") ?? "";
   const previous = element.previousSibling;
   if (
-    element.hasAttribute(PIECE_CONTINUATION_ATTRIBUTE) &&
+    element.hasAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE) &&
     previous instanceof Element &&
     isUnmatchedElement(previous) &&
     previous.getAttribute("data-marker") === marker

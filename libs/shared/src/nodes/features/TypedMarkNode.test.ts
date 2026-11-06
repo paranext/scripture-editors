@@ -534,11 +534,12 @@ describe("TypedMarkNode", () => {
         () => {
           const removed = $createTypedMarkNode({ [testType1]: [testID1] });
           const dropped = $createTypedMarkNode({ [testType1]: [testID1] });
-          const para = $createParaNode().append(
-            removed.append($createTextNode("x")),
-            dropped.append($createTextNode("y")),
+          $getRoot().append(
+            $createParaNode().append(
+              removed.append($createTextNode("x")),
+              dropped.append($createTextNode("y")),
+            ),
           );
-          $getRoot().append(para);
           removedKey = removed.getKey();
           droppedKey = dropped.getKey();
         },

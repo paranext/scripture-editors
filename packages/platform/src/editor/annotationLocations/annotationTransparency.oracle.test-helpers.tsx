@@ -194,6 +194,8 @@ function $isContentText(node: LexicalNode): node is TextNode {
  * The annotation set for the mounted document: for every display-byte carrier of the edited
  * paragraph, the ranges listed in the module comment, addressed as the host addresses them
  * (`UsjDocumentLocation`s).
+ *
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
  */
 export function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
   const leaves = $paragraphLeaves();
@@ -577,7 +579,11 @@ function $textsOf(shell: boolean): TextNode[] {
   return shell ? $shellTexts() : $editableTexts();
 }
 
-/** The plain run's site, restated by document bytes so the annotated tree can find it. */
+/**
+ * The plain run's site, restated by document bytes so the annotated tree can find it.
+ *
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
+ */
 export function $globalSite(index: number, offset: number, shell: boolean): GlobalSite {
   const texts = $textsOf(shell);
   const node = texts[index];
@@ -591,6 +597,8 @@ export function $globalSite(index: number, offset: number, shell: boolean): Glob
  * Every spelling of `site` in the current tree: the node and offset at the same document byte.
  * A start or end site keeps its edge; a site inside a node that the tree now cuts at that byte
  * is both the end of the piece before the cut and the start of the piece after it.
+ *
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
  */
 export function $spellings(site: GlobalSite): CaseSite[] {
   const texts = $textsOf(site.shell);

@@ -169,9 +169,10 @@ An annotation can paint several elements — a verse number and the text after i
 of a char span's edge, a run across paragraphs — so a box style on its class (a border, a radius,
 horizontal padding or margin) would draw one box per element. The first element an annotation
 paints, in document order, therefore also has `${typedMarkStart}-external-${type}` and its last
-`${typedMarkEnd}-external-${type}`, where `typedMarkStart` and `typedMarkEnd` are set by
-`config.theme.typedMarkStart`/`typedMarkEnd` (defaulting to _"editor-typed-markStart"_ and
-_"editor-typed-markEnd"_); an annotation painting one element has both. They are per annotation, so
+`${typedMarkEnd}-external-${type}`, where `typedMarkStart` and `typedMarkEnd` are the editor theme's
+_"editor-typed-markStart"_ and _"editor-typed-markEnd"_; an annotation painting one element has
+both. A paragraph marker drawn in the gutter and a collapsed note's hidden content are left out
+when finding the first and last element, since neither is beside the rest of the box. They are per annotation, so
 two overlapping annotations of one type each have their own. Put the block sides on the base class
 and the inline sides and corners on these to draw one box, with logical properties so it is right in
 right-to-left text too:

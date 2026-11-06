@@ -52,30 +52,30 @@ import {
 function $build(content = true): void {
   const value = $createTextNode(`${NBSP}People`);
   $setState(value, textTypeState, "attribute");
-  const note = $createNoteNode("f", "+", false).append(
-    $createMarkerNode("f"),
-    $createTextNode(getEditableCallerText("+")).toggleUnmergeable(),
-    $createAttributeRunNode("cat").append(
-      $createMarkerNode("cat"),
-      value,
-      $createMarkerNode("cat", "closing"),
-    ),
-  );
-  if (content)
-    note.append(
-      $createCharNode("fr").append($createMarkerNode("fr"), $createTextNode(`${NBSP}3:2 `)),
-      $createCharNode("ft").append(
-        $createMarkerNode("ft"),
-        $createTextNode(`${NBSP}Hello`),
-        $createMarkerNode("ft", "closing"),
-      ),
-    );
-  note.append($createMarkerNode("f", "closing"));
   $getRoot().append(
     $createParaNode().append(
       $createVerseNode("1", "\\v 1 "),
       $createTextNode("In "),
-      note,
+      $createNoteNode("f", "+", false).append(
+        $createMarkerNode("f"),
+        $createTextNode(getEditableCallerText("+")).toggleUnmergeable(),
+        $createAttributeRunNode("cat").append(
+          $createMarkerNode("cat"),
+          value,
+          $createMarkerNode("cat", "closing"),
+        ),
+        ...(content
+          ? [
+              $createCharNode("fr").append($createMarkerNode("fr"), $createTextNode(`${NBSP}3:2 `)),
+              $createCharNode("ft").append(
+                $createMarkerNode("ft"),
+                $createTextNode(`${NBSP}Hello`),
+                $createMarkerNode("ft", "closing"),
+              ),
+            ]
+          : []),
+        $createMarkerNode("f", "closing"),
+      ),
       $createVerseNode("2", "\\v 2 "),
       $createTextNode("the beginning"),
     ),

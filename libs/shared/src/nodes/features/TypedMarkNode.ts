@@ -4,6 +4,7 @@
  * a selection.
  */
 
+import { annotationKey } from "./displayAnnotations.state.js";
 import { assertSafeKey } from "@eten-tech-foundation/scripture-utilities";
 import { addClassNamesToElement, removeClassNamesFromElement } from "@lexical/utils";
 import type {
@@ -205,12 +206,6 @@ export function takeTypedMarkRemovalReports(editor: LexicalEditor): [type: strin
 /** Per editor, the `type`/`id` pairs whose removal no mark reports any more. */
 const silencedRemovals = new WeakMap<LexicalEditor, Set<string>>();
 
-/** One key per `type`/`id` pair. JSON, not a delimiter join: a type or id may itself contain any
- * delimiter character, NUL included. */
-function removalKey(type: string, id: string): string {
-  return JSON.stringify([type, id]);
-}
-
 /**
  * Stop, or resume, every mark of `editor` reporting the removal of `type`/`id`. A reporter that has
  * already told the host an annotation is gone silences it, so a mark an undo brings back cannot
@@ -226,10 +221,10 @@ export function setTypedMarkRemovalSilenced(
   let keys = silencedRemovals.get(editor);
   if (silenced) {
     if (!keys) silencedRemovals.set(editor, (keys = new Set()));
-    keys.add(removalKey(type, id));
+    keys.add(annotationKey(type, id));
   } else {
-    keys?.delete(removalKey(type, id));
-    reportedMarks.get(editor)?.delete(removalKey(type, id));
+    keys?.delete(annotationKey(type, id));
+    reportedMarks.get(editor)?.delete(annotationKey(type, id));
   }
 }
 
@@ -1037,7 +1032,7 @@ export class TypedMarkNode extends ElementNode {
     if (!callback) return;
 
     const editor = $getEditor();
-    const key = removalKey(type, id);
+    const key = annotationKey(type, id);
     const reportedHere = reportedMarks.get(editor);
     if (silencedRemovals.get(editor)?.has(key) || reportedHere?.get(key)?.has(this.getKey())) {
       this.removeOnRemoveFor(type, id);
