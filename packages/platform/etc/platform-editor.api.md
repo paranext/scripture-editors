@@ -634,7 +634,7 @@ export type UnstorableCharacter = "\\" | "//";
 // @public
 export interface UnstorableTextRemoved {
     readonly removed: readonly UnstorableCharacter[];
-    readonly source: "paste" | "drop" | "typing" | "deletion";
+    readonly source: "paste" | "drop" | "typing" | "deletion" | "move";
 }
 
 // @public
