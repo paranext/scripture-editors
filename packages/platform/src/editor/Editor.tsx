@@ -2124,7 +2124,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <AnnotationPlugin ref={annotationRef} logger={stableLogger} viewOptions={viewOptions} />
           <ArrowNavigationPlugin viewOptions={viewOptions} />
           <CharNodePlugin />
-          {/* Before every plugin that handles a paste. In the views that show markers, a paste the
+          {/* Before every plugin that handles a paste but InvisibleCharactersPlugin, a filter that
+              sees the paste a second time to no effect. In the views that show markers, a paste the
               browser delivers itself (macOS's Edit > Paste, Shift+Insert) takes what Ctrl+V takes,
               without the node copy flavor; the hidden-marker views read their own node copy from
               it (UnstorableTextPlugin, StructureKeyboardPlugin). */}

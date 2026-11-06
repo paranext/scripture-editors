@@ -100,6 +100,8 @@ export function $lineToJoinBeforeChapter(
  * view's `ChapterNode`, the hidden-marker views' `ImmutableChapterNode`), or a paragraph tagged
  * `id`, which is what html carrying a book line parses to. USFM allows one book line and one line
  * per chapter, and the editor's chapter document holds exactly one of each.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
  */
 export function $isBookOrChapterLine(node: LexicalNode): boolean {
   return (
@@ -178,6 +180,8 @@ export function $chapterLineToSplitAt(selection: RangeSelection): LexicalNode | 
 /**
  * Whether `node` is chapter 1's chapter line, the only one USFM lets lines (chapter 1's front
  * matter: `\h`, `\mt1`, an introduction) come before.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
  */
 export function $isFirstChapterLine(node: LexicalNode): boolean {
   return $isSomeChapterNode(node) && node.getNumber() === "1";
