@@ -146,6 +146,12 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Changed
 
+- **The active-text box outlines the verse the caret is in, not its whole paragraph**, in the
+  paragraph-structure view (`hasActiveTextFocusBox`). The outline starts and ends with the verse's
+  text, runs straight down between, and follows a verse through every line and paragraph it spans
+  (a `\q1` into its `\q2` lines). It is drawn as an SVG path in a `.psc-verse-outline` overlay
+  placed just after the editor's root element. Where there is no verse to outline (a heading, text
+  before the first verse, a table) the whole paragraph is boxed as before.
 - **A paste over a range across a char span's edge replaces only the selected text**, in the views
   that hide markers, as typing over one already did. It used to pull the text after the range into
   the span, and with nested spans put it ahead of the text it followed.
@@ -325,6 +331,9 @@ refused. The public surface grew substantially; nothing was removed.
   for example after the last verse of a chapter, typing used to extend the verse before it; right
   before a footnote, the caret went into the footnote, and in Standard view the typed text was lost
   from the saved document.
+- A caret after a verse marker that sits inside a character span (`\v 1 \wj \v 2\wj*`) now
+  counts as in that verse, not the one before, so the earlier verse's empty-verse ellipsis shows
+  instead of staying hidden.
 - In views that hide markers, an empty paragraph right after a chapter can now be deleted with
   Backspace or Delete. When it is the only paragraph in its chapter, it leaves a blank line with no
   marker, where a marker can be picked with the `\` menu or `formatPara`. A blank line left empty
