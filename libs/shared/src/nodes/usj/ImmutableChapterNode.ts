@@ -2,6 +2,8 @@
 
 import {
   $applyNodeReplacement,
+  $getEditor,
+  EditorConfig,
   DOMConversionMap,
   DOMConversionOutput,
   DOMExportOutput,
@@ -14,6 +16,11 @@ import {
   Spread,
   isHTMLElement,
 } from "lexical";
+import {
+  getDecoratorPaint,
+  markDomPaintedDecorator,
+  renderDecoratorPaint,
+} from "../features/decoratorPaint.js";
 import { CHAPTER_CLASS_NAME, UnknownAttributes } from "./node-constants.js";
 import { getVisibleOpenMarkerText } from "./markerText.utils.js";
 
@@ -201,16 +208,21 @@ export class ImmutableChapterNode extends DecoratorNode<string> {
     return self.__unknownAttributes;
   }
 
-  override createDOM(): HTMLElement {
+  override createDOM(_config: EditorConfig, editor: LexicalEditor): HTMLElement {
     const dom = document.createElement(IMMUTABLE_CHAPTER_TAG_NAME);
     dom.setAttribute("data-marker", this.__marker);
     dom.classList.add(CHAPTER_CLASS_NAME, `usfm_${this.__marker}`);
     if (this.__showMarker) dom.classList.add("marker");
     dom.setAttribute("data-number", this.__number);
+    // The glyph bytes are written into the element itself, not rendered through the decorator
+    // portal (see `decorate`), with any annotation's sub-spans (`decoratorPaint.ts`).
+    markDomPaintedDecorator(dom);
+    renderDecoratorPaint(dom, this.getRenderedText(), getDecoratorPaint(editor, this.__key));
     return dom;
   }
 
-  override updateDOM(): boolean {
+  override updateDOM(_prevNode: this, dom: HTMLElement): boolean {
+    renderDecoratorPaint(dom, this.getRenderedText(), getDecoratorPaint($getEditor(), this.__key));
     // Returning false tells Lexical that this node does not need its
     // DOM element replacing with a new copy from createDOM.
     return false;
@@ -228,24 +240,12 @@ export class ImmutableChapterNode extends DecoratorNode<string> {
   }
 
   /**
-   * VISIBLE bytes with STABLE IDENTITY, which is only safe because of where this node lives.
-   *
-   * `@lexical/react` paints a decorator payload into the node's element through a portal, and
-   * Lexical only rebuilds that portal when the payload CHANGES (`reconcileDecorator` bails on
-   * `currentDecorators[key] === decorator`, and equal strings always compare equal). So any node
-   * whose element is destroyed and re-created while the node itself survives — which is precisely
-   * what re-parenting does, since Lexical builds fresh elements for every child of a newly created
-   * parent — keeps a portal bound to the OLD, detached element and renders permanently EMPTY.
-   *
-   * A chapter escapes that only by POSITION: it is a root-level block, and the marker engine's
-   * Tier-2 rebuild re-parents preserved nodes only within paragraph-kind blocks, so nothing ever
-   * moves a chapter. That invariant is not enforced anywhere. Moving chapter nodes into any
-   * rebuilt/re-created container would blank this glyph on screen while the node, the USJ, and the
-   * file all stayed correct — a silent rendering loss with no error. If that day comes, render
-   * these bytes from `createDOM` instead, the way `ImmutableTypedTextNode` does.
+   * No decorator payload: the glyph bytes are rendered by {@link createDOM} and {@link updateDOM}
+   * instead, the way `ImmutableTypedTextNode` does, so the bytes travel with the element however
+   * often it is re-created, and an annotation's sub-spans can be written into it.
    */
-  override decorate(): string {
-    return this.getRenderedText();
+  override decorate(): null {
+    return null;
   }
 
   /** The text this chapter shows on screen: its whole `\c N` glyph, or only its number. */

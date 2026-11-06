@@ -96,6 +96,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { mergeRegister } from "@lexical/utils";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import {
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $isTextNode,
@@ -104,6 +105,9 @@ import {
   EditorState,
   LexicalEditor,
   LexicalNode,
+  MutationListener,
+  NodeKey,
+  NodeMutation,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
@@ -114,6 +118,7 @@ import {
   $findThisChapter,
   $isBookNode,
   $isParaNode,
+  $isPieceContinuation,
   $isSomeChapterNode,
   $placeCaretAtBoundary,
   BookNode,
@@ -317,9 +322,15 @@ export function ScriptureReferencePlugin({
   // BookNode listener above is not load-bearing now that this dispatch is deferred - see the note
   // there.
   useEffect(() => {
-    const onVerseDestroyed = (nodeMutations: Map<string, "created" | "updated" | "destroyed">) => {
-      const hasCreatedOrDestroyedVerse = [...nodeMutations.values()].some(
-        (m) => m === "created" || m === "destroyed",
+    const onVerseDestroyed: MutationListener = (nodeMutations, { prevEditorState }) => {
+      // A piece an annotation cuts off a verse marker, or joins back to it, is not a verse: the
+      // verse is still there, whole.
+      const isPiece = (key: NodeKey, mutation: NodeMutation) =>
+        (mutation === "destroyed" ? prevEditorState : editor.getEditorState()).read(() =>
+          $isPieceContinuation($getNodeByKey(key)),
+        );
+      const hasCreatedOrDestroyedVerse = [...nodeMutations].some(
+        ([key, m]) => (m === "created" || m === "destroyed") && !isPiece(key, m),
       );
       // Defer one microtask: dispatching synchronously inside a mutation listener runs a reentrant
       // update while the triggering edit's history entry is still being recorded, corrupting the

@@ -18,6 +18,7 @@ import {
   $carrierHolding,
   appendToWord,
   displayAnnotated,
+  inOneUpdate,
   settleByBlurAndCommit,
 } from "./displayAnnotations.test-helpers";
 import { MarkerObject, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
@@ -26,6 +27,7 @@ import {
   $createRangeSelection,
   $getRoot,
   $isElementNode,
+  $setSelection,
   LexicalEditor,
   LexicalNode,
   UNDO_COMMAND,
@@ -36,13 +38,18 @@ import {
   $isCharNode,
   $isTypedMarkNode,
   $isVerseNode,
+  $lastPiece,
+  $logicalNextSibling,
+  $logicalText,
   $ownerOfRunPiece,
+  $pieces,
+  $setLogicalText,
   $wrapSelectionInTypedMarkNode,
   COMMENT_MARK_TYPE,
   NBSP,
   TypedMarkOnRemove,
 } from "shared";
-import { AnnotationRange, annotationHighlightClassNames, getEditorDelta } from "shared-react";
+import { AnnotationRange, getEditorDelta } from "shared-react";
 import { Mock, vi } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
@@ -127,21 +134,16 @@ describe("an annotation on a char span's attribute value", () => {
     expect(markCount(mounted.lexical)).toBe(0);
     expect(paraText(mounted)).toBe(displayBefore);
     expect(mounted.ref.current?.getUsj()).toEqual(lemmaUsj);
-    const element = mounted.lexical
-      .getEditorState()
-      .read(() => mounted.lexical.getElementByKey($carrierHolding("1").getKey()));
-    // The run is `|grace`: its `|` is not held, so the element is not painted, only its value.
-    expect(element?.classList.contains("annotationId-1")).toBe(false);
-    const painted = [...CSS.highlights].flatMap(([name, highlight]) => {
-      const classNames = annotationHighlightClassNames(name) ?? [];
-      return classNames.includes("annotationId-1")
-        ? [...highlight].map((range) => ({
-            text: range instanceof Range ? range.toString() : "",
-            typed: classNames.includes("editor-typed-mark-external-test"),
-          }))
-        : [];
-    });
+    // The run is `|grace`: its `|` is not held, so it is cut off into its own unpainted piece and
+    // only the value's piece is painted, with the class names a mark gets.
+    const painted = [
+      ...(mounted.lexical.getRootElement()?.querySelectorAll(".annotationId-1") ?? []),
+    ].map((element) => ({
+      text: element.textContent,
+      typed: element.classList.contains("editor-typed-mark-external-test"),
+    }));
     expect(painted).toEqual([{ text: "grace", typed: true }]);
+    expect(paraText(mounted)).toBe(displayBefore);
   });
 
   it("reports its removal once, as removed", async () => {
@@ -281,6 +283,75 @@ describe("an annotation across content and a verse number", () => {
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
+  /** Replace the whole of the marked `and` (its own text node) with `x`, as a selection over it
+   * and a typed key do. */
+  async function typeOverMarkedText(mounted: Mounted): Promise<void> {
+    await inOneUpdate(mounted.lexical, () => {
+      const and = $textContaining("and");
+      const selection = $createRangeSelection();
+      selection.anchor.set(and.getKey(), 0, "text");
+      selection.focus.set(and.getKey(), and.getTextContentSize(), "text");
+      $setSelection(selection);
+      selection.insertText("x");
+    });
+  }
+
+  /** Delete every byte of the verse `\v 2 `, leaving the text on both sides of it. */
+  async function deleteVerse(mounted: Mounted): Promise<void> {
+    await inOneUpdate(mounted.lexical, () => {
+      const before = $textContaining("in the beginning");
+      const verse = before.getNextSibling();
+      if (!$isVerseNode(verse)) throw new Error("no verse after the text");
+      const after = $logicalNextSibling(verse);
+      const selection = $createRangeSelection();
+      selection.anchor.set(before.getKey(), before.getTextContentSize(), "text");
+      if ($isElementNode(after)) selection.focus.set(after.getKey(), 0, "element");
+      else if (after) selection.focus.set(after.getKey(), 0, "text");
+      $setSelection(selection);
+      selection.removeText();
+    });
+  }
+
+  it("reports once, as destroyed, when an edit takes its mark while the verse still holds it, and nothing when the verse goes later", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(usj);
+    await annotate(mounted, markAndVerse, "1", onRemove);
+    expect(markTexts(mounted.lexical)).toEqual(["and"]);
+
+    await typeOverMarkedText(mounted);
+
+    expect(markTexts(mounted.lexical)).toEqual([]);
+    expect(displayAnnotated(mounted.lexical)["1"]?.join("")).toContain("2");
+    expect(onRemove.mock.calls).toEqual([["external-test", "1", "destroyed", "and"]]);
+    // The verse still paints it.
+    const painted = mounted.lexical
+      .getRootElement()
+      ?.getElementsByClassName("annotationId-1").length;
+    expect(painted).toBeGreaterThan(0);
+
+    await deleteVerse(mounted);
+
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports nothing when an edit takes the verse while its mark still holds it, and once when the mark goes later", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(usj);
+    await annotate(mounted, markAndVerse, "1", onRemove);
+
+    await deleteVerse(mounted);
+
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(markTexts(mounted.lexical)).toEqual(["and"]);
+    expect(onRemove).not.toHaveBeenCalled();
+
+    await typeOverMarkedText(mounted);
+
+    expect(markTexts(mounted.lexical)).toEqual([]);
+    expect(onRemove.mock.calls).toEqual([["external-test", "1", "destroyed", "and"]]);
+  });
+
   it("reports once when its mark is deleted and the host then sets the same id again", async () => {
     const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
     const mounted = await mountStandardViewEditor(usj);
@@ -312,10 +383,12 @@ describe("undoing the deletion of an annotated verse", () => {
 
     await act(async () => {
       mounted.lexical.update(() => {
-        $getRoot()
+        // The whole verse: the hold cuts its glyph into pieces, and deleting a verse removes
+        // every one of them.
+        const verse = $getRoot()
           .getAllTextNodes()
-          .find((node) => $isVerseNode(node))
-          ?.remove();
+          .find((node) => $isVerseNode(node));
+        if (verse) $pieces(verse).forEach((piece) => piece.remove());
       });
       await Promise.resolve();
     });
@@ -544,8 +617,10 @@ describe("an annotated chapter number", () => {
     await act(async () => {
       mounted.lexical.update(() => {
         const chapter = $getRoot().getChildren().find($isChapterNode);
-        const glyph = chapter && $chapterGlyphTextNode(chapter);
-        if (!glyph) throw new Error("no chapter glyph");
+        const head = chapter && $chapterGlyphTextNode(chapter);
+        if (!head) throw new Error("no chapter glyph");
+        // Typed at the glyph's end: the annotation cuts the glyph, so its end is its last piece.
+        const glyph = $lastPiece(head);
         glyph.setTextContent(`${glyph.getTextContent()}\\ca 5\\ca*`);
         glyph.select(glyph.getTextContentSize(), glyph.getTextContentSize());
       });
@@ -578,12 +653,12 @@ describe("typing inside an annotated alternate number", () => {
     for (const mounted of [plain, annotated])
       await act(async () => {
         mounted.lexical.update(() => {
+          // The annotated value is cut into pieces at the hold: edited as one carrier.
           const value = $getRoot()
             .getAllTextNodes()
-            .find((node) => node.getTextContent() === `${NBSP}3`);
+            .find((node) => $logicalText(node) === `${NBSP}3`);
           if (!value) throw new Error("no \\va value");
-          value.setTextContent(`${NBSP}34`);
-          value.select(3, 3);
+          $setLogicalText(value, `${NBSP}34`).select(3, 3);
         });
         await Promise.resolve();
       });
@@ -629,8 +704,9 @@ describe("the display-run sync rewriting an annotated run to a new owner value",
     });
   }
 
+  /** The whole run holding the annotation, however the annotation cuts it into pieces. */
   function $annotatedRunText(mounted: Mounted): string {
-    return mounted.lexical.getEditorState().read(() => $carrierHolding("1").getTextContent());
+    return mounted.lexical.getEditorState().read(() => $logicalText($carrierHolding("1")));
   }
 
   it("keeps the annotation on the value's surviving bytes, change after change", async () => {

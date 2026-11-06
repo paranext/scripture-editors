@@ -17,19 +17,22 @@ import {
   RangeSelection,
   TextNode,
 } from "lexical";
+import { $liftOutOfCharStackThroughMarks } from "./charFormatting.utils";
 import { LINE_LEADING_MARKER_REGEX } from "./markerName.pattern";
 import {
   $createCharNode,
   $createMarkerNode,
   $findFirstAncestorNoteNode,
   $isMarkerNode,
-  $liftOutOfCharStack,
   $separatorPrefixLength,
   $withCharContentNbspPrefix,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   MarkerLookup,
   MarkerType,
   NoteNode,
+  $lastPiece,
+  $pieces,
+  $joinCarriersAtSelection,
 } from "shared";
 
 /**
@@ -121,6 +124,9 @@ export function $handlePasteLinesInNote(
     if (removal !== "removed") return removal;
   } else if (!$findExpandedNoteContentAtCaret()) {
     return "declined";
+  } else {
+    // A carrier an annotation cut is met as one text, as the line replay meets it uncut.
+    $joinCarriersAtSelection();
   }
   const [firstLine, ...breakLines] = lines.map((line) =>
     stripLeadingParagraphMarker(line, getMarker),
@@ -184,6 +190,8 @@ function $removeSelectionTouchingExpandedNote(
   const anchorInExpandedNote = anchorNote?.getIsCollapsed() === false;
   const focusInExpandedNote = focusNote?.getIsCollapsed() === false;
   if (!anchorInExpandedNote && !focusInExpandedNote) return "declined";
+  // A carrier an annotation cut is removed from as one text, as the uncut carrier is.
+  $joinCarriersAtSelection();
   // Same removal semantics as pressing Delete over the selection; the deletion transforms
   // (`$noteDeletionTransform` and the char-span transform) repair glyph damage at commit.
   selection.removeText();
@@ -290,21 +298,30 @@ function $startFpAtCaret(): boolean {
       tail.insertBefore(fp);
     }
     // No `closeImplicitSpans`: the `\fp` is itself what ends an implicitly-closed note-content
-    // span, so no closing marker is emitted for it.
-    $liftOutOfCharStack(fp, { renderGlyphs: true });
+    // span, so no closing marker is emitted for it. An annotation mark holding the caret's text
+    // splits around the break like a span, so the break lands where it does with no mark there.
+    $liftOutOfCharStackThroughMarks(fp, { renderGlyphs: true });
   } else {
     // The caret is on the note's OWN text (a spacer) or not on text at all, so there is no stack
     // to lift out of: splice the break in at the note's own level and take the anchor's tail with
     // it. Its following siblings are separate note children and stay where they are.
+    // A text an annotation cuts into pieces (an editable caller) is one text: the pieces after
+    // the caret's go with its tail.
+    const laterPieces = textAnchor
+      ? $pieces(textAnchor).filter((piece) => textAnchor.isBefore(piece))
+      : [];
     const afterCaret =
       textAnchor && offset < size
         ? [offset === 0 ? textAnchor : textAnchor.splitText(offset)[1]]
         : [];
-    noteChild.insertAfter(fp);
+    afterCaret.push(...laterPieces);
+    // A glyph the caret is on is one glyph however an annotation cuts it: the break goes after it
+    // whole. A text's pieces after the caret move into the break, so it goes after the caret's.
+    (textAnchor ? noteChild : $lastPiece(noteChild)).insertAfter(fp);
     const [firstMoved] = afterCaret;
     if (firstMoved) {
       $withCharContentNbspPrefix(firstMoved);
-      fp.append(firstMoved);
+      fp.append(...afterCaret);
     }
   }
   // Nothing after the caret anywhere: the break opens an empty `\fp`, which needs placeholder

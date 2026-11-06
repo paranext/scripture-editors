@@ -559,8 +559,18 @@ export function $announceAppPlacedCaret(): void {
  * jsdom doesn't implement `ClipboardEvent`/`DataTransfer`; the copy/cut handlers under test only
  * touch `clipboardData.getData`/`setData`/`preventDefault`, so a minimal stub covers both dispatch
  * and direct-call sites. Shared by every suite that dispatches `COPY_COMMAND`/`CUT_COMMAND`.
+ *
+ * Lexical's own default copy handler (`@lexical/rich-text`, reached in a view with no copy plugin
+ * of its own) fills in only an event it takes for a `ClipboardEvent` (by its constructor's name);
+ * any other it answers with `document.execCommand("copy")`, which jsdom lacks. A plain stub (the
+ * default) takes that path, which the suites of that fallback stub with `execCommandSpy`; `native`
+ * gives the stub the `ClipboardEvent` prototype (`test-setup.ts` defines the class), so the default
+ * handler writes the copied bytes into `clipboardData` as a browser's would.
  */
-export function copyEvent(): { event: ClipboardEvent; getData: (type: string) => string } {
+export function copyEvent(options: { native?: boolean } = {}): {
+  event: ClipboardEvent;
+  getData: (type: string) => string;
+} {
   const store = new Map<string, string>();
   const clipboardData = {
     getData: (type: string) => store.get(type) ?? "",
@@ -568,8 +578,12 @@ export function copyEvent(): { event: ClipboardEvent; getData: (type: string) =>
       store.set(type, data);
     },
   };
+  const event: unknown = Object.assign(
+    options.native ? Object.create(ClipboardEvent.prototype) : {},
+    { clipboardData, preventDefault: vi.fn() },
+  );
   return {
-    event: { clipboardData, preventDefault: vi.fn() } as unknown as ClipboardEvent,
+    event: event as ClipboardEvent,
     getData: (type: string) => clipboardData.getData(type),
   };
 }

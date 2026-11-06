@@ -165,19 +165,47 @@ Annotations are added with a specific `type` via the editor's reference API (see
 
 For example, if an annotation of type _"grammar"_ is overlapping it will have both CSS classnames `editor-typed-mark-external-grammar` and `editor-typed-markOverlap-external-grammar`. If it's not overlapping it still has the first classname. Annotations and comments are the same when considering if it's overlapping.
 
+An annotation can paint several elements — a verse number and the text after it, text on both sides
+of a char span's edge, a run across paragraphs — so a box style on its class (a border, a radius,
+horizontal padding or margin) would draw one box per element. The first element an annotation
+paints, in document order, therefore also has `${typedMarkStart}-external-${type}` and its last
+`${typedMarkEnd}-external-${type}`, where `typedMarkStart` and `typedMarkEnd` are set by
+`config.theme.typedMarkStart`/`typedMarkEnd` (defaulting to _"editor-typed-markStart"_ and
+_"editor-typed-markEnd"_); an annotation painting one element has both. They are per annotation, so
+two overlapping annotations of one type each have their own. Put the block sides on the base class
+and the inline sides and corners on these to draw one box, with logical properties so it is right in
+right-to-left text too:
+
+```css
+.editor-typed-mark-external-grammar {
+  border-block: 1px solid red;
+}
+.editor-typed-markStart-external-grammar {
+  border-inline-start: 1px solid red;
+  border-start-start-radius: 4px;
+  border-end-start-radius: 4px;
+}
+.editor-typed-markEnd-external-grammar {
+  border-inline-end: 1px solid red;
+  border-start-end-radius: 4px;
+  border-end-end-radius: 4px;
+}
+```
+
 An annotation paints exactly the bytes it covers, including display bytes — a marker glyph, a
 verse or chapter number, a note caller, an attribute run such as `|lemma="grace"` — plus the
 whitespace the editor shows between two of its bytes in one paragraph (a marker's separator, the
-space after a verse number); never whitespace at its edges. A display-byte element covered in
-full gets the same class names plus `display-annotation`. Part of one is painted with a
-[CSS Custom Highlight](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API),
-which the editor styles from your class rules itself: it copies `background-color`, `color`, a
-`text-decoration` that draws a line, and `text-shadow`, and otherwise draws a `border-bottom` as an
-underline. Other properties and `:hover` rules apply only to elements. So style annotations by
-class (never by the `mark` element name), and do not make a rule depend on ancestors inside the
-editable content. The overlap class marks only the text two annotations of one type share. To measure or scroll to an
-annotation, use `getAnnotationRanges(type, id)`: a class lookup misses display bytes painted with a
-highlight. An annotation on display bytes follows the bytes it holds through an edit (a
+space after a verse number); never whitespace at its edges. Every painted element gets the same class
+names: a display-byte element gets `display-annotation` too. An editable display byte covered in
+part is cut at the covered part's edges into pieces of its own kind, so the covered part is an
+element of its own; every piece after the first carries `data-piece-continuation`, so a rule that
+boxes a carrier (padding, a border, a margin) can apply to its first piece alone with
+`:not([data-piece-continuation])`. A read-only glyph covered in part paints a sub-span of its text.
+So style annotations by class (never by the `mark` element name): every class rule — background,
+border, padding, font, `:hover`, `::selection` — applies to everything an annotation paints. The
+overlap class marks only the text two annotations of one type share. To measure or scroll to an
+annotation, use `getAnnotationRanges(type, id)`, which lists every element it paints. An
+annotation on display bytes follows the bytes it holds through an edit (a
 collaborator renumbering a verse) and is dropped, with `onRemove` reporting `"destroyed"`, once none
 of them is left; a change only in how the same bytes are drawn (a note caller while its note is
 collapsed) keeps it.

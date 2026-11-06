@@ -36,8 +36,10 @@ import {
   $isSynthesizedMarkerNode,
   $isTypedMarkNode,
   $isVisibleMarkerNode,
+  $lastPiece,
   $liftOutOfCharStack,
   $normalizeSelectionOutOfGlyphText,
+  $pieceHead,
   $recordNewlyMarkedSpan,
   $setCharNodeMarker,
   authoredNbspState,
@@ -508,7 +510,8 @@ export function getUsjMarkerAction(
           const charTail = caretChar
             ? $collectSiblingsFromCaret(node, selection.anchor.offset)
             : [];
-          const noteChildAnchor = caretChar ?? node;
+          // A caller an annotation cuts into pieces is one node to insert after.
+          const noteChildAnchor = caretChar ?? $lastPiece(node);
           let lastInsertedNode: LexicalNode = noteChildAnchor.insertAfter(nodeToInsert);
           if ($isVisibleMarkerNode(nodeToInsert)) {
             // We are using visible marker mode so the `nodeToInsert` is just the marker. Get the
@@ -870,6 +873,7 @@ function $wrapTextSelectionInInlineNode(
   createNode: () => LexicalNode,
   markerMode?: ViewOptions["markerMode"],
 ): void {
+  $splitMarksAtSelectionEdges(selection);
   const [startOffset, endOffset] = $getSelectionOffsets(selection);
   const [start, end] = selection.isBackward()
     ? [selection.focus, selection.anchor]
@@ -891,11 +895,16 @@ function $wrapTextSelectionInInlineNode(
       : listedNodes;
   // A note the selection holds all of moves into the new span the same way, contents untouched:
   // marking the text inside it marked the note's content, and replaced its `\ft` in Standard view.
-  const wholeNodes = allNodes.filter(
-    (node): node is ElementNode =>
-      ($isWrappableElement(node) || $isNoteNode(node)) && $isWhollySelected(node, start, end),
+  // So does an annotation mark, which is presentation: the span is the one the text gets with no
+  // mark ($splitMarksAtSelectionEdges leaves no mark the selection holds only part of while the
+  // selection reaches past it).
+  const withMarks = $withWhollySelectedMarks(allNodes, start, end);
+  const wholeNodes = withMarks.filter((node): node is ElementNode =>
+    $isTypedMarkNode(node)
+      ? $isMarkWhollySelected(node, start, end)
+      : ($isWrappableElement(node) || $isNoteNode(node)) && $isWhollySelected(node, start, end),
   );
-  const nodes = allNodes.filter((node) => !wholeNodes.some((whole) => whole.isParentOf(node)));
+  const nodes = withMarks.filter((node) => !wholeNodes.some((whole) => whole.isParentOf(node)));
 
   const hasMoreThanSpaces = selection.getTextContent().trim() !== "";
   let currentWrapper: LexicalNode | undefined;
@@ -920,15 +929,16 @@ function $wrapTextSelectionInInlineNode(
 
     // Get the target node to wrap. Offsets apply only to the text nodes the selection's points
     // name; an element point's offset is a child index.
-    const targetNode = $isNoteNode(node)
-      ? node
-      : $getTargetNode(
-          node,
-          start.type === "text" && node.getKey() === start.key,
-          end.type === "text" && node.getKey() === end.key,
-          startOffset,
-          endOffset,
-        );
+    const targetNode =
+      $isNoteNode(node) || $isTypedMarkNode(node)
+        ? node
+        : $getTargetNode(
+            node,
+            start.type === "text" && node.getKey() === start.key,
+            end.type === "text" && node.getKey() === end.key,
+            startOffset,
+            endOffset,
+          );
 
     if (!targetNode) {
       currentWrapper = undefined;
@@ -1071,6 +1081,81 @@ function $spansHoldingPoint(point: PointType): CharNode[] {
   return spans;
 }
 
+/**
+ * Splits each annotation mark that holds an end of `selection` while the selection reaches past
+ * the mark, at that end, into the mark's part inside the selection and its part outside: the parts
+ * keep the mark's annotations, and the part inside is then held whole, so the wrap moves it into
+ * the new span rather than starting a second span inside it. A mark holding both ends is left whole,
+ * as is a mark an end is not directly in.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $splitMarksAtSelectionEdges(selection: RangeSelection): void {
+  if (selection.isCollapsed()) return;
+  for (const isStart of [true, false]) {
+    const [start, end] = selection.isBackward()
+      ? [selection.focus, selection.anchor]
+      : [selection.anchor, selection.focus];
+    const point = isStart ? start : end;
+    const other = isStart ? end : start;
+    const text = point.getNode();
+    const mark = text.getParent();
+    if (point.type !== "text" || !$isTextNode(text) || !$isTypedMarkNode(mark)) continue;
+    if (mark.isParentOf(other.getNode())) continue;
+    let after: LexicalNode | null = text;
+    if (point.offset >= text.getTextContentSize()) after = text.getNextSibling();
+    else if (point.offset > 0) after = text.splitText(point.offset)[1];
+    if (!after || after.getIndexWithinParent() === 0) continue;
+    const rest = $copyNode(mark);
+    mark.insertAfter(rest);
+    rest.append(...mark.getChildren().slice(after.getIndexWithinParent()));
+  }
+}
+
+/**
+ * Whether the range from `start` to `end` holds all of annotation mark `mark`'s text: as
+ * {@link $isWhollySelected}, and also when an end sits at the very start of the mark's first text
+ * or the very end of its last, which is the same place in the document with no mark.
+ */
+function $isMarkWhollySelected(mark: ElementNode, start: PointType, end: PointType): boolean {
+  const isAtEdge = (point: PointType, edge: LexicalNode | null, offset: number) =>
+    point.type === "text" && !!edge && point.getNode().is(edge) && point.offset === offset;
+  const first = mark.getFirstDescendant();
+  const last = mark.getLastDescendant();
+  const startsAtFirst = isAtEdge(start, first, 0);
+  const endsAtLast = isAtEdge(end, last, last?.getTextContentSize() ?? 0);
+  if (mark.isParentOf(start.getNode()) && !startsAtFirst) return false;
+  if (mark.isParentOf(end.getNode()) && !endsAtLast) return false;
+  if (mark.is(start.getNode()) && !(start.type === "element" && start.offset === 0)) return false;
+  return (
+    !mark.is(end.getNode()) || (end.type === "element" && end.offset === mark.getChildrenSize())
+  );
+}
+
+/**
+ * `nodes` with each annotation mark the range holds all of listed in front of its first listed
+ * child: `getNodes` leaves out a mark a range starts or ends inside, even at its edge.
+ */
+function $withWhollySelectedMarks(
+  nodes: LexicalNode[],
+  start: PointType,
+  end: PointType,
+): LexicalNode[] {
+  const out: LexicalNode[] = [];
+  for (const node of nodes) {
+    const mark = node.getParent();
+    if (
+      $isTypedMarkNode(mark) &&
+      !nodes.some((listed) => listed.is(mark)) &&
+      !out.some((listed) => listed.is(mark)) &&
+      $isMarkWhollySelected(mark, start, end)
+    )
+      out.push(mark);
+    out.push(node);
+  }
+  return out;
+}
+
 /** Whether a marker apply's wrap can move `node` into its wrapper as one piece. */
 function $isWrappableElement(node: LexicalNode): node is ElementNode {
   return $isElementNode(node) && node.isInline() && !$isSkippedByMarkerAction(node);
@@ -1211,21 +1296,26 @@ function $wrapNode(node: LexicalNode, wrapper: LexicalNode, isFreshWrapper: bool
     } else {
       wrapper.append(node);
     }
-    if (isFreshWrapper) $moveLeadingSpaceToPreviousNode(node, wrapper);
+    // An annotation mark wrapped first leads with its first text, as that text does with no mark.
+    const lead = $isTypedMarkNode(node) ? node.getFirstDescendant() : node;
+    if (isFreshWrapper && lead) $moveLeadingSpaceToPreviousNode(lead, wrapper);
     // The span's first content carries the display separator after the opening glyph (`\nd one`,
     // not `\ndone`) — the structural NBSP convention in markerSeparators.utils.ts. Only the FIRST
     // wrapped node takes it (later nodes of a multi-node selection are mid-span content), and only
     // in the editable-glyph shape (an opening MarkerNode child); other marker modes carry no
-    // display separator.
+    // display separator. In front of an annotation mark it is a text of its own, since no
+    // annotation holds an opener's separator.
     if (
       isFreshWrapper &&
       $isCharNode(wrapper) &&
       wrapper.getChildren().some((child) => $isMarkerNode(child)) &&
-      $isTextNode(node) &&
-      !$isMarkerNode(node) &&
-      !node.getTextContent().startsWith(NBSP)
-    )
-      node.setTextContent(NBSP + node.getTextContent());
+      $isTextNode(lead) &&
+      !$isMarkerNode(lead) &&
+      !lead.getTextContent().startsWith(NBSP)
+    ) {
+      if ($isTextNode(node)) node.setTextContent(NBSP + node.getTextContent());
+      else node.insertBefore($createTextNode(NBSP));
+    }
   }
 }
 
@@ -1707,14 +1797,15 @@ function $splitCharNodeAroundTargets(
   let firstCoveredIndex = coveredIndexes[0];
   let lastCoveredIndex = coveredIndexes[coveredIndexes.length - 1];
   // Fold an adjacent boundary marker into the covered range so it isn't left stranded alone in a
-  // clone — see the marker-mode handling note above.
+  // clone — see the marker-mode handling note above. A marker an annotation cut into pieces is
+  // folded in whole.
   if (firstCoveredIndex > 0 && $isSynthesizedMarkerNode(children[firstCoveredIndex - 1]))
-    firstCoveredIndex -= 1;
+    firstCoveredIndex = $pieceHead(children[firstCoveredIndex - 1]).getIndexWithinParent();
   if (
     lastCoveredIndex < children.length - 1 &&
     $isSynthesizedMarkerNode(children[lastCoveredIndex + 1])
   )
-    lastCoveredIndex += 1;
+    lastCoveredIndex = $lastPiece(children[lastCoveredIndex + 1]).getIndexWithinParent();
   if (firstCoveredIndex === 0 && lastCoveredIndex === children.length - 1) return charNode;
 
   // Append moves the children out of `charNode`, so it is left holding only the covered ones.

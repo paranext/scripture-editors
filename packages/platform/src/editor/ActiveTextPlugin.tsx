@@ -21,6 +21,11 @@ import {
   $isCaretHost,
   $isImmutableTypedTextNode,
   $isMarkerNode,
+  $lastPiece,
+  $logicalChildren,
+  $logicalOffset,
+  $logicalText,
+  $pieceHead,
   ZWSP,
 } from "shared";
 import { $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-react";
@@ -78,19 +83,23 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
           const para = node.getParent();
           if (!$isElementNode(para)) return false;
           // Leave alone a click that selected something (a double or triple click), and one that
-          // landed inside an editable verse marker's own text (`\v 2`): only the ellipsis after
-          // it moves the caret.
+          // landed inside an editable verse marker's own text (`\v 2`), in any of its pieces: only
+          // the ellipsis after it moves the caret.
           const selection = $getSelection();
           if ($isRangeSelection(selection)) {
             if (!selection.isCollapsed()) return false;
             const { anchor } = selection;
-            if (anchor.key === node.getKey() && anchor.offset < node.getTextContentSize())
+            const anchorNode = anchor.getNode();
+            if (
+              $pieceHead(anchorNode).is($pieceHead(node)) &&
+              $logicalOffset(anchorNode, anchor.offset) < $logicalText(node).length
+            )
               return false;
           }
           // Into the caret host already there, if any: the element point in front of one is drawn
           // in it only because the browser re-resolves it there. Not `$placeCaretAtBoundary`, which
           // would put the caret in an editable next verse marker's own text.
-          const after = node.getIndexWithinParent() + 1;
+          const after = $lastPiece(node).getIndexWithinParent() + 1;
           const host = para.getChildAtIndex(after);
           if ($isTextNode(host) && $isCaretHost(host)) host.select(0, 0);
           else para.select(after, after);
@@ -214,10 +223,12 @@ export function $getActiveVerseKey(): string | undefined {
     boundary = topChild.getIndexWithinParent() + 1;
   }
 
+  // A verse marker an annotation cuts into pieces is named by its last piece, as
+  // `$getEmptyVerseStatus` names it.
   const children = para.getChildren();
   let activeKey: string | undefined;
   for (let i = 0; i < boundary && i < children.length; i++) {
-    if ($isSomeVerseNode(children[i])) activeKey = children[i].getKey();
+    if ($isSomeVerseNode(children[i])) activeKey = $lastPiece(children[i]).getKey();
   }
   return activeKey;
 }
@@ -245,13 +256,15 @@ export function $getParaFromSelection(
  * verse marker and the next verse marker (or end of paragraph) — has any non-whitespace body text.
  * Marker-prefix nodes (the paragraph's leading `\p` marker / immutable typed text) and ZWSPs are
  * ignored. Used to apply `psc-empty-text` per verse so the ellipsis placeholder renders next to
- * every empty verse number, not just verses that occupy their own paragraph.
+ * every empty verse number, not just verses that occupy their own paragraph. A verse marker an
+ * annotation cuts into pieces is one verse, reported by its last piece's key: the placeholder is
+ * drawn after the element of the key reported.
  */
 export function $getEmptyVerseStatus(para: ElementNode): {
   emptyKeys: string[];
   nonEmptyKeys: string[];
 } {
-  const children = para.getChildren();
+  const children = $logicalChildren(para);
   const emptyKeys: string[] = [];
   const nonEmptyKeys: string[] = [];
   for (let i = 0; i < children.length; i++) {
@@ -262,12 +275,13 @@ export function $getEmptyVerseStatus(para: ElementNode): {
       const sibling = children[j];
       if ($isSomeVerseNode(sibling)) break;
       if ($isImmutableTypedTextNode(sibling) || $isMarkerNode(sibling)) continue;
-      if (sibling.getTextContent().replaceAll(ZWSP, "").trim() !== "") {
+      const text = $isTextNode(sibling) ? $logicalText(sibling) : sibling.getTextContent();
+      if (text.replaceAll(ZWSP, "").trim() !== "") {
         sectionHasBody = true;
         break;
       }
     }
-    (sectionHasBody ? nonEmptyKeys : emptyKeys).push(verse.getKey());
+    (sectionHasBody ? nonEmptyKeys : emptyKeys).push($lastPiece(verse).getKey());
   }
   return { emptyKeys, nonEmptyKeys };
 }

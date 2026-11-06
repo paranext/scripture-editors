@@ -43,6 +43,8 @@ import {
   $isNoteNode,
   $isParaLikeNode,
   $isSomeParaNode,
+  $lastPiece,
+  $pieceHead,
   $placeCaretAtBoundary,
   CharNode,
   ImmutableChapterNode,
@@ -641,7 +643,14 @@ function $scanSeed(
     (direction === "next" ? anchorOffset < anchorNode.getTextContentSize() : anchorOffset > 0)
   )
     return anchorNode;
-  return $stepOver(anchorNode, direction, block);
+  // An atom an annotation cut into pieces is one atom: past its far edge is past every piece.
+  const from =
+    $isVisibleAtom(anchorNode) && direction === "next"
+      ? $lastPiece(anchorNode)
+      : $isVisibleAtom(anchorNode)
+        ? $pieceHead(anchorNode)
+        : anchorNode;
+  return $stepOver(from, direction, block);
 }
 
 /**
@@ -699,9 +708,12 @@ function $resolveOneVisibleStop(
     return $canonicalize({ kind: "text", node: rendered, offset }, block);
   }
 
-  const parent = rendered.getParent();
+  // An atom an annotation cut into pieces is crossed whole: past its last piece going forward,
+  // in front of its first going back.
+  const crossed = direction === "next" ? $lastPiece(rendered) : $pieceHead(rendered);
+  const parent = crossed.getParent();
   if (!parent) return undefined;
-  const index = rendered.getIndexWithinParent();
+  const index = crossed.getIndexWithinParent();
   return $canonicalize(
     { kind: "element", node: parent, offset: direction === "next" ? index + 1 : index },
     block,

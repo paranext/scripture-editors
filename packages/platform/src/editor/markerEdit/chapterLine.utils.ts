@@ -45,6 +45,10 @@ import {
   $createImpliedParaNode,
   $createParaNode,
   $isChapterNode,
+  $isPieceOf,
+  $lastPiece,
+  $logicalOffset,
+  $logicalText,
   ChapterNode,
   MarkerLookup,
 } from "shared";
@@ -138,7 +142,12 @@ function $wouldRewriteChapterMarker(selection: RangeSelection): boolean {
   const caretNode = selection.focus.getNode();
   const chapter = $chapterLineOf(caretNode);
   const glyph = chapter && $chapterGlyphTextNode(chapter);
-  return !(glyph?.is(caretNode) && selection.focus.offset === glyph.getTextContentSize());
+  // A glyph an annotation cut into pieces ends at the end of its last piece.
+  return !(
+    glyph &&
+    $isPieceOf(caretNode, glyph) &&
+    $logicalOffset(caretNode, selection.focus.offset) === $logicalText(glyph).length
+  );
 }
 
 /**
@@ -205,7 +214,7 @@ function $isCaretInPubnumberRun(chapter: ChapterNode, selection: RangeSelection)
   const focusNode = selection.focus.getNode();
   if (focusNode.is(chapter)) return selection.focus.offset > runStart.getIndexWithinParent();
   return [wrapper, opener, value].some(
-    (piece) => piece && (piece.is(focusNode) || piece.isParentOf(focusNode)),
+    (piece) => piece && ($isPieceOf(focusNode, piece) || piece.isParentOf(focusNode)),
   );
 }
 
@@ -224,9 +233,11 @@ function $insertionAnchorOnChapterLine(
   const runEnd = wrapper ?? closer;
   if (!runEnd) return glyph;
   const focusNode = selection.focus.getNode();
+  // A glyph an annotation cut into pieces is one glyph: a caret in any of its pieces, or between
+  // two of them, is not past the number.
   const isPastNumber = focusNode.is(chapter)
-    ? selection.focus.offset > glyph.getIndexWithinParent() + 1
-    : !focusNode.is(glyph);
+    ? selection.focus.offset > $lastPiece(glyph).getIndexWithinParent() + 1
+    : !$isPieceOf(focusNode, glyph);
   return isPastNumber ? runEnd : glyph;
 }
 
@@ -293,9 +304,10 @@ export function $moveCaretOffChapterLine(context: Tier2Context): boolean {
 
   // A glyph that has lost its separator would join the placeholder to the number's word.
   const anchor = $insertionAnchorOnChapterLine(chapter, glyph, selection);
-  const separator = anchor.is(glyph) && !/\s$/.test(glyph.getTextContent()) ? " " : "";
+  const separator = anchor.is(glyph) && !/\s$/.test($logicalText(glyph)) ? " " : "";
   const stand = $createTextNode(separator + INSERTION_PLACEHOLDER);
-  anchor.insertAfter(stand);
+  // After every piece of a glyph or closer an annotation cut into pieces.
+  $lastPiece(anchor).insertAfter(stand);
   if (!$rebuildChapter(chapter, context)) {
     stand.remove();
     return false;
