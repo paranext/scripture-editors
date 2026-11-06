@@ -364,9 +364,10 @@ export function UnstorableTextPlugin({
 
     /**
      * Inserts a plain-text paste or drop itself when it needs filtering, line breaks joining (under
-     * protected structure, or on the `\id` line), or a lone carriage return (an old Mac line ending) reading as the line
-     * break it is: Lexical's own insertion splits only at `\n` and `\r\n`, and leaves a lone `\r`
-     * in the text. Returns whether it did; otherwise Lexical's own insertion runs.
+     * protected structure, or on the `\id` line), or a lone carriage return (an old Mac line ending)
+     * reading as the line break it is: Lexical's own insertion splits only at `\n` and `\r\n`, and
+     * leaves a lone `\r` in the text. Returns whether it did; otherwise Lexical's own insertion
+     * runs.
      */
     const $insertPlainTransfer = (
       data: DataTransfer,
@@ -376,11 +377,13 @@ export function UnstorableTextPlugin({
       if (!$isRangeSelection(selection) || insertionRoute(data) !== "plain") return false;
       const text = data.getData("text/plain") || data.getData("text/uri-list");
       if (!text) return false;
+      const keepsLines = $selectionSpansBookOrChapterLine(selection);
+      // A selection that keeps the book line puts the text after the chapter line instead; any
+      // other selection touching the book line lies wholly inside it.
       const joinsLines =
         /[\r\n]/.test(text) &&
         (structureProtectionModeRef.current === "protected" ||
-          !!$findMatchingParent(selection.anchor.getNode(), $isBookNode));
-      const keepsLines = $selectionSpansBookOrChapterLine(selection);
+          (!keepsLines && !!$findMatchingParent(selection.anchor.getNode(), $isBookNode)));
       const hasLoneReturn = /\r(?!\n)/.test(text);
       const { before, after } = $textAroundSelection(selection);
       const lines = hasLoneReturn ? text.replace(/\r(?!\n)/g, "\n") : text;

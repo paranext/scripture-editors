@@ -406,6 +406,17 @@ describe.each(CHAPTERS)("Select All in $name", ({ front }) => {
         ]);
       });
 
+      it("pastes plain text of several lines over Select All as lines, not joined like the book line's", async () => {
+        await selectAll(mounted);
+        await pasteFlavors(mounted, new Map([["text/plain", "one\ntwo"]]));
+        expect(content(mounted)).toEqual([
+          BOOK,
+          CHAPTER,
+          { type: "para", marker: "p", content: ["one"] },
+          { type: "para", marker: "p", content: ["two"] },
+        ]);
+      });
+
       it("pastes over a selection from the book line to the chapter line at the next paragraph's start", async () => {
         await act(async () =>
           mounted.lexical.update(
