@@ -151,9 +151,10 @@ refused. The public surface grew substantially; nothing was removed.
   text, runs straight down between, and follows a verse through every line and paragraph it spans
   (a `\q1` into its `\q2` lines). It is drawn as an SVG path in a `.psc-verse-outline` overlay
   placed just after the editor's root element, styled inline so a host needs no new CSS, though
-  the element that contains the root must be positioned. Where there is no verse to outline (a
-  heading, a paragraph with no verse marker before the chapter's first verse, an empty line, a
-  table, a selected paragraph marker) the whole paragraph is boxed as before.
+  the element that contains the root must be positioned. While it is drawn the paragraph no longer
+  has the `psc-active-text` class. Where there is no verse to outline (a heading, a paragraph with
+  no verse to carry on, an empty line, a table, a selected paragraph marker) the whole paragraph is
+  boxed as before.
 - **A paste over a range across a char span's edge replaces only the selected text**, in the views
   that hide markers, as typing over one already did. It used to pull the text after the range into
   the span, and with nested spans put it ahead of the text it followed.

@@ -24,6 +24,8 @@ import {
   $isImmutableTypedTextNode,
   $isMarkerNode,
   $isParaLikeNode,
+  CategoryType,
+  getMarker,
   ParaLikeNode,
   ZWSP,
 } from "shared";
@@ -64,8 +66,9 @@ export const ACTIVE_EMPTY_CLASS = "psc-empty-text-active";
 /**
  * Plugin that outlines the verse under the cursor — across every line and paragraph it runs
  * through — and marks individual verses with no body content as empty. Where there is no verse to
- * outline (a heading, a paragraph with no verse marker before the chapter's first verse, an empty
- * line, a table, a selected paragraph marker) it outlines the whole paragraph instead. No-op unless `viewOptions.hasActiveTextFocusBox` is true.
+ * outline (a heading, a paragraph with no verse to carry on, an empty line, a table, a selected
+ * paragraph marker) it outlines the whole paragraph instead. No-op unless
+ * `viewOptions.hasActiveTextFocusBox` is true.
  */
 export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | undefined }): null {
   const [editor] = useLexicalComposerContext();
@@ -157,7 +160,16 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
     // direction or styling and a web font arriving, none of which need resize the root.
     const resizeObserver =
       typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(showActiveText);
-    const rootObserver = new MutationObserver(showActiveText);
+    const rootObserver = new MutationObserver((records) => {
+      // TextDirectionPlugin writes the root's `dir` on every edit, usually to the value it has.
+      const isChanged = records.some(
+        ({ attributeName, oldValue, target }) =>
+          target instanceof Element &&
+          attributeName !== null &&
+          target.getAttribute(attributeName) !== oldValue,
+      );
+      if (isChanged) showActiveText();
+    });
     let fonts: FontFaceSet | undefined;
 
     const unsubscribers = [
@@ -184,16 +196,13 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
         overlay.append(outlinePath);
         root.after(overlay);
         resizeObserver?.observe(root);
-        rootObserver.observe(root, { attributeFilter: ["class", "dir", "style"] });
+        rootObserver.observe(root, {
+          attributeFilter: ["class", "dir", "style"],
+          attributeOldValue: true,
+        });
         fonts = root.ownerDocument.fonts;
         fonts?.addEventListener("loadingdone", showActiveText);
       }),
-      () => {
-        resizeObserver?.disconnect();
-        rootObserver.disconnect();
-        fonts?.removeEventListener("loadingdone", showActiveText);
-        overlay?.remove();
-      },
       // Clicking the ellipsis placeholder (rendered as ::after on the empty verse span) hits the
       // verse element itself, which is a decorator node — Lexical's default cursor placement leaves
       // the user with no obvious caret inside the empty verse's section. Move the caret to the slot
@@ -374,12 +383,26 @@ export function $getActiveVerseSection(): VerseSection | undefined {
   };
 }
 
+/** Paragraph categories that hold running text, so a verse carries on through them. */
+const RUNNING_TEXT_CATEGORIES = new Set([
+  CategoryType.Paragraphs,
+  CategoryType.Poetry,
+  CategoryType.Lists,
+]);
+
 /**
- * Whether a verse carries on through `node`: any paragraph but a heading or title (`\s`, `\qa`…),
- * where the verse blocks end a verse too.
+ * Whether `node` is a paragraph of running text (`\p`, `\q2`, `\li`…), not a heading, title or
+ * remark. An acrostic heading (`\qa`) is filed under poetry, so the heading markers rule it out.
  */
 function $isRunningTextPara(node: LexicalNode | null | undefined): node is ParaLikeNode {
-  return $isParaLikeNode(node) && !STRUCTURAL_MARKERS.has(node.getMarker());
+  if (!$isParaLikeNode(node)) return false;
+  const marker = node.getMarker();
+  const category = getMarker(marker)?.category;
+  return (
+    category !== undefined &&
+    RUNNING_TEXT_CATEGORIES.has(category) &&
+    !STRUCTURAL_MARKERS.has(marker)
+  );
 }
 
 /**
@@ -401,7 +424,7 @@ export function $getActiveVerseSections(): VerseSection[] | undefined {
   if ($getSelectedParaMarkerPara($getSelection())) return undefined;
   const section = $getActiveVerseSection();
   if (!section) return undefined;
-  if (!section.verseKey && !section.startKey) return [section];
+  if (!section.verseKey && !section.nextVerseKey && !section.startKey) return [section];
   const para = $getNodeByKey(section.paraKey);
   const sections = [section];
   if (!$isParaLikeNode(para)) return sections;
@@ -552,7 +575,7 @@ function $indexIn(order: LexicalNode[], node: LexicalNode): number {
 }
 
 /**
- * Measures a verse section's layout for `computeVerseOutlineSegments`: the client rects of its text
+ * Measures a verse section's layout for `computeVerseOutlineBoxes`: the client rects of its text
  * — from just before its first node to just before the next verse marker, or to the paragraph's
  * end — with the paragraph's content box, direction and alignment and the next verse marker's box,
  * all as plain objects. The range starts after the paragraph's marker prefix, so a gutter marker

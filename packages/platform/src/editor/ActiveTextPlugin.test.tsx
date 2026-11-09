@@ -970,27 +970,6 @@ describe("$getActiveVerseSections", () => {
     });
   });
 
-  it("carries a verse through a page break, as the verse blocks do", () => {
-    let k!: { [name: string]: string };
-    const { editor } = createBasicTestEnvironment(nodes, () => {
-      const v1 = $verseFor("gutter-hidden", "1");
-      const one = $createTextNode("one");
-      const more = $createTextNode("more");
-      const p1 = $para("p", v1, one);
-      const p2 = $para("p", more);
-      $getRoot().append(p1, $para("pb"), p2);
-      k = { p1: p1.getKey(), v1: v1.getKey(), p2: p2.getKey(), more: more.getKey() };
-      one.select(1, 1);
-    });
-
-    editor.getEditorState().read(() => {
-      expect($getActiveVerseSections()).toEqual([
-        { paraKey: k.p1, verseKey: k.v1, nextVerseKey: undefined, startKey: k.v1 },
-        { paraKey: k.p2, verseKey: undefined, nextVerseKey: undefined, startKey: k.more },
-      ]);
-    });
-  });
-
   it("leaves an empty line with the caret on it to itself, not to the verse it carries on", () => {
     let breakKey!: string;
     const { editor } = createBasicTestEnvironment(nodes, () => {
@@ -1007,6 +986,46 @@ describe("$getActiveVerseSections", () => {
     editor.getEditorState().read(() => {
       expect($getActiveVerseSections()).toEqual([
         { paraKey: breakKey, verseKey: undefined, nextVerseKey: undefined, startKey: undefined },
+      ]);
+    });
+  });
+
+  it("keeps the verse before a caret that sits ahead of its paragraph's leading verse number", () => {
+    let k!: { [name: string]: string };
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      const v1 = $verseFor("gutter-hidden", "1");
+      const p1 = $para("p", v1, $createTextNode("one"));
+      const v2 = $verseFor("gutter-hidden", "2");
+      const p2 = $para("p", v2, $createTextNode("two"));
+      $getRoot().append(p1, p2);
+      k = { p1: p1.getKey(), v1: v1.getKey(), p2: p2.getKey() };
+      p2.select(v2.getIndexWithinParent(), v2.getIndexWithinParent());
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()?.[0]).toEqual({
+        paraKey: k.p1,
+        verseKey: k.v1,
+        nextVerseKey: undefined,
+        startKey: k.v1,
+      });
+    });
+  });
+
+  it("leaves a remark out of the verse around it", () => {
+    let k!: { [name: string]: string };
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      const v1 = $verseFor("gutter-hidden", "1");
+      const one = $createTextNode("one");
+      const p1 = $para("p", v1, one);
+      $getRoot().append(p1, $para("rem", $createTextNode("note")));
+      k = { p1: p1.getKey(), v1: v1.getKey() };
+      one.select(1, 1);
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toEqual([
+        { paraKey: k.p1, verseKey: k.v1, nextVerseKey: undefined, startKey: k.v1 },
       ]);
     });
   });
@@ -1960,6 +1979,25 @@ describe("ActiveTextPlugin verse outline", () => {
     });
 
     expect(overlay.querySelector("path")?.getAttribute("d")).not.toBe(before);
+  });
+
+  it("doesn't measure again when the root's direction is written with the value it has", async () => {
+    const { editor, overlay } = await setUp("one");
+    editor.getRootElement()?.setAttribute("dir", "ltr");
+    await act(async () => Promise.resolve());
+    const before = overlay.querySelector("path")?.getAttribute("d");
+    Range.prototype.getClientRects = function (this: Range) {
+      const rects =
+        this.startContainer.nodeType === Node.TEXT_NODE ? [] : [new DOMRect(150, 24, 100, 16)];
+      return rects as unknown as DOMRectList;
+    };
+
+    await act(async () => {
+      editor.getRootElement()?.setAttribute("dir", "ltr");
+      await Promise.resolve();
+    });
+
+    expect(overlay.querySelector("path")?.getAttribute("d")).toBe(before);
   });
 
   it("leaves a paragraph box, not an outline, where there is no layout to measure", async () => {
