@@ -9,7 +9,6 @@ ignoredBuiltDependencies:
 
 onlyBuiltDependencies:
   - "@swc/core"
-  - "@tailwindcss/oxide"
   - core-js-pure
   - esbuild
   - nx
