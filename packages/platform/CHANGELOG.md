@@ -340,8 +340,7 @@ refused. The public surface grew substantially; nothing was removed.
   already has whitespace. A stored no-break space is still written as `~` when invisible characters
   are not allowed. `text/html` and the internal flavor are unchanged, as the editor's own
   paste reads them back. These views' copies and cuts are now written by the editor rather than by
-  Lexical's rich-text handler, so a cut in a read-only editor copies without removing anything.
-  Lexical's handler still takes a range with no text to copy (a lone verse number, or only spacers
+  Lexical's rich-text handler. Lexical's handler still takes a range with no text to copy (a lone verse number, or only spacers
   or placeholders), and writes it as before.
 - A text node holding only zero-width spaces that the author typed (a line-break opportunity in
   Thai, Khmer and Lao), which an annotation or other split leaves in a node of its own, is now kept

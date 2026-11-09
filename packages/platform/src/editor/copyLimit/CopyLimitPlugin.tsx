@@ -1,5 +1,6 @@
 import {
   $isInCollapsedNote,
+  $isLayoutText,
   isCopyFromOutsideEditor,
   $limitSelectionLength,
   $notePreviewLength,
@@ -13,8 +14,8 @@ import {
 import { $selectionToUsfmViaStandardView } from "../MarkersViewCopyPlugin";
 import {
   $selectionToUsfmText,
-  $withStoredNbspsAsTilde,
   $writeClipboardData,
+  hiddenViewCopySpelling,
 } from "../markerEdit/whitespaceDisplay.plugin.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
@@ -256,7 +257,8 @@ export function CopyLimitPlugin({
  * selection that cannot be mapped to USFM, count the selection's text plus every note caller's
  * preview text, which their normal copy's HTML and internal flavors carry. Shortened, they write
  * the text the view shows (a hidden-marker view's as prose, {@link $selectionPlainText}), so they
- * are fitted to that.
+ * are fitted to that; a hidden-marker view's layout bytes, which its prose leaves out, count for
+ * nothing as the fit places the end.
  */
 function $copyFit(
   editor: LexicalEditor,
@@ -284,7 +286,9 @@ function $copyFit(
       ),
     // Shortened, the selection is fitted to what the over-limit copy writes.
     options: {
-      $isHidden: $isInCollapsedNote,
+      $isHidden: isHiddenMarkerView
+        ? (node) => $isInCollapsedNote(node) || $isLayoutText(node)
+        : $isInCollapsedNote,
       $measure: (selection) => $overLimitText(selection, viewOptions).length,
     },
   };
@@ -293,7 +297,7 @@ function $copyFit(
 /**
  * The plain text an over-limit copy writes, which is therefore what the fit measures: the text the
  * view shows, or a hidden-marker view's prose ({@link $selectionPlainText}, a stored no-break
- * space as `~` with `allowInvisibleCharacters` off, as its copy that fits writes it) when there is
+ * space spelled by `hiddenViewCopySpelling`, as its copy that fits spells it) when there is
  * any. A range of only layout bytes has none, and writes the shown text instead, so a cut never
  * removes what it did not copy.
  */
@@ -303,7 +307,7 @@ function $overLimitText(selection: RangeSelection, viewOptions: ViewOptions | un
       $selectionPlainText(
         selection,
         $isInCollapsedNote,
-        viewOptions.allowInvisibleCharacters ? undefined : $withStoredNbspsAsTilde,
+        hiddenViewCopySpelling(viewOptions.allowInvisibleCharacters),
       )) ||
     $selectionShownText(selection, $isInCollapsedNote)
   );

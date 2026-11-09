@@ -44,7 +44,6 @@ import {
   $isBookNode,
   $isChapterNode,
   $isCharNode,
-  $isLoneNbspContent,
   $isMarkerNode,
   $isNoteNode,
   $isTypedMarkNode,
@@ -83,23 +82,30 @@ import {
 const NBSP_PATTERN = /\u00A0/g;
 
 /**
- * `text`, shown by `node`, with each no-break space written as `~` when `node` is text whose
- * no-break spaces the text stores rather than ones the view lays out (not a gutter marker's, an empty span's placeholder or a collapsed
- * note's spacer; {@link $isLoneNbspContent} tells a lone one apart);
- * otherwise `text` as it is. For `$selectionPlainText`'s `$spell`.
+ * `text`, shown by `node`, with each no-break space written as `~` when `node` is body text (a text
+ * node with no text type, so not a marker's or an attribute's bytes); otherwise `text` as it is.
+ * For `$selectionPlainText`'s `$spell`, which never passes it layout text (`$isLayoutText`), so
+ * every no-break space it sees is one the text stores.
  *
  * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
  */
 export function $withStoredNbspsAsTilde(node: LexicalNode, text: string): string {
-  return $isTextNode(node) && $holdsStoredNbsps(node) ? text.replace(NBSP_PATTERN, "~") : text;
+  return $isTextNode(node) && $getState(node, textTypeState) === undefined
+    ? text.replace(NBSP_PATTERN, "~")
+    : text;
 }
 
-/** Whether the no-break spaces in text node `node` are ones the text stores, not layout. */
-function $holdsStoredNbsps(node: TextNode): boolean {
-  return (
-    $getState(node, textTypeState) === undefined &&
-    (node.getTextContent() !== NBSP || $isLoneNbspContent(node))
-  );
+/**
+ * How a hidden-marker view's copy spells the text it writes as plain text, for
+ * `$selectionPlainText`'s `$spell`: a stored no-break space as `~` ({@link $withStoredNbspsAsTilde})
+ * with `allowInvisibleCharacters` (`ViewOptions.allowInvisibleCharacters`) off, as Paratext 9's
+ * views show and copy one; as itself (`undefined`, the default) with it on. Shared by the copy that
+ * fits and the over-limit copy, so both spell a range alike.
+ */
+export function hiddenViewCopySpelling(
+  allowInvisibleCharacters: boolean | undefined,
+): ((node: LexicalNode, text: string) => string) | undefined {
+  return allowInvisibleCharacters ? undefined : $withStoredNbspsAsTilde;
 }
 
 /** Spaces in runs display as NBSP so they are visible while typing, and a lone display NBSP left
@@ -1390,10 +1396,11 @@ export function $handleCopyForStandardView(
  * claims it — shared by Standard view's handler above and every {@link registerViewCopyWriter}
  * writer, so all of them write their payloads the same way.
  *
- * A cut removes the range only when the editor is editable: `ClipboardPlugin`'s Ctrl+X listener
- * (and `ContextMenuPlugin`/`EditorRef`) dispatches `CUT_COMMAND` with no editability check of its
- * own, so a read-only surface reaching this function must still copy and remove nothing. The rule
- * lives here rather than at each call site so every caller gets it.
+ * A cut removes the range only when the editor is editable. The app's own cut gestures already
+ * stop short of a read-only editor (Lexical's root `cut` listener, `ClipboardPlugin`'s Ctrl+X,
+ * `ContextMenuPlugin`'s disabled Cut, `EditorRef.cut()`), but a host's plugin can dispatch
+ * `CUT_COMMAND` itself, so a read-only surface reaching this function must still copy and remove
+ * nothing. The rule lives here rather than at each call site so every caller gets it.
  *
  * `copyLimit` is `EditorOptions.copyLimit`. `CopyLimitPlugin` fits the selection to it before this
  * runs, so `data` already fits. If it does not, a development build warns, and only the first
@@ -1441,11 +1448,13 @@ export function $writeCopyPayload(
  * (`MarkersViewCopyPlugin.tsx`) and the hidden-marker views' (`HiddenMarkersViewCopyPlugin.tsx`).
  * For a range selection that is not collapsed, `$payload` gives the flavors to write and
  * {@link $writeCopyPayload} writes them; `$payload` returns `undefined` to leave the command to the
- * handlers below. `copyLimit` is `EditorOptions.copyLimit`.
+ * handlers below. `isCut` tells a cut from a copy. `copyLimit` is `EditorOptions.copyLimit`.
  *
- * `event` is the command's payload when it is a browser clipboard event, otherwise `undefined`: Lexical's
- * own dispatchers pass a `KeyboardEvent` or `null`, and `ClipboardPlugin`, `ContextMenuPlugin` and
- * `EditorRef` pass `null`.
+ * `event` is the command's payload when it is a browser clipboard event (Lexical's root `copy` and
+ * `cut` listeners, the usual path), otherwise `undefined`: Lexical's key-down handling passes a
+ * `KeyboardEvent` for a selection that is not a range, and `ClipboardPlugin`, `ContextMenuPlugin`,
+ * `EditorRef` and the guard plugins that re-dispatch a copy (such as `HiddenContentDeleteGuardPlugin`
+ * and `ParaMarkerSelectionPlugin`) pass `null`.
  *
  * @returns A function that unregisters both listeners.
  */
@@ -1455,6 +1464,7 @@ export function registerViewCopyWriter(
   $payload: (
     selection: RangeSelection,
     event: ClipboardEvent | undefined,
+    isCut: boolean,
   ) => LexicalClipboardData | undefined,
   copyLimit?: number,
 ): () => void {
@@ -1466,7 +1476,7 @@ export function registerViewCopyWriter(
     // the type check comes first.
     const event =
       payload && typeof payload === "object" && "clipboardData" in payload ? payload : undefined;
-    const data = $payload(selection, event);
+    const data = $payload(selection, event, isCut);
     return (
       data !== undefined && $writeCopyPayload(event, editor, selection, data, isCut, copyLimit)
     );

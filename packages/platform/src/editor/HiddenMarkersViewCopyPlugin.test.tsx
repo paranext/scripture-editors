@@ -59,6 +59,8 @@ const PSALM_1_2 =
   `<para style="q1"><verse number="2" style="v" />but his delight is in Yahweh’s${NOTE} law.` +
   ` Day${NBSP}and night.</para>`;
 
+const MARK_RUNS = `<char style="fr" closed="false">1:2 </char><char style="ft" closed="false">text</char>`;
+
 const PSALM_1_2_PROSE = `but his delight is in Yahweh’s 1:2 “Yahweh” is God’s proper Name. law.`;
 
 function usx(paras: string): string {
@@ -134,7 +136,7 @@ async function copy(editor: LexicalEditor, command = COPY_COMMAND) {
  * Dispatches `COPY_COMMAND` with a real `ClipboardEvent` (the test setup supplies the class), so
  * Lexical's own copy, if it runs, writes through the event rather than `document.execCommand`.
  */
-async function copyWithLexicalFallback(editor: LexicalEditor) {
+async function copyWithLexicalFallback(editor: LexicalEditor, command = COPY_COMMAND) {
   const store = new Map<string, string>();
   const clipboardData = {
     getData: (format: string) => store.get(format) ?? "",
@@ -144,9 +146,10 @@ async function copyWithLexicalFallback(editor: LexicalEditor) {
     types: [],
     files: [],
   };
-  const event = new ClipboardEvent("copy", { bubbles: true, cancelable: true });
+  const type = command === CUT_COMMAND ? "cut" : "copy";
+  const event = new ClipboardEvent(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, "clipboardData", { value: clipboardData });
-  await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+  await act(async () => editor.dispatchCommand(command, event));
   return { event, getData: clipboardData.getData };
 }
 
@@ -244,6 +247,22 @@ describe("HiddenMarkersViewCopyPlugin", () => {
       "LORD \u200F1:2 “Yahweh” is God’s proper Name.\u200F Almighty",
     );
   });
+
+  it.each([
+    { edge: "opens", inner: `\u200F${MARK_RUNS}`, expected: "Word \u200F1:2 text rest." },
+    { edge: "closes", inner: `${MARK_RUNS}\u200F`, expected: "Word 1:2 text\u200F rest." },
+  ])(
+    "keeps a direction mark that $edge a note on its own side of the space",
+    async ({ inner, expected }) => {
+      const { editor } = await renderEditor(
+        `<para style="p">Word<note style="f" caller="+" closed="false">${inner}</note>rest.</para>`,
+      );
+      await act(async () => editor.update(() => $selectBetween("Word", "rest.")));
+      const { getData } = await copy(editor);
+
+      expect(getData("text/plain")).toBe(expected);
+    },
+  );
 
   it("adds no space where the copy starts or ends at a spacer", async () => {
     const { editor } = await renderEditor();
@@ -391,6 +410,71 @@ describe("HiddenMarkersViewCopyPlugin", () => {
     expect(hadEditorRange).toBe(true);
     expect(getData("text/plain")).toBe("");
     expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("writes a cut whose page selection runs outside the editor, since Lexical's cut removes it", async () => {
+    const { editor } = await renderEditor(PSALM_1_2, { allowInvisibleCharacters: false });
+    await act(async () => editor.update(() => $selectBetween("but his", "night.")));
+    const outside = document.createElement("p");
+    outside.textContent = "Outside the editor";
+    document.body.append(outside);
+    let result: Awaited<ReturnType<typeof copyWithLexicalFallback>>;
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(outside);
+      document.getSelection()?.removeAllRanges();
+      document.getSelection()?.addRange(range);
+      result = await copyWithLexicalFallback(editor, CUT_COMMAND);
+    } finally {
+      document.getSelection()?.removeAllRanges();
+      outside.remove();
+    }
+    const { event, getData } = result;
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(getData("text/plain")).toBe(`${PSALM_1_2_PROSE} Day~and night.`);
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).not.toContain(
+      "delight",
+    );
+  });
+
+  it.each([
+    {
+      name: "counts empty spans' placeholders for nothing as it fits a copy to the limit",
+      paras:
+        `<para style="p">aaaa<char style="w" closed="false"></char>` +
+        `<char style="nd" closed="false"></char><char style="wj" closed="false"></char>` +
+        `bbbbbbbbbbbb</para>`,
+      from: "aaaa",
+      limit: 10,
+      expected: "aaaabbbbbb",
+    },
+    {
+      name: "fits text, not placeholders, when a limited copy starts at an empty span",
+      paras:
+        `<para style="p">Word<char style="w" closed="false"></char>` +
+        `<char style="nd" closed="false"></char>abcdef</para>`,
+      from: NBSP,
+      limit: 2,
+      expected: "ab",
+    },
+  ])("$name", async ({ paras, from, limit, expected }) => {
+    const { editor } = await renderEditor(paras, {
+      copyLimit: limit,
+      viewMode: FORMATTED_VIEW_MODE,
+    });
+    await act(async () =>
+      editor.update(() => {
+        const start =
+          $textNodes().find((node) => node.getTextContent() === from) ?? $textNode(from);
+        const end = $textNodes().at(-1);
+        if (!end) throw new Error("fixture has no text");
+        $select(start, 0, end, -1);
+      }),
+    );
+    const { getData } = await copy(editor);
+
+    expect(getData("text/plain")).toBe(expected);
   });
 
   it("keeps an over-limit copy of only layout bytes within the limit", async () => {

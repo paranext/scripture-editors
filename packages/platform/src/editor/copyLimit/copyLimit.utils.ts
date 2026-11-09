@@ -19,11 +19,9 @@ import { graphemeSegments } from "unicode-segmenter/grapheme";
 import {
   $isChapterNode,
   $isGlyphTextNode,
-  $isLoneNbspContent,
-  $isMarkerTrailingSeparator,
   $isNoteNode,
   $isSomeChapterNode,
-  NBSP,
+  $shouldIgnoreNodeForContentIndexes,
 } from "shared";
 import { $isImmutableNoteCallerNode, $isOpaqueBlockNode, $isSomeVerseNode } from "shared-react";
 
@@ -392,7 +390,8 @@ export function $selectionShownText(
  * (`\xt Gen 1:1\xt*, \xt Exo 2:3\xt*` copies as `Gen 1:1, Exo 2:3`). An NBSP the text itself
  * holds is kept, or written as `$spell` spells the text of the node that shows it (a stored no-break
  * space as `~`, say); spacing is decided on the text as shown, so a respelled NBSP still counts as
- * the whitespace it is.
+ * the whitespace it is. Text that displays as nothing (a lone direction mark) stays on its own side
+ * of the space a note's edge adds.
  *
  * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
  */
@@ -403,26 +402,33 @@ export function $selectionPlainText(
 ): string {
   const texts: string[] = [];
   let previous: { text: string; noteKey: NodeKey | undefined } | undefined;
+  // Text that displays as nothing (a lone direction mark, say) decides no spacing, so it is held
+  // back until the next visible text is weighed against what came before it.
+  let held: { text: string; noteKey: NodeKey | undefined }[] = [];
   for (const { node, text } of $selectionShownParts(selection, $isHidden)) {
     if (text === "" || $isLayoutText(node)) continue;
-    // Text that displays as nothing (a lone direction mark, say) decides no spacing: the next
-    // visible text is weighed against what came before it.
+    const noteKey = $findMatchingParent(node, $isNoteNode)?.getKey();
     if (INVISIBLE_ONLY.test(text)) {
-      texts.push($spell(node, text));
-      if (previous) previous = { ...previous, text: previous.text + text };
+      held.push({ text: $spell(node, text), noteKey });
       continue;
     }
-    const noteKey = $findMatchingParent(node, $isNoteNode)?.getKey();
+    const pieces = held.map((part) => part.text);
     if (
       previous &&
       noteKey !== previous.noteKey &&
       !TRAILING_SPACE.test(previous.text) &&
       !LEADING_SPACE.test(text)
-    )
-      texts.push(" ");
-    texts.push($spell(node, text));
+    ) {
+      // The space goes where the note starts or ends, among the held text: after what still
+      // belongs with the text before it.
+      const boundary = held.findIndex((part) => part.noteKey !== previous?.noteKey);
+      pieces.splice(boundary < 0 ? pieces.length : boundary, 0, " ");
+    }
+    texts.push(...pieces, $spell(node, text));
+    held = [];
     previous = { text, noteKey };
   }
+  texts.push(...held.map((part) => part.text));
   return texts.join("");
 }
 
@@ -434,16 +440,16 @@ const TRAILING_SPACE = /[^\S\uFEFF]\p{Default_Ignorable_Code_Point}*$/u;
 const INVISIBLE_ONLY = /^\p{Default_Ignorable_Code_Point}+$/u;
 
 /**
- * Whether `node`'s text is layout a hidden-marker view shows that stands for nothing in the file:
- * an engine-owned NBSP spacer (a collapsed note lays one out after its caller and after each run),
- * or a lone NBSP that is no author's `~` ({@link $isLoneNbspContent} tells them apart), such as the
- * placeholder an empty char span holds.
+ * Whether `node` is text a hidden-marker view shows only for layout, which stands for nothing in
+ * the file (`$shouldIgnoreNodeForContentIndexes`): an engine-owned NBSP spacer (a collapsed note
+ * lays one out after its caller and after each run), or a lone NBSP that is no author's `~`, such
+ * as the placeholder an empty char span holds. Only text: a gutter glyph is a decorator, and is
+ * copied.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
  */
-function $isLayoutText(node: LexicalNode): boolean {
-  return (
-    $isMarkerTrailingSeparator(node) ||
-    ($isTextNode(node) && node.getTextContent() === NBSP && !$isLoneNbspContent(node))
-  );
+export function $isLayoutText(node: LexicalNode): boolean {
+  return $isTextNode(node) && $shouldIgnoreNodeForContentIndexes(node);
 }
 
 /** One piece of {@link $selectionShownText}: a node's selected text, or a line break between
