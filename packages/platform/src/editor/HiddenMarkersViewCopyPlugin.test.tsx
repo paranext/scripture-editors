@@ -90,7 +90,10 @@ async function renderEditor(
     JSON.stringify({ root: state.root }),
     <>
       <CopyLimitPlugin limit={copyLimit} viewOptions={viewOptions} />
-      <HiddenMarkersViewCopyPlugin allowInvisibleCharacters={allowInvisibleCharacters} />
+      <HiddenMarkersViewCopyPlugin
+        allowInvisibleCharacters={allowInvisibleCharacters}
+        copyLimit={copyLimit}
+      />
     </>,
   );
 }
@@ -436,6 +439,28 @@ describe("HiddenMarkersViewCopyPlugin", () => {
     expect(editor.getEditorState().read(() => $getRoot().getTextContent())).not.toContain(
       "delight",
     );
+  });
+
+  it("never writes an outside-the-editor cut whole past a copy limit", async () => {
+    const { editor } = await renderEditor(PSALM_1_2, { copyLimit: 10 });
+    await act(async () => editor.update(() => $selectBetween("but his", "night.")));
+    const outside = document.createElement("p");
+    outside.textContent = "Outside the editor";
+    document.body.append(outside);
+    let result: Awaited<ReturnType<typeof copyWithLexicalFallback>>;
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(outside);
+      document.getSelection()?.removeAllRanges();
+      document.getSelection()?.addRange(range);
+      result = await copyWithLexicalFallback(editor, CUT_COMMAND);
+    } finally {
+      document.getSelection()?.removeAllRanges();
+      outside.remove();
+    }
+
+    expect(result.getData("text/plain").length).toBeLessThanOrEqual(10);
+    expect(result.getData("text/html")).toBe("");
   });
 
   it.each([

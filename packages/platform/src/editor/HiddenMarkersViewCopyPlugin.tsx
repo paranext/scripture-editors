@@ -26,7 +26,8 @@ import { useEffect } from "react";
  * (only a verse number, say, which Lexical's flavors carry), and declines a copy, not a cut, when a
  * browser copy's page selection runs outside the editor, which Lexical's copy leaves to the
  * browser. Lexical's cut still removes its own range then, so this writes that range rather than
- * let it go uncopied.
+ * let it go uncopied, unless a copy limit is set: the fit does not shorten a range the page
+ * selection does not match, so `$writeCopyPayload` declines it rather than write it whole.
  *
  * A cut removes its range only in an editable editor, as `$writeCopyPayload` decides.
  *
@@ -34,29 +35,37 @@ import { useEffect } from "react";
  * `CopyLimitPlugin`'s over-limit plain copy (NORMAL), but before Lexical's own copy (EDITOR), which
  * it replaces. So with `EditorOptions.copyLimit` set, it only writes copies that fit: one that does
  * not is shortened by the fit and written by `CopyLimitPlugin`, which writes the same prose except
- * that it leaves out the text of collapsed notes, as the view shows them. Mount it only for
- * `markerMode: "hidden"`.
+ * that it leaves out the text of collapsed notes, as the view shows them. The limit is passed on as
+ * `$writeCopyPayload`'s backstop, which also declines the outside-the-editor cut above. Mount it
+ * only for `markerMode: "hidden"`.
  */
 export function HiddenMarkersViewCopyPlugin({
   allowInvisibleCharacters,
+  copyLimit,
 }: {
   allowInvisibleCharacters?: boolean;
+  copyLimit?: number;
 }): null {
   const [editor] = useLexicalComposerContext();
 
   useEffect(
     () =>
-      registerViewCopyWriter(editor, COMMAND_PRIORITY_LOW, (selection, event, isCut) => {
-        if (!isCut && isCopyFromOutsideEditor(editor, event)) return undefined;
-        const plain = $selectionPlainText(
-          selection,
-          undefined,
-          hiddenViewCopySpelling(allowInvisibleCharacters),
-        );
-        if (plain === "") return undefined;
-        return { ...$getClipboardDataFromSelection(selection), "text/plain": plain };
-      }),
-    [editor, allowInvisibleCharacters],
+      registerViewCopyWriter(
+        editor,
+        COMMAND_PRIORITY_LOW,
+        (selection, event, isCut) => {
+          if (!isCut && isCopyFromOutsideEditor(editor, event)) return undefined;
+          const plain = $selectionPlainText(
+            selection,
+            undefined,
+            hiddenViewCopySpelling(allowInvisibleCharacters),
+          );
+          if (plain === "") return undefined;
+          return { ...$getClipboardDataFromSelection(selection), "text/plain": plain };
+        },
+        copyLimit,
+      ),
+    [editor, allowInvisibleCharacters, copyLimit],
   );
 
   return null;

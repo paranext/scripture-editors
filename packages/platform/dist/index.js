@@ -3681,11 +3681,11 @@ function du(e, t) {
     }
     return Si(u);
   }, x = (Ce) => {
-    const W = S();
-    typeof Ce == "string" && typeof W[W.length - 1] == "string" ? W[W.length - 1] = W[W.length - 1] + Ce : W.push(Ce);
+    const V = S();
+    typeof Ce == "string" && typeof V[V.length - 1] == "string" ? V[V.length - 1] = V[V.length - 1] + Ce : V.push(Ce);
   }, D = (Ce) => {
-    for (let W = Ce; W < d.length; W += 1) {
-      const se = d[W].object;
+    for (let V = Ce; V < d.length; V += 1) {
+      const se = d[V].object;
       se.closed = "false";
     }
   }, U = () => {
@@ -3694,11 +3694,11 @@ function du(e, t) {
     f && (d.length > p && (D(p), d.length = p), p = 0, Ce || (f.closed = "false"), f = void 0);
   }, ae = () => {
     g = void 0, h = void 0;
-  }, le = (Ce, W, se) => {
+  }, le = (Ce, V, se) => {
     U();
     const [, oe, Ge, j] = se, ct = {
       type: "table:cell",
-      marker: j ? W.slice(0, W.indexOf("-")) : W,
+      marker: j ? V.slice(0, V.indexOf("-")) : V,
       align: DE[oe],
       content: []
     };
@@ -3723,8 +3723,8 @@ function du(e, t) {
       return;
     const Ce = { type: "char", marker: P.marker, content: [] };
     P.value && (Ce.content = [a(P.value)]), S().push(Ce), d.push({ object: Ce }), P = void 0;
-  }, re = (Ce, W) => {
-    C = !1, ae(), U(), z(!1), u = { type: "para", marker: Ce, content: [] }, W && (u.content = [a(W)]), b().push(u);
+  }, re = (Ce, V) => {
+    C = !1, ae(), U(), z(!1), u = { type: "para", marker: Ce, content: [] }, V && (u.content = [a(V)]), b().push(u);
   }, be = () => {
     P && (re(P.marker, P.value), P = void 0);
   };
@@ -3732,10 +3732,10 @@ function du(e, t) {
   const It = (Ce) => {
     if (!Le)
       return;
-    let { value: W } = Le;
-    Le = void 0, Ce && W.endsWith(`
-`) && (W = W.slice(0, -1));
-    const se = W.indexOf("|"), oe = se >= 0 ? Ra(W.slice(se + 1), Um, void 0, i) : void 0, Ge = se >= 0 ? W.slice(0, se) : W, j = se >= 0 && (!oe || !!Ge && !!oe[zm]), ct = j ? void 0 : oe, et = j ? W : Ge, Lt = {
+    let { value: V } = Le;
+    Le = void 0, Ce && V.endsWith(`
+`) && (V = V.slice(0, -1));
+    const se = V.indexOf("|"), oe = se >= 0 ? Ra(V.slice(se + 1), Um, void 0, i) : void 0, Ge = se >= 0 ? V.slice(0, se) : V, j = se >= 0 && (!oe || !!Ge && !!oe[zm]), ct = j ? void 0 : oe, et = j ? V : Ge, Lt = {
       type: "periph",
       ...et ? { [zm]: a(et) } : {},
       ...ct
@@ -3755,13 +3755,13 @@ function du(e, t) {
     }
   }, Ht = WE(e, t?.getMarker ?? Ur, r, t?.placeholders ?? [], !r && t?.opensNamelessParagraph === !0, o, s);
   for (let Ce = 0; Ce < Ht.length; Ce++) {
-    const W = Ht[Ce];
+    const V = Ht[Ce];
     if (P) {
-      if (W.kind === "text") {
-        P.value += W.text;
+      if (V.kind === "text") {
+        P.value += V.text;
         continue;
       }
-      if (P.shape === "char" && W.kind === "end" && W.marker.replace(/^\+/, "") === P.marker) {
+      if (P.shape === "char" && V.kind === "end" && V.marker.replace(/^\+/, "") === P.marker) {
         if (P.value.trim() === "") {
           S().push({ type: "char", marker: P.marker, content: [] }), P = void 0, O();
           continue;
@@ -3776,31 +3776,31 @@ function du(e, t) {
         }
         continue;
       }
-      if (P.shape === "para" && (W.kind === "para" || W.kind === "chapter")) {
+      if (P.shape === "para" && (V.kind === "para" || V.kind === "chapter")) {
         const se = P.value.replace(/[\s\u200B]+$/, "");
         se === "" ? (re(P.marker), P = void 0) : (Object.assign(P.target, {
           [P.attrName]: c(se)
         }), P = void 0);
       } else {
-        fe = void 0, (W.kind === "para" || W.kind === "chapter") && P.value.endsWith(`
+        fe = void 0, (V.kind === "para" || V.kind === "chapter") && P.value.endsWith(`
 `) && (P.value = P.value.slice(0, -1)), P.shape === "para" ? be() : Y(), Ce--;
         continue;
       }
     }
     if (Le) {
-      if (W.kind === "text" || W.kind === "optbreak") {
-        Le.value += W.kind === "text" ? W.text : "//";
+      if (V.kind === "text" || V.kind === "optbreak") {
+        Le.value += V.kind === "text" ? V.text : "//";
         continue;
       }
-      It(W.kind === "para" || W.kind === "chapter"), Ce--;
+      It(V.kind === "para" || V.kind === "chapter"), Ce--;
       continue;
     }
     if (He) {
-      if (W.kind === "text" || W.kind === "optbreak") {
-        He.value += W.kind === "text" ? W.text : "//";
+      if (V.kind === "text" || V.kind === "optbreak") {
+        He.value += V.kind === "text" ? V.text : "//";
         continue;
       }
-      if (W.kind === "end" && W.marker.replace(/^\+/, "") === es) {
+      if (V.kind === "end" && V.marker.replace(/^\+/, "") === es) {
         const se = He.value.indexOf("|"), oe = se >= 0 ? Ra(He.value.slice(se + 1), es, void 0, s) : void 0;
         if (oe) {
           const Ge = {};
@@ -3819,35 +3819,35 @@ function du(e, t) {
       continue;
     }
     if (fe)
-      if (W.kind === "text") {
-        if (W.text.includes(`
-`) && /^[\s\u200B]*$/.test(W.text)) {
-          E += W.text;
+      if (V.kind === "text") {
+        if (V.text.includes(`
+`) && /^[\s\u200B]*$/.test(V.text)) {
+          E += V.text;
           continue;
         }
         O();
-      } else if (W.kind === "charOpen" || W.kind === "para") {
-        const se = W.kind === "para" || !W.isNested ? fl(W.marker) : void 0, oe = HE[fe.type]?.indexOf(W.marker) ?? -1;
+      } else if (V.kind === "charOpen" || V.kind === "para") {
+        const se = V.kind === "para" || !V.isNested ? fl(V.marker) : void 0, oe = HE[fe.type]?.indexOf(V.marker) ?? -1;
         if (se && se.targetTypes.includes(fe.type) && oe > Ie) {
           Ie = oe, E = "", P = {
             target: fe,
             attrName: se.attrName,
-            marker: W.marker,
+            marker: V.marker,
             shape: se.shape,
             value: ""
           };
           continue;
         }
-        O(W.kind === "para");
+        O(V.kind === "para");
       } else
-        O(W.kind === "chapter");
-    if (!f && !r && (W.kind === "charOpen" && !W.isNested && W.marker === es || W.kind === "para" && W.marker === es)) {
-      U(), He = { shape: W.kind === "charOpen" ? "char" : "para", value: "" };
+        O(V.kind === "chapter");
+    if (!f && !r && (V.kind === "charOpen" && !V.isNested && V.marker === es || V.kind === "para" && V.marker === es)) {
+      U(), He = { shape: V.kind === "charOpen" ? "char" : "para", value: "" };
       continue;
     }
-    switch (W.kind) {
+    switch (V.kind) {
       case "text": {
-        let se = W.text;
+        let se = V.text;
         if (!f && se.endsWith(`
 `)) {
           const oe = Ht[Ce + 1];
@@ -3858,18 +3858,18 @@ function du(e, t) {
       }
       case "para": {
         const se = !f && !r;
-        if (se && W.marker === Fm) {
+        if (se && V.marker === Fm) {
           U(), g || (g = { type: "table", content: [] }, b().push(g)), h = { type: "table:row", marker: Fm, content: [] }, Si(g).push(h), u = h, C = !1;
           break;
         }
         if (se && h) {
-          const oe = jm.exec(W.marker);
+          const oe = jm.exec(V.marker);
           if (oe && Vm(oe)) {
-            le(h, W.marker, oe);
+            le(h, V.marker, oe);
             break;
           }
         }
-        if (ae(), !r && W.marker === pd) {
+        if (ae(), !r && V.marker === pd) {
           U(), z(!1), ye(!1);
           const oe = {
             type: "sidebar",
@@ -3879,20 +3879,20 @@ function du(e, t) {
           b().push(oe), m = oe, u = void 0, Oe(m), C = !1;
           break;
         }
-        if (W.marker === Sx && m) {
+        if (V.marker === Sx && m) {
           U(), z(!1), ye(!0), u = void 0;
           break;
         }
-        if (!r && W.marker === Um) {
+        if (!r && V.marker === Um) {
           U(), z(!1), ye(!1), Ae(), Le = { value: "" }, u = void 0, C = !1;
           break;
         }
-        re(W.marker);
+        re(V.marker);
         break;
       }
       case "verse": {
         z(!1);
-        const se = { type: "verse", marker: Cx, number: W.number };
+        const se = { type: "verse", marker: Cx, number: V.number };
         x(se), Oe(se);
         break;
       }
@@ -3901,7 +3901,7 @@ function du(e, t) {
         const se = {
           type: "chapter",
           marker: vx,
-          number: W.number
+          number: V.number
         };
         n.push(se), Oe(se), C = !0;
         break;
@@ -3909,32 +3909,32 @@ function du(e, t) {
       case "note": {
         z(!1);
         const se = S();
-        f = { type: "note", marker: W.marker, caller: W.caller, content: [] }, p = d.length, se.push(f), Oe(f);
+        f = { type: "note", marker: V.marker, caller: V.caller, content: [] }, p = d.length, se.push(f), Oe(f);
         break;
       }
       case "charOpen": {
-        if (!f && !r && h && !W.isNested) {
-          const Ge = jm.exec(W.marker);
+        if (!f && !r && h && !V.isNested) {
+          const Ge = jm.exec(V.marker);
           if (Ge && Vm(Ge)) {
-            le(h, W.marker, Ge);
+            le(h, V.marker, Ge);
             break;
           }
         }
-        if (!W.isNested) {
+        if (!V.isNested) {
           const Ge = f ? p : 0;
           D(Ge), d.length = Ge;
         }
-        const se = S(), oe = { type: "char", marker: W.marker, content: [] };
-        se.push(oe), d.push({ object: oe }), r && Ce === 0 && W.marker === qE && (l = oe);
+        const se = S(), oe = { type: "char", marker: V.marker, content: [] };
+        se.push(oe), d.push({ object: oe }), r && Ce === 0 && V.marker === qE && (l = oe);
         break;
       }
       case "end": {
-        const se = W.marker.replace(/^\+/, ""), oe = f ? p : 0, Ge = d.findLastIndex((j, ct) => ct >= oe && j.object.marker === se);
-        Ge >= 0 ? (rM(d[Ge].object, s), D(Ge + 1), d.length = Ge) : f && f.marker === se ? z(!0) : (D(oe), d.length = oe, x({ type: "unmatched", marker: `${W.marker}*` }));
+        const se = V.marker.replace(/^\+/, ""), oe = f ? p : 0, Ge = d.findLastIndex((j, ct) => ct >= oe && j.object.marker === se);
+        Ge >= 0 ? (rM(d[Ge].object, s), D(Ge + 1), d.length = Ge) : f && f.marker === se ? z(!0) : (D(oe), d.length = oe, x({ type: "unmatched", marker: `${V.marker}*` }));
         break;
       }
       case "milestone":
-        x({ type: "ms", marker: W.marker, ...W.attributes });
+        x({ type: "ms", marker: V.marker, ...V.attributes });
         break;
       case "optbreak":
         x({ type: "optbreak" });
@@ -3954,10 +3954,10 @@ function du(e, t) {
       P.value.endsWith(`
 `) && (P.value = P.value.slice(0, -1)), Y();
   U(), z(!1), ye(!1);
-  const St = (Ce, W = a) => {
+  const St = (Ce, V = a) => {
     Ce.forEach((se, oe) => {
       if (typeof se == "string") {
-        Ce[oe] = W(se);
+        Ce[oe] = V(se);
         return;
       }
       if (se.content) {
@@ -19519,7 +19519,7 @@ function ZO(e) {
     const xe = lr(L, J), he = b.get(xe) ?? /* @__PURE__ */ new Set();
     he.has(X) !== ee && (ee ? he.add(X) : he.delete(X), he.size > 0 ? b.set(xe, he) : b.delete(xe), Ht(g.get(xe)?.keys() ?? []));
   }
-  function W(L) {
+  function V(L) {
     e.getEditorState().read(() => {
       const J = /* @__PURE__ */ new Set();
       for (const [X, ee] of L) {
@@ -19616,7 +19616,7 @@ function ZO(e) {
     a.delete(X), Jm(e, L, J, !1);
   }
   const ei = ze(
-    ...XO.filter((L) => e.hasNodes([L])).map((L) => e.registerMutationListener(L, W, { skipInitialization: !1 })),
+    ...XO.filter((L) => e.hasNodes([L])).map((L) => e.registerMutationListener(L, V, { skipInitialization: !1 })),
     e.hasNodes([Mt]) ? e.registerMutationListener(Mt, se, {
       skipInitialization: !1
     }) : () => {
@@ -23625,7 +23625,7 @@ function Hv() {
   }, E = n, P = E.implementation, te = E.createNodeIterator, O = E.createDocumentFragment, Y = E.getElementsByTagName, re = r.importNode;
   let be = Rb();
   t.isSupported = typeof Vv == "function" && typeof y == "function" && P && P.createHTMLDocument !== void 0;
-  const Le = eL, It = tL, He = nL, Lr = rL, Ht = iL, St = sL, Ce = oL, W = cL;
+  const Le = eL, It = tL, He = nL, Lr = rL, Ht = iL, St = sL, Ce = oL, V = cL;
   let se = Nb, oe = null;
   const Ge = Je({}, [...Eb, ...Vf, ...Wf, ...Hf, ...Mb]);
   let j = null;
@@ -23705,7 +23705,7 @@ function Hv() {
     "xmp"
   ]);
   let B = null;
-  const V = Je({}, ["audio", "video", "img", "source", "image", "track"]);
+  const W = Je({}, ["audio", "video", "img", "source", "image", "track"]);
   let ne = null;
   const $e = Je({}, ["alt", "class", "for", "id", "label", "name", "pattern", "placeholder", "role", "summary", "title", "value", "style", "xmlns"]), Pe = "http://www.w3.org/1998/Math/MathML", je = "http://www.w3.org/2000/svg", Be = "http://www.w3.org/1999/xhtml";
   let ft = Be, mt = !1, yt = null;
@@ -23733,9 +23733,9 @@ function Hv() {
     }), ne = Ai(k, "ADD_URI_SAFE_ATTR", $e, {
       transform: At,
       base: $e
-    }), B = Ai(k, "ADD_DATA_URI_TAGS", V, {
+    }), B = Ai(k, "ADD_DATA_URI_TAGS", W, {
       transform: At,
-      base: V
+      base: W
     }), Vn = Ai(k, "FORBID_CONTENTS", $, {
       transform: At
     }), Lt = Ai(k, "FORBID_TAGS", dn({}), {
@@ -24048,7 +24048,7 @@ function Hv() {
     }
     return !0;
   }, w0 = Je({}, ["annotation-xml", "color-profile", "font-face", "font-face-format", "font-face-name", "font-face-src", "font-face-uri", "missing-glyph"]), Nm = function(k) {
-    return !w0[ga(k)] && Gt(W, k);
+    return !w0[ga(k)] && Gt(V, k);
   }, N0 = function(k, N, G, ke) {
     if (U && typeof f == "object" && typeof f.getAttributeType == "function" && !G)
       switch (f.getAttributeType(k, N)) {
@@ -28500,8 +28500,8 @@ function em(e, t = () => !1, n = (r, i) => i) {
     }
     const l = s.map((u) => u.text);
     if (i && c !== i.noteKey && !hD.test(i.text) && !gD.test(a)) {
-      const u = s.findIndex((f) => f.noteKey !== i?.noteKey);
-      l.splice(u < 0 ? l.length : u, 0, " ");
+      const u = i.noteKey, f = s.findIndex((d) => d.noteKey !== u);
+      l.splice(f < 0 ? l.length : f, 0, " ");
     }
     r.push(...l, n(o, a)), s = [], i = { text: a, noteKey: c };
   }
@@ -30613,21 +30613,27 @@ function xB() {
   return H(() => e.registerCommand(Bp, () => !0, Tt), [e]), null;
 }
 function TB({
-  allowInvisibleCharacters: e
+  allowInvisibleCharacters: e,
+  copyLimit: t
 }) {
-  const [t] = _e();
+  const [n] = _e();
   return H(
-    () => _A(t, Tt, (n, r, i) => {
-      if (!i && Xh(t, r)) return;
-      const s = em(
-        n,
-        void 0,
-        yA(e)
-      );
-      if (s !== "")
-        return { ...nE(n), "text/plain": s };
-    }),
-    [t, e]
+    () => _A(
+      n,
+      Tt,
+      (r, i, s) => {
+        if (!s && Xh(n, i)) return;
+        const o = em(
+          r,
+          void 0,
+          yA(e)
+        );
+        if (o !== "")
+          return { ...nE(r), "text/plain": o };
+      },
+      t
+    ),
+    [n, e, t]
   ), null;
 }
 function CB({
@@ -34771,7 +34777,7 @@ const s0 = Wi(function({
     contextMenu: Ht,
     styleInfo: St,
     markerSettleDelayMs: Ce,
-    copyLimit: W
+    copyLimit: V
   } = c ?? GU, se = It ?? WU, oe = Ha(se) && (se.markerMode !== "hidden" || !se.hasSpacing || se.hasGutterParaMarkers || se.hasActiveTextFocusBox) ? {
     ...se,
     markerMode: "hidden",
@@ -34784,8 +34790,8 @@ const s0 = Wi(function({
     const $ = He ?? HU, { noteCallerOnClick: B } = $;
     return B ? {
       ...$,
-      noteCallerOnClick: (V, ne, $e, Pe, je, Be, ft) => B(
-        V,
+      noteCallerOnClick: (W, ne, $e, Pe, je, Be, ft) => B(
+        W,
         ne,
         $e,
         Pe,
@@ -34830,9 +34836,9 @@ const s0 = Wi(function({
         B,
         ct.extraValidMarkers
       ),
-      apply: (B, V) => {
+      apply: (B, W) => {
         const ne = xe.current;
-        ne && (V.trigger === "enter" ? ne.splitParagraphWithMarker(B.marker) : ne.applyMarkerMenuSelection(B, V));
+        ne && (W.trigger === "enter" ? ne.splitParagraphWithMarker(B.marker) : ne.applyMarkerMenuSelection(B, W));
       },
       commitTypedCloser: (B) => {
         xe.current?.commitTypedCloser(B);
@@ -34878,12 +34884,12 @@ const s0 = Wi(function({
         y.current
       );
       yt && (m.current = yt, b.current = !1);
-    }, V = vd($), ne = S.current;
-    if ((!V || V.size === 0) && !ne)
+    }, W = vd($), ne = S.current;
+    if ((!W || W.size === 0) && !ne)
       return B(), m.current;
     const $e = $.getEditorState(), Pe = x.current, je = {
       editorState: $e,
-      pendedKeys: V ? [...V].sort().join(",") : "",
+      pendedKeys: W ? [...W].sort().join(",") : "",
       transientInput: ne,
       caretKey: Pe?.key,
       caretOffset: Pe?.offset,
@@ -34894,7 +34900,7 @@ const s0 = Wi(function({
     const ft = $e.toJSON(), mt = $e.read(
       () => EF(
         ft,
-        V ?? /* @__PURE__ */ new Set(),
+        W ?? /* @__PURE__ */ new Set(),
         { viewOptions: j, getMarker: Lt, logger: L },
         ne,
         Pe,
@@ -34916,11 +34922,11 @@ const s0 = Wi(function({
     return ua(B) && B.cache.entries.clear(), B;
   }, [j, Lt, L, Te]), ti = Fe(
     ($) => {
-      const B = d.current, V = fn();
-      if (!(!B || !V))
-        return ua(V) ? $ : B.getEditorState().read(() => {
-          const ne = qk(V);
-          return ZF(V, ne, $);
+      const B = d.current, W = fn();
+      if (!(!B || !W))
+        return ua(W) ? $ : B.getEditorState().read(() => {
+          const ne = qk(W);
+          return ZF(W, ne, $);
         });
     },
     [fn]
@@ -34930,7 +34936,7 @@ const s0 = Wi(function({
   }), []);
   const Qs = Fe(
     ($, B) => $.read(() => {
-      const V = fn(), ne = V && lU(qk(V));
+      const W = fn(), ne = W && lU(qk(W));
       return !ne && _(M()) && L?.warn(
         `${B} refused: the selection could not be expressed against the document the host is reading`
       ), ne;
@@ -34939,10 +34945,10 @@ const s0 = Wi(function({
   ), wc = Fe(
     ($) => {
       if (!i) return;
-      const B = d.current, V = fn();
+      const B = d.current, W = fn();
       z.current += 1;
       const ne = z.current;
-      if (!B || !V || ua(V)) {
+      if (!B || !W || ua(W)) {
         i($);
         return;
       }
@@ -34954,7 +34960,7 @@ const s0 = Wi(function({
     },
     [i, fn, Qs]
   );
-  function Yo($, B, V) {
+  function Yo($, B, W) {
     if (J && B === "remote") {
       ei.current?.error(
         "Editor: ignoring a remote update in the block verse layout; reload the view with the new USJ instead."
@@ -34968,7 +34974,7 @@ const s0 = Wi(function({
     let je = !1;
     ne.update(
       () => {
-        _f(ne, B), B === "remote" && Ot(Gp), $e || Ot(fr), V && Ot(V);
+        _f(ne, B), B === "remote" && Ot(Gp), $e || Ot(fr), W && Ot(W);
         try {
           s$(VL($, j), j, ct, L);
         } catch (Be) {
@@ -35049,13 +35055,13 @@ const s0 = Wi(function({
     commitPendingMarkerEdits() {
       const $ = d.current;
       if (!$) return;
-      const B = !tt(), V = B ? yo($, fr) : void 0;
+      const B = !tt(), W = B ? yo($, fr) : void 0;
       $.update(
         () => {
           B && Ot(fr), $.dispatchCommand(p_, void 0);
         },
         { discrete: !0 }
-      ), V?.(), B && Bf($);
+      ), W?.(), B && Bf($);
     },
     setMarkerSettleSuspended($) {
       d.current?.dispatchCommand(g_, $);
@@ -35066,14 +35072,14 @@ const s0 = Wi(function({
         return;
       }
       const B = d.current?.getEditorState().read(() => {
-        const V = M();
-        return _(V) && V.isCollapsed() ? V.focus.key : void 0;
+        const W = M();
+        return _(W) && W.isCollapsed() ? W.focus.key : void 0;
       });
       S.current = { input: $, nodeKey: B ?? x.current?.key };
     },
     setUsj($, B) {
-      const V = dr(m.current, $) || dr(un(), $);
-      if (B?.force || !V) {
+      const W = dr(m.current, $) || dr(un(), $);
+      if (B?.force || !W) {
         m.current = $, y.current = $.version || Jn, b.current = !1, U.current = void 0, S.current = void 0;
         const ne = dr(ye, $);
         Ae($), ne && Ie(($e) => $e + 1);
@@ -35083,8 +35089,8 @@ const s0 = Wi(function({
       Yo($, B);
     },
     replaceEmbedUpdate($, B) {
-      const V = d.current?.read(() => NN($, B));
-      V ? this.applyUpdate(V) : l?.warn(
+      const W = d.current?.read(() => NN($, B));
+      W ? this.applyUpdate(W) : l?.warn(
         `replaceEmbedUpdate: no embed found for key "${$}" — update dropped (stale key after a setUsj reload?)`
       );
     },
@@ -35110,17 +35116,17 @@ const s0 = Wi(function({
         return;
       }
       d.current?.update(() => {
-        const V = YU(x.current, B, j) ?? Ga(B, j);
-        V !== void 0 && (Rt(V), (!at().isEditable() || Uk(V.anchor) && Uk(V.focus)) && d.current?.dispatchCommand(Fn, void 0));
+        const W = YU(x.current, B, j) ?? Ga(B, j);
+        W !== void 0 && (Rt(W), (!at().isEditable() || Uk(W.anchor) && Uk(W.focus)) && d.current?.dispatchCommand(Fn, void 0));
       });
     },
-    setAnnotation($, B, V, ne, $e) {
+    setAnnotation($, B, W, ne, $e) {
       let Pe, je, Be, ft;
       typeof ne == "function" || ne === void 0 ? (Pe = ne, je = $e) : (Pe = ne.onClick, je = ne.onRemove, Be = ne.onMouseEnter, ft = ne.onMouseLeave);
       const mt = ti($);
       if (!mt) {
         L?.warn(
-          `setAnnotation refused for ${B} "${V}": the range could not be resolved against the document currently being edited`
+          `setAnnotation refused for ${B} "${W}": the range could not be resolved against the document currently being edited`
         );
         return;
       }
@@ -35128,7 +35134,7 @@ const s0 = Wi(function({
       p.current?.setAnnotation(
         mt,
         Cf(B),
-        V,
+        W,
         Pe && ((qt, wt, Nt, mn) => Pe(qt, wt, Nt, yt(mn))),
         je && ((qt, wt, Nt, mn) => je(qt, wt, Nt, yt(mn))),
         Be && ((qt, wt, Nt, mn) => Be(qt, wt, Nt, yt(mn))),
@@ -35144,9 +35150,9 @@ const s0 = Wi(function({
     formatPara($) {
       pe("format a paragraph"), d.current?.update(
         () => {
-          const B = M(), V = yr(B);
-          if (V) {
-            gm(V, $, j);
+          const B = M(), W = yr(B);
+          if (W) {
+            gm(W, $, j);
             return;
           }
           if (!_(B)) {
@@ -35199,8 +35205,8 @@ const s0 = Wi(function({
       let B = !1;
       return d.current?.update(
         () => {
-          const V = M();
-          _(V) && (B = IA(V, $, j));
+          const W = M();
+          _(W) && (B = IA(W, $, j));
         },
         { discrete: !0 }
       ), B;
@@ -35208,25 +35214,25 @@ const s0 = Wi(function({
     replaceCharacterMarker($, B) {
       if (X) throw new Error("Cannot replace character marker in readonly mode");
       hn($), hn(B);
-      let V = !1;
+      let W = !1;
       return d.current?.update(
         () => {
           const ne = M();
-          _(ne) && (V = AK(ne, $, B));
+          _(ne) && (W = AK(ne, $, B));
         },
         { discrete: !0 }
-      ), V;
+      ), W;
     },
     extendCharacterMarker($, B) {
       if (X) throw new Error("Cannot extend character marker in readonly mode");
       hn($), B?.forEach(
         (ne) => hn(ne)
       );
-      let V = !1;
+      let W = !1;
       return d.current?.update(
         () => {
           const ne = M();
-          _(ne) && (V = BA(
+          _(ne) && (W = BA(
             ne,
             $,
             B,
@@ -35234,7 +35240,7 @@ const s0 = Wi(function({
           ));
         },
         { discrete: !0 }
-      ), V;
+      ), W;
     },
     insertMarker($) {
       if (X) throw new Error("Cannot insert marker in readonly mode");
@@ -35260,13 +35266,13 @@ const s0 = Wi(function({
         throw new Error("Cannot insert a chapter without a scripture reference (scrRef)");
       if (!d.current) return !1;
       const { chapterNum: B } = n;
-      let V = !1;
+      let W = !1;
       return d.current.update(
         () => {
-          V = um({ chapterNum: B, verseCount: $, viewOptions: j, styleInfo: St });
+          W = um({ chapterNum: B, verseCount: $, viewOptions: j, styleInfo: St });
         },
         { discrete: !0 }
-      ), V;
+      ), W;
     },
     getMarkerMenuContext() {
       if (P) return;
@@ -35282,16 +35288,16 @@ const s0 = Wi(function({
       if (!d.current) return;
       if ($.kind !== "closeTag" && !xp($.marker, ct.extraValidMarkers))
         throw new Error(`Unsupported marker '${$.marker}'`);
-      let V;
+      let W;
       return d.current.update(() => {
-        no(), V = kB($, B, n, {
+        no(), W = kB($, B, n, {
           expandedNoteKeyRef: C,
           viewOptions: j,
           nodeOptions: ct,
           logger: l,
           styleInfo: St
         });
-      }), V;
+      }), W;
     },
     splitParagraphWithMarker($) {
       if (P) throw new Error("Cannot split paragraph in readonly mode");
@@ -35302,12 +35308,12 @@ const s0 = Wi(function({
     commitTypedMarker($, B) {
       if (P) throw new Error("Cannot commit a typed marker in readonly mode");
       if (!d.current) return !1;
-      let V = !1;
+      let W = !1;
       return d.current.update(() => {
-        no(), V = yB($, B), V || l?.warn(
+        no(), W = yB($, B), W || l?.warn(
           "commitTypedMarker refused: requires a collapsed range selection (wrap a selection via applyMarkerMenuSelection instead)"
         );
-      }), V;
+      }), W;
     },
     commitTypedCloser($) {
       if (P) throw new Error("Cannot commit a typed closing marker in readonly mode");
@@ -35319,10 +35325,10 @@ const s0 = Wi(function({
         );
       }), B;
     },
-    insertNote($, B, V) {
+    insertNote($, B, W) {
       pe("insert a note");
-      const ne = V && ti(V);
-      if (V && !ne) {
+      const ne = W && ti(W);
+      if (W && !ne) {
         L?.warn(
           `insertNote refused for \\${$}: the position could not be resolved against the document currently being edited`
         );
@@ -35348,8 +35354,8 @@ const s0 = Wi(function({
     selectNote($) {
       const B = d.current;
       if (!B) return;
-      const V = fn();
-      if (typeof $ == "string" || !V || ua(V)) {
+      const W = fn();
+      if (typeof $ == "string" || !W || ua(W)) {
         B.update(() => {
           const Pe = Kr($);
           Pe && (el(Pe, j), Hc(Pe, C));
@@ -35367,15 +35373,15 @@ const s0 = Wi(function({
     selectAfterNote($) {
       const B = d.current;
       if (!B) return;
-      const V = !tt(), ne = V ? yo(B, fr) : void 0;
+      const W = !tt(), ne = W ? yo(B, fr) : void 0;
       if (B.update(
         () => {
-          V && Ot(fr);
+          W && Ot(fr);
           const $e = Kr($);
           $e && BC($e);
         },
         { discrete: !0 }
-      ), ne?.(), V) {
+      ), ne?.(), W) {
         Bf(B);
         const $e = yo(
           B,
@@ -35389,38 +35395,38 @@ const s0 = Wi(function({
         ), $e();
       }
     },
-    selectNoteTextOffset($, B, V) {
+    selectNoteTextOffset($, B, W) {
       d.current?.update(() => {
         const ne = Kr($);
         if (!ne) return;
-        const $e = V?.glyph;
-        (V?.field === "category" ? oO(ne, B, $e) || Ly(ne, 0) : Ly(ne, B, $e)) || el(ne, j), Hc(ne, C);
+        const $e = W?.glyph;
+        (W?.field === "category" ? oO(ne, B, $e) || Ly(ne, 0) : Ly(ne, B, $e)) || el(ne, j), Hc(ne, C);
       });
     },
     getNoteOps($) {
       const B = d.current;
       return B ? lo(B, () => {
-        const V = Kr($);
-        if (V)
-          return sa(Eu(V), j);
+        const W = Kr($);
+        if (W)
+          return sa(Eu(W), j);
       }) : void 0;
     },
     getOpsAfterNote($) {
       const B = d.current;
       return B ? lo(B, () => {
-        const V = Kr($);
-        return V ? sa(jk(V), j) : void 0;
+        const W = Kr($);
+        return W ? sa(jk(W), j) : void 0;
       }) : void 0;
     },
     takeOpsAfterNote($) {
-      const B = d.current, V = B ? lo(B, () => {
+      const B = d.current, W = B ? lo(B, () => {
         const je = Kr($);
         if (!je) return;
         const Be = jg(je, "apply"), ft = je.getNextSiblings().reduce((mt, yt) => mt + Ml(yt), 0);
         return { ops: jk(je), notePosition: Be, length: ft };
       }) : void 0;
-      if (!V) return;
-      const { ops: ne, notePosition: $e, length: Pe } = V;
+      if (!W) return;
+      const { ops: ne, notePosition: $e, length: Pe } = W;
       return ne.length === 0 || $e === void 0 ? ne : (Yo([{ retain: $e + 1 }, { delete: Pe }], "remote", wa), sa(ne, j));
     },
     getNoteIndex($) {
@@ -35442,18 +35448,18 @@ const s0 = Wi(function({
     const $ = d.current;
     if ($)
       return $.registerUpdateListener(({ editorState: B }) => {
-        const V = B.read(zk);
-        V && (x.current = V);
+        const W = B.read(zk);
+        W && (x.current = W);
       });
   }, []);
   const xi = ie({ onUsjChange: s, viewOptions: j, isBlockVerse: J, readSettledUsj: un });
   xi.current = { onUsjChange: s, viewOptions: j, isBlockVerse: J, readSettledUsj: un };
   const Ti = Fe(($, B) => {
-    const { editorState: V, dirtyElements: ne, dirtyLeaves: $e, tags: Pe } = $;
+    const { editorState: W, dirtyElements: ne, dirtyLeaves: $e, tags: Pe } = $;
     if (ne.size === 0 && $e.size === 0) return;
     if (Pe.has(fc)) {
       const Nt = xi.current, mn = !Nt.isBlockVerse && po.deserializeEditorState(
-        V,
+        W,
         Nt.viewOptions,
         y.current
       );
@@ -35467,15 +35473,15 @@ const s0 = Wi(function({
     }
     const je = xi.current;
     if (je.isBlockVerse) return;
-    Zx(B, V, Pe);
-    const Be = V.read(zk);
+    Zx(B, W, Pe);
+    const Be = W.read(zk);
     Be && (x.current = Be);
     const ft = r$($, {
       ignoreTags: Fk
-    }), mt = ft ? [] : new cs(V.read(() => i$(B, $))).chop().ops;
+    }), mt = ft ? [] : new cs(W.read(() => i$(B, $))).chop().ops;
     if (!ft) {
       const Nt = po.deserializeEditorState(
-        V,
+        W,
         je.viewOptions,
         y.current
       );
@@ -35488,13 +35494,13 @@ const s0 = Wi(function({
       je.onUsjChange(yt, void 0, "local", void 0);
       return;
     }
-    const qt = Ay(mt, V), wt = qt && !$.prevEditorState.read(() => Q(qt)) ? qt : void 0;
+    const qt = Ay(mt, W), wt = qt && !$.prevEditorState.read(() => Q(qt)) ? qt : void 0;
     je.onUsjChange(
       yt,
       sa(
         mt,
         je.viewOptions,
-        jL(() => Ld(V).ops)
+        jL(() => Ld(W).ops)
       ),
       "local",
       wt
@@ -35586,7 +35592,7 @@ const s0 = Wi(function({
           /* @__PURE__ */ I(Y$, {}),
           j?.markerMode !== "editable" && /* @__PURE__ */ I(X$, { logger: L }),
           /* @__PURE__ */ I(nR, { options: et }),
-          /* @__PURE__ */ I(qK, { limit: W, viewOptions: j }),
+          /* @__PURE__ */ I(qK, { limit: V, viewOptions: j }),
           /* @__PURE__ */ I(aR, {}),
           /* @__PURE__ */ I(gR, {}),
           /* @__PURE__ */ I(bR, {}),
@@ -35597,7 +35603,7 @@ const s0 = Wi(function({
             {
               isEnabled: j?.markerMode !== "editable",
               structureProtectionMode: te,
-              copyLimit: W,
+              copyLimit: V,
               onHiddenContentDelete: O,
               logger: L
             }
@@ -35605,7 +35611,8 @@ const s0 = Wi(function({
           j?.markerMode === "hidden" && /* @__PURE__ */ I(
             TB,
             {
-              allowInvisibleCharacters: j.allowInvisibleCharacters
+              allowInvisibleCharacters: j.allowInvisibleCharacters,
+              copyLimit: V
             }
           ),
           j?.markerMode === "hidden" && /* @__PURE__ */ I(CB, { structureProtectionMode: te }),
@@ -35617,10 +35624,10 @@ const s0 = Wi(function({
               logger: L,
               markerSettleDelayMs: Ce,
               structureProtectionMode: te,
-              copyLimit: W
+              copyLimit: V
             }
           ),
-          j?.markerMode === "visible" && /* @__PURE__ */ I(LK, { viewOptions: j, copyLimit: W }),
+          j?.markerMode === "visible" && /* @__PURE__ */ I(LK, { viewOptions: j, copyLimit: V }),
           /* @__PURE__ */ I(
             kF,
             {

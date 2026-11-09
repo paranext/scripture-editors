@@ -421,7 +421,8 @@ export function $selectionPlainText(
     ) {
       // The space goes where the note starts or ends, among the held text: after what still
       // belongs with the text before it.
-      const boundary = held.findIndex((part) => part.noteKey !== previous?.noteKey);
+      const previousNoteKey = previous.noteKey;
+      const boundary = held.findIndex((part) => part.noteKey !== previousNoteKey);
       pieces.splice(boundary < 0 ? pieces.length : boundary, 0, " ");
     }
     texts.push(...pieces, $spell(node, text));
