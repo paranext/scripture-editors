@@ -1,40 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { OutlineRect, OutlineSegment } from "./verseOutlineGeometry";
 import { outlinePathData } from "./verseOutlinePath";
-
-/** A box segment; the path only reads its rect. */
-function box(rect: OutlineRect): OutlineSegment {
-  return {
-    rect,
-    borders: { top: true, right: true, bottom: true, left: true },
-    corners: { topLeft: true, topRight: true, bottomRight: true, bottomLeft: true },
-  };
-}
-
-/** A step edge, which the path ignores. */
-function edge(left: number, right: number, y: number): OutlineSegment {
-  return {
-    rect: { left, right, top: y, bottom: y },
-    borders: { top: true, right: false, bottom: false, left: false },
-    corners: { topLeft: false, topRight: false, bottomRight: false, bottomLeft: false },
-  };
-}
 
 // A Z: verse 2 starts at x=50 on the first line and fills the second.
 const Z = [
-  box({ left: 50, right: 110, top: 20, bottom: 40 }),
-  box({ left: 10, right: 110, top: 40, bottom: 60 }),
-  edge(10, 50, 40),
+  { left: 50, right: 110, top: 20, bottom: 40 },
+  { left: 10, right: 110, top: 40, bottom: 60 },
 ];
 
 describe("outlinePathData", () => {
   it("draws nothing for no boxes", () => {
     expect(outlinePathData([], "outward", 4)).toBe("");
-    expect(outlinePathData([edge(10, 50, 40)], "outward", 4)).toBe("");
   });
 
   it("rounds all four corners of a single box, clockwise from its top right", () => {
-    expect(outlinePathData([box({ left: 10, right: 110, top: 20, bottom: 40 })], "ends", 4)).toBe(
+    expect(outlinePathData([{ left: 10, right: 110, top: 20, bottom: 40 }], "ends", 4)).toBe(
       "M106,20Q110,20 110,24L110,36Q110,40 106,40L14,40Q10,40 10,36L10,24Q10,20 14,20Z",
     );
   });
@@ -65,10 +44,8 @@ describe("outlinePathData", () => {
   it("draws boxes that don't overlap side to side as two shapes", () => {
     const d = outlinePathData(
       [
-        box({ left: 400, right: 480, top: 20, bottom: 40 }),
-        box({ left: 100, right: 160, top: 40, bottom: 60 }),
-        edge(400, 480, 40),
-        edge(100, 160, 40),
+        { left: 400, right: 480, top: 20, bottom: 40 },
+        { left: 100, right: 160, top: 40, bottom: 60 },
       ],
       "all",
       0,
@@ -77,7 +54,7 @@ describe("outlinePathData", () => {
   });
 
   it("rounds a short side's corners by no more than half its length", () => {
-    expect(outlinePathData([box({ left: 10, right: 110, top: 20, bottom: 23 })], "ends", 4)).toBe(
+    expect(outlinePathData([{ left: 10, right: 110, top: 20, bottom: 23 }], "ends", 4)).toBe(
       "M108.5,20Q110,20 110,21.5L110,21.5Q110,23 108.5,23L11.5,23Q10,23 10,21.5L10,21.5Q10,20 11.5,20Z",
     );
   });

@@ -1,10 +1,10 @@
 /**
- * Turns the boxes of a verse outline (from `computeVerseOutlineSegments`) into an SVG path: each
+ * Turns the boxes of a verse outline (from `computeVerseOutlineBoxes`) into an SVG path: each
  * stack of boxes that touch is traced as one closed shape, and its corners are rounded by the
  * chosen style. No DOM access.
  */
 
-import { OutlineRect, OutlineSegment } from "./verseOutlineGeometry";
+import { OutlineRect } from "./verseOutlineGeometry";
 
 /**
  * Which corners of the outline round:
@@ -21,15 +21,14 @@ type Point = [x: number, y: number];
 const SAME_POINT_PX = 0.01;
 
 /**
- * The SVG path data (`d`) for an outline's segments, or an empty string when there is nothing to
- * draw. The geometry's edge pieces are not needed: tracing the boxes draws the steps between them.
+ * The SVG path data (`d`) for an outline's boxes, top to bottom, or an empty string when there are
+ * none.
  */
 export function outlinePathData(
-  segments: readonly OutlineSegment[],
+  boxes: readonly OutlineRect[],
   cornerStyle: OutlineCornerStyle,
   radius: number,
 ): string {
-  const boxes = segments.map((segment) => segment.rect).filter((rect) => rect.bottom > rect.top);
   return touchingStacks(boxes)
     .map((stack) => shapePath(traceStack(stack), cornerStyle, radius))
     .join("");

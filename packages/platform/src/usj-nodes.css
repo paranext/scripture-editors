@@ -3012,30 +3012,10 @@ span.read img {
   --verse-text-start: -5vw;
 }
 
-/* ── Active verse outline ─────────────────────────────────────────────────────
-   ActiveTextPlugin draws the outline of the verse under the cursor as an SVG path in this overlay,
-   which it places just after the editor's root element. The overlay covers its container (Chromium
-   paints nothing for a zero-size one, overflow or not) and the path's own transform places it over
-   the text. It sits beside the root, so the plugin copies the root's --scripture-accent onto it. */
-.psc-verse-outline {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-  pointer-events: none;
-}
-
-.psc-verse-outline path {
-  fill: none;
-  stroke: var(--scripture-accent, #c4956a);
-}
-
 /* ── Active text focus box ────────────────────────────────────────────────────
    Applied via .psc-active-focus when viewOptions.hasActiveTextFocusBox is true.
-   Outlines the entire paragraph under the cursor where there is no verse to outline (see the
-   active verse outline above). When used alongside
+   Outlines the entire paragraph under the cursor where there is no verse to outline (ActiveTextPlugin
+   draws the verse's own outline). When used alongside
    .psc-gutter-markers the box also takes in the marker glyph (the rule below);
    --verse-text-start is a fallback start that no marker in this file wins today.
    Without the gutter class that variable defaults to 0px, so poetry alignment is

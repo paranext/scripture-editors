@@ -24,17 +24,12 @@ import {
   $isImmutableTypedTextNode,
   $isMarkerNode,
   $isParaLikeNode,
-  CategoryType,
-  getMarker,
   ParaLikeNode,
   ZWSP,
 } from "shared";
 import { $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-react";
-import {
-  computeVerseOutlineSegments,
-  OutlineRect,
-  VerseOutlineInput,
-} from "./verseOutlineGeometry";
+import { STRUCTURAL_MARKERS } from "./adaptors/verse-block.utils";
+import { computeVerseOutlineBoxes, OutlineRect, VerseOutlineInput } from "./verseOutlineGeometry";
 import { OutlineCornerStyle, outlinePathData } from "./verseOutlinePath";
 
 /** Outlines the whole paragraph, where there is no verse to outline (a heading, say). */
@@ -43,10 +38,12 @@ const ACTIVE_CLASS = "psc-active-text";
 export const VERSE_OUTLINE_CLASS = "psc-verse-outline";
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
-// How the active verse's outline is drawn.
+// How the active verse's outline is drawn, in the editor's own CSS px (any CSS `zoom` around it
+// scales them, as it does the whole-paragraph box's).
 /** How far (px) the outline's line stands off the text. */
 const OUTLINE_PADDING_PX = 2;
 const OUTLINE_STROKE_PX = 2.5;
+const OUTLINE_DEFAULT_COLOR = "#c4956a";
 const OUTLINE_CORNERS: OutlineCornerStyle = "outward";
 const OUTLINE_CORNER_RADIUS_PX = 4;
 /**
@@ -67,8 +64,8 @@ export const ACTIVE_EMPTY_CLASS = "psc-empty-text-active";
 /**
  * Plugin that outlines the verse under the cursor — across every line and paragraph it runs
  * through — and marks individual verses with no body content as empty. Where there is no verse to
- * outline (a heading, text before the first verse, a table) it outlines the whole paragraph
- * instead. No-op unless `viewOptions.hasActiveTextFocusBox` is true.
+ * outline (a heading, a paragraph with no verse marker before the chapter's first verse, an empty
+ * line, a table, a selected paragraph marker) it outlines the whole paragraph instead. No-op unless `viewOptions.hasActiveTextFocusBox` is true.
  */
 export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | undefined }): null {
   const [editor] = useLexicalComposerContext();
@@ -102,22 +99,25 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
         ? undefined
         : editor.getEditorState().read($getActiveVerseSections);
       const measurement = sections && measureVerseSections(editor, sections);
-      const segments =
+      // Measurements are in viewport px, which any CSS `zoom` around the editor has already scaled.
+      const zoom = host?.currentCSSZoom || 1;
+      const strokeWidth = OUTLINE_STROKE_PX * zoom;
+      const boxes =
         measurement &&
-        computeVerseOutlineSegments({
+        computeVerseOutlineBoxes({
           ...measurement,
           // The line is drawn centred on the outline, so it stops half its width short of the next
           // verse number to stay off it.
           following: measurement.following && {
             ...measurement.following,
-            left: measurement.following.left - OUTLINE_STROKE_PX / 2,
-            right: measurement.following.right + OUTLINE_STROKE_PX / 2,
+            left: measurement.following.left - strokeWidth / 2,
+            right: measurement.following.right + strokeWidth / 2,
           },
           hugLines: measurement.hugLines || OUTLINE_HUGS_LINES,
-          padding: OUTLINE_PADDING_PX,
+          padding: OUTLINE_PADDING_PX * zoom,
         });
-      const d = segments
-        ? outlinePathData(segments, OUTLINE_CORNERS, OUTLINE_CORNER_RADIUS_PX)
+      const d = boxes
+        ? outlinePathData(boxes, OUTLINE_CORNERS, OUTLINE_CORNER_RADIUS_PX * zoom)
         : "";
       if (!d || !root || !host || !overlay || !outlinePath) {
         overlay?.style.setProperty("display", "none");
@@ -126,8 +126,8 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
       // From the viewport's coordinates to the overlay's: its host's padding box, which scrolls with
       // the text, in the host's own (unzoomed) CSS px.
       const origin = host.getBoundingClientRect();
-      const zoom = host.currentCSSZoom || 1;
       outlinePath.setAttribute("d", d);
+      outlinePath.setAttribute("stroke-width", String(strokeWidth));
       outlinePath.setAttribute(
         "transform",
         `translate(${host.scrollLeft - host.clientLeft} ${host.scrollTop - host.clientTop}) ` +
@@ -153,13 +153,19 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
       if (paraKey !== activeKeyRef.current) setActivePara(paraKey);
     }
 
-    // A resize rewraps the text, so the outline is measured again.
+    // A resize rewraps the text, so the outline is measured again. So do a change of the root's
+    // direction or styling and a web font arriving, none of which need resize the root.
     const resizeObserver =
       typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(showActiveText);
+    const rootObserver = new MutationObserver(showActiveText);
+    let fonts: FontFaceSet | undefined;
 
     const unsubscribers = [
       editor.registerRootListener((root, previousRoot) => {
         if (previousRoot) resizeObserver?.unobserve(previousRoot);
+        rootObserver.disconnect();
+        fonts?.removeEventListener("loadingdone", showActiveText);
+        fonts = undefined;
         overlay?.remove();
         overlay = undefined;
         outlinePath = undefined;
@@ -167,15 +173,25 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
         overlay = root.ownerDocument.createElementNS(SVG_NAMESPACE, "svg");
         overlay.classList.add(VERSE_OUTLINE_CLASS);
         overlay.setAttribute("aria-hidden", "true");
-        overlay.style.setProperty("display", "none");
+        // Inline, as hosts that keep their own copy of this package's stylesheets wouldn't have these
+        // rules. It covers its container (Chromium paints nothing for a zero-size svg, overflow or
+        // not); the path's own transform places it over the text.
+        overlay.style.cssText =
+          "display:none;position:absolute;top:0;left:0;width:100%;height:100%;" +
+          "overflow:visible;pointer-events:none";
         outlinePath = root.ownerDocument.createElementNS(SVG_NAMESPACE, "path");
-        outlinePath.setAttribute("stroke-width", String(OUTLINE_STROKE_PX));
+        outlinePath.style.cssText = `fill:none;stroke:var(--scripture-accent, ${OUTLINE_DEFAULT_COLOR})`;
         overlay.append(outlinePath);
         root.after(overlay);
         resizeObserver?.observe(root);
+        rootObserver.observe(root, { attributeFilter: ["class", "dir", "style"] });
+        fonts = root.ownerDocument.fonts;
+        fonts?.addEventListener("loadingdone", showActiveText);
       }),
       () => {
         resizeObserver?.disconnect();
+        rootObserver.disconnect();
+        fonts?.removeEventListener("loadingdone", showActiveText);
         overlay?.remove();
       },
       // Clicking the ellipsis placeholder (rendered as ::after on the empty verse span) hits the
@@ -358,18 +374,12 @@ export function $getActiveVerseSection(): VerseSection | undefined {
   };
 }
 
-/** Paragraph categories that hold running text, so a verse carries on through them. */
-const RUNNING_TEXT_CATEGORIES = new Set([
-  CategoryType.Paragraphs,
-  CategoryType.Poetry,
-  CategoryType.Lists,
-]);
-
-/** Whether `node` is a paragraph of running text (`\p`, `\q2`, `\li`…), not a heading or title. */
+/**
+ * Whether a verse carries on through `node`: any paragraph but a heading or title (`\s`, `\qa`…),
+ * where the verse blocks end a verse too.
+ */
 function $isRunningTextPara(node: LexicalNode | null | undefined): node is ParaLikeNode {
-  if (!$isParaLikeNode(node)) return false;
-  const category = getMarker(node.getMarker())?.category;
-  return category !== undefined && RUNNING_TEXT_CATEGORIES.has(category);
+  return $isParaLikeNode(node) && !STRUCTURAL_MARKERS.has(node.getMarker());
 }
 
 /**
@@ -381,13 +391,17 @@ function $isRunningTextPara(node: LexicalNode | null | undefined): node is ParaL
  * but whitespace (a stanza break) is left out.
  *
  * Elsewhere it is just {@link $getActiveVerseSection}'s section: in a heading, in text before the
- * chapter's first verse, or in a verse that ends in its own paragraph. Undefined where that is.
+ * chapter's first verse, on an empty line (which has nothing of the verse to show, so the caret's
+ * own line isn't left unmarked), or in a verse that ends in its own paragraph. Undefined where that
+ * is, and while a paragraph's marker is selected: that acts on the paragraph, not on a verse.
  *
  * Read-only, like {@link $getActiveVerseSection}.
  */
 export function $getActiveVerseSections(): VerseSection[] | undefined {
+  if ($getSelectedParaMarkerPara($getSelection())) return undefined;
   const section = $getActiveVerseSection();
   if (!section) return undefined;
+  if (!section.verseKey && !section.startKey) return [section];
   const para = $getNodeByKey(section.paraKey);
   const sections = [section];
   if (!$isParaLikeNode(para)) return sections;

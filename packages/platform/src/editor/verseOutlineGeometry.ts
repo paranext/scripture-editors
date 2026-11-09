@@ -1,7 +1,7 @@
 /**
  * Pure geometry for the active verse outline: turns the client rects of the active verse section's
- * text (from `Range.getClientRects()`, see `measureVerseSection`) into the boxes and edges that
- * together outline just that section. No DOM access, so every case can be unit tested with plain
+ * text (from `Range.getClientRects()`, see `measureVerseSection`) into the boxes that together
+ * outline just that section. No DOM access, so every case can be unit tested with plain
  * numbers.
  *
  * Working from the text's own line boxes, rather than from where the verse markers sit, is what
@@ -9,7 +9,7 @@
  * markers, a "Z" that starts mid-line, one that also ends mid-line, hanging and first-line indents,
  * and RTL — without guessing lines from marker boxes, which are shorter than the line they sit on.
  *
- * All rects are in the same coordinate space (e.g. viewport pixels). Sides and corners are physical.
+ * All rects are in the same coordinate space (e.g. viewport pixels). Sides are physical.
  */
 
 export interface OutlineRect {
@@ -17,31 +17,6 @@ export interface OutlineRect {
   right: number;
   top: number;
   bottom: number;
-}
-
-export interface OutlineSides {
-  top: boolean;
-  right: boolean;
-  bottom: boolean;
-  left: boolean;
-}
-
-export interface OutlineCorners {
-  topLeft: boolean;
-  topRight: boolean;
-  bottomRight: boolean;
-  bottomLeft: boolean;
-}
-
-/**
- * One piece of the outline: a rect, which of its sides draw a border, and which corners round. A
- * piece with zero height is a horizontal edge — the step where one line of the section is wider
- * than the next — and draws only its top border.
- */
-export interface OutlineSegment {
-  rect: OutlineRect;
-  borders: OutlineSides;
-  corners: OutlineCorners;
 }
 
 export interface VerseOutlineInput {
@@ -76,23 +51,20 @@ const SAME_EDGE_PX = 0.5;
 
 /**
  * Computes the outline for a verse section from its text's client rects: one box per run of lines
- * that share their left and right edges, plus an edge piece wherever two runs' widths differ. It
+ * that share their left and right edges, top to bottom, for `outlinePathData` to trace. The outline
  * starts where the section's text starts and ends where it ends, so it never takes in blank space
- * after the text, and (unless hugging) its sides run straight down between the two. The result is
- * a closed outline; only its four outermost corners round. A short section that wraps
- * without its two lines overlapping (it starts late on one line and ends early on the next) comes
- * out as two closed pieces that meet at no more than a corner, with square corners where they do.
+ * after the text, and (unless hugging) its sides run straight down between the two.
  *
- * Returns no segments when there is no visible text to outline (no rects with width and height).
+ * Returns no boxes when there is no visible text to outline (no rects with width and height).
  */
-export function computeVerseOutlineSegments({
+export function computeVerseOutlineBoxes({
   rects,
   contentBox,
   following,
   direction = "ltr",
   hugLines = false,
   padding = 0,
-}: VerseOutlineInput): OutlineSegment[] {
+}: VerseOutlineInput): OutlineRect[] {
   const lines = groupRectsIntoLines(rects);
   if (lines.length === 0) return [];
 
@@ -138,7 +110,7 @@ export function computeVerseOutlineSegments({
   ys.push(lines[last].bottom + padding);
 
   // Runs of consecutive lines with the same edges become one box.
-  const runs: { left: number; right: number; top: number; bottom: number }[] = [];
+  const runs: OutlineRect[] = [];
   spans.forEach((span, i) => {
     const run = runs.at(-1);
     if (run && sameEdge(run.left, span.left) && sameEdge(run.right, span.right)) {
@@ -147,29 +119,7 @@ export function computeVerseOutlineSegments({
       runs.push({ ...span, top: ys[i], bottom: ys[i + 1] });
     }
   });
-
-  const segments: OutlineSegment[] = [];
-  runs.forEach((run, i) => {
-    const isFirst = i === 0;
-    const isLast = i === runs.length - 1;
-    segments.push({
-      rect: { ...run },
-      borders: { top: isFirst, right: true, bottom: isLast, left: true },
-      corners: { topLeft: isFirst, topRight: isFirst, bottomRight: isLast, bottomLeft: isLast },
-    });
-    if (isFirst) return;
-    // Between two runs, the edge is drawn where one is wider than the other: the parts of each
-    // run's span the other doesn't cover — both whole spans when the runs don't overlap.
-    const above = runs[i - 1];
-    for (const [left, right] of uncoveredIntervals(above, run)) {
-      segments.push({
-        rect: { left, right, top: run.top, bottom: run.top },
-        borders: { top: true, right: false, bottom: false, left: false },
-        corners: { topLeft: false, topRight: false, bottomRight: false, bottomLeft: false },
-      });
-    }
-  });
-  return segments;
+  return runs;
 }
 
 /**
@@ -214,23 +164,4 @@ function isOnLine(rect: OutlineRect, line: OutlineRect): boolean {
 
 function sameEdge(a: number, b: number): boolean {
   return Math.abs(a - b) < SAME_EDGE_PX;
-}
-
-/** The symmetric difference of two spans: the stretches only one of them covers. */
-function uncoveredIntervals(
-  a: { left: number; right: number },
-  b: { left: number; right: number },
-): [number, number][] {
-  if (a.right <= b.left || b.right <= a.left) {
-    return [
-      [a.left, a.right],
-      [b.left, b.right],
-    ];
-  }
-  const intervals: [number, number][] = [];
-  if (!sameEdge(a.left, b.left))
-    intervals.push([Math.min(a.left, b.left), Math.max(a.left, b.left)]);
-  if (!sameEdge(a.right, b.right))
-    intervals.push([Math.min(a.right, b.right), Math.max(a.right, b.right)]);
-  return intervals;
 }

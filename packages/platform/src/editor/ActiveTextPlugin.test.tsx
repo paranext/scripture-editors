@@ -952,6 +952,83 @@ describe("$getActiveVerseSections", () => {
     });
   });
 
+  it("stops at an acrostic heading, though the marker data files it under poetry", () => {
+    let k!: { [name: string]: string };
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      const v8 = $verseFor("gutter-hidden", "8");
+      const keep = $createTextNode("I will keep");
+      const q1 = $para("q1", v8, keep);
+      $getRoot().append(q1, $para("qa", $createTextNode("Beth")));
+      k = { q1: q1.getKey(), v8: v8.getKey() };
+      keep.select(1, 1);
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toEqual([
+        { paraKey: k.q1, verseKey: k.v8, nextVerseKey: undefined, startKey: k.v8 },
+      ]);
+    });
+  });
+
+  it("carries a verse through a page break, as the verse blocks do", () => {
+    let k!: { [name: string]: string };
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      const v1 = $verseFor("gutter-hidden", "1");
+      const one = $createTextNode("one");
+      const more = $createTextNode("more");
+      const p1 = $para("p", v1, one);
+      const p2 = $para("p", more);
+      $getRoot().append(p1, $para("pb"), p2);
+      k = { p1: p1.getKey(), v1: v1.getKey(), p2: p2.getKey(), more: more.getKey() };
+      one.select(1, 1);
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toEqual([
+        { paraKey: k.p1, verseKey: k.v1, nextVerseKey: undefined, startKey: k.v1 },
+        { paraKey: k.p2, verseKey: undefined, nextVerseKey: undefined, startKey: k.more },
+      ]);
+    });
+  });
+
+  it("leaves an empty line with the caret on it to itself, not to the verse it carries on", () => {
+    let breakKey!: string;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      const empty = $para("b");
+      $getRoot().append(
+        $para("q1", $verseFor("gutter-hidden", "1"), $createTextNode("Blessed,")),
+        empty,
+        $para("q1", $verseFor("gutter-hidden", "2"), $createTextNode("But")),
+      );
+      breakKey = empty.getKey();
+      empty.selectEnd();
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toEqual([
+        { paraKey: breakKey, verseKey: undefined, nextVerseKey: undefined, startKey: undefined },
+      ]);
+    });
+  });
+
+  it("has no sections while a paragraph's marker is selected", () => {
+    let glyph!: ImmutableTypedTextNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      glyph = $createGutterMarkerNode(`\\q2${NBSP}`);
+      $getRoot().append(
+        $para("q1", $verseFor("gutter-hidden", "1"), $createTextNode("Blessed,")),
+        $createParaNode("q2").append(glyph, $createTextNode("nor stand,")),
+      );
+    });
+
+    registerParaMarkerSelectionOwner(editor);
+    editor.update(() => $selectParaMarker(glyph), { discrete: true });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseSections()).toBeUndefined();
+    });
+  });
+
   it("carries a verse across a stanza break, which adds nothing of its own", () => {
     let k!: { [name: string]: string };
     const { editor } = createBasicTestEnvironment(nodes, () => {
@@ -1843,6 +1920,46 @@ describe("ActiveTextPlugin verse outline", () => {
       editor.dispatchCommand(FOCUS_COMMAND, new FocusEvent("focus"));
     });
     expect(overlay.style.display).toBe("");
+  });
+
+  it("styles the overlay inline, so a host with its own stylesheets still shows it", async () => {
+    const { overlay } = await setUp("one");
+
+    expect(overlay.style.position).toBe("absolute");
+    expect(overlay.style.pointerEvents).toBe("none");
+    expect(overlay.querySelector("path")?.style.fill).toBe("none");
+    expect(overlay.querySelector("path")?.style.stroke).toContain("--scripture-accent");
+  });
+
+  it("scales the line and its offset with CSS zoom around the editor", async () => {
+    const { editor, para, overlay } = await setUp("one");
+    Object.defineProperty(overlay.parentElement, "currentCSSZoom", { value: 2 });
+
+    await act(async () => {
+      editor.update(() => para.getChildAtIndex<TextNode>(1)?.select(2, 2));
+    });
+
+    const path = overlay.querySelector("path");
+    expect(path?.getAttribute("stroke-width")).toBe("5");
+    // Text from x 110, standing off it by twice the padding.
+    expect(path?.getAttribute("d")).toContain("106,");
+  });
+
+  it("measures again when the root's direction changes with no editor update", async () => {
+    const { editor, overlay } = await setUp("one");
+    const before = overlay.querySelector("path")?.getAttribute("d");
+    Range.prototype.getClientRects = function (this: Range) {
+      const rects =
+        this.startContainer.nodeType === Node.TEXT_NODE ? [] : [new DOMRect(150, 24, 100, 16)];
+      return rects as unknown as DOMRectList;
+    };
+
+    await act(async () => {
+      editor.getRootElement()?.setAttribute("dir", "rtl");
+      await Promise.resolve();
+    });
+
+    expect(overlay.querySelector("path")?.getAttribute("d")).not.toBe(before);
   });
 
   it("leaves a paragraph box, not an outline, where there is no layout to measure", async () => {

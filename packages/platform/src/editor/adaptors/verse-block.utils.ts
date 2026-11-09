@@ -53,7 +53,7 @@ const SEMANTIC_DIVISION_MARKER = /^sd\d*$/;
  * verse below. Core's `sliceUsjToVerse` hand-lists its boundary markers and does not include `sd*`
  * either, so both paths end a verse in the same place.
  */
-const STRUCTURAL_MARKERS = new Set([
+export const STRUCTURAL_MARKERS = new Set([
   ...Object.entries(usfmMarkers)
     .filter(
       ([name, marker]) =>
