@@ -31902,9 +31902,9 @@ function Ex(e, t, n, r) {
     r ? c : void 0
   );
 }
-const Au = /\r\n|[\n\r\u2028\u2029]/;
+const Au = /\r\n|[\n\r]/;
 function GU(e) {
-  return e.replace(/\r\n|[\r\u2028\u2029]/g, `
+  return e.replace(/\r\n?/g, `
 `);
 }
 function JU(e) {
