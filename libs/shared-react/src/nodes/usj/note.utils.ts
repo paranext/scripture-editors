@@ -336,6 +336,7 @@ export function $insertNoteWithSelect(
   // displayed bytes gives, and what a mid-content caret already produced.
   const closingGlyph = $closingGlyphAfterCaret(selection);
   if (closingGlyph) {
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- $closingGlyphAfterCaret returns a closer's head (never a continuation): the note goes in front of all of it
     closingGlyph.insertBefore(noteNode);
     noteNode.selectNext(0, 0); // caret past the note, where `insertNodes` leaves it
   } else {

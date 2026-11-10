@@ -223,6 +223,7 @@ function $runDestroyedSinceLastCommit(
  * own deletion policy stay in one place. */
 function $clearRun(pieces: ScannedRun): void {
   for (const piece of [pieces.opener, pieces.value, pieces.closer])
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- removes every piece of each run glyph and value
     if (piece) $pieces(piece).forEach((part) => part.remove());
 }
 
@@ -290,6 +291,7 @@ function $writeRun(
       value = $setLogicalText(value, expected.valueText);
   } else {
     value = $createValueNode(expected.valueText);
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the opener's last piece: the value goes after all of it
     $lastPiece(opener).insertAfter(value);
   }
   // A closer-less kind never builds a trailing glyph; its wrapper bounds the value instead.

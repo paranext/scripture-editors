@@ -3,7 +3,8 @@
  * The `scripture-editors/no-raw-carrier-accessors` lint rule (`tools/lint-rules/`): it needs the
  * receiver's type to tell a carrier an annotation can cut from any other text, so these cases are
  * linted with the TypeScript project service, as the repo's lint runs it. The classes are declared
- * in each case so the rule sees exactly the hierarchy named here.
+ * in each case so the rule sees exactly the hierarchy named here; each carries a field of its own,
+ * as the real classes do, so a type guard narrows to it.
  */
 // The rule lives with the repo's lint config, outside every project, and runs in this project's
 // tests so `nx affected -t test` covers it.
@@ -30,13 +31,21 @@ const tester = new RuleTester({
 const CLASSES = `
 class TextNode {
   getTextContent(): string { return ""; }
+  getTextContentSize(): number { return 0; }
   setTextContent(text: string): this { return this; }
   getNextSibling(): TextNode | null { return null; }
+  getPreviousSibling(): TextNode | null { return null; }
   getIndexWithinParent(): number { return 0; }
+  insertAfter(node: TextNode): TextNode { return node; }
+  selectEnd(): void {}
+  remove(): void {}
 }
-class MarkerNode extends TextNode {}
-class TokenGlyph extends MarkerNode {}
-class Caller extends TextNode {}
+class MarkerNode extends TextNode { __marker = ""; }
+class VerseNode extends TextNode { __number = ""; }
+class ImmutableUnmatchedNode extends TextNode { __closer = ""; }
+class TokenGlyph extends MarkerNode { __token = true; }
+class Caller extends TextNode { __caller = ""; }
+declare function $isMarkerNode(node: TextNode | null): node is MarkerNode;
 `;
 
 tester.run("no-raw-carrier-accessors", noRawCarrierAccessors, {
@@ -57,6 +66,38 @@ tester.run("no-raw-carrier-accessors", noRawCarrierAccessors, {
     },
     {
       code: `${CLASSES} export const write = (marker: MarkerNode) => marker.setTextContent("x");`,
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: `${CLASSES} export const size = (verse: VerseNode) => verse.getTextContentSize();`,
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: `${CLASSES} export const before = (closer: ImmutableUnmatchedNode) => closer.getPreviousSibling();`,
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: `${CLASSES} export const read = (marker: MarkerNode | null) => marker?.getTextContent();`,
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: `${CLASSES} export const read = (node: TextNode) => $isMarkerNode(node) ? node.getTextContent() : "";`,
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: `${CLASSES} export const read = (marker: MarkerNode & { tag: 1 }) => marker.getIndexWithinParent();`,
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: `${CLASSES} export const put = (marker: MarkerNode, text: TextNode) => marker.insertAfter(text);`,
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: `${CLASSES} export const caret = (verse: VerseNode) => verse.selectEnd();`,
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: `${CLASSES} export const drop = (marker: MarkerNode) => marker.remove();`,
       errors: [{ messageId: "raw" }],
     },
   ],

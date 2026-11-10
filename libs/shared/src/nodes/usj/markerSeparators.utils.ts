@@ -314,6 +314,7 @@ export function $syncOpenerSeparators(char: CharNode): void {
       return;
     }
     if (gap === "spacer") {
+      // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the opener's last piece: the spacer goes after all of it
       $lastPiece(child).insertAfter($createTextNode(NBSP));
       return;
     }
@@ -396,6 +397,7 @@ export function $moveGlyphTailBehindSeparator(opener: MarkerNode): boolean {
 export function $insertOwedOpenerSpacer(opener: MarkerNode, char: CharNode): void {
   if (!$isTypedMarkNode($logicalNextSibling(opener))) return;
   if ($openerSeparatorGap(opener, char) === "spacer")
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the opener's last piece: the spacer goes after all of it
     $lastPiece(opener).insertAfter($createTextNode(NBSP));
 }
 

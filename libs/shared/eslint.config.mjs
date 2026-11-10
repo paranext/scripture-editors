@@ -1,7 +1,8 @@
-import baseConfig from "../../eslint.config.mjs";
+import baseConfig, { noRawCarrierAccessorsConfig } from "../../eslint.config.mjs";
 
 export default [
   ...baseConfig,
+  noRawCarrierAccessorsConfig,
   {
     files: ["**/*.json"],
     rules: {

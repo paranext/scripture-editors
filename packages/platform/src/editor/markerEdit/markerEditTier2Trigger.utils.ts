@@ -175,6 +175,7 @@ function $movePushedNameIntoGlyph(node: TextNode, span: CharNode): boolean {
   if (!BYTES_READ_WITH_MARKER_REGEX.test(name) || text[anchor.offset] !== NBSP) return false;
   const glyphText = $logicalText(glyph) + name;
   node.setTextContent(text.slice(name.length));
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- $setLogicalText returns the glyph joined into one node, so its logical end is a point in it; the piece transform moves the caret with its bytes when it cuts the glyph again
   $setLogicalText(glyph, glyphText).select(glyphText.length, glyphText.length);
   return true;
 }

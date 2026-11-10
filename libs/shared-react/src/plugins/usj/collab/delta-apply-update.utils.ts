@@ -2248,6 +2248,7 @@ function $appendSpanContent(span: CharNode, nodes: LexicalNode[]): void {
       closer.getTextType() === "marker" &&
       closer.getTextContent() ===
         closingMarkerText(span.getMarker(), $isCharNode(span.getParent())));
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- closer is the closer's head ($pieceHead): the content goes in front of all of it
   if (isCloser) nodes.forEach((node) => closer.insertBefore(node));
   else span.append(...nodes);
 }

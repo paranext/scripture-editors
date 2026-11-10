@@ -57,6 +57,7 @@ export function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   // caret-host question, which would otherwise answer with the NEXT verse's marker.
   const opening = para.getChildAtIndex(contentStart);
   if (!opening || $isSomeVerseNode(opening)) {
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- marker is the verse's last piece: its end is the whole verse's end
     if ($isTextNode(marker)) marker.selectEnd();
     else $placeCaretAtBoundary(para, contentStart);
     return;
@@ -70,6 +71,7 @@ export function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
 
   // Content the caret must stay in front of, with nothing at the boundary able to carry a point.
   if ($isTextNode(marker)) {
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- marker is the verse's last piece: its end is the whole verse's end
     marker.selectEnd();
     return;
   }
