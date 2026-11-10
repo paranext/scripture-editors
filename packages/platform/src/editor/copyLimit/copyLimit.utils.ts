@@ -24,6 +24,7 @@ import {
   $isSomeChapterNode,
   $pieceHead,
   $pieces,
+  $shouldIgnoreNodeForContentIndexes,
 } from "shared";
 import { $isImmutableNoteCallerNode, $isOpaqueBlockNode, $isSomeVerseNode } from "shared-react";
 
@@ -394,6 +395,101 @@ export function $selectionShownText(
   selection: RangeSelection,
   $isHidden: (node: LexicalNode) => boolean,
 ): string {
+  return $selectionShownParts(selection, $isHidden)
+    .map(({ text }) => text)
+    .join("");
+}
+
+/**
+ * The selection's text as plain prose for the clipboard in a hidden-marker view:
+ * {@link $selectionShownText} without the bytes the view shows only for layout, which never reach
+ * the file: the NBSP spacers a collapsed note's caller and runs are laid out with, and an empty char
+ * span's placeholder (see {@link $isLayoutText}). Copying those spacers made
+ * `Yahweh’s<NBSP>1:2 <NBSP>“Yahweh”…Name.<NBSP> law.`, which read as doubled spaces once pasted as
+ * plain text. Instead, one ordinary space separates a note's text from the text before and after
+ * it, where neither side already has whitespace (`Yahweh’s 1:2 “Yahweh”…Name. law.`); a note that
+ * contributes no text adds none. Within a note, its runs follow each other as the file has them
+ * (`\xt Gen 1:1\xt*, \xt Exo 2:3\xt*` copies as `Gen 1:1, Exo 2:3`). An NBSP the text itself
+ * holds is kept, or written as `$spell` spells the text of the node that shows it (a stored no-break
+ * space as `~`, say); spacing is decided on the text as shown, so a respelled NBSP still counts as
+ * the whitespace it is. Text that displays as nothing (a lone direction mark) stays on its own side
+ * of the space a note's edge adds.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+export function $selectionPlainText(
+  selection: RangeSelection,
+  $isHidden: (node: LexicalNode) => boolean = () => false,
+  $spell: (node: LexicalNode, text: string) => string = (_node, text) => text,
+): string {
+  const texts: string[] = [];
+  let previous: { text: string; noteKey: NodeKey | undefined } | undefined;
+  // Text that displays as nothing (a lone direction mark, say) decides no spacing, so it is held
+  // back until the next visible text is weighed against what came before it.
+  let held: { text: string; noteKey: NodeKey | undefined }[] = [];
+  for (const { node, text } of $selectionShownParts(selection, $isHidden)) {
+    if (text === "" || $isLayoutText(node)) continue;
+    const noteKey = $findMatchingParent(node, $isNoteNode)?.getKey();
+    if (INVISIBLE_ONLY.test(text)) {
+      held.push({ text: $spell(node, text), noteKey });
+      continue;
+    }
+    const pieces = held.map((part) => part.text);
+    if (
+      previous &&
+      noteKey !== previous.noteKey &&
+      !TRAILING_SPACE.test(previous.text) &&
+      !LEADING_SPACE.test(text)
+    ) {
+      // The space goes where the note starts or ends, among the held text: after what still
+      // belongs with the text before it.
+      const previousNoteKey = previous.noteKey;
+      const boundary = held.findIndex((part) => part.noteKey !== previousNoteKey);
+      pieces.splice(boundary < 0 ? pieces.length : boundary, 0, " ");
+    }
+    texts.push(...pieces, $spell(node, text));
+    held = [];
+    previous = { text, noteKey };
+  }
+  texts.push(...held.map((part) => part.text));
+  return texts.join("");
+}
+
+// Whitespace, past any default-ignorable characters (a zero-width space or no-break space, a
+// direction mark): those display as nothing, so they neither stand in for a space nor hide one.
+// U+FEFF is one of them, though `\s` counts it.
+const LEADING_SPACE = /^\p{Default_Ignorable_Code_Point}*[^\S\uFEFF]/u;
+const TRAILING_SPACE = /[^\S\uFEFF]\p{Default_Ignorable_Code_Point}*$/u;
+const INVISIBLE_ONLY = /^\p{Default_Ignorable_Code_Point}+$/u;
+
+/**
+ * Whether `node` is text a hidden-marker view shows only for layout, which stands for nothing in
+ * the file (`$shouldIgnoreNodeForContentIndexes`): an engine-owned NBSP spacer (a collapsed note
+ * lays one out after its caller and after each run), or a lone NBSP that is no author's `~`, such
+ * as the placeholder an empty char span holds. Only text: a gutter glyph is a decorator, and is
+ * copied.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+export function $isLayoutText(node: LexicalNode): boolean {
+  return $isTextNode(node) && $shouldIgnoreNodeForContentIndexes(node);
+}
+
+/** One piece of {@link $selectionShownText}: a node's selected text, or a line break between
+ * blocks. */
+interface ShownPart {
+  node: LexicalNode;
+  text: string;
+}
+
+/**
+ * The pieces of {@link $selectionShownText} in order, each with the node it came from: built the
+ * same way as `RangeSelection.getTextContent()`, without the text of nodes `$isHidden` picks.
+ */
+function $selectionShownParts(
+  selection: RangeSelection,
+  $isHidden: (node: LexicalNode) => boolean,
+): ShownPart[] {
   const nodes = selection.getNodes();
   const lastIndex = nodes.length - 1;
   const [startPoint, endPoint] = selection.isBackward()
@@ -404,32 +500,35 @@ export function $selectionShownText(
     startPoint.type === "element" &&
     endPoint.type === "element" &&
     startPoint.offset !== endPoint.offset;
-  let text = "";
+  const parts: ShownPart[] = [];
   let prevWasElement = true;
   nodes.forEach((node, i) => {
     if ($isHidden(node)) return;
     if ($isElementNode(node) && !node.isInline()) {
-      if (!prevWasElement) text += "\n";
+      if (!prevWasElement) parts.push({ node, text: "\n" });
       prevWasElement = !node.isEmpty();
       return;
     }
     prevWasElement = false;
     if ($isTextNode(node)) {
       const content = node.getTextContent();
-      if (isElementRangeInOneNode) text += content;
+      if (isElementRangeInOneNode) parts.push({ node, text: content });
       else
-        text += content.slice(
-          i === 0 ? $characterOffset(startPoint) : 0,
-          i === lastIndex ? $characterOffset(endPoint) : content.length,
-        );
+        parts.push({
+          node,
+          text: content.slice(
+            i === 0 ? $characterOffset(startPoint) : 0,
+            i === lastIndex ? $characterOffset(endPoint) : content.length,
+          ),
+        });
     } else if (
       ($isDecoratorNode(node) || $isLineBreakNode(node)) &&
       (i !== lastIndex || !selection.isCollapsed())
     ) {
-      text += node.getTextContent();
+      parts.push({ node, text: node.getTextContent() });
     }
   });
-  return text;
+  return parts;
 }
 
 /**

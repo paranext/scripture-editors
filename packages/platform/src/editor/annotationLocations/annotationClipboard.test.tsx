@@ -60,7 +60,11 @@ import {
   NBSP,
   ParaNode,
 } from "shared";
-import { $getRangeFromUsjSelection } from "shared-react";
+import {
+  $getRangeFromUsjSelection,
+  getViewOptions,
+  PARAGRAPH_STRUCTURE_VIEW_MODE,
+} from "shared-react";
 import { describe, expect, it, vi } from "vitest";
 
 /** The closing glyph of the char span whose content `text` is. */
@@ -495,11 +499,16 @@ describe("a copy of carriers an annotation cut into pieces", () => {
   /** What a copy of the whole edited paragraph of `row` in `view` writes, with or without the
    * oracle's annotation set: its HTML's marker elements, each with the text it opens with (the
    * text between them is cut where a mark cut it, which pastes back as one text), its nodes
-   * ({@link nodesShape}), and its text. */
-  async function paragraphCopy(view: string, row: string, isAnnotated: boolean) {
+   * ({@link nodesShape}), its text, and its HTML and internal flavors as written. `viewOptions`
+   * mounts `row` in another view than its own. */
+  async function paragraphCopy(
+    view: string,
+    row: string,
+    isAnnotated: boolean,
+    viewOptions = pendingOracleView(view),
+  ) {
     const usj = oracleRows(view).find(([name]) => name.startsWith(`${row} (`))?.[1];
     if (!usj) throw new Error(`no row ${row}`);
-    const viewOptions = pendingOracleView(view);
     const mounted = await mountInView(usj, viewOptions);
     if (isAnnotated) {
       const plan = mounted.lexical.getEditorState().read(() => $planAnnotations(viewOptions));
@@ -528,6 +537,11 @@ describe("a copy of carriers an annotation cut into pieces", () => {
         ?.map((element) => element.replace(/ class="[^"]*"/, "")),
       nodes: nodesShape(getData("application/x-lexical-editor")),
       text: getData("text/plain"),
+      // Every flavor as written, but for the class names a node's theme puts on its element.
+      written: [
+        getData("text/html").replace(/ class="[^"]*"/g, ""),
+        getData("application/x-lexical-editor"),
+      ],
     };
   }
 
@@ -539,6 +553,19 @@ describe("a copy of carriers an annotation cut into pieces", () => {
     "writes each carrier as one node (%s view, %s)",
     async (view, row) => {
       expect(await paragraphCopy(view, row, true)).toEqual(await paragraphCopy(view, row, false));
+    },
+    120_000,
+  );
+  // The hidden-marker views write their copy through their own plugin, which takes the `text/html`
+  // and internal flavors from the same annotation-free tree.
+  it.each(["verse", "closed char span"] as const)(
+    "writes what it writes with no annotation in a hidden-marker view (paragraph structure, %s)",
+    async (row) => {
+      const view = getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE);
+      if (!view) throw new Error("no paragraph-structure view");
+      expect(await paragraphCopy("unformatted", row, true, view)).toEqual(
+        await paragraphCopy("unformatted", row, false, view),
+      );
     },
     120_000,
   );

@@ -28,6 +28,7 @@ import { $getMarkerMenuContext } from "./markerMenu/markerMenuContext.utils";
 import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
 import { $insertFirstChapter } from "./markerEdit/firstChapter.utils";
 import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
+import { HiddenMarkersViewCopyPlugin } from "./HiddenMarkersViewCopyPlugin";
 import { InlineRangeEditPlugin } from "./InlineRangeEditPlugin";
 import { InvisibleCharactersPlugin } from "./InvisibleCharactersPlugin";
 import {
@@ -2129,6 +2130,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             onHiddenContentDelete={onHiddenContentDelete}
             logger={stableLogger}
           />
+          {/* The hidden-marker views copy prose, without their note layout spacers. */}
+          {viewOptions?.markerMode === "hidden" && (
+            <HiddenMarkersViewCopyPlugin
+              allowInvisibleCharacters={viewOptions.allowInvisibleCharacters}
+              copyLimit={copyLimit}
+            />
+          )}
           {viewOptions?.markerMode === "hidden" && (
             <InlineRangeEditPlugin structureProtectionMode={structureProtectionMode} />
           )}
@@ -2146,7 +2154,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             copyLimit={copyLimit}
           />
           {/* Standard view writes its own USFM copy (MarkerEditPlugin); the read-only Markers view
-              needs one too, since its display text is not USFM. The hidden-marker views copy prose. */}
+              needs one too, since its display text is not USFM. */}
           {viewOptions?.markerMode === "visible" && (
             <MarkersViewCopyPlugin viewOptions={viewOptions} copyLimit={copyLimit} />
           )}
