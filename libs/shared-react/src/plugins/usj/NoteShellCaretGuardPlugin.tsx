@@ -257,6 +257,7 @@ function $contentEndIndex(note: NoteNode): number {
     $isMarkerNode(last) &&
     last.getMarkerSyntax() === "closing" &&
     last.getMarker() === note.getMarker();
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- `last` is the closer's head, so this is the whole closer's front
   return endsInCloser ? last.getIndexWithinParent() : note.getChildrenSize();
 }
 

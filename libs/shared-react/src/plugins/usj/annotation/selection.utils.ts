@@ -1759,6 +1759,7 @@ function $locationFromNode(
       if ($isMarkerNode(previousGlyph))
         return $locationFromNode(
           previousGlyph,
+          // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- a point at the end of the opener's last piece; $locationFromNode reads a piece's offset
           previousGlyph.getTextContentSize(),
           collapsesSpaceRuns,
         );
@@ -2307,7 +2308,9 @@ function $documentEndPoint(
   // A verse glyph's trailing separator stands for no byte at a line end, and the browser does not
   // draw it, so the caret goes in front of it, where End puts it.
   if ($isVerseNode(lastDescendant) && $endsInOwnSeparator(lastDescendant))
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- a point in the verse's last piece, which $locationFromNode reads in that piece
     return [lastDescendant, lastDescendant.getTextContentSize() - 1];
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- a point at the end of the last piece, which $locationFromNode reads in that piece
   if ($isTextNode(lastDescendant)) return [lastDescendant, lastDescendant.getTextContentSize()];
   if ($isElementNode(lastDescendant)) return [lastDescendant, lastDescendant.getChildrenSize()];
   const container = lastDescendant?.getParent() ?? lastBlock;

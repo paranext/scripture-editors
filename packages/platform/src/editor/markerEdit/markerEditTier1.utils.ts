@@ -361,6 +361,7 @@ function $moveCaretPastMarker(node: MarkerNode): void {
   if ($isTextNode(next)) next.select(1, 1);
   else {
     const last = $lastPiece(node);
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- a caret at the end of the glyph's last piece is the end of the whole glyph
     last.select(last.getTextContentSize(), last.getTextContentSize());
   }
 }
@@ -613,7 +614,9 @@ function $markerGlyphCaretHeld(glyph: MarkerNode): boolean {
     if (next !== null && pointNode.is(next) && point.offset === 0) return true;
     const parent = glyph.getParent();
     if (parent !== null && pointNode.is(parent)) {
+      // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the first piece's index is where the whole glyph starts among its parent's children
       const start = first.getIndexWithinParent();
+      // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the last piece's index is where the whole glyph ends among its parent's children
       const end = last.getIndexWithinParent() + 1;
       if (point.offset >= start && point.offset <= end) return true;
     }
@@ -900,6 +903,7 @@ export function $unmatchedNodeTransform(
     pieces.forEach((piece) => piece.remove());
     return;
   }
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- asks whether this one continuation piece was emptied, not the whole node
   if ($isPieceContinuation(node) && node.getTextContent() === "") {
     $pieceHead(node).markDirty();
     node.remove();
@@ -1453,6 +1457,7 @@ export function $noteOfCallerText(node: LexicalNode): NoteNode | undefined {
   const note = node.getParent();
   if (!$isNoteNode(note) || note.getIsCollapsed() !== false) return undefined;
   let slot: LexicalNode | null = note.getFirstChild();
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- every piece of a cut opener is an opening MarkerNode, so the walk steps past all of them
   while ($isMarkerNode(slot) && slot.getMarkerSyntax() === "opening") slot = slot.getNextSibling();
   // Every piece of a caller text an annotation cuts into pieces is the caller's.
   return $pieceHead(node).is(slot) ? note : undefined;
@@ -1624,6 +1629,7 @@ export function $keepProtectedNoteCloser(note: NoteNode): void {
     closerHead.insertBefore(behind);
 
   // In front of it, as a note child: into the closer-less span the screen shows it in.
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- closer is the first closing glyph among the children, its head: the node before all of it
   const front = closer.getPreviousSibling();
   const span = front?.getPreviousSibling();
   if (

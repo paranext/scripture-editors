@@ -184,6 +184,7 @@ export function $findNextVerseAfter(verseNode: SomeVerseNode): SomeVerseNode | u
   if (parent && $isElementNode(parent)) {
     const children = parent.getChildren();
     // Past every piece of a verse an annotation cut into pieces.
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the verse's last piece: the walk starts past all of it
     for (let i = $lastPiece(verseNode).getIndexWithinParent() + 1; i < children.length; i++) {
       const child = children[i];
       if ($isSomeVerseNode(child)) return child;
@@ -266,6 +267,7 @@ function $isSelectionBeforeVerseNode(
   if (!anchorNode) return false;
   const parent = verseNode.getParent();
   if (anchorNode === parent && $isElementNode(anchorNode)) {
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- verseNode is a head ($resolveVerseNode names a verse by its head), the verse's front
     const verseIndex = verseNode.getIndexWithinParent();
     const anchorOffset = selection.anchor.offset;
     return anchorOffset <= verseIndex;
@@ -442,12 +444,14 @@ export function $selectNextVerse(selection: RangeSelection): boolean {
       $isElementNode(parent) &&
       $isElementNode(anchorNode) &&
       anchorNode === parent &&
+      // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- currentVerse is a head ($resolveVerseNode), the verse's front
       selection.anchor.offset < currentVerse.getIndexWithinParent()
     ) {
       nextVerse = currentVerse;
     }
     if (!nextVerse && parent && $isElementNode(parent)) {
       const children = parent.getChildren();
+      // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the verse's last piece: the walk starts past all of it
       const currentIndex = $lastPiece(currentVerse).getIndexWithinParent();
       for (let i = currentIndex + 1; i < children.length; i++) {
         const child = children[i];
@@ -517,6 +521,7 @@ export function $selectPreviousVerse(selection: RangeSelection): boolean {
       prevVerse = currentVerse;
     }
     if (!prevVerse && parent && $isElementNode(parent)) {
+      // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- currentVerse is a head ($resolveVerseNode): search back from the verse's front
       prevVerse = $findPreviousVerseInSiblings(parent, currentVerse.getIndexWithinParent());
     }
     if (!prevVerse && parent) {

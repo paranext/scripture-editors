@@ -202,6 +202,7 @@ function $isClosingGlyphEnd(node: LexicalNode, offset: number): boolean {
     $isMarkerNode(node) &&
     node.getMarkerSyntax() !== "opening" &&
     node.is($lastPiece(node)) &&
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- node is checked to be the last piece; offset is a point in it, so its end is the glyph's
     offset === node.getTextContentSize()
   );
 }
