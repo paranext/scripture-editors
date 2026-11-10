@@ -569,7 +569,7 @@ const HIDDEN_MARKER_COPY_VIEWS = enabledViews([
 ] as const);
 
 describe.each(HIDDEN_MARKER_COPY_VIEWS)("%s view: a copy of a whole paragraph", (name) => {
-  it("writes only a stored no-break space as `~` in its plain text", async () => {
+  it("writes only a stored no-break space as `~` in its prose plain text", async () => {
     const content: MarkerContent[] = [
       `a${NBSP}b `,
       { type: "char", marker: "nd", content: [] },
@@ -604,10 +604,11 @@ describe.each(HIDDEN_MARKER_COPY_VIEWS)("%s view: a copy of a whole paragraph", 
       mounted.unmount();
       return store;
     };
-    // With the setting on nothing is respelled, so that copy shows where the layout spacing is.
+    // With the setting on nothing is respelled. Either way the copy is the view's prose: the note's
+    // layout spacers and the empty span's placeholder are left out, not written as no-break spaces.
     const asShown = await copyParagraph(true);
     const plainShown = asShown.get("text/plain") ?? "";
-    expect(plainShown.split(NBSP).length).toBeGreaterThan(2);
+    expect(plainShown).toContain(`a${NBSP}b  y note z`);
 
     const copied = await copyParagraph(false);
 
