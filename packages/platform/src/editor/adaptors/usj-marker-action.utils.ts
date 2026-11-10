@@ -38,6 +38,8 @@ import {
   $isVisibleMarkerNode,
   $lastPiece,
   $liftOutOfCharStack,
+  $logicalOffset,
+  $logicalText,
   $normalizeSelectionOutOfGlyphText,
   $pieceHead,
   $recordNewlyMarkedSpan,
@@ -1045,17 +1047,21 @@ function $selectionCrossesSpanBorder(selection: RangeSelection): boolean {
   );
 }
 
-/** Whether `point` sits between two bytes of a char span's closing glyph. */
+/**
+ * Whether `point` sits between two bytes of a char span's closing glyph, measured in the whole
+ * glyph's bytes: a cut an annotation made inside it is between two of them.
+ */
 function $isPointInsideClosingGlyph(point: PointType): boolean {
   const node = point.getNode();
-  return (
-    point.type === "text" &&
-    $isMarkerNode(node) &&
-    node.getMarkerSyntax() !== "opening" &&
-    $isCharNode(node.getParent()) &&
-    point.offset > 0 &&
-    point.offset < node.getTextContentSize()
-  );
+  if (
+    point.type !== "text" ||
+    !$isMarkerNode(node) ||
+    node.getMarkerSyntax() === "opening" ||
+    !$isCharNode(node.getParent())
+  )
+    return false;
+  const offset = $logicalOffset(node, point.offset);
+  return offset > 0 && offset < $logicalText(node).length;
 }
 
 /** The char spans `point` sits inside, innermost first. */
@@ -1063,10 +1069,10 @@ function $spansHoldingPoint(point: PointType): CharNode[] {
   const node = point.getNode();
   let holder: LexicalNode | null = node;
   if (point.type === "text" && $isMarkerNode(node) && $isCharNode(node.getParent())) {
+    // The outer edge of the whole glyph, however an annotation has cut it into pieces.
+    const offset = $logicalOffset(node, point.offset);
     const isAtOuterEdge =
-      node.getMarkerSyntax() === "opening"
-        ? point.offset === 0
-        : point.offset === node.getTextContentSize();
+      node.getMarkerSyntax() === "opening" ? offset === 0 : offset === $logicalText(node).length;
     holder = isAtOuterEdge ? (node.getParent()?.getParent() ?? null) : node.getParent();
   } else if (
     point.type === "element" &&
