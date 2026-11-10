@@ -3246,4 +3246,70 @@ describe("USJ Marker Action Utils — a glyph or caller an annotation cuts into 
       );
     });
   });
+
+  describe("applying a char marker from inside a cut glyph to the text after its span", () => {
+    let opener: LexicalNode;
+    let closer: LexicalNode;
+    let tail: TextNode;
+
+    function $span() {
+      opener = $createMarkerNode("nd");
+      closer = $createMarkerNode("nd", "closing");
+      tail = $createTextNode(" said");
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("the "),
+          $createCharNode("nd").append(opener, $createTextNode(`${NBSP}Lord`), closer),
+          tail,
+        ),
+      );
+    }
+
+    /**
+     * Apply `\wj` from offset `offset` into piece `pieceIndex` of `glyph()` to inside the text after
+     * the span, with the glyph first cut at `[start, end)` when `cutAt` is given. Returns the
+     * paragraph's shape and the warnings logged.
+     */
+    function applyFrom(
+      glyph: () => LexicalNode,
+      pieceIndex: number,
+      offset: number,
+      cutAt?: [number, number],
+    ): { shape: unknown[]; warnings: string[] } {
+      const { editor } = createBasicTestEnvironment(nodes, $span);
+      registerDisplayAnnotationBasis(editor);
+      if (cutAt) cut(editor, glyph(), ...cutAt);
+      const piece = editor.getEditorState().read(() => $pieces(glyph())[pieceIndex]);
+      updateSelection(editor, piece, offset, tail, 3);
+      const warnings: string[] = [];
+      const logger = {
+        error: () => undefined,
+        warn: (message: string) => warnings.push(message),
+        info: () => undefined,
+        debug: () => undefined,
+      };
+      getUsjMarkerAction("wj", expandedNoteKeyRef, editable, undefined, logger, {
+        discrete: true,
+      }).action({ editor, reference });
+      return { shape: editor.getEditorState().read($paraShape), warnings };
+    }
+
+    it("refuses a selection from between two bytes of the closer at a cut, as uncut", () => {
+      const uncut = applyFrom(() => closer, 0, 3);
+      expect(uncut.warnings).toContainEqual(
+        expect.stringContaining("crosses the border of a character"),
+      );
+      // `\nd*` cut into `\`, `nd`, `*`: the end of the middle piece is byte 3.
+      expect(applyFrom(() => closer, 1, 2, [1, 3])).toEqual(uncut);
+    });
+
+    it("refuses a selection from inside the opener at a cut, as uncut", () => {
+      const uncut = applyFrom(() => opener, 0, 1);
+      expect(uncut.warnings).toContainEqual(
+        expect.stringContaining("crosses the border of a character"),
+      );
+      // `\nd` cut into `\`, `n`, `d`: the front of the middle piece is byte 1.
+      expect(applyFrom(() => opener, 1, 0, [1, 2])).toEqual(uncut);
+    });
+  });
 });
