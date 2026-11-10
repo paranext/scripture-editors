@@ -387,6 +387,7 @@ function $landCaretAfterRename(node: MarkerNode, caretOffsetInName: number | und
         latest,
         Math.min(span.start + caretOffsetInName, span.end),
       );
+      // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- piece and offset come from $pieceAtLogicalOffset, a point in that piece
       piece.select(offset, offset);
       return;
     }
@@ -704,6 +705,7 @@ function $moveOuterGlyphSpaceOut(glyph: MarkerNode): boolean {
   holder.setTextContent(holder.getTextContent() + space);
   if (caret !== undefined) {
     if (caret <= space.length) holder.select(spaceStart + caret, spaceStart + caret);
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- $setLogicalText joined the glyph into one node, so this logical offset is a point in it; the piece transform moves the caret with its bytes when it cuts the glyph again
     else glyph.select(caret - space.length, caret - space.length);
   }
   return true;
@@ -863,9 +865,8 @@ function $splitTextTypedAfterMilestone(glyph: MarkerNode): boolean {
   const text = $logicalText(glyph);
   if (!text.startsWith(canonical) || text.length === canonical.length) return false;
   const wrapper = glyph.getParent();
-  const runEnd = $isAttributeRunNode(wrapper) ? wrapper : $lastPiece(glyph);
   if ($isAttributeRunNode(wrapper) && !wrapper.getLastChild()?.is($lastPiece(glyph))) return false;
-  const block = runEnd.getParent();
+  const block = $isAttributeRunNode(wrapper) ? wrapper.getParent() : wrapper;
   if (!block || $isRootOrShadowRoot(block)) return false;
   const selection = $getSelection();
   const caret =
@@ -875,8 +876,10 @@ function $splitTextTypedAfterMilestone(glyph: MarkerNode): boolean {
   const caretOffset =
     caret !== undefined && caret > canonical.length ? caret - canonical.length : undefined;
   const rest = $createTextNode(text.slice(canonical.length));
-  $setLogicalText(glyph, canonical);
-  runEnd.insertAfter(rest);
+  // Rewriting the glyph joins its pieces into one node, which ends a run no wrapper holds.
+  const joined = $setLogicalText(glyph, canonical);
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- `joined` is the whole glyph in one node: this is after all of it
+  ($isAttributeRunNode(wrapper) ? wrapper : joined).insertAfter(rest);
   if (caretOffset !== undefined) rest.select(caretOffset, caretOffset);
   return true;
 }
@@ -900,12 +903,14 @@ export function $unmatchedNodeTransform(
   if ($logicalText(node) === "") {
     const pieces = $pieces(node);
     context.pendingKeys.delete(pieces[0].getKey());
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- removes every piece of the emptied node
     pieces.forEach((piece) => piece.remove());
     return;
   }
   // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- asks whether this one continuation piece was emptied, not the whole node
   if ($isPieceContinuation(node) && node.getTextContent() === "") {
     $pieceHead(node).markDirty();
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- removes this one emptied continuation piece; its head's pass covers the rest
     node.remove();
     return;
   }
@@ -1369,6 +1374,7 @@ function $movePushedNameIntoNoteGlyph(callerNode: TextNode, caller: string): boo
   if (!BARE_OPENER_REGEX.test($logicalText(glyph))) return false;
   const glyphText = $logicalText(glyph) + pushed;
   $setLogicalText(callerNode, getEditableCallerText(caller));
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- $setLogicalText returns the glyph joined into one node, so its logical end is a point in it; the piece transform moves the caret with its bytes when it cuts the glyph again
   $setLogicalText(glyph, glyphText).select(glyphText.length, glyphText.length);
   return true;
 }
@@ -1626,6 +1632,7 @@ export function $keepProtectedNoteCloser(note: NoteNode): void {
     behind;
     behind = $logicalNextSibling(closerHead)
   )
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- closer is the first closing glyph among the children, its head: the node goes in front of all of it
     closerHead.insertBefore(behind);
 
   // In front of it, as a note child: into the closer-less span the screen shows it in.
