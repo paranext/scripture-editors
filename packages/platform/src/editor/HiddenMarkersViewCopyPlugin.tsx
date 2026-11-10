@@ -8,6 +8,7 @@ import { $getClipboardDataFromSelection } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { COMMAND_PRIORITY_LOW } from "lexical";
 import { useEffect } from "react";
+import { LoggerBasic } from "shared";
 
 /**
  * Copies a hidden-marker view's selection the way Lexical's own copy does, except that `text/plain`
@@ -45,9 +46,12 @@ import { useEffect } from "react";
 export function HiddenMarkersViewCopyPlugin({
   allowInvisibleCharacters,
   copyLimit,
+  logger,
 }: {
   allowInvisibleCharacters?: boolean;
   copyLimit?: number;
+  /** Told when an annotated copy cannot be written without its annotations. */
+  logger?: LoggerBasic;
 }): null {
   const [editor] = useLexicalComposerContext();
 
@@ -65,12 +69,13 @@ export function HiddenMarkersViewCopyPlugin({
           );
           if (plain === "") return undefined;
           const flavors =
-            $uncutClipboardData(editor, selection) ?? $getClipboardDataFromSelection(selection);
+            $uncutClipboardData(editor, selection, logger) ??
+            $getClipboardDataFromSelection(selection);
           return { ...flavors, "text/plain": plain };
         },
         copyLimit,
       ),
-    [editor, allowInvisibleCharacters, copyLimit],
+    [editor, allowInvisibleCharacters, copyLimit, logger],
   );
 
   return null;

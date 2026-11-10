@@ -64,6 +64,7 @@ import {
   $getRangeFromUsjSelection,
   getViewOptions,
   PARAGRAPH_STRUCTURE_VIEW_MODE,
+  ViewOptions,
 } from "shared-react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -569,6 +570,78 @@ describe("a copy of carriers an annotation cut into pieces", () => {
     },
     120_000,
   );
+});
+
+describe("a copy the view's own writer leaves to the browser", () => {
+  /** What a copy writes in `viewOptions`, with or without the oracle's annotation set: whether it
+   * was claimed, and every flavor. `select` sets the editor's selection; with `isOutside` the
+   * page's selection is moved outside the editor before the copy, as when a user selects across
+   * the page. */
+  async function copyCase(
+    row: string,
+    viewOptions: ViewOptions,
+    isAnnotated: boolean,
+    select: () => void,
+    { copyLimit, isOutside = false }: { copyLimit?: number; isOutside?: boolean } = {},
+  ) {
+    const usj = oracleRows("unformatted").find(([name]) => name.startsWith(`${row} (`))?.[1];
+    if (!usj) throw new Error(`no row ${row}`);
+    const mounted = await mountInView(usj, viewOptions, { copyLimit });
+    if (isAnnotated) {
+      const plan = mounted.lexical.getEditorState().read(() => $planAnnotations(viewOptions));
+      for (const { id, range } of plan)
+        await act(async () => {
+          mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, id);
+          await Promise.resolve();
+        });
+    }
+    await act(async () => {
+      mounted.lexical.update(select);
+      await drainNativeSelectionChange();
+    });
+    const outside = document.createElement("p");
+    outside.textContent = "Outside the editor";
+    document.body.append(outside);
+    const { event, getData } = copyEvent({ native: true });
+    try {
+      if (isOutside) {
+        const range = document.createRange();
+        range.selectNodeContents(outside);
+        document.getSelection()?.removeAllRanges();
+        document.getSelection()?.addRange(range);
+      }
+      await act(async () => {
+        mounted.lexical.dispatchCommand(COPY_COMMAND, event);
+      });
+    } finally {
+      document.getSelection()?.removeAllRanges();
+      outside.remove();
+      mounted.unmount();
+    }
+    return {
+      isClaimed: vi.mocked(event.preventDefault).mock.calls.length > 0,
+      written: [
+        getData("text/plain"),
+        getData("text/html").replace(/ class="[^"]*"/g, ""),
+        getData("application/x-lexical-editor"),
+      ],
+    };
+  }
+
+  const $selectParagraph = () => {
+    const para = $getRoot().getChildren()[2];
+    if ($isElementNode(para)) para.select(0, para.getChildrenSize());
+  };
+
+  it("leaves a copy whose page selection runs outside the editor to the browser, with a copy limit set", async () => {
+    const view = pendingOracleView("standard");
+    const options = { copyLimit: 100_000, isOutside: true };
+    const plain = await copyCase("closed char span", view, false, $selectParagraph, options);
+    expect(plain.isClaimed).toBe(false);
+    expect(await copyCase("closed char span", view, true, $selectParagraph, options)).toEqual(
+      plain,
+    );
+  }, 120_000);
 });
 
 describe("a copy of annotated text", () => {

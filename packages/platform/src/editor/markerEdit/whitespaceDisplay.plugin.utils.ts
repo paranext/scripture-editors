@@ -1512,6 +1512,9 @@ export function $writeCopyPayload(
  * copy is Lexical's own (no view handler claimed it above): the clipboard is written as the same
  * selection in the document with no annotation writes it (`$uncutClipboardData`), the document
  * only read. Declines a selection that touches no annotation, which Lexical's own copy writes.
+ * Written through {@link $writeCopyPayload} with `copyLimit` (`EditorOptions.copyLimit`), so the
+ * limit's backstop applies as to every view's copy: with a limit set, a copy whose page selection
+ * runs outside the editor is left to the page guard.
  *
  * Mutating only for a cut, which removes the range: call inside `editor.update()` — in practice,
  * from a `COPY_COMMAND` or `CUT_COMMAND` handler.
@@ -1521,17 +1524,13 @@ export function $copyWithoutAnnotations(
   editor: LexicalEditor,
   isCut: boolean,
   logger?: LoggerBasic,
+  copyLimit?: number,
 ): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
   const data = $uncutClipboardData(editor, selection, logger);
   if (!data) return false;
-  return $writeClipboardData(
-    event,
-    editor,
-    data,
-    isCut && editor.isEditable() ? () => selection.removeText() : undefined,
-  );
+  return $writeCopyPayload(event, editor, selection, data, isCut, copyLimit);
 }
 
 /**
