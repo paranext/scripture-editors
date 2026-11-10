@@ -212,6 +212,7 @@ function $isCaretInPubnumberRun(chapter: ChapterNode, selection: RangeSelection)
   const runStart = wrapper ?? opener;
   if (!runStart) return false;
   const focusNode = selection.focus.getNode();
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- runStart is the run's wrapper or its opener's head (reached by $logicalNextSibling)
   if (focusNode.is(chapter)) return selection.focus.offset > runStart.getIndexWithinParent();
   return [wrapper, opener, value].some(
     (piece) => piece && ($isPieceOf(focusNode, piece) || piece.isParentOf(focusNode)),

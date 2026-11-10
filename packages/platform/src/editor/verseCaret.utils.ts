@@ -49,6 +49,7 @@ export function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   if (!para) return;
   // An editable marker an annotation cuts into pieces ends with its last piece.
   const marker = $lastPiece(verse);
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- marker is the verse's last piece: the content starts past all of it
   const contentStart = marker.getIndexWithinParent() + 1;
 
   // The verse has no content of its own when nothing follows the marker or the next verse marker

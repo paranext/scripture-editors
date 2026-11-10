@@ -368,6 +368,7 @@ export function $moveGlyphTailBehindSeparator(opener: MarkerNode): boolean {
   const text = $logicalText(opener);
   const last = $lastPiece(opener);
   const { anchor } = selection;
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- compares the caret's offset in `last`, the opener's last piece, with that piece's end
   if (anchor.key !== last.getKey() || anchor.offset !== last.getTextContentSize()) return false;
   const spelled = openingMarkerText(opener.getMarker(), opener.getNested());
   const tail = text.slice(spelled.length);

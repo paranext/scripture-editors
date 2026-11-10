@@ -124,6 +124,7 @@ function $glyphDebrisGrace(pieces: ScannedRun): boolean {
   const anchorNode = selection.anchor.getNode();
   const openerEnd = $lastPiece(opener);
   const atOpenerEnd =
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- compares a caret offset in openerEnd, the opener's last piece, with that piece's end
     anchorNode.is(openerEnd) && selection.anchor.offset === openerEnd.getTextContentSize();
   if (closer) return atOpenerEnd || $pieces(closer).some((piece) => anchorNode.is(piece));
   return atOpenerEnd;

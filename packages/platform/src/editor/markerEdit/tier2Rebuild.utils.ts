@@ -1305,6 +1305,7 @@ function $appendNodesFragment(
   for (let index = 0; index < children.length; index++) {
     const node = children[index];
     if ($isMarkerNode(node)) {
+      // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the child walk visits every piece and pushes each one's bytes under its own key
       pushText(out, node, toFragmentText(node.getTextContent()));
     } else if ($isMilestoneNode(node)) {
       consumeCharLead();

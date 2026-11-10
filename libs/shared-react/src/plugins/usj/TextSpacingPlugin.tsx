@@ -267,6 +267,7 @@ function $verseNodeTransform(node: SomeVerseNode): void {
   // A caret host in front of the verse is passed over, wrapped or not: it is never saved, so the
   // space belongs to what precedes it, and goes in front of it too, where it stays once the host
   // is removed.
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- a continuation returned above, so node is the verse's head: this is the node before it
   const before = node.getPreviousSibling();
   const host = before && $hasCaretHostMark(before) ? before : undefined;
   let previousSibling = $previousSiblingThroughMarks(host ?? node);

@@ -1,6 +1,7 @@
 import lexicalPlugin from "@lexical/eslint-plugin";
 import nx from "@nx/eslint-plugin";
 import tseslint from "typescript-eslint";
+import noRawCarrierAccessors from "./tools/lint-rules/no-raw-carrier-accessors.mjs";
 
 export default [
   ...nx.configs["flat/base"],
@@ -84,6 +85,31 @@ export default [
     ],
     // Override or add rules here
     rules: {},
+  },
+  // A display-byte carrier an annotation holds in part is cut into pieces of its own class, so a
+  // raw text or sibling accessor on one reads or writes one piece. Type-aware, so it runs with the
+  // TypeScript project service. The patterns match both a root-invoked `npx eslint` and each
+  // project's own lint, which evaluates them relative to the project's directory.
+  {
+    files: ["**/src/**/*.ts", "**/src/**/*.tsx"],
+    ignores: [
+      "demos/**",
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "**/*.spec.ts",
+      "**/*.spec.tsx",
+      "**/*test-helpers*",
+      "**/*test.utils*",
+      "**/*test-utils*",
+      "**/test-setup.ts",
+    ],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    plugins: {
+      "scripture-editors": { rules: { "no-raw-carrier-accessors": noRawCarrierAccessors } },
+    },
+    rules: { "scripture-editors/no-raw-carrier-accessors": "error" },
   },
   {
     files: ["**/*.json"],

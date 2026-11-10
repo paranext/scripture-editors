@@ -607,6 +607,7 @@ function $closingGlyphIndex(element: NoteNode | CharNode): number {
     ($isMarkerNode(last) && last.getMarkerSyntax() === "closing") ||
     ($isVisibleMarkerNode(last) &&
       last.getTextContent() === closingMarkerText(element.getMarker()));
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- `last` is the closer's head, so this is the whole closer's front
   return isCloser && last ? last.getIndexWithinParent() : -1;
 }
 

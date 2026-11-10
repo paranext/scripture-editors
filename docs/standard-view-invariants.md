@@ -221,6 +221,14 @@ corruption the annotation-transparency oracle
 annotations covering every display byte of a paragraph, every keystroke case of the pending/settled
 oracle must give the same documents, screen, positions and delta as the same case with none.
 
+The lint rule `scripture-editors/no-raw-carrier-accessors` (`tools/lint-rules/`) catches the raw
+form where a type can: `getTextContent`, `getTextContentSize`, `setTextContent`, the sibling
+accessors and `getIndexWithinParent` called on a `MarkerNode`, `VerseNode` or
+`ImmutableUnmatchedNode` (or a union holding one) are errors outside tests. A call that means the
+piece itself carries an `eslint-disable-next-line` comment saying why. The rule cannot see a
+carrier typed only as `TextNode` (an attribute run's text, a note's editable caller, a chapter's
+glyph) or a parent's child walk, so those still rely on review and the oracle.
+
 The settle carries both representations by bytes: kept or re-spelled bytes carry their annotation to
 the settled counterpart, discarded bytes drop it. `getUsj()` carries no display-byte annotation.
 

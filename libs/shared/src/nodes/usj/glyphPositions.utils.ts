@@ -142,6 +142,7 @@ export function $isPointInMarkerGlyphText(node: LexicalNode, offset: number): bo
   // The trailing edge is the end of the whole glyph, however an annotation has cut it.
   return !(
     $lastPiece(node).is(node) &&
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- node is checked to be the last piece; offset is a point in it, so its end is the glyph's
     offset === node.getTextContentSize() &&
     node.getMarkerSyntax() !== "opening" &&
     $isCanonicalMarkerNode(node) &&

@@ -134,6 +134,7 @@ function $mergeIntoFollowingGlyphSpan(node: CharNode, target: CharNode): boolean
   if (!$isMarkerNode(opener) || opener.getMarkerSyntax() !== "opening") return false;
   // An opener an annotation cut into pieces is one glyph: the content goes after its last piece.
   const openerEnd = $lastPiece(opener);
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- openerEnd is the opener's last piece: this is the node after the whole opener
   const oldFirstContent = openerEnd.getNextSibling();
   if ($isSeparatorPrefixHostText(oldFirstContent)) {
     const text = oldFirstContent.getTextContent();
@@ -142,6 +143,7 @@ function $mergeIntoFollowingGlyphSpan(node: CharNode, target: CharNode): boolean
       else oldFirstContent.setTextContent(text.slice(NBSP.length));
     }
   }
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- openerEnd is the opener's last piece: the content goes after the whole opener
   target.splice(openerEnd.getIndexWithinParent() + 1, 0, node.getChildren());
   node.remove();
   return true;
