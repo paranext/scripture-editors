@@ -6,8 +6,12 @@
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { inOneUpdate } from "./displayAnnotations.test-helpers";
-import { $keepProtectedNoteCloser } from "./markerEditTier1.utils";
-import { testEnvironment } from "./markerEdit.test-helpers";
+import {
+  $keepProtectedNoteCloser,
+  $markerNodeTransform,
+  MarkerEditContext,
+} from "./markerEditTier1.utils";
+import { requireDefined, testEnvironment, viewOptions } from "./markerEdit.test-helpers";
 import { drainNativeSelectionChange } from "../editor-test.utils";
 import { act } from "@testing-library/react";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -18,11 +22,13 @@ import {
   CONTROLLED_TEXT_INSERTION_COMMAND,
   LexicalEditor,
   LexicalNode,
+  NodeKey,
 } from "lexical";
 import {
   $addDisplayAnnotation,
   $createCharNode,
   $createMarkerNode,
+  $createMilestoneNode,
   $createNoteNode,
   $createParaNode,
   $coveredDisplayText,
@@ -41,11 +47,16 @@ import {
   $setLogicalText,
   CharNode,
   getEditableCallerText,
+  getMarker,
+  MarkerNode,
   NBSP,
   NoteNode,
   ParaNode,
   registerDisplayAnnotationBasis,
 } from "shared";
+// Reaching inside only for tests.
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import { createBasicTestEnvironment } from "../../../../../libs/shared/src/nodes/usj/test.utils";
 
 function $find<T extends LexicalNode>(guard: (node: LexicalNode) => node is T): T {
   let found: T | undefined;
@@ -331,5 +342,64 @@ describe("a carrier an annotation cuts into pieces", () => {
     const uncut = await noteText(false);
     expect(uncut.startsWith(`\\fx${NBSP}\\ft`)).toBe(true);
     expect(await noteText(true)).toBe(uncut);
+  });
+
+  it("splits text typed after a loose milestone's cut closer off after the whole closer", () => {
+    // A milestone's glyphs left loose beside it (no run wrapper, as an undo or a collaborator's
+    // update can leave them), its `\*` cut in two: `x` typed at the end of the closer follows the
+    // milestone, as it does when the closer is whole. The glyph pass runs alone, with no sync to
+    // re-home the loose glyphs first.
+    const paraAfterTyping = (cutCloser: boolean) => {
+      let closer: MarkerNode | undefined;
+      const { editor } = createBasicTestEnvironment(undefined, () => {
+        closer = $createMarkerNode("", "selfClosing");
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createTextNode("a "),
+            $createMilestoneNode("qt-s"),
+            $createMarkerNode("qt-s"),
+            closer,
+            $createTextNode("b"),
+          ),
+        );
+      });
+      registerDisplayAnnotationBasis(editor);
+      const glyph = requireDefined(closer, "no closer");
+      if (cutCloser) {
+        // `\*`: hold the `\` alone.
+        editor.update(() => $addDisplayAnnotation(glyph, "test", "slash", 0, 1), {
+          discrete: true,
+        });
+        editor.getEditorState().read(() => expect($pieces(glyph).length).toBe(2));
+      }
+      const context: MarkerEditContext = {
+        viewOptions,
+        getMarker,
+        pendingKeys: new Set<NodeKey>(),
+        splitExpected: { current: false },
+        rebuildAttempted: new Set<string>(),
+        structureProtectionMode: "off",
+      };
+      editor.update(
+        () => {
+          const last = $lastPiece(glyph);
+          const text = `${last.getTextContent()}x`;
+          last.setTextContent(text);
+          last.select(text.length, text.length);
+          $markerNodeTransform(glyph.getLatest(), context);
+        },
+        { discrete: true },
+      );
+      return editor
+        .getEditorState()
+        .read(() =>
+          $logicalChildren($getRoot().getChildren().filter($isParaNode)[0]).map(
+            (child) => `${child.getType()}:${$logicalText(child)}`,
+          ),
+        );
+    };
+    const uncut = paraAfterTyping(false);
+    expect(uncut.slice(-3)).toEqual(["marker:\\qt-s", "marker:\\*", "text:xb"]);
+    expect(paraAfterTyping(true)).toEqual(uncut);
   });
 });
