@@ -15,7 +15,7 @@ import {
   RangeSelection,
 } from "lexical";
 import { useEffect } from "react";
-import { $isGutterMarkerNode, $isUnknownNode } from "shared";
+import { $isGutterMarkerNode, $isUnknownNode, LoggerBasic } from "shared";
 import {
   $hiddenViewLexicalFlavor,
   $removeTextKeepingBookAndChapterLines,
@@ -116,9 +116,12 @@ function $hiddenViewFlavors(
 export function HiddenMarkersViewCopyPlugin({
   allowInvisibleCharacters,
   copyLimit,
+  logger,
 }: {
   allowInvisibleCharacters?: boolean;
   copyLimit?: number;
+  /** Told when an annotated copy cannot be written without its annotations. */
+  logger?: LoggerBasic;
 }): null {
   const [editor] = useLexicalComposerContext();
 
@@ -136,7 +139,7 @@ export function HiddenMarkersViewCopyPlugin({
           );
           if (plain === "") return $selectsOnlyGutterMarkers(selection) ? EMPTY_COPY : undefined;
           return {
-            ...($uncutClipboardData(editor, selection, undefined, $hiddenViewFlavors) ??
+            ...($uncutClipboardData(editor, selection, logger, $hiddenViewFlavors) ??
               $hiddenViewFlavors(selection, editor)),
             "text/plain": plain,
           };
@@ -144,7 +147,7 @@ export function HiddenMarkersViewCopyPlugin({
         copyLimit,
         $removeTextKeepingBookAndChapterLines,
       ),
-    [editor, allowInvisibleCharacters, copyLimit],
+    [editor, allowInvisibleCharacters, copyLimit, logger],
   );
 
   return null;

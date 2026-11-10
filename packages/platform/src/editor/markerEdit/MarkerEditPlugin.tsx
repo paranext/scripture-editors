@@ -1608,6 +1608,7 @@ export function MarkerEditPlugin({
               editor,
               command === CUT_COMMAND,
               context.logger,
+              copyLimitRef.current,
             ),
           COMMAND_PRIORITY_LOW,
         ),

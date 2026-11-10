@@ -2254,6 +2254,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             <HiddenMarkersViewCopyPlugin
               allowInvisibleCharacters={viewOptions.allowInvisibleCharacters}
               copyLimit={copyLimit}
+              logger={stableLogger}
             />
           )}
           {viewOptions?.markerMode === "hidden" && (
