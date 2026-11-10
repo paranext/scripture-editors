@@ -494,13 +494,42 @@ describe("a caret on the chapter line", () => {
     ["\\n", "aa\nbb"],
     ["\\r\\n", "aa\r\nbb"],
     ["a lone \\r", "aa\rbb"],
-    ["U+2028", "aa\u2028bb"],
   ])("takes typed text holding a line break (%s) as a multi-line paste", async (_name, text) => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
     await onChapterLine(lexical, () =>
       lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text),
     );
     expect(ref.current?.getUsj()?.content).toEqual(TYPED_AA_BB);
+  });
+
+  // As in Paratext 9, Unicode's line and paragraph separators are characters, not line breaks.
+  async function savedAfterTyping(text: string): Promise<MarkerContent[] | undefined> {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await onChapterLine(lexical, () =>
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text),
+    );
+    return ref.current?.getUsj()?.content;
+  }
+
+  it("keeps a U+2029 in typed text there as a character", async () => {
+    expect(await savedAfterTyping("aa\u2029bb")).toEqual([
+      CHAPTER_2,
+      "aa\u2029bb",
+      VERSE_1_PARA,
+      POETRY_PARA,
+    ]);
+  });
+
+  // TODO: the rebuild that settles the chapter line drops every U+2028 in the text it rebuilds,
+  // because tier2Rebuild.utils.ts spells a display-only line break as U+2028 and strips them all
+  // before tokenizing. Flip to `it` once the display-only break is a character no text can hold.
+  it.fails("keeps a U+2028 in typed text there as a character", async () => {
+    expect(await savedAfterTyping("aa\u2028bb")).toEqual([
+      CHAPTER_2,
+      "aa\u2028bb",
+      VERSE_1_PARA,
+      POETRY_PARA,
+    ]);
   });
 
   it("takes a multi-line paste as it would be typed", async () => {

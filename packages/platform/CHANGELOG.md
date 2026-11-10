@@ -438,14 +438,16 @@ refused. The public surface grew substantially; nothing was removed.
   (`hasSpacing: false`), whose line breaks before each verse are its layout, keeps its line breaks.
 - **Text inserted as one string holding a line break no longer keeps it as a character.**
   Dictation, autocorrect or a text replacement, a yank, an extension's insertion or a `beforeinput`
-  `insertText` could insert text holding `\n`, `\r\n`, a lone `\r`, U+2028 or U+2029 through
+  `insertText` could insert text holding `\n`, `\r\n` or a lone `\r` through
   `CONTROLLED_TEXT_INSERTION_COMMAND`; it stayed in the text, showed as two lines and saved as a
-  space (U+2028 and U+2029 as invisible characters). Each such line break now goes in as a pasted
-  one does: in the views that hide markers the paragraph splits there, or, where it cannot
-  (`"protected"` structure, a note, the `\id` line), it is a space (nothing beside whitespace);
+  space. Each such line break now goes in as a pasted one does: in the views that hide markers
+  the paragraph splits there, or, where it cannot (`"protected"` structure, a note, the `\id`
+  line), it is a space (nothing beside whitespace);
   `UnstorableTextPlugin` still judges and reports the text once, whole. In Standard view it goes in
   as a plain-text paste of it does, where Standard's paste on the `\id` line now joins the lines
   with a space instead of running them together. Text an input method is composing is left alone.
+  Unicode's line and paragraph separators (U+2028, U+2029) are not line breaks: as in Paratext 9,
+  they stay in the text as characters, and one the loaded text holds is never split at.
 - **A plain-text paste or drop whose lines are joined no longer joins two words or doubles a
   space.** Under `"protected"` structure in the views that hide markers, `UnstorableTextPlugin`
   dropped a trailing line break (`x` and a line break pasted before `verse` saved `xverse`) and made

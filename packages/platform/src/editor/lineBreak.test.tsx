@@ -452,6 +452,13 @@ const NEWLINES: [string, string][] = [
   ["\\n", "\n"],
   ["\\r\\n", "\r\n"],
   ["a lone \\r", "\r"],
+];
+
+/**
+ * Unicode's line and paragraph separators, which are not line breaks: as in Paratext 9, each is a
+ * character like any other, kept in the text where it is inserted and saved as it is.
+ */
+const SEPARATORS: [string, string][] = [
   ["U+2028 (line separator)", "\u2028"],
   ["U+2029 (paragraph separator)", "\u2029"],
 ];
@@ -562,6 +569,15 @@ describe.each(VIEW_MODES)("in $view view with structure $mode", ({ view, mode })
     },
   );
 
+  it.each(SEPARATORS)(
+    "%s inside typed text stays in the text as a character, as in Paratext 9",
+    async (_name, separator) => {
+      expect(await savedAfterInserting(`x${separator}y`)).toEqual([
+        ["q1", `first x${separator}yverse text`],
+      ]);
+    },
+  );
+
   it.each(TEXT_INSERTIONS)("%s holding a line break splits the same way", async (_name, insert) => {
     expect(await savedAfterInserting("x\ny", insert)).toEqual(
       splitOrJoined(
@@ -640,6 +656,40 @@ describe.each(VIEW_MODES)("in $view view with structure $mode", ({ view, mode })
       mounted.unmount();
     }
   });
+
+  // The typed text lands in the very text node holding the stored separator, so the node is dirty
+  // in the update that splits at the typed line break.
+  it.each<[string, string]>([
+    ["U+2028", "\u2028"],
+    ["U+2029", "\u2029"],
+  ])(
+    "keeps a %s the document stores in the text that typed text holding a line break lands in",
+    async (_name, separator) => {
+      const stored = `a${separator}b`;
+      const mounted = await mountInView(
+        chapterOneHolding({ type: "para", marker: "p", content: [stored] }),
+        editorView(view),
+        { structureProtectionMode: mode },
+      );
+      try {
+        await caretAt(mounted, stored, stored);
+        await type(mounted, "x\ny");
+
+        expect(lineBreaksIn(mounted)).toBe(0);
+        expect(savedParagraphs(mounted)).toEqual([
+          ["q1", VERSE_TEXT],
+          ...(mode === "protected"
+            ? [["p", `${stored}x y`]]
+            : [
+                ["p", `${stored}x`],
+                ["p", "y"],
+              ]),
+        ]);
+      } finally {
+        mounted.unmount();
+      }
+    },
+  );
 
   it("leaves the caret after the typed text", async () => {
     const mounted = await mountInView(DOCUMENT, editorView(view), {
@@ -929,6 +979,24 @@ describe.each(VIEW_MODES)("in $view view with structure $mode", ({ view, mode })
       },
     );
 
+    it.each(SEPARATORS)(
+      "holding a %s keeps it in the text as a character, as in Paratext 9",
+      async (_name, separator) => {
+        const mounted = await mountInView(DOCUMENT, editorView(view), {
+          structureProtectionMode: mode,
+        });
+        try {
+          await caretAt(mounted, VERSE_TEXT, "first ");
+          await insert(mounted, `x${separator}y`);
+
+          expect(lineBreaksIn(mounted)).toBe(0);
+          expect(savedParagraphs(mounted)).toEqual([["q1", `first x${separator}yverse text`]]);
+        } finally {
+          mounted.unmount();
+        }
+      },
+    );
+
     it("holding a line break, on the \\id line, joins its lines with a space", async () => {
       const book: MarkerObject = { ...BOOK, content: ["test book"] };
       const mounted = await mountInView(
@@ -1092,6 +1160,22 @@ describe("in the footnotes pane's row editor", () => {
       }
     },
   );
+
+  it.each(SEPARATORS)(
+    "%s inside typed text stays in the text as a character, as in Paratext 9",
+    async (_name, separator) => {
+      const mounted = await mountInPaneRow(NOTE);
+      try {
+        await caretAt(mounted, VERSE_TEXT, "first ");
+        await type(mounted, `x${separator}y`);
+
+        expect(lineBreaksIn(mounted)).toBe(0);
+        expect(savedNote(mounted)).toEqual([["ft", `first x${separator}yverse text`]]);
+      } finally {
+        mounted.unmount();
+      }
+    },
+  );
 });
 
 const POPOVER_HOSTS = ["formatted", "paragraph-structure"].filter(isPopoverHostEnabled);
@@ -1131,6 +1215,21 @@ describe.each(POPOVER_HOSTS)("in the footnote popover over %s view", (host) => {
 
         expect(lineBreaksIn(mounted)).toBe(0);
         expect(savedNote(mounted)).toEqual([["ft", "first x yverse text"]]);
+      } finally {
+        mounted.unmount();
+      }
+    },
+  );
+
+  it.each(SEPARATORS)(
+    "%s inside typed text stays in the text as a character, as in Paratext 9",
+    async (_name, separator) => {
+      const mounted = await mountPopover();
+      try {
+        await type(mounted, `x${separator}y`);
+
+        expect(lineBreaksIn(mounted)).toBe(0);
+        expect(savedNote(mounted)).toEqual([["ft", `first x${separator}yverse text`]]);
       } finally {
         mounted.unmount();
       }
