@@ -299,6 +299,7 @@ function $verseNodeTransform(node: SomeVerseNode): void {
       !$endsInSpace(previousSibling) &&
       !$ownsItsSpacing(previousSibling, $parentOutsideMarks(previousSibling), node))
   )
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- a continuation returned above, so node is the verse's head: the space goes in front of all of it
     (host ?? node).insertBefore($createTextNode(" "));
 }
 

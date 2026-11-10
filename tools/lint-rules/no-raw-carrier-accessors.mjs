@@ -4,7 +4,9 @@
  * An annotation that holds part of a carrier (a marker glyph, a verse, an unmatched closer) cuts it
  * into sibling pieces of its own class (`libs/shared/src/nodes/features/displayPieces.state.ts`).
  * `getTextContent()` on a piece reads that piece's text only, `getNextSibling()` from it may return
- * the next piece of the same carrier, and `setTextContent()` rewrites one piece. A reader that
+ * the next piece of the same carrier, `setTextContent()` rewrites one piece, `insertAfter()` and
+ * `insertBefore()` can land between two pieces, `select*()` puts the caret inside the carrier, and
+ * `remove()` or `replace()` takes one piece and leaves the rest. A reader that
  * means the carrier goes through the chain helpers instead: `$logicalText`, `$setLogicalText`,
  * `$pieceHead`, `$lastPiece`, `$logicalNextSibling`, `$logicalPreviousSibling`, `$logicalOffset`.
  * A call that means the piece itself (the piece machinery, a node's own DOM) says so with an
@@ -30,13 +32,26 @@ const ACCESSORS = new Map([
   ["getNextSiblings", "$logicalNextSibling"],
   ["getPreviousSiblings", "$logicalPreviousSibling"],
   ["getIndexWithinParent", "the index of $pieceHead"],
+  ["isFirstChild", "$pieceHead(...).isFirstChild"],
+  ["isLastChild", "$lastPiece(...).isLastChild"],
+  ["insertBefore", "$pieceHead(...).insertBefore"],
+  ["insertAfter", "$lastPiece(...).insertAfter"],
+  ["selectStart", "$pieceHead(...).selectStart"],
+  ["selectEnd", "$lastPiece(...).selectEnd"],
+  ["selectPrevious", "$pieceHead(...).selectPrevious"],
+  ["selectNext", "$lastPiece(...).selectNext"],
+  ["select", "a point from $pieceAtLogicalOffset"],
+  ["remove", "removing every piece ($pieces)"],
+  ["replace", "replacing the whole chain ($pieces)"],
 ]);
 
-/** Whether `type`, or a member of it if it is a union, is a carrier class or extends one. */
+/** Whether `type`, or a member of it if it is a union or an intersection, is a carrier class or
+ * extends one. */
 function isCarrierType(checker, type, seen = new Set()) {
   if (seen.has(type)) return false;
   seen.add(type);
-  if (type.isUnion()) return type.types.some((member) => isCarrierType(checker, member, seen));
+  if (type.isUnion() || type.isIntersection())
+    return type.types.some((member) => isCarrierType(checker, member, seen));
   const symbol = type.getSymbol();
   if (symbol && CARRIER_CLASSES.has(symbol.getName())) return true;
   if (!type.isClassOrInterface()) return false;
@@ -48,7 +63,7 @@ export default {
     type: "problem",
     docs: {
       description:
-        "Disallow raw text and sibling accessors on display-byte carriers an annotation may cut into pieces",
+        "Disallow raw text, sibling, insertion, selection and removal calls on display-byte carriers an annotation may cut into pieces",
     },
     messages: {
       raw:

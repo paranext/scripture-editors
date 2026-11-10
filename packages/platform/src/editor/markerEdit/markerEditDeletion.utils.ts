@@ -610,6 +610,7 @@ export function $deleteLastOpenerGlyphCharForward(): boolean {
   const char = glyph?.getParent();
   if (!glyph || !$isCharNode(char)) return false;
   const content = $logicalNextSibling(glyph);
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the glyph's whole text is one character, so it is one piece: this removes all of it
   glyph.remove();
   if ($isSeparatorPrefixHostText(content) && content.getTextContent().startsWith(NBSP))
     content.setTextContent(` ${content.getTextContent().slice(NBSP.length)}`);

@@ -15,6 +15,7 @@ import {
 } from "./usj-marker-action.utils";
 import {
   $createNodeSelection,
+  $createRangeSelection,
   $createTextNode,
   $getRoot,
   $getSelection,
@@ -3267,7 +3268,8 @@ describe("USJ Marker Action Utils — a glyph or caller an annotation cuts into 
 
     /**
      * Apply `\wj` from offset `offset` into piece `pieceIndex` of `glyph()` to inside the text after
-     * the span, with the glyph first cut at `[start, end)` when `cutAt` is given. Returns the
+     * the span, with the glyph first cut at `[start, end)` when `cutAt` is given; with
+     * `asElementPoint`, from the element point in front of that piece instead. Returns the
      * paragraph's shape and the warnings logged.
      */
     function applyFrom(
@@ -3275,12 +3277,25 @@ describe("USJ Marker Action Utils — a glyph or caller an annotation cuts into 
       pieceIndex: number,
       offset: number,
       cutAt?: [number, number],
+      asElementPoint = false,
     ): { shape: unknown[]; warnings: string[] } {
       const { editor } = createBasicTestEnvironment(nodes, $span);
       registerDisplayAnnotationBasis(editor);
       if (cutAt) cut(editor, glyph(), ...cutAt);
       const piece = editor.getEditorState().read(() => $pieces(glyph())[pieceIndex]);
-      updateSelection(editor, piece, offset, tail, 3);
+      if (asElementPoint)
+        // The place in front of `piece` in its span, as an element point between two pieces.
+        editor.update(
+          () => {
+            const selection = $createRangeSelection();
+            const span = piece.getParentOrThrow();
+            selection.anchor.set(span.getKey(), piece.getIndexWithinParent(), "element");
+            selection.focus.set(tail.getKey(), 3, "text");
+            $setSelection(selection);
+          },
+          { discrete: true },
+        );
+      else updateSelection(editor, piece, offset, tail, 3);
       const warnings: string[] = [];
       const logger = {
         error: () => undefined,
@@ -3310,6 +3325,16 @@ describe("USJ Marker Action Utils — a glyph or caller an annotation cuts into 
       );
       // `\nd` cut into `\`, `n`, `d`: the front of the middle piece is byte 1.
       expect(applyFrom(() => opener, 1, 0, [1, 2])).toEqual(uncut);
+    });
+
+    it("refuses a selection from an element point between two pieces of the closer, as uncut", () => {
+      const uncut = applyFrom(() => closer, 0, 3);
+      expect(applyFrom(() => closer, 2, 0, [1, 3], true)).toEqual(uncut);
+    });
+
+    it("refuses a selection from an element point between two pieces of the opener, as uncut", () => {
+      const uncut = applyFrom(() => opener, 0, 1);
+      expect(applyFrom(() => opener, 1, 0, [1, 2], true)).toEqual(uncut);
     });
   });
 });

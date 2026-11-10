@@ -223,7 +223,8 @@ oracle must give the same documents, screen, positions and delta as the same cas
 
 The lint rule `scripture-editors/no-raw-carrier-accessors` (`tools/lint-rules/`) catches the raw
 form where a type can: `getTextContent`, `getTextContentSize`, `setTextContent`, the sibling
-accessors and `getIndexWithinParent` called on a `MarkerNode`, `VerseNode` or
+accessors, `getIndexWithinParent`, `isFirstChild`/`isLastChild`, `insertBefore`/`insertAfter`, the
+`select*` calls, `remove` and `replace` called on a `MarkerNode`, `VerseNode` or
 `ImmutableUnmatchedNode` (or a union holding one) are errors outside tests. A call that means the
 piece itself carries an `eslint-disable-next-line` comment saying why. The rule cannot see a
 carrier typed only as `TextNode` (an attribute run's text, a note's editable caller, a chapter's

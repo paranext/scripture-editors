@@ -161,6 +161,7 @@ function $mergeIntoPrecedingGlyphSpan(node: CharNode, target: CharNode): void {
   const closer = last && $pieceHead(last);
   const children = node.getChildren();
   if ($isMarkerNode(closer) && closer.getMarkerSyntax() === "closing") {
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- closer is the closer's head ($pieceHead): the content goes in front of all of it
     children.forEach((child) => closer.insertBefore(child));
   } else {
     target.append(...children);

@@ -488,6 +488,7 @@ export function $selectNextVerse(selection: RangeSelection): boolean {
 
   if (!nextVerse) return false;
   // The content starts past every piece of a verse an annotation cut into pieces.
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the verse's last piece: the content starts past all of it
   $lastPiece(nextVerse).selectNext(0, 0);
   return true;
 }
@@ -550,6 +551,7 @@ export function $selectPreviousVerse(selection: RangeSelection): boolean {
 
   if (!prevVerse) return false;
   // The content starts past every piece of a verse an annotation cut into pieces.
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the verse's last piece: the content starts past all of it
   $lastPiece(prevVerse).selectNext(0, 0);
   return true;
 }
