@@ -520,10 +520,7 @@ describe("a caret on the chapter line", () => {
     ]);
   });
 
-  // TODO: the rebuild that settles the chapter line drops every U+2028 in the text it rebuilds,
-  // because tier2Rebuild.utils.ts spells a display-only line break as U+2028 and strips them all
-  // before tokenizing. Flip to `it` once the display-only break is a character no text can hold.
-  it.fails("keeps a U+2028 in typed text there as a character", async () => {
+  it("keeps a U+2028 in typed text there as a character", async () => {
     expect(await savedAfterTyping("aa\u2028bb")).toEqual([
       CHAPTER_2,
       "aa\u2028bb",

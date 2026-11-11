@@ -382,6 +382,13 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- **A marker settle keeps the Unicode line separators (U+2028) the paragraph holds.** Typing a
+  marker into a paragraph that held one, typing one on a chapter line, or any other edit whose
+  settle re-reads a paragraph's text, saved the paragraph without each U+2028 in it, in Standard
+  view and the Unformatted view: the settle spelled the display-only line break a view without
+  spacing shows before a verse as U+2028 in the text it re-reads, and removed every one before
+  reading it. It now spells that break as vertical tab (U+000B), which no text can hold, so a
+  stored or typed U+2028 stays a character, as in Paratext 9.
 - **A Standard-view copy whose selection ends on the editor root between two paragraphs copies
   that last paragraph.** The copy walker (`$selectionToUsfmText`) took a boundary text node's
   offset from Lexical's `$getCharacterOffsets`, which answers 0 for an element point short of its
