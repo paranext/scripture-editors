@@ -1,3 +1,4 @@
+import { ActiveTextPlugin } from "./ActiveTextPlugin";
 import editorUsjAdaptor from "./adaptors/editor-usj.adaptor";
 import usjEditorAdaptor from "./adaptors/usj-editor.adaptor";
 import {
@@ -8,10 +9,32 @@ import {
   isCharacterMarkerSupported,
   isUsjMarkerSupported,
 } from "./adaptors/usj-marker-action.utils";
+import { CopyLimitPlugin } from "./copyLimit/CopyLimitPlugin";
 import { EditorOptions, EditorProps, EditorRef } from "./editor.model";
 import editorTheme from "./editor.theme";
-import { ActiveTextPlugin } from "./ActiveTextPlugin";
-import { CopyLimitPlugin } from "./copyLimit/CopyLimitPlugin";
+import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
+import { HiddenMarkersViewCopyPlugin } from "./HiddenMarkersViewCopyPlugin";
+import { InlineRangeEditPlugin } from "./InlineRangeEditPlugin";
+import { InvisibleCharactersPlugin } from "./InvisibleCharactersPlugin";
+import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
+import { $insertFirstChapter } from "./markerEdit/firstChapter.utils";
+import {
+  COMMIT_PENDING_MARKERS_COMMAND,
+  MarkerEditPlugin,
+  SET_MARKER_SETTLE_SUSPENDED_COMMAND,
+} from "./markerEdit/MarkerEditPlugin";
+import { MarkerValidationPlugin } from "./markerEdit/MarkerValidationPlugin";
+import {
+  $settledUsj,
+  AnchoredTransientInput,
+  LastKnownCaret,
+} from "./markerEdit/virtualSettle.utils";
+import {
+  opsForHost,
+  opsFromHost,
+  textBeforeFromDocumentOps,
+  toUsfmNbspSpelling,
+} from "./markerEdit/whitespaceDisplay.utils";
 import {
   getEnterMenuItems,
   getMarkerMenuItems,
@@ -25,30 +48,7 @@ import {
   $splitParagraphWithMarker,
 } from "./markerMenu/markerMenuApply.utils";
 import { $getMarkerMenuContext } from "./markerMenu/markerMenuContext.utils";
-import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
-import { $insertFirstChapter } from "./markerEdit/firstChapter.utils";
-import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
-import { HiddenMarkersViewCopyPlugin } from "./HiddenMarkersViewCopyPlugin";
-import { InlineRangeEditPlugin } from "./InlineRangeEditPlugin";
-import { InvisibleCharactersPlugin } from "./InvisibleCharactersPlugin";
-import {
-  COMMIT_PENDING_MARKERS_COMMAND,
-  MarkerEditPlugin,
-  SET_MARKER_SETTLE_SUSPENDED_COMMAND,
-} from "./markerEdit/MarkerEditPlugin";
-import { MarkerValidationPlugin } from "./markerEdit/MarkerValidationPlugin";
-import {
-  opsForHost,
-  opsFromHost,
-  textBeforeFromDocumentOps,
-  toUsfmNbspSpelling,
-} from "./markerEdit/whitespaceDisplay.utils";
 import { MarkersViewCopyPlugin } from "./MarkersViewCopyPlugin";
-import {
-  $settledUsj,
-  AnchoredTransientInput,
-  LastKnownCaret,
-} from "./markerEdit/virtualSettle.utils";
 import { ParaMarkerPrefixGuardPlugin } from "./ParaMarkerPrefixGuardPlugin";
 import {
   isLiveSettledIdentical,
@@ -61,8 +61,9 @@ import {
 } from "./positions/settledPositions.utils";
 import { $prepareSettleScopes } from "./positions/settledScopes.utils";
 import { ScriptureReferencePlugin } from "./ScriptureReferencePlugin";
-import TreeViewPlugin from "./TreeViewPlugin";
 import { ToolbarPlugin } from "./toolbar/ToolbarPlugin";
+import TreeViewPlugin from "./TreeViewPlugin";
+import { useLoadGate } from "./use-load-gate.hook";
 import {
   ContentJsonPath,
   MarkerContent,
@@ -602,6 +603,19 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     loggerRef.current = logger;
   }
   const stableLogger = loggerRef.current;
+
+  // Annotations address the loaded document, so they wait for the load in flight.
+  const { handleLoadingChange, noteLoadRequested, runWhenLoaded } = useLoadGate(stableLogger);
+  // `LoadStatePlugin` only reports a load from its own passive effect, and a consumer's LAYOUT
+  // effect runs before every passive effect in the commit — including at mount, which is the first
+  // moment a consumer can touch the ref at all. So close the gate here instead: a change to any
+  // input of that plugin's reload effect means a reload is coming, and this layout effect runs
+  // before the consumer's own. Keep these dependencies a SUBSET of that effect's (`scripture`,
+  // `viewOptions`, `logger`, plus the `key={loadTrigger}` remount below) — anything else would
+  // close the gate for a load that never arrives.
+  useLayoutEffect(() => {
+    noteLoadRequested();
+  }, [loadTrigger, noteLoadRequested, stableLogger, usj, viewOptions]);
 
   // The block verse layout regroups each verse into its own element, splitting paragraphs that span
   // verses. That shape cannot be exported back to USJ, so the layout is read-only by construction
@@ -1197,6 +1211,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         transientInputRef.current = undefined;
         // This can happen when using `applyUpdate` since `usj` won't change.
         const shouldForceReload = deepEqual(usj, incomingUsj);
+        // A load is now certain, but React hasn't re-rendered yet, so neither the gate's layout
+        // effect above nor LoadStatePlugin has seen it. Without this, an annotation set in this
+        // same tick would address the outgoing document and be discarded by the load.
+        noteLoadRequested();
         setUsj(incomingUsj);
         if (shouldForceReload) setLoadTrigger((prev) => prev + 1);
       }
@@ -1316,38 +1334,45 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         onMouseLeave = fourth.onMouseLeave;
       }
 
-      const live = liveSelectionFromSettled(selection);
-      if (!live) {
-        stableLogger?.warn(
-          `setAnnotation refused for ${type} "${id}": the range could not be resolved against ` +
-            "the document currently being edited",
-        );
-        return;
-      }
-
       // The text each callback reports is the annotation's display text, so a stored no-break space
       // is still the editor's internal stand-in there; the host is given U+00A0. Keep the
       // `viewOptions` of this call, not the latest: a view-option change reloads the document and
       // drops its annotations, so the text a removal then reports is spelled the old way.
       const hostText = (text: string) => toUsfmNbspSpelling(text, viewOptions);
-      annotationRef.current?.setAnnotation(
-        live,
-        externalTypedMarkType(type),
-        id,
-        onClick &&
-          ((event, markType, markId, text) => onClick(event, markType, markId, hostText(text))),
-        onRemove &&
-          ((markType, markId, cause, text) => onRemove(markType, markId, cause, hostText(text))),
-        onMouseEnter &&
-          ((event, markType, markId, text) =>
-            onMouseEnter(event, markType, markId, hostText(text))),
-        onMouseLeave &&
-          ((event, markType, markId, text) =>
-            onMouseLeave(event, markType, markId, hostText(text))),
-      );
+      // The settled-to-live translation reads the document too, so it waits with the rest: run
+      // early, it would resolve against the outgoing document.
+      runWhenLoaded(() => {
+        const live = liveSelectionFromSettled(selection);
+        if (!live) {
+          stableLogger?.warn(
+            `setAnnotation refused for ${type} "${id}": the range could not be resolved against ` +
+              "the document currently being edited",
+          );
+          return;
+        }
+
+        annotationRef.current?.setAnnotation(
+          live,
+          externalTypedMarkType(type),
+          id,
+          onClick &&
+            ((event, markType, markId, text) => onClick(event, markType, markId, hostText(text))),
+          onRemove &&
+            ((markType, markId, cause, text) => onRemove(markType, markId, cause, hostText(text))),
+          onMouseEnter &&
+            ((event, markType, markId, text) =>
+              onMouseEnter(event, markType, markId, hostText(text))),
+          onMouseLeave &&
+            ((event, markType, markId, text) =>
+              onMouseLeave(event, markType, markId, hostText(text))),
+        );
+      });
     },
     removeAnnotation(type, id) {
-      annotationRef.current?.removeAnnotation(externalTypedMarkType(type), id);
+      // Gated for the same reason `setAnnotation` is, and so the pair keeps its issue order: an
+      // un-gated removal alongside a queued set would run against the outgoing document while its
+      // set ran against the loaded one.
+      runWhenLoaded(() => annotationRef.current?.removeAnnotation(externalTypedMarkType(type), id));
     },
     getAnnotationRanges(type, id) {
       return annotationRef.current?.getAnnotationRanges(externalTypedMarkType(type), id) ?? [];
@@ -2087,6 +2112,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             nodeOptions={nodeOptions}
             editorAdaptor={usjEditorAdaptor}
             viewOptions={viewOptions}
+            onLoadingChange={handleLoadingChange}
             logger={stableLogger}
           />
           <OnSelectionChangePlugin onChange={handleSelectionChange} viewOptions={viewOptions} />
