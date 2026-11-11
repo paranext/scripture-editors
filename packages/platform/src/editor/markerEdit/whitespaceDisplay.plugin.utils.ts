@@ -78,9 +78,9 @@ import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
 import { $isNoteCallerSlot } from "./noteCallerSlot.utils";
 import { paratext9HtmlToUsfm } from "./paratext9Clipboard.utils";
 import {
-  controlCharactersToSpaces,
+  enteredControlCharactersToSpaces,
+  normalizeEnteredText,
   respellNbspToUsfm,
-  withoutZeroWidthNoBreakSpaces,
 } from "./whitespaceDisplay.utils";
 
 const NBSP_PATTERN = /\u00A0/g;
@@ -155,11 +155,11 @@ export function $displayWhitespaceTransform(node: TextNode): void {
  * Makes a no-break space the user types go in as `getNbspSpelling()`'s display form whenever that
  * is not `~` — the case where the project stores U+00A0 itself, so the character is data and is
  * kept. With the `~` spelling a typed U+00A0 is left alone: it is display spacing there and saves
- * as a space, as in Paratext 9, whose authors type a no-break space as `~`. A typed C0 control
- * character other than tab, line feed and carriage return goes in as a space either way
- * ({@link controlCharactersToSpaces}), so a typed U+001A never becomes the stand-in for a stored
- * no-break space, and a typed zero-width no-break space (U+FEFF) is dropped
- * ({@link withoutZeroWidthNoBreakSpaces}). The typing routes are {@link registerTypedTextRewrite}'s.
+ * as a space, as in Paratext 9, whose authors type a no-break space as `~`. Either way the typed
+ * text goes in as entered text does in every view ({@link normalizeEnteredText}): a C0 control
+ * character other than tab, line feed and carriage return as a space, so a typed U+001A never
+ * becomes the stand-in for a stored no-break space, and a zero-width no-break space (U+FEFF)
+ * dropped. The typing routes are {@link registerTypedTextRewrite}'s.
  *
  * @param editor - The editor.
  * @param getNbspSpelling - The current spelling, read at each insertion.
@@ -171,7 +171,7 @@ export function registerTypedNbspSpelling(
 ): () => void {
   return registerTypedTextRewrite(editor, (text) => {
     const nbspSpelling = getNbspSpelling();
-    const result = withoutZeroWidthNoBreakSpaces(controlCharactersToSpaces(text));
+    const result = normalizeEnteredText(text);
     return nbspSpelling === "~" ? result : result.replaceAll(NBSP, nbspSpelling);
   });
 }
@@ -446,8 +446,9 @@ export function getDataTransferPayload(
   const paratext9Text = html ? paratext9HtmlToUsfm(html) : undefined;
   return {
     // Control characters become spaces, as Paratext would read them, before any claim sees the text:
-    // U+001A is the editor's stand-in for a stored no-break space (`controlCharactersToSpaces`).
-    text: controlCharactersToSpaces(
+    // U+001A is the editor's stand-in for a stored no-break space
+    // (`enteredControlCharactersToSpaces`).
+    text: enteredControlCharactersToSpaces(
       paratext9Text
         ? normalizeLineEndings(paratext9Text)
         : plainText || (html ? normalizeLineEndings(htmlPasteText(html)) : ""),
