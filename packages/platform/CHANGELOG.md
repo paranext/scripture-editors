@@ -148,8 +148,9 @@ refused. The public surface grew substantially; nothing was removed.
   keystroke in a view whose `markerMode` is `"hidden"` that removed or refused `\` or `//`, with its
   `source` (`"paste"`, `"drop"` or `"typing"`) and what was `removed` (`"\\"` and `"//"`, each once,
   in the order first met), so the host can tell the user why some of what they pasted, dropped or
-  typed is missing; and once per refused deletion (below), with `source` `"deletion"` and `removed`
-  `["//"]`. Never called in Standard or Markers view, or when nothing was removed or refused.
+  typed is missing; once per refused deletion (below), with `source` `"deletion"` and `removed`
+  `["//"]`; and once per refused drag-move (below), with `source` `"move"` and what the drop would
+  have left out. Never called in Standard or Markers view, or when nothing was removed or refused.
 
 ### Changed
 
@@ -316,9 +317,9 @@ refused. The public surface grew substantially; nothing was removed.
   now does nothing, and `onUnstorableTextRemoved` is told once with `source: "deletion"`. This
   covers Backspace and Delete and their word and line chords, the same deletes arriving without a
   keystroke (a `beforeinput` delete or a menu), deleting a selection, a cut (which then copies
-  nothing either, except one that first asks about hidden content in the selection: that copy is
-  made before the question, so it stays on the clipboard), the removal half of a drag-move (whose drop still goes in, leaving the text in
-  both places), and a paragraph join, including guarded structure's two-step join (refused at the
+  nothing either; one over hidden content is refused without first asking the host about that
+  content), the removal half of a drag-move (whose drop still goes in, leaving the text in both
+  places), and a paragraph join, including guarded structure's two-step join (refused at the
   first press) and a selected paragraph marker. The check reads what the file stores either side of
   what goes: through annotation marks, through a character span the delete empties, and through two
   pieces of one span that a join makes one again. An optional line break, which the view shows as
@@ -326,6 +327,24 @@ refused. The public surface grew substantially; nothing was removed.
   against one is treated as making `//` too. A `//` already in the text is left alone. Under
   `"protected"` structure a join is refused by the protection, as before. Standard view is
   unchanged.
+- **The views that hide markers refuse a drag-move that would lose a `/` where it lands.** The
+  browser removes the dragged text before it inserts it at the drop point, and the insertion's
+  filter then left out a `/` that landed against a `/` (or an optional line break), after its source
+  was already gone: dragging the lone `/` out of `a/b` to just after `c/` saved `ab c/`. Such a
+  move (a drag that started in editable content of the editor's document, without the copy key
+  held) is now refused at its drop, removing and inserting nothing, and `onUnstorableTextRemoved`
+  is told once with the new `source` `"move"` (`UnstorableTextRemoved.source` gains that value; a
+  host that switches over `source` needs a case for it) and what the drop would have left out. A
+  copy-drop and a drop from another program keep the filter, as does a drop carrying html under
+  `"protected"` structure, which the protection inserts itself after cancelling the browser's move.
+- **A drag-move within the editor, in the views that hide markers, lands where it was dropped.** A
+  move within one line, and any move whose removal changed the text node the drop point was in,
+  went in at the start of that node, since Lexical rewrites a changed text node whole in Chromium
+  and that moves the browser's drop point to the node's start: the `/` of `one/two` dragged to just
+  after `three` in `yet I will look one/two three` saved `/yet I will look onetwo three`. The
+  editor now makes such a move itself, in one undo step, through the same removal and insertion
+  commands the browser's move dispatches, so every guard and filter still judges both halves. A
+  drop at or inside what was dragged changes nothing.
 - **The views that hide markers refuse a transpose that would join two `/` into `//`.** macOS
   Ctrl+T swaps the characters either side of the caret (at the end of a line, the two before it),
   so in `/x/` with the caret before the second `/` it would have saved `//x`, an optional line
