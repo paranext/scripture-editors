@@ -103,6 +103,70 @@ describe("USX to USJ Converter", () => {
     });
   });
 
+  // ParatextData writes USX as XML 1.0, where only CR and CR LF are line ends. XML 1.1 (xmldom's
+  // default) also folds NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR into a line feed, which the save
+  // path then stores as a space.
+  describe("line ends", () => {
+    const usxWithText = (text: string, lemma = "x") =>
+      `<usx version="3.0"><book code="GEN" style="id" /><para style="p">` +
+      `his${text}royal<char style="w" lemma="${lemma}">word</char></para></usx>`;
+
+    it.each([
+      ["U+2028", "\u2028"],
+      ["U+2029", "\u2029"],
+      ["U+0085", "\u0085"],
+    ])("should keep a stored %s in text exactly", (_, character) => {
+      const usj = usxStringToUsj(usxWithText(character));
+      expect(usj.content[1]).toEqual({
+        type: "para",
+        marker: "p",
+        content: [
+          `his${character}royal`,
+          { type: "char", marker: "w", lemma: "x", content: ["word"] },
+        ],
+      });
+    });
+
+    it.each([
+      ["U+2028", "\u2028"],
+      ["U+2029", "\u2029"],
+      ["U+0085", "\u0085"],
+    ])("should keep a stored %s that is a whole text node", (_, character) => {
+      const usj = usxStringToUsj(
+        `<usx version="3.0"><book code="GEN" style="id" /><para style="p">` +
+          `<char style="w">a</char>${character}<char style="w">b</char></para></usx>`,
+      );
+      expect(usj.content[1]).toEqual({
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "char", marker: "w", content: ["a"] },
+          character,
+          { type: "char", marker: "w", content: ["b"] },
+        ],
+      });
+    });
+
+    it.each([
+      ["U+2028", "\u2028"],
+      ["U+2029", "\u2029"],
+      ["U+0085", "\u0085"],
+    ])("should keep a stored %s in an attribute value exactly", (_, character) => {
+      const usj = usxStringToUsj(usxWithText(" ", `a${character}b`));
+      expect(usj.content[1]).toMatchObject({
+        content: ["his royal", { type: "char", marker: "w", lemma: `a${character}b` }],
+      });
+    });
+
+    it.each([
+      ["CR LF", "\r\n"],
+      ["a lone CR", "\r"],
+    ])("should still read %s in text as a line feed", (_, lineEnd) => {
+      const usj = usxStringToUsj(usxWithText(`${lineEnd}x`));
+      expect(usj.content[1]).toMatchObject({ content: ["his\nxroyal", expect.anything()] });
+    });
+  });
+
   // ParatextData writes `vid` on every paragraph that continues a verse, empty in a chapter after
   // the first. A paragraph attribute the editor does not know keeps its typed markers from being
   // read as markers, so the derived ones are dropped whatever their value.
