@@ -9,7 +9,10 @@
  * cutting selected text inverts display-NBSP back to plain spaces, so pasted text elsewhere isn't
  * polluted with NBSP. Both clipboard flavors a consumer can read carry the SAME inverted USFM bytes
  * ({@link $getStandardViewClipboardData}). Both pieces are gated to Standard view only by the caller
- * (`MarkerEditPlugin.tsx`) — they must not run in other view modes.
+ * (`MarkerEditPlugin.tsx`) — they must not run in other view modes. The clipboard writers
+ * ({@link $writeCopyPayload}, {@link $writeClipboardData}, {@link registerViewCopyWriter}) are the
+ * exception: they are view-neutral, and the Markers and hidden-marker views' copy plugins use them
+ * too.
  */
 
 import { $getLexicalContent, copyToClipboard, LexicalClipboardData } from "@lexical/clipboard";
@@ -23,9 +26,11 @@ import {
   $isLineBreakNode,
   $isRangeSelection,
   $isTextNode,
-  BaseSelection,
   COMMAND_PRIORITY_CRITICAL,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  CommandListenerPriority,
+  COPY_COMMAND,
+  CUT_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
   LexicalEditor,
   LexicalNode,
@@ -39,7 +44,6 @@ import {
   $isBookNode,
   $isChapterNode,
   $isCharNode,
-  $isLoneNbspContent,
   $isMarkerNode,
   $isNoteNode,
   $isSomeChapterNode,
@@ -64,6 +68,8 @@ import {
   MARKER_TEXT_HTML_ATTRIBUTE,
 } from "shared-react";
 import {
+  $liesBeforeElementPoint,
+  $offsetInText,
   isCopyFromOutsideEditor,
   normalizeCopyLimit,
   sliceToCopyLimit,
@@ -79,58 +85,31 @@ import {
 
 const NBSP_PATTERN = /\u00A0/g;
 
-function countMatches(text: string, pattern: RegExp): number {
-  return text.match(pattern)?.length ?? 0;
+/**
+ * `text`, shown by `node`, with each no-break space written as `~` when `node` is body text (a text
+ * node with no text type, so not a marker's or an attribute's bytes); otherwise `text` as it is.
+ * For `$selectionPlainText`'s `$spell`, which never passes it layout text (`$isLayoutText`), so
+ * every no-break space it sees is one the text stores.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+export function $withStoredNbspsAsTilde(node: LexicalNode, text: string): string {
+  return $isTextNode(node) && $getState(node, textTypeState) === undefined
+    ? text.replace(NBSP_PATTERN, "~")
+    : text;
 }
 
 /**
- * Whether each no-break space a copy of `selection` writes, in order, is one the text stores
- * rather than one the view shows for its layout: a gutter marker's (`\p `), an empty char span's
- * placeholder, a collapsed note's spacers ({@link $isLoneNbspContent} tells a lone one apart). In
- * the order the copy's plain text writes them: the selected leaves' text, the first and last text
- * cut to the selection as Lexical's copy cuts them; a node `$isHidden` picks writes none, as in
- * {@link $selectionShownText}.
+ * How a hidden-marker view's copy spells the text it writes as plain text, for
+ * `$selectionPlainText`'s `$spell`: a stored no-break space as `~` ({@link $withStoredNbspsAsTilde})
+ * with `allowInvisibleCharacters` (`ViewOptions.allowInvisibleCharacters`) off, as Paratext 9's
+ * views show and copy one; as itself (`undefined`, the default) with it on. Shared by the copy that
+ * fits and the over-limit copy, so both spell a range alike.
  */
-export function $storedNbsps(
-  selection: BaseSelection,
-  $isHidden?: (node: LexicalNode) => boolean,
-): boolean[] {
-  const stored: boolean[] = [];
-  const range = $isRangeSelection(selection) ? selection : undefined;
-  const [start, end] = range?.isBackward()
-    ? [range.focus, range.anchor]
-    : [range?.anchor, range?.focus];
-  for (const node of selection.getNodes()) {
-    if ($isHidden?.(node) || $isElementNode(node)) continue;
-    if (!$isTextNode(node)) {
-      // A leaf that is not text, such as a gutter marker, is layout.
-      stored.push(...Array<boolean>(countMatches(node.getTextContent(), NBSP_PATTERN)).fill(false));
-      continue;
-    }
-    const text = node.getTextContent();
-    const from = start?.type === "text" && start.key === node.getKey() ? start.offset : 0;
-    const to = end?.type === "text" && end.key === node.getKey() ? end.offset : text.length;
-    const isContent =
-      $getState(node, textTypeState) === undefined && (text !== NBSP || $isLoneNbspContent(node));
-    stored.push(
-      ...Array<boolean>(countMatches(text.slice(from, to), NBSP_PATTERN)).fill(isContent),
-    );
-  }
-  return stored;
-}
-
-/**
- * `text` with each no-break space `stored` marks as stored written as `~`; `undefined` when `text`
- * does not hold exactly as many as `stored` names, so which is which cannot be told.
- */
-export function withStoredNbspsAsTildes(text: string, stored: boolean[]): string | undefined {
-  if (countMatches(text, NBSP_PATTERN) !== stored.length) return undefined;
-  let index = 0;
-  return text.replace(NBSP_PATTERN, (nbsp) => {
-    const isStored = stored[index];
-    index += 1;
-    return isStored ? "~" : nbsp;
-  });
+export function hiddenViewCopySpelling(
+  allowInvisibleCharacters: boolean | undefined,
+): ((node: LexicalNode, text: string) => string) | undefined {
+  return allowInvisibleCharacters ? undefined : $withStoredNbspsAsTilde;
 }
 
 /** Spaces in runs display as NBSP so they are visible while typing, and a lone display NBSP left
@@ -1268,35 +1247,6 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
 }
 
 /**
- * Where `point` falls in text node `node`, as an offset into its text: the point's own offset when
- * it is a text point on `node`, otherwise 0 when it lies before `node` and the text's length when it
- * lies after. An element point is placed by the child it stands before, where Lexical's
- * `$getCharacterOffsets` answers 0 for any element point short of its element's end — so a range
- * ending on the root between two paragraphs would read as taking none of the last one's text.
- *
- * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
- */
-function $offsetInText(node: TextNode, point: PointType): number {
-  const length = node.getTextContentSize();
-  if (point.type === "text") {
-    if (point.key === node.getKey()) return point.offset;
-    return point.getNode().isBefore(node) ? 0 : length;
-  }
-  return $liesBeforeElementPoint(node, point) ? length : 0;
-}
-
-/** Whether leaf `node` lies wholly before element point `point`. */
-function $liesBeforeElementPoint(node: LexicalNode, point: PointType): boolean {
-  const element = point.getNode();
-  if (!$isElementNode(element)) return false;
-  const after = element.getChildAtIndex(point.offset);
-  if (after === null) return element.isParentOf(node) || node.isBefore(element);
-  return (
-    after !== node && !($isElementNode(after) && after.isParentOf(node)) && node.isBefore(after)
-  );
-}
-
-/**
  * Whether `node` starts at or after element point `point`. `RangeSelection.getNodes` reaches past
  * an end on the root between two paragraphs into the next one, whose block and first child are no
  * part of the range.
@@ -1489,13 +1439,14 @@ export function $handleCopyForStandardView(
 
 /**
  * Writes a copy or cut's `data` to the clipboard through whichever leg delivered the command, and
- * claims it — shared by Standard view's handler above and the Markers view's
- * (`MarkersViewCopyPlugin.tsx`), so both write their payloads the same way.
+ * claims it — shared by Standard view's handler above and every {@link registerViewCopyWriter}
+ * writer, so all of them write their payloads the same way.
  *
- * A cut removes the range only when the editor is editable: `ClipboardPlugin`'s Ctrl+X listener
- * (and `ContextMenuPlugin`/`EditorRef`) dispatches `CUT_COMMAND` with no editability check of its
- * own, so a read-only surface reaching this function must still copy and remove nothing. The rule
- * lives here rather than at each call site so every caller gets it.
+ * A cut removes the range only when the editor is editable. The app's own cut gestures already
+ * stop short of a read-only editor (Lexical's root `cut` listener, `ClipboardPlugin`'s Ctrl+X,
+ * `ContextMenuPlugin`'s disabled Cut, `EditorRef.cut()`), but a host's plugin can dispatch
+ * `CUT_COMMAND` itself, so a read-only surface reaching this function must still copy and remove
+ * nothing. The rule lives here rather than at each call site so every caller gets it.
  *
  * `copyLimit` is `EditorOptions.copyLimit`. `CopyLimitPlugin` fits the selection to it before this
  * runs, so `data` already fits. If it does not, a development build warns, and only the first
@@ -1539,6 +1490,53 @@ export function $writeCopyPayload(
     editor,
     data,
     isCut && editor.isEditable() ? () => $removeRange(selection) : undefined,
+  );
+}
+
+/**
+ * Registers a view's own copy and cut writer at `priority`, shared by the Markers view's
+ * (`MarkersViewCopyPlugin.tsx`) and the hidden-marker views' (`HiddenMarkersViewCopyPlugin.tsx`).
+ * For a range selection that is not collapsed, `$payload` gives the flavors to write and
+ * {@link $writeCopyPayload} writes them; `$payload` returns `undefined` to leave the command to the
+ * handlers below. `isCut` tells a cut from a copy. `copyLimit` is `EditorOptions.copyLimit`, and
+ * `$removeRange` is how a cut removes the range ({@link $writeCopyPayload}'s).
+ *
+ * `event` is the command's payload when it is a browser clipboard event (Lexical's root `copy` and
+ * `cut` listeners, the usual path), otherwise `undefined`: Lexical's key-down handling passes a
+ * `KeyboardEvent` for a selection that is not a range, and `ClipboardPlugin`, `ContextMenuPlugin`,
+ * `EditorRef` and the guard plugins that re-dispatch a copy (such as `HiddenContentDeleteGuardPlugin`
+ * and `ParaMarkerSelectionPlugin`) pass `null`.
+ *
+ * @returns A function that unregisters both listeners.
+ */
+export function registerViewCopyWriter(
+  editor: LexicalEditor,
+  priority: CommandListenerPriority,
+  $payload: (
+    selection: RangeSelection,
+    event: ClipboardEvent | undefined,
+    isCut: boolean,
+  ) => LexicalClipboardData | undefined,
+  copyLimit?: number,
+  $removeRange?: (range: RangeSelection) => void,
+): () => void {
+  const $copy = (payload: ClipboardEvent | KeyboardEvent | null, isCut: boolean): boolean => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+    // Duck-checked on the one property the writers need rather than `instanceof ClipboardEvent`,
+    // which a synthesized event built as a plain object fails. `in` throws on a non-object, so
+    // the type check comes first.
+    const event =
+      payload && typeof payload === "object" && "clipboardData" in payload ? payload : undefined;
+    const data = $payload(selection, event, isCut);
+    return (
+      data !== undefined &&
+      $writeCopyPayload(event, editor, selection, data, isCut, copyLimit, $removeRange)
+    );
+  };
+  return mergeRegister(
+    editor.registerCommand(COPY_COMMAND, (event) => $copy(event, false), priority),
+    editor.registerCommand(CUT_COMMAND, (event) => $copy(event, true), priority),
   );
 }
 

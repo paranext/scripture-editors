@@ -195,7 +195,8 @@ export interface ViewOptions {
    * U+00A0 as U+00A0 under either setting.
    *
    * Views that hide markers (formatted, paragraph-structure, block verse) show the stored
-   * characters as they are either way, so they behave the same with this on or off.
+   * characters as they are either way. Their copy differs: with this off, a stored no-break space is
+   * written to `text/plain` as `~`, as Paratext 9's views copy one; with it on, as U+00A0.
    *
    * Passing the wrong value for the project corrupts text saved from Standard view: off for a
    * project that has it on turns every `~` into U+00A0; on for a project that has it off saves a

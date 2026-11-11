@@ -56,8 +56,10 @@ export function $hasCopyableSelection(): boolean {
  * committed state, and every dispatcher is covered by the one registration.
  *
  * Registered at `COMMAND_PRIORITY_LOW` — above `@lexical/rich-text`'s own copy/cut fallback at
- * EDITOR, which is the thing that synthesizes the event, and below every feature handler, so a view
- * with its own clipboard payload (Standard view's USFM copy) still claims first and this never runs.
+ * EDITOR, which is the thing that synthesizes the event. A view with its own clipboard payload
+ * claims at a higher priority (Standard view's USFM copy) or at this same one (the hidden-marker
+ * views' prose copy, which claims only a selection with text to write, which this never claims), so
+ * whichever runs first, the outcome is the same.
  */
 export function registerEmptyCopyGuard(editor: LexicalEditor): () => void {
   const $claimWhenNothingToCopy = () => !$hasCopyableSelection();

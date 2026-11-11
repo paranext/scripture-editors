@@ -1,25 +1,13 @@
-import {
-  registerTypedTextRewrite,
-  $storedNbsps,
-  withStoredNbspsAsTildes,
-  $writeClipboardData,
-} from "./markerEdit/whitespaceDisplay.plugin.utils";
+import { registerTypedTextRewrite } from "./markerEdit/whitespaceDisplay.plugin.utils";
 import {
   withoutZeroWidthNoBreakSpaces,
   ZERO_WIDTH_NO_BREAK_SPACE,
 } from "./markerEdit/whitespaceDisplay.utils";
-import { $getClipboardDataFromSelection } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
-  $getSelection,
-  $isNodeSelection,
-  $isRangeSelection,
   COMMAND_PRIORITY_CRITICAL,
-  COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
-  COPY_COMMAND,
-  CUT_COMMAND,
   LexicalEditor,
   PASTE_COMMAND,
   PasteCommandType,
@@ -38,14 +26,17 @@ import { hasStandardViewWhitespace, ViewOptions } from "shared-react";
  * - With `allowInvisibleCharacters` off, a no-break space (U+00A0) typed as a character goes in as
  *   a space outside Standard view — the author's no-break space is typed as `~` — and a view that
  *   hides markers copies a stored no-break space as `~` in its plain text, as Paratext 9's views
- *   show and copy one. A pasted U+00A0 stays a no-break space. Standard view does both itself
- *   (`registerTypedNbspSpelling`, and its USFM copy), and so does the Markers view's USFM copy.
- *   With the setting on, a no-break space is typed and copied as itself.
+ *   show and copy one. A pasted U+00A0 stays a no-break space. The typing rule is this plugin's; the
+ *   copy is the view's own (`HiddenMarkersViewCopyPlugin`), which writes the view's prose with
+ *   `$withStoredNbspsAsTilde`. Standard view does both itself (`registerTypedNbspSpelling`, and its
+ *   USFM copy), and so does the Markers view's USFM copy. With the setting on, a no-break space is
+ *   typed and copied as itself.
  *
  * Mount it ahead of every plugin with a CRITICAL paste or text-insertion handler: at equal priority
  * handlers run in the order they were registered, and one that inserted the paste itself before
- * this saw it would take the U+FEFF with it. Its handlers are registered once and read the view
- * options at each event, so a change of options does not move them behind the others.
+ * this saw it would take the U+FEFF with it. Its paste and drop handlers are registered once, at
+ * mount; the typed-text rewrite reads the view options at each insertion, and is registered again
+ * only when the view switches into or out of Standard view, which rewrites its own typing.
  */
 export function InvisibleCharactersPlugin({ viewOptions }: { viewOptions?: ViewOptions }): null {
   const [editor] = useLexicalComposerContext();
@@ -66,16 +57,6 @@ export function InvisibleCharactersPlugin({ viewOptions }: { viewOptions?: ViewO
           CONTROLLED_TEXT_INSERTION_COMMAND,
           (payload) => redispatchDropWithoutZeroWidthNoBreakSpaces(editor, payload),
           COMMAND_PRIORITY_CRITICAL,
-        ),
-        editor.registerCommand(
-          COPY_COMMAND,
-          (event) => $copyWithTildes(editor, viewOptionsRef.current, event, false),
-          COMMAND_PRIORITY_LOW,
-        ),
-        editor.registerCommand(
-          CUT_COMMAND,
-          (event) => $copyWithTildes(editor, viewOptionsRef.current, event, true),
-          COMMAND_PRIORITY_LOW,
         ),
       ),
     [editor],
@@ -145,47 +126,4 @@ function redispatchDropWithoutZeroWidthNoBreakSpaces(
   payload.preventDefault();
   editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, replay);
   return true;
-}
-
-/**
- * In a view that hides markers, with `allowInvisibleCharacters` off, writes a copy or cut holding a
- * stored no-break space with each one as `~` in its plain text, as Paratext 9 copies one; a
- * no-break space the view shows for its layout stays as it is. The html and the internal flavor
- * keep U+00A0: they are what this editor's own paste reads, where a `~` would come back as a
- * literal tilde rather than the no-break space it was. A copy without a stored one, or one whose
- * plain text cannot be matched to the selection's text, is left to the view's usual handling.
- * Standard view and the Markers view copy USFM themselves; the Unformatted view's copy, which only
- * the library offers, is not respelled. A range selection in a view that hides markers is copied
- * by `HiddenViewCopyPlugin`, which respells its plain text the same way, so this writes the rest.
- */
-function $copyWithTildes(
-  editor: LexicalEditor,
-  viewOptions: ViewOptions | undefined,
-  event: ClipboardEvent | KeyboardEvent | null,
-  isCut: boolean,
-): boolean {
-  if (
-    viewOptions?.allowInvisibleCharacters ||
-    viewOptions?.markerMode !== "hidden" ||
-    (isCut && !editor.isEditable())
-  )
-    return false;
-  const selection = $getSelection();
-  if (!selection) return false;
-  const stored = $storedNbsps(selection);
-  if (!stored.includes(true)) return false;
-  const data = $getClipboardDataFromSelection(selection);
-  const plainText = withStoredNbspsAsTildes(data["text/plain"], stored);
-  if (plainText === undefined) return false;
-  data["text/plain"] = plainText;
-  const $remove = () => {
-    if ($isRangeSelection(selection)) selection.removeText();
-    else if ($isNodeSelection(selection)) selection.getNodes().forEach((node) => node.remove());
-  };
-  return $writeClipboardData(
-    event && "clipboardData" in event ? event : null,
-    editor,
-    data,
-    isCut ? $remove : undefined,
-  );
 }

@@ -132,6 +132,9 @@ async function dispatchClipboard(
 ): Promise<{ store: Map<string, string>; isClaimed: boolean }> {
   const store = new Map<string, string>();
   let isClaimed = false;
+  // A read-only editor does not draw its selection on the page, so a page selection an earlier
+  // test left behind would read as a copy from outside the editor (`isCopyFromOutsideEditor`).
+  if (!editor.isEditable()) document.getSelection()?.removeAllRanges();
   await act(async () =>
     editor.update(() => {
       isClaimed = editor.dispatchCommand(command, clipboardEvent(store));
@@ -150,7 +153,7 @@ const ACROSS_PARAGRAPHS = {
 const MATTHEW_LINE_2 = matthew.content[23] as MarkerObject;
 const MATTHEW_LINE_3 = matthew.content[24] as MarkerObject;
 
-describe("HiddenViewCopyPlugin", () => {
+describe("hidden-marker view copy", () => {
   it("paragraph-structure copy across a paragraph break writes no gutter glyph text", async () => {
     const mounted = await mountInView(matthew, editorView("paragraph-structure"));
     try {
@@ -452,10 +455,11 @@ describe("HiddenViewCopyPlugin", () => {
     }
   }
 
-  // An optional break is invisible here, so a selection can only touch it at its edges. Lexical
-  // normalizes a point beside it into the break itself or into the text next to it. A selection with
-  // an end in the break writes no node copy at all (`$rangeReachesIntoOpaqueBlock`), and one that
-  // only touches it leaves it out, so a paste never brings back a break the selection did not cover.
+  // An optional break is invisible here, so a selection can only touch it at its edges. Lexical may
+  // normalize a point beside it into the break itself or into the text next to it, or leave it a
+  // point in the paragraph. A selection with an end in the break writes no node copy at all
+  // (`$rangeReachesIntoOpaqueBlock`), and one that only touches it leaves it out, so a paste never
+  // brings back a break the selection did not cover.
   describe.each(enabledViews(["formatted", "paragraph-structure"] as const))(
     "%s copy at an optional break's edge",
     (viewName) => {
@@ -471,7 +475,6 @@ describe("HiddenViewCopyPlugin", () => {
 
       it.each([
         ["ends on it", before, { optbreak: "on" }],
-        ["ends right before it", before, { optbreak: "before" }],
         ["ends right after it", before, { optbreak: "after" }],
         ["starts on it", { optbreak: "on" }, after],
       ] as const)("writes no node copy for a selection that %s", async (_, from, to) => {
@@ -480,6 +483,10 @@ describe("HiddenViewCopyPlugin", () => {
 
       it("leaves out an optional break the selection starts right after", async () => {
         expect(await optbreaksCopied(viewName, { optbreak: "after" }, after)).toEqual([]);
+      });
+
+      it("leaves out an optional break the selection ends right before", async () => {
+        expect(await optbreaksCopied(viewName, before, { optbreak: "before" })).toEqual([]);
       });
     },
   );

@@ -152,16 +152,13 @@ const sampleUsjWithNote = {
 } as unknown as Usj;
 
 /**
- * jsdom does not implement the DOM `ClipboardEvent` class (`typeof ClipboardEvent` is
- * `undefined` under this project's jsdom test environment). Formatted view registers no
- * Standard-view handler ahead of `@lexical/rich-text`'s own COPY_COMMAND fallback, so a dispatch
- * here falls all the way through to that fallback — which reads the bare, unimported, ambient
- * global `ClipboardEvent` identifier before it ever touches the event. With the global entirely
- * undefined that reference throws a `ReferenceError`, before any clipboard data is written.
- * `@lexical/utils`'s `objectKlassEquals` (which the fallback uses to decide whether to honor the
- * event) only compares constructor NAMES (`Object.getPrototypeOf(x).constructor.name`), not real
- * inheritance, so a same-named stand-in registered on `globalThis` satisfies both the reference
- * and the name check without jsdom needing to implement the real class. `StubClipboardEvent` is
+ * A `ClipboardEvent` stand-in carrying a plain read/write `clipboardData` store. Formatted view
+ * registers no Standard-view handler; its own copy (`HiddenMarkersViewCopyPlugin`) writes through
+ * the event, and whatever it declines falls through to `@lexical/rich-text`'s own COPY_COMMAND
+ * fallback, which honors the event only when `objectKlassEquals(event, ClipboardEvent)` holds.
+ * `@lexical/utils`'s `objectKlassEquals` only compares constructor NAMES
+ * (`Object.getPrototypeOf(x).constructor.name`), not real inheritance, so a same-named stand-in
+ * registered on `globalThis` (in place of the test setup's polyfill) passes that check. `StubClipboardEvent` is
  * declared and renamed here, rather than a class literally named `ClipboardEvent`, so this file's
  * own `ClipboardEvent` TYPE annotations keep referring to the real DOM type.
  */
@@ -181,9 +178,9 @@ Object.defineProperty(StubClipboardEvent, "name", { value: "ClipboardEvent" });
 
 /** A jsdom-safe `ClipboardEvent`-shaped stub, with a real read/write `clipboardData` store, that
  * satisfies `@lexical/rich-text`'s own `objectKlassEquals(event, ClipboardEvent)` check (see
- * `StubClipboardEvent`'s doc comment) so RichText's default COPY_COMMAND handler actually runs
- * instead of throwing. Registers `StubClipboardEvent` as the global `ClipboardEvent` for the
- * caller to `vi.unstubAllGlobals()` afterward. */
+ * `StubClipboardEvent`'s doc comment), so RichText's default COPY_COMMAND handler honors it
+ * wherever the view's own copy declines. Registers `StubClipboardEvent` as the global
+ * `ClipboardEvent` for the caller to `vi.unstubAllGlobals()` afterward. */
 function formattedViewCopyEvent(): { event: ClipboardEvent; getData: (type: string) => string } {
   const store = new Map<string, string>();
   const clipboardData = {
@@ -215,7 +212,7 @@ function selectWholeDocument(editor: LexicalEditor): void {
 describe("MarkerEditPlugin's Standard-view clipboard handlers do not leak into Formatted view", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("COPY_COMMAND yields Lexical's default payload: prose only, no marker glyphs, no note-caller character", async () => {
+  it("COPY_COMMAND yields the hidden-marker views' prose payload: no marker glyphs, no note-caller character", async () => {
     const ref = createRef<EditorRef>();
     const lexicalRef = createRef<LexicalEditor>();
     await act(async () => {
@@ -239,8 +236,9 @@ describe("MarkerEditPlugin's Standard-view clipboard handlers do not leak into F
     });
 
     const text = getData("text/plain");
-    // Real content was copied (proves the command actually ran, not that everything declined).
-    expect(text).toContain("first verse text");
+    // Real content was copied (proves the command actually ran, not that everything declined), as
+    // prose: one ordinary space either side of the note, not the view's NBSP layout spacers.
+    expect(text).toContain("first verse text A note after");
     // No marker glyphs: `$selectionToUsfmText` (the Standard-view walker, gated out of this view)
     // is the only thing in this codebase that renders literal backslash marker syntax like `\p`,
     // `\v`, or `\f`; Formatted view's own node types (ImmutableTypedTextNode et al.) carry no
@@ -248,11 +246,11 @@ describe("MarkerEditPlugin's Standard-view clipboard handlers do not leak into F
     expect(text).not.toContain("\\");
     expect(text).not.toContain("\\f");
     // No note-caller character: the collapsed note's caller renders as a DecoratorNode
-    // (`ImmutableNoteCallerNode`) with no literal text of its own, so Lexical's default text
-    // extraction never emits it — only the Standard-view walker renders the caller as visible "+"
+    // (`ImmutableNoteCallerNode`) with no literal text of its own, so the hidden-marker views'
+    // prose copy never emits it — only the Standard-view walker renders the caller as visible "+"
     // text. Confirmed by direct comparison: calling `$getStandardViewClipboardData` against this
-    // exact selection produces "...first verse text + A note after" (caller present); Lexical's
-    // real default (asserted here) has no caller at all.
+    // exact selection produces "...first verse text + A note after" (caller present); the prose
+    // copy (asserted here) has no caller at all.
     expect(text).not.toContain("+");
   });
 

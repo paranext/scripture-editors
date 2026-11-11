@@ -37,7 +37,7 @@ function $removeKeepingLines(): boolean {
  * removed as a cut of it is ({@link $removeTextKeepingBookAndChapterLines}): both lines stay
  * whole, text and all, and the rest goes, so typed text or a new paragraph goes in after the
  * chapter line, never in the `\id` line. A paste over such a selection is `UnstorableTextPlugin`'s,
- * and a cut `HiddenViewCopyPlugin`'s.
+ * and a cut `HiddenMarkersViewCopyPlugin`'s.
  *
  * Registered at `COMMAND_PRIORITY_LOW`, below every guard that refuses, arms or asks about the
  * edit (`StructureKeyboardPlugin`'s two-step delete and protected refusal, the hidden-content
