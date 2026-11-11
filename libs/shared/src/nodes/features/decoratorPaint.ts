@@ -142,8 +142,8 @@ export function paintedSubSpanOf(node: Node | null): Element | undefined {
 
 /**
  * `text` cut into the runs `paint` names, in order: each a plain run, or a painted one with the
- * segment that paints it, with the offset in `text` it starts at. Each segment is clamped to `text` and to the end of the one before it, so
- * every byte of `text` is in exactly one run.
+ * segment that paints it, with the offset in `text` it starts at. Each segment is clamped to
+ * `text` and to the end of the one before it, so every byte of `text` is in exactly one run.
  */
 export function paintRuns(
   text: string,

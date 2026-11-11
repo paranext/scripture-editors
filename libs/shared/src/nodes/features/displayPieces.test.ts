@@ -29,6 +29,7 @@ import {
   $logicalPointOffset,
   $logicalPreviousSibling,
   $logicalText,
+  $mergePieces,
   $pieceAtLogicalOffset,
   $pieceHead,
   $pieces,
@@ -52,6 +53,7 @@ import {
   $isRangeSelection,
   $isTextNode,
   $parseSerializedNode,
+  $setCompositionKey,
   $setSelection,
   $setState,
   HISTORY_MERGE_TAG,
@@ -194,6 +196,27 @@ describe("carrier pieces", () => {
       expect(run.getTextContent()).toBe('|lemma="grace" strong="G5485"');
       expect(run.getNextSibling()?.getTextContent()).toBe("\\w*");
     });
+  });
+
+  it("moves an IME composition in a later piece onto the joined node", () => {
+    const editor = mount();
+    let run!: TextNode;
+    editor.update(
+      () => {
+        run = $span().run;
+        $addDisplayAnnotation(run, "check", "a", 23, 28);
+      },
+      { discrete: true },
+    );
+    editor.update(
+      () => {
+        $setCompositionKey($pieces(run)[1].getKey());
+        const joined = $mergePieces(run);
+        expect(editor._compositionKey).toBe(joined.getKey());
+        $setCompositionKey(null);
+      },
+      { discrete: true },
+    );
   });
 
   it("cuts at every annotation's edges and holds each piece by the annotations covering it", () => {
