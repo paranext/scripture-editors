@@ -171,11 +171,21 @@ refused. The public surface grew substantially; nothing was removed.
   they carried it under `milestone`. `applyUpdate` and `replaceEmbedUpdate` still accept
   `milestone`, so ops from earlier builds keep their milestones.
 - **Standard view turns incoming control characters into spaces.** Every C0 control character but
-  tab, line feed and carriage return in a loaded document (text and attribute values), a paste, a
-  drop, typed text or applied delta ops becomes a space, so none can be saved as the stand-in for a
-  no-break space. Paratext's reader makes the same of all of them but vertical tab (U+000B) and
-  form feed (U+000C), which become spaces here on purpose, since JavaScript reads them as
-  whitespace.
+  U+0000, tab, line feed and carriage return in a loaded document (text and attribute values) or
+  applied delta ops becomes a space, so none can be saved as the stand-in for a no-break space.
+  Paratext's reader (`ScrText.ProcessBookOrChapterText`) makes the same of every one of them, so a
+  project's text never holds one.
+- **Control characters the user types, pastes or drops go in as spaces, in every view.** Every C0
+  control character but tab, line feed and carriage return (U+0000 included) becomes a space,
+  which is how Paratext's reader reads it the next time the text is opened: typed, inserted through
+  `CONTROLLED_TEXT_INSERTION_COMMAND` or a `beforeinput` `insertText`, pasted or dropped as plain
+  text or html, or carried by a hidden-marker view's node copy (its flavor or its html), in
+  Standard view, the views that hide markers, the footnotes pane's row editor and the footnote
+  popover. A space and not nothing, so the text either side stays apart. Outside Standard view the
+  views took them in as they were. Text the document already holds is never changed, and text an
+  input method is composing is left alone. The editors keep two of these characters for
+  themselves: Standard view's stand-in for a stored no-break space (U+001A), and the display-only
+  line break a marker settle spells in the text it re-reads (U+000B).
 - **A drop into Standard view goes in as a paste of the same data does** (`\c`/`\id` stripped,
   no-break spaces resolved positionally, lines replayed), instead of through Lexical's own
   insertion, and a drag out of Standard view carries the same USFM text and html a copy writes.

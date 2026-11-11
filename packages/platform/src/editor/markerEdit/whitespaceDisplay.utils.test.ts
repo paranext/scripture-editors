@@ -1,6 +1,8 @@
 import {
   controlCharactersToSpaces,
   displayTextToUsj,
+  enteredControlCharactersToSpaces,
+  normalizeEnteredText,
   opsForHost,
   opsFromHost,
   textBeforeFromDocumentOps,
@@ -66,6 +68,28 @@ describe("toUsfmNbspSpelling", () => {
   });
 });
 
+describe("enteredControlCharactersToSpaces", () => {
+  it("turns every C0 control character but tab, line feed and carriage return into a space", () => {
+    const controls = Array.from({ length: 32 }, (_, index) => String.fromCharCode(index));
+    const kept = new Set(["\t", "\n", "\r"]);
+
+    expect([...enteredControlCharactersToSpaces(controls.join(""))]).toEqual(
+      controls.map((character) => (kept.has(character) ? character : " ")),
+    );
+  });
+
+  it("leaves U+007F, Unicode's separators and text without them alone", () => {
+    const text = "a\u007Fb\u2028c\u2029d\u00A0e";
+    expect(enteredControlCharactersToSpaces(text)).toBe(text);
+  });
+});
+
+describe("normalizeEnteredText", () => {
+  it("turns control characters into spaces and drops zero-width no-break spaces", () => {
+    expect(normalizeEnteredText("a\u000Bb\uFEFFc\u0000d\te\nf")).toBe("a bc d\te\nf");
+  });
+});
+
 describe("controlCharactersToSpaces", () => {
   it("turns every C0 control character but tab, line feed and carriage return into a space", () => {
     const controls = Array.from({ length: 31 }, (_, index) => String.fromCharCode(index + 1));
@@ -78,6 +102,10 @@ describe("controlCharactersToSpaces", () => {
 
   it("leaves U+0000, U+007F and text without them alone", () => {
     expect(controlCharactersToSpaces("a\u0000b\u007Fc")).toBe("a\u0000b\u007Fc");
+  });
+
+  it("is not what entered text gets: that turns U+0000 into a space too", () => {
+    expect(enteredControlCharactersToSpaces("a\u0000b\u007Fc")).toBe("a b\u007Fc");
   });
 
   it("is what usjTextToDisplay does first, so U+001A never displays as the stand-in", () => {

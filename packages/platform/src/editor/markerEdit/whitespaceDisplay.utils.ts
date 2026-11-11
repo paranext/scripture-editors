@@ -45,32 +45,65 @@ import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scriptur
 import { ATTRIBUTE_NBSP_SPELLING, NBSP } from "shared";
 import { getNbspSpelling, hasStandardViewWhitespace, ViewOptions } from "shared-react";
 
-/** Whether `code` is a C0 control character other than tab, line feed and carriage return. */
+/**
+ * Whether `code` is a C0 control character other than tab, line feed and carriage return: one that
+ * Paratext's reader (`ScrText.ProcessBookOrChapterText`, behind `ScrText.GetText`) turns into a
+ * space, so a project's text can never hold one.
+ */
+function isControlCharacterReadAsSpace(code: number): boolean {
+  return code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d;
+}
+
+/** Whether `code` is a control character {@link controlCharactersToSpaces} turns into a space. */
 function isIncomingControlCharacter(code: number): boolean {
-  return code >= 0x01 && code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d;
+  return code !== 0x00 && isControlCharacterReadAsSpace(code);
+}
+
+/** `text` with each character whose code `isReplaced` accepts as a space; `text` itself when it
+ * has none. */
+function withSpacesFor(text: string, isReplaced: (code: number) => boolean): string {
+  let index = 0;
+  while (index < text.length && !isReplaced(text.charCodeAt(index))) index += 1;
+  if (index === text.length) return text;
+  let result = text.slice(0, index);
+  for (; index < text.length; index += 1)
+    result += isReplaced(text.charCodeAt(index)) ? " " : text[index];
+  return result;
 }
 
 /**
- * Turns each C0 control character other than tab, line feed and carriage return (U+0001-U+0008,
- * U+000B, U+000C, U+000E-U+001F) into a space. Paratext's reader (`ScrText.GetText`) turns
- * U+0001-U+0008 and U+000E-U+001F into spaces, so a project can never hold one of those; it keeps
- * U+000B and U+000C, which become spaces here on purpose, since JavaScript reads them as
- * whitespace (`\s`). Run on all text that comes into Standard view (a load, a paste, a drop,
- * typing, applied delta ops) before anything else, because U+001A is the editor's own stand-in for
- * a stored no-break space (`NBSP_STAND_IN`): one that came in from outside would otherwise be saved
- * as a no-break space.
+ * Turns each C0 control character other than U+0000, tab, line feed and carriage return
+ * (U+0001-U+0008, U+000B, U+000C, U+000E-U+001F) into a space, as Paratext's reader
+ * (`ScrText.ProcessBookOrChapterText`) does, so text loaded from a project never holds one. Run on
+ * all text that comes into Standard view from outside the user's own entry (a load, applied delta
+ * ops) before anything else, because U+001A is the editor's own stand-in for a stored no-break
+ * space (`NBSP_STAND_IN`): one that came in from outside would otherwise be saved as a no-break
+ * space. Text the user enters goes through {@link enteredControlCharactersToSpaces} instead.
  *
  * @param text - Incoming text.
  * @returns The text with those characters as spaces; `text` itself when it has none.
  */
 export function controlCharactersToSpaces(text: string): string {
-  let index = 0;
-  while (index < text.length && !isIncomingControlCharacter(text.charCodeAt(index))) index += 1;
-  if (index === text.length) return text;
-  let result = text.slice(0, index);
-  for (; index < text.length; index += 1)
-    result += isIncomingControlCharacter(text.charCodeAt(index)) ? " " : text[index];
-  return result;
+  return withSpacesFor(text, isIncomingControlCharacter);
+}
+
+/**
+ * Turns each C0 control character other than tab, line feed and carriage return (U+0000-U+0008,
+ * U+000B, U+000C, U+000E-U+001F) in text the user enters — typed, pasted or dropped, in every view
+ * — into a space, which is how Paratext's reader (`ScrText.ProcessBookOrChapterText`) reads each
+ * one the next time the text is opened. A space, not nothing, so the text on either side stays
+ * apart. Line breaks are left to the editor's line-break handling, and a tab to each view's own.
+ *
+ * The editors rely on no text holding one of these characters: U+001A is Standard view's stand-in
+ * for a stored no-break space (`NBSP_STAND_IN`), and U+000B is how a marker settle spells a
+ * display-only line break in the text it re-reads (`tier2Rebuild.utils.ts`). Text the editor
+ * already holds is never changed here.
+ *
+ * @param text - Entered text.
+ * @returns The text with those characters as spaces; `text` itself when it has none.
+ */
+export function enteredControlCharactersToSpaces(text: string): string {
+  return withSpacesFor(text, isControlCharacterReadAsSpace);
 }
 
 /** The zero-width no-break space (U+FEFF), also read as a byte order mark. */
@@ -89,6 +122,18 @@ export function withoutZeroWidthNoBreakSpaces(text: string): string {
   return text.includes(ZERO_WIDTH_NO_BREAK_SPACE)
     ? text.replaceAll(ZERO_WIDTH_NO_BREAK_SPACE, "")
     : text;
+}
+
+/**
+ * Text the user enters — typed, pasted or dropped, in every view — as the editor takes it in: each
+ * control character Paratext reads as a space is a space ({@link enteredControlCharactersToSpaces}),
+ * and each zero-width no-break space is dropped ({@link withoutZeroWidthNoBreakSpaces}).
+ *
+ * @param text - Entered text.
+ * @returns The text as the editor takes it in; `text` itself when nothing changes.
+ */
+export function normalizeEnteredText(text: string): string {
+  return withoutZeroWidthNoBreakSpaces(enteredControlCharactersToSpaces(text));
 }
 
 /**
