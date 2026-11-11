@@ -36,6 +36,7 @@ import {
   $getState,
   $isRangeSelection,
   $isTextNode,
+  $setCompositionKey,
   $setState,
   createState,
   ElementNode,
@@ -392,6 +393,11 @@ export function $joinPieces<T extends LexicalNode>(pieces: readonly T[]): T {
   const ends: number[] = [];
   let end = 0;
   for (const piece of pieces.slice(0, -1)) ends.push((end += piece.getTextContentSize()));
+  // As Lexical's own text merge does: an IME composition in a removed piece stays on its bytes.
+  // Lexical exports no getter for the composition key, so it is read off the active editor.
+  const compositionKey = $getEditor()._compositionKey;
+  if (rest.some((piece) => piece.getKey() === compositionKey))
+    $setCompositionKey(writable.getKey());
   const index = writable.getIndexWithinParent();
   $keepParentPoints(
     writable.getParent(),
@@ -471,11 +477,12 @@ export function $recordPieceChain(node: LexicalNode): void {
  * the chain it came from. A `token` carrier is copied whole wherever a selection touches it, since
  * a token's text is never cut, so the pieces of a cut token pasted without the rest of it are
  * pasted as the whole token, which their record holds: the first takes its text and the others
- * are left out of `nodes` (or removed from the element they were pasted in). Where a pasted copy then joins a carrier is the piece transform's to
- * decide, as Lexical decides it for text no annotation holds: beside a text Lexical would merge it
- * with, it is joined into that carrier (`$joinMergeableNeighbours`), and nowhere else. One sibling
- * list only, not the nodes' children; each node may have been built from the clipboard's JSON in
- * this update ({@link $parsePastedPieceStates}). Mutating: call inside `editor.update()`.
+ * are left out of `nodes` (or removed from the element they were pasted in). Where a pasted copy
+ * then joins a carrier is the piece transform's to decide, as Lexical decides it for text no
+ * annotation holds: beside a text Lexical would merge it with, it is joined into that carrier
+ * (`$joinMergeableNeighbours`), and nowhere else. One sibling list only, not the nodes' children;
+ * each node may have been built from the clipboard's JSON in this update
+ * ({@link $parsePastedPieceStates}). Mutating: call inside `editor.update()`.
  */
 export function $restatePastedPieces(nodes: LexicalNode[]): void {
   nodes.forEach($parsePastedPieceStates);
