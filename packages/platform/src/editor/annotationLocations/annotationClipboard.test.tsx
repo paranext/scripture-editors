@@ -62,6 +62,7 @@ import {
 } from "shared";
 import {
   $getRangeFromUsjSelection,
+  $isSomeVerseNode,
   getViewOptions,
   PARAGRAPH_STRUCTURE_VIEW_MODE,
   ViewOptions,
@@ -641,6 +642,61 @@ describe("a copy the view's own writer leaves to the browser", () => {
     expect(await copyCase("closed char span", view, true, $selectParagraph, options)).toEqual(
       plain,
     );
+  }, 120_000);
+});
+
+describe("a hidden-marker view's copy of a range with no text to write", () => {
+  it("writes an annotated verse number as Lexical writes it with no annotation", async () => {
+    const view = getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE);
+    if (!view) throw new Error("no paragraph-structure view");
+    const usj = oracleRows("unformatted").find(([name]) => name.startsWith("verse ("))?.[1];
+    if (!usj) throw new Error("no verse row");
+    const copyVerse = async (isAnnotated: boolean) => {
+      const mounted = await mountInView(usj, view);
+      if (isAnnotated)
+        await act(async () => {
+          const number = "$.content[2].content[0]['number']";
+          mounted.ref.current?.setAnnotation(
+            {
+              start: { jsonPath: number, propertyOffset: 0 },
+              end: { jsonPath: number, propertyOffset: 1 },
+            },
+            ORACLE_TYPE,
+            "number",
+          );
+          await Promise.resolve();
+        });
+      expect(document.querySelector(".annotationId-number")?.textContent).toBe(
+        isAnnotated ? "1" : undefined,
+      );
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const verse = $getRoot()
+            .getChildren()
+            .flatMap((block) => ($isElementNode(block) ? block.getChildren() : []))
+            .find($isSomeVerseNode);
+          if (!verse) throw new Error("no verse");
+          const parentKey = verse.getParentOrThrow().getKey();
+          const selection = $createRangeSelection();
+          selection.anchor.set(parentKey, verse.getIndexWithinParent(), "element");
+          selection.focus.set(parentKey, $lastPiece(verse).getIndexWithinParent() + 1, "element");
+          $setSelection(selection);
+        });
+        await drainNativeSelectionChange();
+      });
+      const { event, getData } = copyEvent({ native: true });
+      try {
+        await act(async () => {
+          mounted.lexical.dispatchCommand(COPY_COMMAND, event);
+        });
+      } finally {
+        mounted.unmount();
+      }
+      return [getData("text/plain"), getData("text/html"), getData("application/x-lexical-editor")];
+    };
+    const plain = await copyVerse(false);
+    expect(plain[2]).toContain('"marker":"v"');
+    expect(await copyVerse(true)).toEqual(plain);
   }, 120_000);
 });
 
