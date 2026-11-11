@@ -1101,6 +1101,54 @@ describe.each(enabledViews(["unformatted"]))("in %s view", (view) => {
   });
 });
 
+// A typed marker settles its paragraph by reading the paragraph's text again: in a view without
+// spacing that text holds a display-only line break before each verse, which the settle drops
+// (`tier2Rebuild.utils.ts`), and a separator the text stores must not be dropped with it.
+describe.each(enabledViews(["standard", "unformatted"]))("in %s view", (view) => {
+  it.each(SEPARATORS)(
+    "keeps a %s the text stores when a typed marker settles its paragraph",
+    async (_name, separator) => {
+      const mounted = await mountInView(
+        chapterOneHolding({
+          type: "para",
+          marker: "p",
+          content: [
+            `a${separator}b `,
+            { type: "verse", marker: "v", number: "2" },
+            `c${separator}d v 3 e`,
+          ],
+        }),
+        editorView(view),
+      );
+      try {
+        await caretAt(mounted, "v 3 e", "");
+        await type(mounted, "\\");
+        await caretAt(mounted, VERSE_TEXT, "first ");
+        act(() => mounted.ref.current?.commitPendingMarkerEdits());
+
+        expect(saved(mounted)?.[3]).toEqual({
+          type: "para",
+          marker: "p",
+          content: [
+            `a${separator}b `,
+            { type: "verse", marker: "v", number: "2" },
+            `c${separator}d `,
+            { type: "verse", marker: "v", number: "3" },
+            "e",
+          ],
+        });
+        // The display-only line break the settle spells in the text it reads stays in that text.
+        const shown = mounted.lexical.getEditorState().read(() => $getRoot().getTextContent());
+        expect(shown).not.toContain("\u000B");
+        expect(mounted.lexical.getRootElement()?.textContent).not.toContain("\u000B");
+        expect(JSON.stringify(saved(mounted))).not.toContain("\\u000b");
+      } finally {
+        mounted.unmount();
+      }
+    },
+  );
+});
+
 /** The text of the note's `\ft`, and every other char span after it, as `[marker, text]`. */
 function savedNote(mounted: MountedEditor): [string, string][] {
   const para = saved(mounted)?.find(
