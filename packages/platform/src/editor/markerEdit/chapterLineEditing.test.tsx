@@ -1357,6 +1357,58 @@ describe("a chapter inserted into a book with no chapters", () => {
     });
   });
 
+  // A book Paratext creates holds its header lines under the `\id` line. They are all front matter,
+  // so chapter 1 goes below them, and the `\id` line stays the book's only one. Simple mode's
+  // "Add chapter number" button inserts in the paragraph-structure view.
+  describe.each<ViewMode>(
+    enabledViews([STANDARD_VIEW_MODE, FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE]),
+  )("below the header lines of a new book (%s view)", (viewMode) => {
+    const NUM_1_1: SerializedVerseRef = { book: "NUM", chapterNum: 1, verseNum: 1 };
+    // Paratext writes the project name after the book code, and a project name can hold almost
+    // any character.
+    const book: MarkerContent = {
+      type: "book",
+      marker: "id",
+      code: "NUM",
+      content: ['- A_project_name_!/"§$%&/()=?_öäüß'],
+    };
+    const para = (marker: string, text: string): MarkerContent => ({
+      type: "para",
+      marker,
+      content: [text],
+    });
+    const V1: MarkerContent = { type: "verse", marker: "v", number: "1" };
+    const V2: MarkerContent = { type: "verse", marker: "v", number: "2" };
+
+    it.each<[string, MarkerContent[]]>([
+      ["a running header and one table-of-contents line", [para("h", "NUM"), para("toc2", "NUM")]],
+      [
+        "a running header, all three table-of-contents lines and a title",
+        [
+          para("h", "Numbers"),
+          para("toc1", "The Book of Numbers"),
+          para("toc2", "Numbers"),
+          para("toc3", "Num"),
+          para("mt1", "Numbers"),
+        ],
+      ],
+    ])("is inserted with its verses below %s", async (_name, header) => {
+      const view = requireDefined(getViewOptions(viewMode), "no view options");
+      const { ref } = await mountEmptyBook(NUM_1_1, view, {
+        ...emptyBook,
+        content: [book, ...header],
+      });
+
+      let inserted: boolean | undefined;
+      await act(async () => {
+        inserted = ref.current?.insertFirstChapter(2);
+      });
+
+      expect(inserted).toBe(true);
+      expect(ref.current?.getUsj()?.content).toEqual([book, ...header, CHAPTER_1, V1, V2]);
+    });
+  });
+
   // Where the markers are hidden the chapter is a decorator, with no line to put the caret on.
   describe.each<ViewMode>(enabledViews([FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE]))(
     "with the markers hidden (%s view)",
