@@ -270,12 +270,12 @@ export const MARKER_TEXT_HTML_ATTRIBUTE = "data-platform-editor-marker-text";
  * @param nodeCopy - The node copy, as written to {@link LEXICAL_CLIPBOARD_TYPE}.
  */
 export function htmlWithNodeCopy(html: string, nodeCopy: string): string {
-  const value = nodeCopy
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-  return `<span ${NODE_COPY_HTML_ATTRIBUTE}="${value}">${html}</span>`;
+  // The browser's own serializer escapes the attribute value. The closing tag is cut from the end:
+  // a serializer may leave `<` unescaped in an attribute, so the value can itself hold `</span>`.
+  const carrier = document.createElement("span");
+  carrier.setAttribute(NODE_COPY_HTML_ATTRIBUTE, nodeCopy);
+  const openingTag = carrier.outerHTML.slice(0, -"</span>".length);
+  return `${openingTag}${html}</span>`;
 }
 
 /**
