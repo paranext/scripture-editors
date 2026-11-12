@@ -53,6 +53,12 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
+          # Tests never ship, and they parse clipboard html freely to check what a paste made, which
+          # CodeQL reads as an XSS sink.
+          config: |
+            paths-ignore:
+              - "**/*.test.ts"
+              - "**/*.test.tsx"
           # If you wish to specify custom queries, you can do so here or in a config file.
           # By default, queries listed here will override any specified in a config file.
           # Prefix the list here with "+" to use these queries and those in the config file.
