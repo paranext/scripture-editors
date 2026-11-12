@@ -14,9 +14,18 @@ import { RuleTester } from "eslint";
 import tseslint from "typescript-eslint";
 import { describe, it } from "vitest";
 
+// The first case to run starts the TypeScript project service, which on a CI runner can take longer
+// than the default 5 s. Only that case gets longer; every later one keeps the default.
+const PROJECT_SERVICE_START_TIMEOUT_MS = 60_000;
+let startsProjectService = true;
+const startTimeout = () => {
+  const timeout = startsProjectService ? PROJECT_SERVICE_START_TIMEOUT_MS : undefined;
+  startsProjectService = false;
+  return timeout;
+};
 RuleTester.describe = describe;
-RuleTester.it = it;
-RuleTester.itOnly = it.only;
+RuleTester.it = (name: string, test: () => void) => it(name, test, startTimeout());
+RuleTester.itOnly = (name: string, test: () => void) => it.only(name, test, startTimeout());
 
 const tester = new RuleTester({
   languageOptions: {
