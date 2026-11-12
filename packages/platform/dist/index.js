@@ -21445,8 +21445,8 @@ function rm(e) {
 }
 const Us = "application/x-lexical-editor", jr = "data-platform-editor-node-copy", Ep = "data-platform-editor-marker-text";
 function FI(e, t) {
-  const n = t.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-  return `<span ${jr}="${n}">${e}</span>`;
+  const n = document.createElement("span");
+  return n.setAttribute(jr, t), `${n.outerHTML.slice(0, -7)}${e}</span>`;
 }
 const sc = "platformEditor/hidden-markers", _S = "platformEditor", UI = new RegExp(String.raw`\\\+?(?:[${bn}]+(?:\*| ?)|\*?)`, "g");
 function ES(e) {
