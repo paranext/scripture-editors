@@ -262,8 +262,10 @@ function replacementText(payload: InputEvent): string | undefined {
  *   splitting a paragraph under a live composition would lose its place.
  *
  * A view without spacing (`hasSpacing: false`) puts a line break before each verse as its layout,
- * and its saving skips them, so its line breaks are left alone: only the first rule applies there,
- * and a line break written in inserted text stays in the text.
+ * and its saving skips them, so it splits at no line break: a line break pasted or dropped where
+ * the paragraph cannot be split (in a note, on the `\id` line, under protected structure) still
+ * becomes a space, which keeps the text in the note or span at the caret, but any other line break,
+ * and one written in inserted text, stays a line break.
  *
  * Registered at `COMMAND_PRIORITY_HIGH`, below the guards that refuse or ask about a line break at
  * `CRITICAL` (inside a note, over hidden content, the note shell), which treat one as they treat a
