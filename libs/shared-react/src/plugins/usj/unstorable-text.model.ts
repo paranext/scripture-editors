@@ -14,9 +14,9 @@ export interface UnstorableTextRemoved {
    * a `/` against another `/` (Backspace, Delete, a word or line delete, a cut, or the removal half
    * of a drag-move), or `"move"` for a drag-move refused whole, before anything was removed,
    * because the dragged text would have lost some of itself where it was dropped (a `/` landing
-   * against a `/`). `"typing"` also covers a refused transpose (macOS Ctrl+T) that would have put
-   * a `/` against another `/`. More sources may be added; a host that branches on this should
-   * handle values it does not know.
+   * against a `/`, or a `\` dragged from content that can hold one). `"typing"` also covers a
+   * refused transpose (macOS Ctrl+T) that would have put a `/` against another `/`. More sources
+   * may be added; a host that branches on this should handle values it does not know.
    */
   readonly source: "paste" | "drop" | "typing" | "deletion" | "move";
   /**
