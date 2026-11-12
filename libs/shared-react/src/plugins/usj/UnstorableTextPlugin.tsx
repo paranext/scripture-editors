@@ -56,6 +56,7 @@ import {
   COMMAND_PRIORITY_HIGH,
   COMMAND_PRIORITY_NORMAL,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  createCommand,
   CUT_COMMAND,
   DELETE_CHARACTER_COMMAND,
   DELETE_LINE_COMMAND,
@@ -159,6 +160,17 @@ function rangeDeletion(selection: RangeSelection): JudgedDeletion {
 function isShortcutChord(event: KeyboardEvent): boolean {
   return (event.ctrlKey || event.metaKey) && !event.altKey;
 }
+
+/**
+ * Dispatched, inside the update, just before {@link UnstorableTextPlugin} inserts a paste or drop's
+ * plain text itself, as Lexical's own plain-text insertion would: with `RangeSelection.insertText`
+ * over the selection. A handler may first replace a selected range that insertion would mishandle
+ * with a caret, as it may for Lexical's own; `InlineRangeEditPlugin` does so for a range across a
+ * span's edge or a collapsed note. The text then goes in at the selection as the handler left it.
+ */
+export const BEFORE_PLAIN_TEXT_INSERTION_COMMAND: LexicalCommand<void> = createCommand(
+  "BEFORE_PLAIN_TEXT_INSERTION_COMMAND",
+);
 
 /**
  * The flavor `data` is inserted from in a hidden-marker view: a node copy from a hidden-marker view
@@ -381,17 +393,18 @@ function joinLines(text: string, before: string, after: string): string {
  * that refusal, and a composition's deletes are not judged.
  *
  * A drag-move whose text would lose a character where it is dropped (a `/` landing against a `/`,
- * or against an optional line break) is refused whole at its drop (`DROP_COMMAND`), and reported
- * with `source: "move"`: the browser removes the dragged text before it inserts it, and the filter
- * above would then leave that character out, so it would be gone from both places. The drop is
- * judged as its insertion will be, at the place the drop lands ({@link $selectionAtDropPoint}). A
- * move within this editor that loses nothing is made here, in the same update, rather than by the
- * browser, whose own insertion lands at the start of the drop point's text node whenever the
- * removal changed that node; a drop at or inside what was dragged, which would put it back as it
- * was, changes nothing. A drag is a move when it started in editable content of the editor's
- * document (this editor or another) and the copy key (Ctrl; Option on macOS) is not held; a
- * copy-drop, a drop from another document or program, and a move from elsewhere in the document
- * that loses nothing are left to the browser, and only filtered.
+ * or against an optional line break, or a `\` dragged from other editable content that holds one)
+ * is refused whole at its drop (`DROP_COMMAND`), and reported with `source: "move"`: the browser
+ * removes the dragged text before it inserts it, and the filter above would then leave that
+ * character out, so it would be gone from both places. The drop is judged as its insertion will
+ * be, at the place the drop lands ({@link $selectionAtDropPoint}). A move within this editor that
+ * loses nothing is made here, in the same update, rather than by the browser, whose own insertion
+ * lands at the start of the drop point's text node whenever the removal changed that node; a drop
+ * at or inside what was dragged, which would put it back as it was, changes nothing. A drag is a
+ * move when it started in editable content of the editor's document (this editor or another) and
+ * the copy key (Ctrl; Option on macOS) is not held; a copy-drop, a drop from another document or
+ * program, and a move from elsewhere in the document that loses nothing are left to the browser,
+ * and only filtered.
  *
  * Mount it whatever the view, and say with `isEnabled` whether it acts: its handlers are
  * registered once, so a view that starts or stops hiding markers leaves them where they are among
@@ -543,6 +556,19 @@ export function UnstorableTextPlugin({
     };
 
     /**
+     * Inserts `data` at the selection as Lexical's own paste does, first dispatching
+     * {@link BEFORE_PLAIN_TEXT_INSERTION_COMMAND} when it goes in as plain text.
+     *
+     * Mutating: call inside `editor.update()` or a command handler.
+     */
+    const $insertAsLexicalDoes = (data: DataTransfer) => {
+      if (insertionRoute(data) === "plain")
+        editor.dispatchCommand(BEFORE_PLAIN_TEXT_INSERTION_COMMAND, undefined);
+      const selection = $getSelection();
+      if (selection) $insertDataTransferForRichText(data, selection, editor);
+    };
+
+    /**
      * Inserts a plain-text paste or drop itself when it needs filtering, line breaks joining (under
      * protected structure, or on the `\id` line), or a lone carriage return reading as the line
      * break it is: Lexical's own insertion splits only at `\n` and `\r\n`, and leaves a lone `\r`
@@ -568,7 +594,7 @@ export function UnstorableTextPlugin({
         const plainOnly = {
           getData: (type: string) => (type === "text/plain" ? filtered.text : ""),
         } as Pick<DataTransfer, "getData"> as DataTransfer;
-        $insertDataTransferForRichText(plainOnly, selection, editor);
+        $insertAsLexicalDoes(plainOnly);
       }
       if (filtered.removed.length > 0)
         reportRemoved(
@@ -751,7 +777,7 @@ export function UnstorableTextPlugin({
       if ($insertPlainTransfer(data, source) || $insertHtmlWithoutGlyphs(data, source)) return true;
       if (data === transfer) return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);
-      $insertDataTransferForRichText(data, selection, editor);
+      $insertAsLexicalDoes(data);
       return true;
     };
 
