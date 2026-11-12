@@ -55,6 +55,19 @@ const BOTH_CLIPBOARDS = [
   { flavor: "plain text", clipboard: PLAIN_CLIPBOARD },
 ];
 
+/** Clipboards the hidden-marker views insert themselves, keeping only the text `X`. */
+const FILTERED_CLIPBOARDS: { flavor: string; clipboard: ClipboardFlavors }[] = [
+  { flavor: "plain text holding \\", clipboard: { "text/plain": "X\\" } },
+  { flavor: "plain text holding //", clipboard: { "text/plain": "X//" } },
+  {
+    flavor: "Markers view copy",
+    clipboard: {
+      "text/plain": "\\nd X",
+      "application/x-lexical-editor": JSON.stringify({ namespace: "platformEditor", nodes: [] }),
+    },
+  },
+];
+
 function clipboardEvent(flavors: ClipboardFlavors): ClipboardEvent {
   const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
   Object.defineProperty(event, "clipboardData", {
@@ -186,6 +199,41 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
         { type: "para", marker: "p", content: ["abc", char("nd", "LoXrd"), " def"] },
       ]);
     });
+  });
+
+  describe.each(
+    PROTECTION_MODES.flatMap((mode) => FILTERED_CLIPBOARDS.map((entry) => ({ ...entry, mode }))),
+  )(
+    "a filtered paste of $flavor over a range, structure protection $mode",
+    ({ clipboard, mode }) => {
+      it("from a nested span to past its enclosing span leaves the rest outside", async () => {
+        const { content } = await pastedOver(
+          NESTED_SPAN,
+          { jsonPath: NESTED_TWO, offset: 2 },
+          { jsonPath: AFTER_NESTED_SPAN, offset: 1 },
+          clipboard,
+          mode,
+        );
+
+        expect(content()).toEqual([
+          { type: "para", marker: "p", content: [char("nd", "one ", char("wj", "twX")), "b"] },
+        ]);
+      });
+    },
+  );
+
+  it("joins several lines of plain text over a range under protected structure, leaving the rest outside", async () => {
+    const { content } = await pastedOver(
+      NESTED_SPAN,
+      { jsonPath: NESTED_TWO, offset: 2 },
+      { jsonPath: AFTER_NESTED_SPAN, offset: 1 },
+      { "text/plain": "X\nY" },
+      "protected",
+    );
+
+    expect(content()).toEqual([
+      { type: "para", marker: "p", content: [char("nd", "one ", char("wj", "twX Y")), "b"] },
+    ]);
   });
 
   it("keeps the rest in place when several lines of plain text are pasted", async () => {
