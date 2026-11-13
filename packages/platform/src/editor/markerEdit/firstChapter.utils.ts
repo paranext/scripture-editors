@@ -28,10 +28,10 @@ import {
   $getRoot,
   $getSelection,
   $isElementNode,
+  $isLineBreakNode,
   $isRangeSelection,
   $isTextNode,
   $parseSerializedNode,
-  ElementNode,
   LexicalNode,
 } from "lexical";
 import {
@@ -47,7 +47,9 @@ import {
   $isSomeChapterNode,
   $isUnknownNode,
   defaultStyleInfo,
+  ImpliedParaNode,
   PARA_MARKER_DEFAULT,
+  ParaNode,
   StyleInfo,
   ZWSP,
 } from "shared";
@@ -182,11 +184,23 @@ function canHoldVerses(styleInfo: StyleInfo, marker: string): boolean {
 }
 
 /**
- * Removes `para`'s text that is only spaces, which would sit before verse 1, and a zero-width space
- * that holds a caret. Everything else stays: a no-break space or a zero-width space from the file
- * is the document's text, and a marker and its separator are the paragraph's own.
+ * Text that is only spaces, tabs and line ends, which {@link $removeBlankText} deletes. It is
+ * deliberately narrower than the whitespace {@link $isDocumentText} looks past: a no-break space or
+ * a zero-width space does not stop the verses going in, but it is the document's text, so it is not
+ * deleted.
  */
-function $removeBlankText(para: ElementNode, viewOptions: ViewOptions | undefined): void {
+const SPACES_ONLY = /^[ \t\r\n]*$/;
+
+/**
+ * Removes `para`'s text that is only spaces (see {@link SPACES_ONLY}), which would sit before
+ * verse 1, and a zero-width space that holds a caret. Everything else stays: a no-break space or a
+ * zero-width space from the file is the document's text, and a marker and its separator are the
+ * paragraph's own.
+ */
+function $removeBlankText(
+  para: ParaNode | ImpliedParaNode,
+  viewOptions: ViewOptions | undefined,
+): void {
   for (const child of para.getChildren()) {
     if (
       !$isTextNode(child) ||
@@ -197,7 +211,7 @@ function $removeBlankText(para: ElementNode, viewOptions: ViewOptions | undefine
     const text = hasStandardViewWhitespace(viewOptions)
       ? displayTextToUsj(child.getTextContent())
       : child.getTextContent();
-    if ($isCaretHost(child) || /^[ \t\r\n]*$/.test(text)) child.remove();
+    if ($isCaretHost(child) || SPACES_ONLY.test(text)) child.remove();
   }
 }
 
@@ -209,10 +223,12 @@ function $removeBlankText(para: ElementNode, viewOptions: ViewOptions | undefine
  * verse. When the content is an empty paragraph that can hold verses (see {@link canHoldVerses}),
  * the verses go at its end, so they are in a paragraph; what it held, other than spaces, stays ahead
  * of verse 1 (see {@link $removeBlankText}). Otherwise they go above it. A book that is all front
- * matter has no chapter content, so the verses get a new `\p`. Where the markers show, the caret
- * goes at the end of the chapter line. Where they are hidden there is no chapter line, so the caret goes after verse 1, or with no
- * verses to the start of the paragraph that follows; with neither, it stays where it was. Only
- * where {@link $canInsertChapter} allows a chapter.
+ * matter has no chapter content, so the verses get a new `\p`. So does content that starts with
+ * blank text in no paragraph, as an empty document has: the new `\p` takes its place, and what it
+ * held, other than spaces, stays ahead of verse 1. Where the markers show, the caret goes at the end
+ * of the chapter line. Where they are hidden there is no chapter line, so the caret goes after
+ * verse 1, or with no verses to the start of the paragraph that follows; with neither, it stays
+ * where it was. Only where {@link $canInsertChapter} allows a chapter.
  *
  * The nodes come from the same conversion that loads a document, so they match a loaded `\c 1` in
  * every view.
@@ -247,15 +263,19 @@ export function $insertFirstChapter({
     canHoldVerses(styleInfo, chapterContentStart.getMarker())
       ? chapterContentStart
       : undefined;
+  // Blank text in no paragraph, as an empty document or stray spaces after the `\id` line load as,
+  // has no paragraph for the verses either, so they get a new one in its place.
+  const blankText =
+    versesToAdd > 0 && $isImpliedParaNode(chapterContentStart) ? chapterContentStart : undefined;
 
   const verseMarkers: MarkerContent[] = [];
   for (let verse = 1; verse <= versesToAdd; verse += 1)
     verseMarkers.push({ type: "verse", marker: "v", number: `${verse}` });
-  // A book that is all front matter has no paragraph for the verses, so they get a new one, as
-  // verses in no paragraph cannot be given one where the structure is locked.
+  // A book that is all front matter has no paragraph for the verses either, so they get a new one,
+  // as verses in no paragraph cannot be given one where the structure is locked.
   const content: MarkerContent[] = [
     { type: "chapter", marker: "c", number: `${chapterNum}` },
-    ...(chapterContentStart || verseMarkers.length === 0
+    ...((chapterContentStart && !blankText) || verseMarkers.length === 0
       ? verseMarkers
       : [{ type: "para", marker: PARA_MARKER_DEFAULT, content: verseMarkers }]),
   ];
@@ -276,6 +296,14 @@ export function $insertFirstChapter({
   if (versePara) {
     $removeBlankText(versePara, viewOptions);
     versePara.append(...verseNodes);
+  }
+  // What the blank text held, other than spaces, moves into the new paragraph ahead of verse 1, as
+  // it stays ahead of verse 1 in a paragraph that takes the verses.
+  if (blankText) {
+    $removeBlankText(blankText, viewOptions);
+    const verseStart = verseNodes.find((node) => $isSomeVerseNode(node) || $isLineBreakNode(node));
+    for (const node of blankText.getChildren()) verseStart?.insertBefore(node);
+    blankText.remove();
   }
 
   // Where the markers show, the chapter line is text, so the caret goes at its end. Where they are

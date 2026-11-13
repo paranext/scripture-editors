@@ -59,8 +59,11 @@ export function getMarkerStyleInfo(
 }
 
 /**
- * Whether a char or verse marker declared by `entry` may occur under `contextMarker`: an empty
- * `occursUnder` allows it anywhere (PT9 semantics).
+ * Whether the inline marker `entry` declares, a character style or `\v`, may occur under
+ * `contextMarker`, the enclosing paragraph's or note's marker: an empty `occursUnder` allows it
+ * anywhere (PT9 semantics). The validator, the marker menu and chapter insertion share it, so they
+ * agree on where a marker may go. Paragraph tags are placed by the validity stack instead (see
+ * {@link isParagraphTagValid}).
  */
 export function occursUnderAllows(entry: MarkerStyleInfo, contextMarker: string): boolean {
   const occursUnder = entry.occursUnder ?? [];
