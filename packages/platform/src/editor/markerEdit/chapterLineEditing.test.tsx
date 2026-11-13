@@ -43,11 +43,14 @@ import {
   UNDO_COMMAND,
 } from "lexical";
 import {
+  $addDisplayAnnotation,
   $chapterAltnumberRunPieces,
   $chapterGlyphTextNode,
   $chapterPubnumberRunPieces,
   $isChapterNode,
   $isTypedMarkNode,
+  $lastPiece,
+  $pieces,
   ChapterNode,
   defaultStyleInfo,
   getVisibleOpenMarkerText,
@@ -1634,4 +1637,83 @@ describe("a chapter inserted into a book with no chapters", () => {
 
     expect(ref.current?.getUsj()?.content).toEqual([extraBook, CHAPTER_1]);
   });
+});
+
+describe("the chapter line with its `\\c N` glyph cut into pieces", () => {
+  // An annotation held over part of the glyph cuts it into pieces (`displayPieces.state.ts`); the
+  // pieces are one glyph, so a caret at the end of the line is in its last piece.
+  const CHAPTER_2_CA_3: MarkerContent = { ...CHAPTER_2, altnumber: "3" };
+  const CA_3: MarkerContent = { type: "char", marker: "ca", content: ["3"] };
+  const FRESH_CHAR_ND: MarkerContent = { type: "char", marker: "nd" };
+  const docOf = (...content: MarkerContent[]): Usj => ({ type: "USJ", version: "3.1", content });
+  const numberAt = CHAPTER_2_GLYPH.indexOf("2");
+  const holds: [string, number, number][] = [
+    ["the number", numberAt, numberAt + 1],
+    ["the marker and number", 0, numberAt + 1],
+  ];
+
+  /** Holds `[start, end)` of the glyph, then puts the caret at the end of the line. */
+  async function cutAndPark(lexical: LexicalEditor, start: number, end: number): Promise<void> {
+    await act(async () =>
+      lexical.update(() => {
+        $addDisplayAnnotation($glyph(), "test", "a", start, end);
+      }),
+    );
+    await act(async () =>
+      lexical.update(() => {
+        expect($pieces($glyph()).length).toBeGreaterThan(1);
+        const last = $lastPiece($glyph());
+        last.select(last.getTextContentSize(), last.getTextContentSize());
+      }),
+    );
+  }
+
+  it.each(holds)(
+    "puts an inline insertion after the whole number with %s held",
+    async (_label, start, end) => {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2, VERSE_1_PARA), {
+        scrRef: GEN_2_1,
+      });
+      await cutAndPark(lexical, start, end);
+      await act(async () => {
+        ref.current?.insertMarker("nd");
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, FRESH_CHAR_ND, VERSE_1_PARA]);
+    },
+  );
+
+  it.each(holds)(
+    "puts an inline insertion ahead of the \\ca run with %s held",
+    async (_label, start, end) => {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2_CA_3, VERSE_1_PARA), {
+        scrRef: GEN_2_1,
+      });
+      await cutAndPark(lexical, start, end);
+      await act(async () => {
+        ref.current?.insertMarker("nd");
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([
+        CHAPTER_2,
+        FRESH_CHAR_ND,
+        CA_3,
+        VERSE_1_PARA,
+      ]);
+    },
+  );
+
+  it.each(holds)(
+    "takes a structure-protected paste just past the end of the line with %s held",
+    async (_label, start, end) => {
+      const { ref, lexical } = await mountStandardViewEditor(chapterDoc, {
+        structureProtectionMode: "protected",
+      });
+      await cutAndPark(lexical, start, end);
+      await act(async () =>
+        lexical.update(() => {
+          lexical.dispatchCommand(PASTE_COMMAND, plainTextPaste("aa"));
+        }),
+      );
+      expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, "aa", VERSE_1_PARA, POETRY_PARA]);
+    },
+  );
 });

@@ -25,6 +25,11 @@ import { createBasicTestEnvironment, updateSelection } from "./test.utils.js";
 import { $createVerseNode, VerseNode } from "./VerseNode.js";
 import { $createMarkerNode, $isMarkerNode } from "../features/MarkerNode.js";
 import { $createTypedMarkNode, TypedMarkNode } from "../features/TypedMarkNode.js";
+import {
+  $addDisplayAnnotation,
+  registerDisplayAnnotationBasis,
+} from "../features/displayAnnotations.utils.js";
+import { $pieces } from "../features/displayPieces.state.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { displayRunDescriptor } from "../../displayRun/displayRunRegistry.js";
 import { $createTextNode, $getRoot, $isTextNode, $setState, TextNode } from "lexical";
@@ -1271,6 +1276,22 @@ describe("$noteEditableCallerNode", () => {
     const { editor, note, caller } = buildExpandedNote(true);
 
     editor.getEditorState().read(() => {
+      expect($noteEditableCallerNode(note)?.is(caller)).toBe(true);
+    });
+  });
+
+  it("finds a caller an annotation cut into pieces by its head", () => {
+    const { editor, note, caller } = buildExpandedNote(false);
+    registerDisplayAnnotationBasis(editor);
+    editor.update(
+      () => {
+        $addDisplayAnnotation(caller, "check", "a", 1, 2);
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      expect($pieces(caller).length).toBe(3);
       expect($noteEditableCallerNode(note)?.is(caller)).toBe(true);
     });
   });

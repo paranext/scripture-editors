@@ -23,8 +23,11 @@ import {
   $isMarkerNode,
   $isNewlyMarkedSpan,
   $isSeparatorPrefixHostText,
+  $lastPiece,
+  $pieceHead,
   $recordClipboardSpans,
   $syncDisplayRun,
+  $charLacksOpeningGlyph,
   $syncNestedGlyphs,
   $syncOpenerSeparators,
   $wereSplitFromOneSpan,
@@ -63,9 +66,12 @@ function useCharNode(editor: LexicalEditor) {
       // whenever a span is dirtied — heals remote collab updates (delta-apply only calls
       // setUnknownAttributes) and structure surgery. $syncDisplayRun (displayRunSync.utils.ts,
       // `shared`), driven here with the char descriptor from displayRunRegistry.ts (`shared`).
-      editor.registerNodeTransform(CharNode, (node) =>
-        $syncDisplayRun(displayRunDescriptor("char"), node),
-      ),
+      // A span missing its opener (torn by a line break, or its opener just deleted) is transient:
+      // its run is not a picture of its attributes until the marker-edit engine settles it, so the
+      // sync leaves it to that resolution rather than strip the bytes the resolution reads back.
+      editor.registerNodeTransform(CharNode, (node) => {
+        if (!$charLacksOpeningGlyph(node)) $syncDisplayRun(displayRunDescriptor("char"), node);
+      }),
       // Spans a paste or drop brings in stay the spans the copied content held: never claims the
       // insertion, only notes which spans it inserts before whichever handler inserts them.
       editor.registerCommand(
@@ -126,7 +132,10 @@ function $rendersOwnGlyphs(node: CharNode): boolean {
 function $mergeIntoFollowingGlyphSpan(node: CharNode, target: CharNode): boolean {
   const opener = target.getFirstChild();
   if (!$isMarkerNode(opener) || opener.getMarkerSyntax() !== "opening") return false;
-  const oldFirstContent = opener.getNextSibling();
+  // An opener an annotation cut into pieces is one glyph: the content goes after its last piece.
+  const openerEnd = $lastPiece(opener);
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- openerEnd is the opener's last piece: this is the node after the whole opener
+  const oldFirstContent = openerEnd.getNextSibling();
   if ($isSeparatorPrefixHostText(oldFirstContent)) {
     const text = oldFirstContent.getTextContent();
     if (text.startsWith(NBSP)) {
@@ -134,7 +143,8 @@ function $mergeIntoFollowingGlyphSpan(node: CharNode, target: CharNode): boolean
       else oldFirstContent.setTextContent(text.slice(NBSP.length));
     }
   }
-  target.splice(1, 0, node.getChildren());
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- openerEnd is the opener's last piece: the content goes after the whole opener
+  target.splice(openerEnd.getIndexWithinParent() + 1, 0, node.getChildren());
   node.remove();
   return true;
 }
@@ -146,9 +156,12 @@ function $mergeIntoFollowingGlyphSpan(node: CharNode, target: CharNode): boolean
  * needs no attention in this direction — `target`'s first content keeps its role.
  */
 function $mergeIntoPrecedingGlyphSpan(node: CharNode, target: CharNode): void {
-  const closer = target.getLastChild();
+  // A closer an annotation cut into pieces is one glyph: the content goes before its first piece.
+  const last = target.getLastChild();
+  const closer = last && $pieceHead(last);
   const children = node.getChildren();
   if ($isMarkerNode(closer) && closer.getMarkerSyntax() === "closing") {
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- closer is the closer's head ($pieceHead): the content goes in front of all of it
     children.forEach((child) => closer.insertBefore(child));
   } else {
     target.append(...children);

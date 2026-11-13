@@ -44,9 +44,10 @@ import { EditorOptions, EditorProps, EditorRef } from "./editor.model";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
-import { act, render } from "@testing-library/react";
+import { act } from "@testing-library/react";
 import { LexicalEditor } from "lexical";
 import { createRef, ReactElement, RefObject } from "react";
+import { createRoot } from "react-dom/client";
 import { LoggerBasic, StyleInfo } from "shared";
 import {
   BLOCK_VERSE_VIEW_MODE,
@@ -58,7 +59,7 @@ import {
   UNFORMATTED_VIEW_MODE,
   ViewOptions,
 } from "shared-react";
-import { describe, it } from "vitest";
+import { afterEach, describe, it } from "vitest";
 
 // jsdom doesn't implement `getBoundingClientRect` on `Range`; moving the caret gives the editor
 // root DOM focus, and Lexical's post-commit scroll-into-view reads a Range rect. Stub it (a zero
@@ -513,6 +514,15 @@ export interface MountedEditor {
   rerenderWithView: (view: ViewOptions) => Promise<void>;
 }
 
+/**
+ * The teardown of every editor {@link mountInView} has mounted and not yet unmounted. Each is run
+ * after its test, as Testing Library's own cleanup would for a `render` the test left mounted.
+ */
+const liveMounts = new Set<() => void>();
+afterEach(() => {
+  for (const unmount of [...liveMounts]) unmount();
+});
+
 /** Mounts `usj` in the real `Editor` with `view`, collecting what its logger reports. */
 export async function mountInView(
   usj: Usj,
@@ -569,14 +579,25 @@ export async function mountInView(
       {capture}
     </Editor>
   );
-  let unmount: (() => void) | undefined;
-  let rerender: ((ui: ReactElement) => void) | undefined;
+  // A root of its own, not Testing Library's `render`: that keeps every root it creates, with the
+  // element it last rendered, until the test ends, so a test mounting editor after editor (the
+  // oracles mount hundreds per test) kept every one of them alive.
+  const container = document.body.appendChild(document.createElement("div"));
+  const root = createRoot(container);
+  const rerenderEditor = (ui: ReactElement) => root.render(ui);
+  let isMounted = true;
+  const unmount = () => {
+    if (!isMounted) return;
+    isMounted = false;
+    liveMounts.delete(unmount);
+    act(() => root.unmount());
+    container.remove();
+  };
+  liveMounts.add(unmount);
   await act(async () => {
-    ({ unmount, rerender } = render(editorWith(styleInfo)));
+    rerenderEditor(editorWith(styleInfo));
   });
   if (!lexicalRef.current) throw new Error("lexical editor was not captured");
-  if (!unmount || !rerender) throw new Error("render did not return a teardown");
-  const rerenderEditor = rerender;
   let currentStyleInfo = styleInfo;
   return {
     ref,

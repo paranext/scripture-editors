@@ -15,16 +15,20 @@ import {
 } from "./usj-marker-action.utils";
 import {
   $createNodeSelection,
+  $createRangeSelection,
   $createTextNode,
   $getRoot,
   $getSelection,
   $getState,
+  $isElementNode,
   $isNodeSelection,
   $isRangeSelection,
   $isTextNode,
   $setSelection,
   $setState,
+  ElementNode,
   LexicalEditor,
+  LexicalNode,
   TextNode,
 } from "lexical";
 import {
@@ -36,6 +40,7 @@ import {
   ViewOptions,
 } from "shared-react";
 import {
+  $addDisplayAnnotation,
   $createCharNode,
   $createImmutableChapterNode,
   $createImmutableTypedTextNode,
@@ -49,12 +54,17 @@ import {
   $isNoteNode,
   $isParaNode,
   $isVerseNode,
+  $logicalChildren,
+  $logicalText,
+  $pieces,
   CharNode,
   charIdState,
   closingMarkerText,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
+  getEditableCallerText,
   NBSP,
   openingMarkerText,
+  registerDisplayAnnotationBasis,
 } from "shared";
 
 const nodes = usjReactNodes;
@@ -3127,6 +3137,204 @@ describe("USJ Marker Action Utils", () => {
     it("isCharacterMarkerSupported honors extraValidMarkers, unlike isUsjMarkerSupported", () => {
       expect(isCharacterMarkerSupported("zzz", ["zzz"])).toBe(true);
       expect(isUsjMarkerSupported("zzz")).toBe(false);
+    });
+  });
+});
+
+describe("USJ Marker Action Utils — a glyph or caller an annotation cuts into pieces", () => {
+  const expandedNoteKeyRef = { current: undefined as string | undefined };
+  const editable: ViewOptions = { markerMode: "editable", hasSpacing: true, isFormattedFont: true };
+
+  /** `element`'s logical children, one per carrier, each a text or `type(marker): [children]`. */
+  function $shape(element: ElementNode): unknown[] {
+    return $logicalChildren(element).map((child: LexicalNode) => {
+      if (!$isElementNode(child)) return $logicalText(child);
+      const marker = $isCharNode(child) || $isNoteNode(child) ? `(${child.getMarker()})` : "";
+      return { [`${child.getType()}${marker}`]: $shape(child) };
+    });
+  }
+
+  function $paraShape(): unknown[] {
+    const para = $getRoot().getFirstChild();
+    if (!$isParaNode(para)) throw new Error("expected a paragraph");
+    return $shape(para);
+  }
+
+  /** Hold `[start, end)` of `node` in a discrete update, so the piece transform cuts it. */
+  function cut(editor: LexicalEditor, node: LexicalNode, start: number, end: number): void {
+    editor.update(() => $addDisplayAnnotation(node, "test", "a", start, end), { discrete: true });
+    editor.getEditorState().read(() => expect($pieces(node).length).toBeGreaterThan(1));
+  }
+
+  describe("inserting a char at a caret in a note's caller", () => {
+    let caller: TextNode;
+
+    function $note() {
+      caller = $createTextNode(getEditableCallerText("+")).toggleUnmergeable();
+      $getRoot().append(
+        $createParaNode().append(
+          $createTextNode("text "),
+          $createNoteNode("f", "+", false).append(
+            $createMarkerNode("f"),
+            caller,
+            $createCharNode("ft").append($createTextNode("note body")),
+            $createMarkerNode("f", "closing"),
+          ),
+        ),
+      );
+    }
+
+    function insertAtCallerOffset(isCut: boolean): unknown[] {
+      const { editor } = createBasicTestEnvironment(nodes, $note);
+      registerDisplayAnnotationBasis(editor);
+      // The caret in front of the caller's `+`: the end of its first piece when it is cut.
+      if (isCut) cut(editor, caller, 1, 2);
+      updateSelection(editor, caller, 1);
+      getUsjMarkerAction("fk", expandedNoteKeyRef, undefined, undefined, undefined, {
+        discrete: true,
+      }).action({ editor, reference });
+      return editor.getEditorState().read($paraShape);
+    }
+
+    it("inserts after the whole caller, as it does after the uncut one", () => {
+      expect(insertAtCallerOffset(true)).toEqual(insertAtCallerOffset(false));
+    });
+  });
+
+  describe("removing a char marker from content beside a cut glyph", () => {
+    let content: TextNode;
+    let opener: LexicalNode;
+    let closer: LexicalNode;
+
+    function $span() {
+      content = $createTextNode(`${NBSP}Lord God`);
+      opener = $createMarkerNode("nd");
+      closer = $createMarkerNode("nd", "closing");
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("the "),
+          $createCharNode("nd").append(opener, content, closer),
+          $createTextNode(" said"),
+        ),
+      );
+    }
+
+    function removeFrom(
+      start: number,
+      end: number,
+      cutGlyph?: (editor: LexicalEditor) => void,
+    ): unknown[] {
+      const { editor } = createBasicTestEnvironment(nodes, $span);
+      registerDisplayAnnotationBasis(editor);
+      cutGlyph?.(editor);
+      updateSelection(editor, content, start, content, end);
+      sutRemoveCharacterMarker(editor, "nd", editable);
+      return editor.getEditorState().read($paraShape);
+    }
+
+    it("takes the whole opener along when the content after it is unmarked", () => {
+      const size = `${NBSP}Lord`.length;
+      expect(removeFrom(0, size, (editor) => cut(editor, opener, 1, 3))).toEqual(
+        removeFrom(0, size),
+      );
+    });
+
+    it("takes the whole closer along when the content before it is unmarked", () => {
+      const from = `${NBSP}Lord`.length;
+      const to = `${NBSP}Lord God`.length;
+      expect(removeFrom(from, to, (editor) => cut(editor, closer, 1, 3))).toEqual(
+        removeFrom(from, to),
+      );
+    });
+  });
+
+  describe("applying a char marker from inside a cut glyph to the text after its span", () => {
+    let opener: LexicalNode;
+    let closer: LexicalNode;
+    let tail: TextNode;
+
+    function $span() {
+      opener = $createMarkerNode("nd");
+      closer = $createMarkerNode("nd", "closing");
+      tail = $createTextNode(" said");
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("the "),
+          $createCharNode("nd").append(opener, $createTextNode(`${NBSP}Lord`), closer),
+          tail,
+        ),
+      );
+    }
+
+    /**
+     * Apply `\wj` from offset `offset` into piece `pieceIndex` of `glyph()` to inside the text after
+     * the span, with the glyph first cut at `[start, end)` when `cutAt` is given; with
+     * `asElementPoint`, from the element point in front of that piece instead. Returns the
+     * paragraph's shape and the warnings logged.
+     */
+    function applyFrom(
+      glyph: () => LexicalNode,
+      pieceIndex: number,
+      offset: number,
+      cutAt?: [number, number],
+      asElementPoint = false,
+    ): { shape: unknown[]; warnings: string[] } {
+      const { editor } = createBasicTestEnvironment(nodes, $span);
+      registerDisplayAnnotationBasis(editor);
+      if (cutAt) cut(editor, glyph(), ...cutAt);
+      const piece = editor.getEditorState().read(() => $pieces(glyph())[pieceIndex]);
+      if (asElementPoint)
+        // The place in front of `piece` in its span, as an element point between two pieces.
+        editor.update(
+          () => {
+            const selection = $createRangeSelection();
+            const span = piece.getParentOrThrow();
+            selection.anchor.set(span.getKey(), piece.getIndexWithinParent(), "element");
+            selection.focus.set(tail.getKey(), 3, "text");
+            $setSelection(selection);
+          },
+          { discrete: true },
+        );
+      else updateSelection(editor, piece, offset, tail, 3);
+      const warnings: string[] = [];
+      const logger = {
+        error: () => undefined,
+        warn: (message: string) => warnings.push(message),
+        info: () => undefined,
+        debug: () => undefined,
+      };
+      getUsjMarkerAction("wj", expandedNoteKeyRef, editable, undefined, logger, {
+        discrete: true,
+      }).action({ editor, reference });
+      return { shape: editor.getEditorState().read($paraShape), warnings };
+    }
+
+    it("refuses a selection from between two bytes of the closer at a cut, as uncut", () => {
+      const uncut = applyFrom(() => closer, 0, 3);
+      expect(uncut.warnings).toContainEqual(
+        expect.stringContaining("crosses the border of a character"),
+      );
+      // `\nd*` cut into `\`, `nd`, `*`: the end of the middle piece is byte 3.
+      expect(applyFrom(() => closer, 1, 2, [1, 3])).toEqual(uncut);
+    });
+
+    it("refuses a selection from inside the opener at a cut, as uncut", () => {
+      const uncut = applyFrom(() => opener, 0, 1);
+      expect(uncut.warnings).toContainEqual(
+        expect.stringContaining("crosses the border of a character"),
+      );
+      // `\nd` cut into `\`, `n`, `d`: the front of the middle piece is byte 1.
+      expect(applyFrom(() => opener, 1, 0, [1, 2])).toEqual(uncut);
+    });
+
+    it("refuses a selection from an element point between two pieces of the closer, as uncut", () => {
+      const uncut = applyFrom(() => closer, 0, 3);
+      expect(applyFrom(() => closer, 2, 0, [1, 3], true)).toEqual(uncut);
+    });
+
+    it("refuses a selection from an element point between two pieces of the opener, as uncut", () => {
+      const uncut = applyFrom(() => opener, 0, 1);
+      expect(applyFrom(() => opener, 1, 0, [1, 2], true)).toEqual(uncut);
     });
   });
 });

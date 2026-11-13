@@ -5,7 +5,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { mergeRegister } from "@lexical/utils";
 import { NodeKey } from "lexical";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
-import { $noteEditableCallerNode, EXTERNAL_USJ_MUTATION_TAG, NoteNode } from "shared";
+import { $noteEditableCallerNode, $pieces, EXTERNAL_USJ_MUTATION_TAG, NoteNode } from "shared";
 import { readLatest } from "./editorUpdate.utils";
 
 /** PT9's selected-caller style: a yellow fill and thin blue top/bottom borders on the caller. */
@@ -42,28 +42,29 @@ export const NoteCallerHighlightPlugin = forwardRef<NoteCallerHighlightHandle>(
   function NoteCallerHighlightPlugin(_props, ref) {
     const [editor] = useLexicalComposerContext();
     const highlightedKeyRef = useRef<NodeKey | undefined>(undefined);
-    const highlightedElementRef = useRef<HTMLElement | undefined>(undefined);
+    const highlightedElementsRef = useRef<HTMLElement[]>([]);
 
     const applyHighlight = useCallback(() => {
       const noteKey = highlightedKeyRef.current;
-      const callerKey =
+      const callerKeys =
         noteKey === undefined
-          ? undefined
+          ? []
           : editor.getEditorState().read(() => {
               const note = $getNoteByKeyOrIndex(noteKey);
-              if (!note) return undefined;
+              if (!note) return [];
               // The caller is not the note's first child: in editable marker mode the note opens
               // with its marker glyph.
               const caller =
                 note.getChildren().find($isImmutableNoteCallerNode) ??
                 $noteEditableCallerNode(note);
-              return caller?.getKey();
+              // Every piece of a caller an annotation cut into pieces has its own element.
+              return caller ? $pieces(caller).map((piece) => piece.getKey()) : [];
             });
-      const element = callerKey ? (editor.getElementByKey(callerKey) ?? undefined) : undefined;
-      if (highlightedElementRef.current && highlightedElementRef.current !== element)
-        highlightedElementRef.current.classList.remove(NOTE_CALLER_HIGHLIGHT_CLASS);
-      element?.classList.add(NOTE_CALLER_HIGHLIGHT_CLASS);
-      highlightedElementRef.current = element;
+      const elements = callerKeys.flatMap((key) => editor.getElementByKey(key) ?? []);
+      for (const element of highlightedElementsRef.current)
+        if (!elements.includes(element)) element.classList.remove(NOTE_CALLER_HIGHLIGHT_CLASS);
+      for (const element of elements) element.classList.add(NOTE_CALLER_HIGHLIGHT_CLASS);
+      highlightedElementsRef.current = elements;
     }, [editor]);
 
     useImperativeHandle(
@@ -121,7 +122,10 @@ export const NoteCallerHighlightPlugin = forwardRef<NoteCallerHighlightHandle>(
     );
 
     useEffect(
-      () => () => highlightedElementRef.current?.classList.remove(NOTE_CALLER_HIGHLIGHT_CLASS),
+      () => () => {
+        for (const element of highlightedElementsRef.current)
+          element.classList.remove(NOTE_CALLER_HIGHLIGHT_CLASS);
+      },
       [],
     );
 

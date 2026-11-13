@@ -1,5 +1,5 @@
 import { $isElementNode, $isTextNode, ElementNode, TextNode } from "lexical";
-import { $caretHostAtBoundary, $isNoteNode, $placeCaretAtBoundary } from "shared";
+import { $caretHostAtBoundary, $isNoteNode, $lastPiece, $placeCaretAtBoundary } from "shared";
 import { $isSomeVerseNode, SomeVerseNode } from "shared-react";
 
 /**
@@ -47,14 +47,18 @@ import { $isSomeVerseNode, SomeVerseNode } from "shared-react";
 export function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   const para = verse.getParent();
   if (!para) return;
-  const contentStart = verse.getIndexWithinParent() + 1;
+  // An editable marker an annotation cuts into pieces ends with its last piece.
+  const marker = $lastPiece(verse);
+  // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- marker is the verse's last piece: the content starts past all of it
+  const contentStart = marker.getIndexWithinParent() + 1;
 
   // The verse has no content of its own when nothing follows the marker or the next verse marker
   // does — and an editable verse marker is itself a TextNode, so this has to be asked before the
   // caret-host question, which would otherwise answer with the NEXT verse's marker.
   const opening = para.getChildAtIndex(contentStart);
   if (!opening || $isSomeVerseNode(opening)) {
-    if ($isTextNode(verse)) verse.selectEnd();
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- marker is the verse's last piece: its end is the whole verse's end
+    if ($isTextNode(marker)) marker.selectEnd();
     else $placeCaretAtBoundary(para, contentStart);
     return;
   }
@@ -66,8 +70,9 @@ export function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   }
 
   // Content the caret must stay in front of, with nothing at the boundary able to carry a point.
-  if ($isTextNode(verse)) {
-    verse.selectEnd();
+  if ($isTextNode(marker)) {
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- marker is the verse's last piece: its end is the whole verse's end
+    marker.selectEnd();
     return;
   }
 

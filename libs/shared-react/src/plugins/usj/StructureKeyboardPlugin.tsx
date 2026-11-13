@@ -56,6 +56,7 @@ import {
   $getSelectedParaMarkerPara,
   $isBookNode,
   $isSomeParaNode,
+  $pieces,
   $selectParaMarker,
   MARKER_TEXT_TYPE,
 } from "shared";
@@ -173,10 +174,12 @@ export function StructureKeyboardPlugin({
         const node = $getNodeByKey(armed.key) ?? undefined;
         if (armed.kind === "verse") {
           if (node) {
+            // Every piece of a verse an annotation cut into pieces.
+            const pieces = $pieces(node);
             const parent = node.getParent();
-            const prev = node.getPreviousSibling();
-            const next = node.getNextSibling();
-            node.remove();
+            const prev = pieces[0].getPreviousSibling();
+            const next = pieces[pieces.length - 1].getNextSibling();
+            pieces.forEach((piece) => piece.remove());
             if (prev) $placeCaretAtEnd(prev);
             else if (next && $isTextNode(next)) next.select(0, 0);
             else parent?.selectStart();
@@ -318,7 +321,9 @@ export function StructureKeyboardPlugin({
       const selection = $getSelection();
       // Through the command a paste's nodes always go through, so its listeners run here too:
       // prose lands inside the caret's span, a range over several texts is replaced as typing
-      // replaces it, pasted spans are recorded and display annotations stripped.
+      // replaces it, pasted spans are recorded and display annotations stripped, and the
+      // display-annotation index splits a carrier an annotation cut into pieces at the caret, as the
+      // insertion splits an uncut one.
       if (
         $isRangeSelection(selection) &&
         !editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {

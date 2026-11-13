@@ -16,6 +16,13 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Added
 
+- **Annotation edge classes.** The first element an annotation paints, by document order, also
+  gets `editor-typed-markStart-<type>` and its last `editor-typed-markEnd-<type>` (theme keys
+  `typedMarkStart` / `typedMarkEnd`), so a host can draw one box over an annotation that spans
+  several elements: block sides on the base class, inline sides and corners on the edge classes.
+- **`data-piece-continuation`** on every piece of a display byte an annotation cuts after the
+  first, so a style that boxes a marker glyph or verse number (padding, a border, a margin) can
+  apply to the head piece alone with `:not([data-piece-continuation])`.
 - `generateUsjFontCss` — the font part of `generateUsjCss`'s output only (the base font family and
   size, and each marker's font family), for a view that keeps its own marker layout.
 - `STANDARD_VIEW_MODE`, plus `"standard"` in `getDefaultViewMode()` and `viewModeToViewNames`.
@@ -146,6 +153,23 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Changed
 
+- **Every annotation paints as CSS classes on a real element.** Display bytes an annotation holds
+  in part (a marker glyph, a verse number, a note caller, an attribute run) are cut into sibling
+  pieces of their own class and painted with the class names a `<mark>` gets, and a read-only glyph
+  paints sub-spans of its rendered text. The CSS Custom Highlight painter and its translation of a
+  host's class rules are gone, so `::selection`, `:hover`, borders and padding now apply to
+  everything an annotation paints.
+- **Setting or removing an annotation adds no undo step**, so an undo no longer brings back an
+  annotation the host removed.
+- **A copy of annotated text carries no annotations** in `text/html` or
+  `application/x-lexical-editor`, wherever those flavors are Lexical's own (Standard view's
+  fallback and the hidden-marker views): they are written from the document with its marks and
+  pieces taken out.
+- **`usj-nodes.css`:** the grey verse badge is drawn only in the views without editable markers
+  (`.formatted-font:where(:not(.marker-editable)) .verse`), so an annotation's background shows on
+  a Standard view verse number; `.note.collapsed mark` draws no box beside a collapsed note's
+  caller; and every piece of a cut attribute run lifts together on hover. A host that vendors its
+  own copy of `usj-nodes.css` needs these rules.
 - **A paste over a range across a char span's edge replaces only the selected text**, in the views
   that hide markers, as typing over one already did. It used to pull the text after the range into
   the span, and with nested spans put it ahead of the text it followed.
@@ -338,10 +362,11 @@ refused. The public surface grew substantially; nothing was removed.
   into `text/plain`, so a footnote pasted with Paste as Plain Text no longer has two spaces at each
   end. One ordinary space now separates a note's text from the text around it, where neither side
   already has whitespace. A stored no-break space is still written as `~` when invisible characters
-  are not allowed. `text/html` and the internal flavor are unchanged, as the editor's own
-  paste reads them back. These views' copies and cuts are now written by the editor rather than by
-  Lexical's rich-text handler. Lexical's handler still takes a range with no text to copy (a lone verse number, or only spacers
-  or placeholders), and writes it as before.
+  are not allowed. `text/html` and the internal flavor are still Lexical's own (without
+  annotations, as under Changed), as the editor's own paste reads them back. These views' copies
+  and cuts are now written by the editor rather than by Lexical's rich-text handler. Lexical's
+  handler still takes a range with no text to copy (a lone verse number, or only spacers or
+  placeholders), and writes it as before.
 - A text node holding only zero-width spaces that the author typed (a line-break opportunity in
   Thai, Khmer and Lao), which an annotation or other split leaves in a node of its own, is now kept
   by `getUsj()`, sent in delta ops, and counted in annotation and OT positions. It used to be taken

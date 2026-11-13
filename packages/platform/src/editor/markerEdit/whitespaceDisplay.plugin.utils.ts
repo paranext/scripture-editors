@@ -15,6 +15,7 @@
  * too.
  */
 
+import { $uncutClipboardData } from "./uncutClipboard.utils";
 import { $getLexicalContent, copyToClipboard, LexicalClipboardData } from "@lexical/clipboard";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -43,11 +44,16 @@ import {
   $isAttributeRunNode,
   $isBookNode,
   $isChapterNode,
+  $getLogicalParent,
   $isCharNode,
   $isMarkerNode,
+  $isNbspContentAtMark,
   $isNoteNode,
-  $isTypedMarkNode,
+  $isPlainTextNode,
   $isUnknownNode,
+  $parentOutsideMarks,
+  $previousSiblingThroughMarks,
+  $textRunThroughMarks,
   ATTRIBUTE_NBSP_SPELLING,
   GENERATOR_NOTE_CALLER,
   MarkerLookup,
@@ -57,6 +63,9 @@ import {
   NBSP_STAND_IN,
   nbspValueToDisplay,
   textTypeState,
+  $logicalText,
+  $removeRangeHeldByMarks,
+  LoggerBasic,
 } from "shared";
 import {
   $hasCopyableSelection,
@@ -108,43 +117,72 @@ export function hiddenViewCopySpelling(
   return allowInvisibleCharacters ? undefined : $withStoredNbspsAsTilde;
 }
 
-/** Spaces in runs display as NBSP so they are visible while typing, and a lone display NBSP left
- * standing on its own goes back to a plain space ({@link $isLeftoverDisplaySpace}). */
-export function $displayWhitespaceTransform(node: TextNode): void {
-  const text = node.getTextContent();
-  const isLoneNbsp = text === NBSP;
-  if (!isLoneNbsp && !text.includes(" ")) return;
+/**
+ * Whether `node` is display text whose spaces belong to a space run: content text, not an
+ * attribute run, a marker's trailing separator, an expanded note's caller slot, or a chapter's or
+ * an unknown block's own text.
+ */
+function $isSpaceRunText(node: LexicalNode): node is TextNode {
+  if (!$isPlainTextNode(node)) return false;
   const textType = $getState(node, textTypeState);
-  if (textType === "attribute" || textType === MARKER_TRAILING_SPACE_TEXT_TYPE) return;
+  if (textType === "attribute" || textType === MARKER_TRAILING_SPACE_TEXT_TYPE) return false;
   // An expanded note's caller slot is a structural space, the caller, and a structural NBSP -
   // with the caller deleted, just the two separators, which this mapping would turn into two
   // NBSPs and the caller's own transform straight back, forever. The caller's transform owns it.
-  if ($isNoteCallerSlot(node)) return;
+  if ($isNoteCallerSlot(node)) return false;
   for (let parent = node.getParent(); parent; parent = parent.getParent()) {
     // Note content and the `\id` line's content both display space runs as NBSP like any other
     // content — the USJ->editor adaptor already display-maps their text on load, so mapping while
     // typing is what keeps the live shape and the loaded one the same. A chapter's own text is its
     // `\c N` glyph rather than content, and unknown blocks keep literal text (degradation
     // property), so neither has a content run to map.
-    if ($isChapterNode(parent) || $isUnknownNode(parent)) return;
+    if ($isChapterNode(parent) || $isUnknownNode(parent)) return false;
   }
-  if (isLoneNbsp) {
-    if ($isLeftoverDisplaySpace(node)) node.setTextContent(" ");
+  return true;
+}
+
+/**
+ * Spaces in runs display as NBSP so they are visible while typing, and a lone display NBSP left
+ * standing on its own goes back to a plain space ({@link $isLeftoverDisplaySpace}).
+ *
+ * A run is read across the text nodes an annotation mark cuts one text into
+ * (`$textRunThroughMarks`): a mark is presentation, so a space typed beside a marked space makes
+ * the same run, displayed the same way, as with no mark there. Every node of the run that the
+ * mapping changes is rewritten, not only the one typed in.
+ */
+export function $displayWhitespaceTransform(node: TextNode): void {
+  if (!$isSpaceRunText(node)) return;
+  const run = $textRunThroughMarks(node, $isSpaceRunText);
+  const texts = run.map((member) => member.getTextContent());
+  const text = texts.join("");
+  if (text === NBSP) {
+    const lone = run.find((member) => member.getTextContent() === NBSP);
+    if (lone && $isLeftoverDisplaySpace(lone)) lone.setTextContent(" ");
     return;
   }
-  // A char span's text children carry a STRUCTURAL leading NBSP (the glyph separator the
-  // adaptor/materializer glues onto content). It is not a display space-run member, so it must
-  // not act as left context for the mapping: a genuine content-leading single space stays plain
-  // in the clean-loaded shape, and mapping it here would make edited (dirty) nodes emit
-  // different collab ops than clean-loaded ones for identical content.
-  const hasStructuralPrefix = text.startsWith(NBSP) && $isCharNode(node.getParent());
+  if (!texts.some((memberText) => memberText.includes(" "))) return;
+  // A char span's text right after its opening glyph carries a STRUCTURAL leading NBSP (the glyph
+  // separator the adaptor/materializer glues onto content). It is not a display space-run member,
+  // so it must not act as left context for the mapping: a genuine content-leading single space
+  // stays plain in the clean-loaded shape, and mapping it here would make edited (dirty) nodes
+  // emit different collab ops than clean-loaded ones for identical content.
+  const first = run[0];
+  const hasStructuralPrefix = text.startsWith(NBSP) && $isCharNode($getLogicalParent(first));
   const body = hasStructuralPrefix ? text.slice(1) : text;
   const mapped =
     (hasStructuralPrefix ? NBSP : "") +
     body
       .replace(/ (?=[ \u00A0])/g, NBSP) // space followed by space/NBSP
       .replace(/(?<=\u00A0) /g, NBSP); // space preceded by NBSP
-  if (mapped !== text) node.setTextContent(mapped); // length-preserving: caret stays valid
+  if (mapped === text) return;
+  // Length-preserving, so each node keeps its length and a caret in any of them stays valid.
+  let start = 0;
+  run.forEach((member, index) => {
+    const end = start + texts[index].length;
+    const memberText = mapped.slice(start, end);
+    if (memberText !== texts[index]) member.setTextContent(memberText);
+    start = end;
+  });
 }
 
 /**
@@ -260,27 +298,29 @@ export function registerTypedTextRewrite(
  * - directly under a note with a collapsed caller (`ImmutableNoteCallerNode`): its display
  *   separators, and the bare separator `NoteNodePlugin` turns into its tagged one after the caller
  *   or a top-level span;
- * - inside or beside an annotation mark, where a lone NBSP may be content the wrap split off
- *   (`$isNbspContentAtMark`) or a run piece the mark separated from the rest of its run — the
- *   editor→USJ conversion already keeps those as content;
  * - inside an attribute display run.
  *
  * Nor is a token-mode or tagged node one; a note's caller slot, and chapter and unknown-block text,
  * are ruled out before this is asked.
  *
+ * Read as the unmarked document has it: the caller asks only when the space's whole run through
+ * annotation marks is the one NBSP (a mark that splits a run leaves a lone-NBSP node that is not a
+ * lone space), and the parent and the node before it are read through marks
+ * ({@link $parentOutsideMarks}, {@link $previousSiblingThroughMarks}), so a held space is spelled
+ * exactly as the same space with no annotation.
+ *
  * Read-only: call inside `editor.update()` or an editor-state read.
  */
 function $isLeftoverDisplaySpace(node: TextNode): boolean {
   if (node.getMode() !== "normal" || $getState(node, textTypeState) !== undefined) return false;
-  const parent = node.getParent();
-  if ($isTypedMarkNode(parent) || $isAttributeRunNode(parent)) return false;
+  const parent = $parentOutsideMarks(node);
+  if ($isAttributeRunNode(parent)) return false;
   if ($isNoteNode(parent) && parent.getChildren().some($isImmutableNoteCallerNode)) return false;
-  const previous = node.getPreviousSibling();
+  const previous = $previousSiblingThroughMarks(node);
   // A span's or note's opening glyph always comes first, so a leftover space never does; a first
   // child is the spacer that followed a glyph the user deleted.
   if (($isCharNode(parent) || $isNoteNode(parent)) && !previous) return false;
-  const next = node.getNextSibling();
-  return !$isMarkerNode(previous) && !$isTypedMarkNode(previous) && !$isTypedMarkNode(next);
+  return !$isMarkerNode(previous);
 }
 
 /**
@@ -764,7 +804,12 @@ function $insertPastedTextIntoAttributeContext(
       );
   // Nothing survived the strip, so there is nothing to replace the selection with — see
   // `$handlePasteForStandardView`.
-  if (resolved) selection.insertText(resolved.replace(/\n/g, " "));
+  if (!resolved) return;
+  // A range an annotation mark holds an end of is removed first, as for any paste
+  // (`$removeRangeHeldByMarks`): Lexical's replacement of a range whose ends a mark puts in
+  // different parents moves what follows the range's end into the start's parent.
+  $removeRangeHeldByMarks(selection);
+  selection.insertText(resolved.replace(/\n/g, " "));
 }
 
 /**
@@ -925,15 +970,17 @@ export function $handleDropForStandardView(
  * @param event The drag's `dragstart` event.
  * @param editor The editor.
  * @param nbspSpelling What a stored NBSP displays as (`getNbspSpelling`).
+ * @param logger Where a copy without annotations that cannot be written is reported.
  */
 export function $setStandardViewDragData(
   event: DragEvent,
   editor: LexicalEditor,
   nbspSpelling: string,
+  logger?: LoggerBasic,
 ): void {
   const { dataTransfer } = event;
   if (!dataTransfer) return;
-  const data = $getStandardViewClipboardData(editor, nbspSpelling);
+  const data = $getStandardViewClipboardData(editor, nbspSpelling, logger);
   if (!data) return;
   dataTransfer.clearData();
   for (const type of ["text/plain", "text/html"] as const) {
@@ -1031,6 +1078,10 @@ export function $insertPastedText(
   );
   if (!normalized) return;
   const lines = normalized.split("\n");
+  // A range an annotation mark holds an end of is removed first, so the insertions below type at
+  // the caret it leaves rather than through Lexical's range replacement, which climbs out of a mark
+  // or past the node before it (`$removeRangeHeldByMarks`).
+  $removeRangeHeldByMarks(selection);
   // A protected document never gains a paragraph from a paste: each newline becomes a single space
   // and the payload goes in as one insertion, so the block structure the user sees is exactly the
   // one they had. Every byte-level rule above still applied.
@@ -1071,9 +1122,14 @@ export function $insertPastedText(
  * after the caller, which is the mandatory space between a note's caller and its first content
  * marker (`\f + \fr …`). Every other placement (between content children, before the note's own
  * closing marker) has nothing in the source USFM to reproduce and must contribute nothing.
+ *
+ * A lone NBSP that is content an annotation mark's edge split off (a space of a run the user typed
+ * in the note's content, `$isNbspContentAtMark`) is not a separator: it copies as the space it is,
+ * as the same run with no mark does.
  */
 function $isNoteInternalDisplaySeparator(node: TextNode): boolean {
-  if (node.getTextContent() !== NBSP) return false;
+  // Read whole: a lone NBSP piece an annotation cut off a note's caller is part of the caller.
+  if ($logicalText(node) !== NBSP || $isNbspContentAtMark(node)) return false;
   const parent = node.getParent();
   if (!$isNoteNode(parent)) return false;
   return !$isImmutableNoteCallerNode(node.getPreviousSibling());
@@ -1215,7 +1271,9 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
                 ? nodeText.slice(anchorOffset, focusOffset)
                 : nodeText.slice(focusOffset, anchorOffset);
         } else nodeText = isBefore ? nodeText.slice(anchorOffset) : nodeText.slice(focusOffset);
-      } else if (node === lastNode) {
+      } else if (node === lastNode && (isBefore ? focus : anchor).type === "text") {
+        // An element point ends the range after the last node, which is then read whole: its
+        // character offset (0 unless the point is at its element's end) is not into this text.
         nodeText = isBefore ? nodeText.slice(0, focusOffset) : nodeText.slice(0, anchorOffset);
       }
       text += $isNoteInternalDisplaySeparator(node)
@@ -1322,6 +1380,7 @@ function $selectionTouchesBookOrChapter(selection: RangeSelection): boolean {
 export function $getStandardViewClipboardData(
   editor: LexicalEditor,
   nbspSpelling = "~",
+  logger?: LoggerBasic,
 ): LexicalClipboardData | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return undefined;
@@ -1331,7 +1390,11 @@ export function $getStandardViewClipboardData(
     "text/html": usfmToClipboardHtml(usfm),
   };
   if ($selectionReachesIntoOpaqueBlock() || $selectionTouchesBookOrChapter(selection)) return data;
-  const lexical = $getLexicalContent(editor);
+  // An annotated selection's internal flavor is written as the document with no annotation
+  // writes it.
+  const lexical =
+    $uncutClipboardData(editor, selection, logger)?.["application/x-lexical-editor"] ??
+    $getLexicalContent(editor);
   // The internal flavor is the editor's own nodes, so it holds the stand-in for a stored no-break
   // space (`NBSP_STAND_IN`) as it is, and the stand-in must not leave the editor. Without the
   // flavor the paste takes the text, which spells the no-break space as U+00A0.
@@ -1376,6 +1439,7 @@ export function $handleCopyForStandardView(
   isCut: boolean,
   copyLimit?: number,
   nbspSpelling = "~",
+  logger?: LoggerBasic,
 ): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) {
@@ -1385,7 +1449,7 @@ export function $handleCopyForStandardView(
     // content and is therefore declined here — and one shared function is what keeps them agreeing.
     return isNullPayloadDispatch && !$hasCopyableSelection();
   }
-  const data = $getStandardViewClipboardData(editor, nbspSpelling);
+  const data = $getStandardViewClipboardData(editor, nbspSpelling, logger);
   if (!data) return false;
   if (copyLimit !== undefined) delete data["application/x-lexical-editor"];
   return $writeCopyPayload(event, editor, selection, data, isCut, copyLimit);
@@ -1441,6 +1505,32 @@ export function $writeCopyPayload(
     data,
     isCut && editor.isEditable() ? () => selection.removeText() : undefined,
   );
+}
+
+/**
+ * A copy or cut of a selection touching anything an annotation puts in the tree, for a view whose
+ * copy is Lexical's own (no view handler claimed it above): the clipboard is written as the same
+ * selection in the document with no annotation writes it (`$uncutClipboardData`), the document
+ * only read. Declines a selection that touches no annotation, which Lexical's own copy writes.
+ * Written through {@link $writeCopyPayload} with `copyLimit` (`EditorOptions.copyLimit`), so the
+ * limit's backstop applies as to every view's copy: with a limit set, a copy whose page selection
+ * runs outside the editor is left to the page guard.
+ *
+ * Mutating only for a cut, which removes the range: call inside `editor.update()` — in practice,
+ * from a `COPY_COMMAND` or `CUT_COMMAND` handler.
+ */
+export function $copyWithoutAnnotations(
+  event: ClipboardEvent | null,
+  editor: LexicalEditor,
+  isCut: boolean,
+  logger?: LoggerBasic,
+  copyLimit?: number,
+): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+  const data = $uncutClipboardData(editor, selection, logger);
+  if (!data) return false;
+  return $writeCopyPayload(event, editor, selection, data, isCut, copyLimit);
 }
 
 /**

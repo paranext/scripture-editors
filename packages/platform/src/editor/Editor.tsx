@@ -229,6 +229,42 @@ const defaultOptions: EditorOptions = {};
  */
 const commitIgnoredTags = blackListedChangeTags.filter((tag) => tag !== DELTA_CHANGE_TAG);
 
+/** The callbacks a host gives `setAnnotation`. */
+interface AnnotationCallbacks {
+  onClick?: TypedMarkOnClick;
+  onRemove?: TypedMarkOnRemove;
+  onMouseEnter?: TypedMarkOnMouseEnter;
+  onMouseLeave?: TypedMarkOnMouseLeave;
+}
+
+/**
+ * Wrap a host's annotation callbacks so the text each reports is spelled as the host stores it: the
+ * annotation's display text holds the editor's internal stand-in for a stored no-break space, and
+ * the host is given U+00A0. Built outside the component on purpose: a mark's callbacks are kept for
+ * as long as an undo could bring the mark back, past the editor's own unmount, so a wrapper closing
+ * over the component's scope would keep the whole editor alive with it.
+ */
+function hostAnnotationCallbacks(
+  viewOptions: ViewOptions | undefined,
+  { onClick, onRemove, onMouseEnter, onMouseLeave }: AnnotationCallbacks,
+): AnnotationCallbacks {
+  const hostText = (text: string) => toUsfmNbspSpelling(text, viewOptions);
+  return {
+    onClick:
+      onClick &&
+      ((event, markType, markId, text) => onClick(event, markType, markId, hostText(text))),
+    onRemove:
+      onRemove &&
+      ((markType, markId, cause, text) => onRemove(markType, markId, cause, hostText(text))),
+    onMouseEnter:
+      onMouseEnter &&
+      ((event, markType, markId, text) => onMouseEnter(event, markType, markId, hostText(text))),
+    onMouseLeave:
+      onMouseLeave &&
+      ((event, markType, markId, text) => onMouseLeave(event, markType, markId, hostText(text))),
+  };
+}
+
 function Placeholder(): ReactElement {
   return <div className="editor-placeholder">Enter some Scripture...</div>;
 }
@@ -1325,25 +1361,23 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         return;
       }
 
-      // The text each callback reports is the annotation's display text, so a stored no-break space
-      // is still the editor's internal stand-in there; the host is given U+00A0. Keep the
-      // `viewOptions` of this call, not the latest: a view-option change reloads the document and
-      // drops its annotations, so the text a removal then reports is spelled the old way.
-      const hostText = (text: string) => toUsfmNbspSpelling(text, viewOptions);
+      // Keep the `viewOptions` of this call, not the latest: a view-option change reloads the
+      // document and drops its annotations, so the text a removal then reports is spelled the old
+      // way.
+      const hosted = hostAnnotationCallbacks(viewOptions, {
+        onClick,
+        onRemove,
+        onMouseEnter,
+        onMouseLeave,
+      });
       annotationRef.current?.setAnnotation(
         live,
         externalTypedMarkType(type),
         id,
-        onClick &&
-          ((event, markType, markId, text) => onClick(event, markType, markId, hostText(text))),
-        onRemove &&
-          ((markType, markId, cause, text) => onRemove(markType, markId, cause, hostText(text))),
-        onMouseEnter &&
-          ((event, markType, markId, text) =>
-            onMouseEnter(event, markType, markId, hostText(text))),
-        onMouseLeave &&
-          ((event, markType, markId, text) =>
-            onMouseLeave(event, markType, markId, hostText(text))),
+        hosted.onClick,
+        hosted.onRemove,
+        hosted.onMouseEnter,
+        hosted.onMouseLeave,
       );
     },
     removeAnnotation(type, id) {
@@ -2135,6 +2169,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             <HiddenMarkersViewCopyPlugin
               allowInvisibleCharacters={viewOptions.allowInvisibleCharacters}
               copyLimit={copyLimit}
+              logger={stableLogger}
             />
           )}
           {viewOptions?.markerMode === "hidden" && (
