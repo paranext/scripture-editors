@@ -3014,7 +3014,8 @@ span.read img {
 
 /* ── Active text focus box ────────────────────────────────────────────────────
    Applied via .psc-active-focus when viewOptions.hasActiveTextFocusBox is true.
-   Outlines the entire paragraph under the cursor. When used alongside
+   Outlines the entire paragraph under the cursor where there is no verse to outline (ActiveTextPlugin
+   draws the verse's own outline). When used alongside
    .psc-gutter-markers the box also takes in the marker glyph (the rule below);
    --verse-text-start is a fallback start that no marker in this file wins today.
    Without the gutter class that variable defaults to 0px, so poetry alignment is
