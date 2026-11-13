@@ -477,6 +477,20 @@ async function pressDeleteKey(editor: LexicalEditor): Promise<void> {
   });
 }
 
+/** Verses after `\c` with no paragraph marker, which load as an implied paragraph. */
+const usjWithVersesOutsideAnyParagraph: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+    { type: "chapter", marker: "c", number: "1" },
+    { type: "verse", marker: "v", number: "1" },
+    "one ",
+    { type: "verse", marker: "v", number: "2" },
+    "two",
+  ],
+};
+
 const usjWithVerseInParagraphMiddle: Usj = {
   type: "USJ",
   version: "3.1",
@@ -2079,21 +2093,10 @@ describe("formatPara (standard view)", () => {
     });
   });
 
-  // Verses outside any paragraph marker load as an implied paragraph, which reports `p` as its
-  // block marker, so the paragraph menu offers to retag it like any other paragraph.
+  // Verses outside any paragraph marker load as an implied paragraph. Once a host hears its block
+  // marker, it can offer to retag it like any other paragraph; this pins that `formatPara` does so
+  // without losing the verses. The reporting itself is tested under `onStateChange` below.
   it("retags an implied paragraph into a real paragraph that keeps its verses", async () => {
-    const usjWithVersesOutsideAnyParagraph: Usj = {
-      type: "USJ",
-      version: "3.1",
-      content: [
-        { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
-        { type: "chapter", marker: "c", number: "1" },
-        { type: "verse", marker: "v", number: "1" },
-        "one ",
-        { type: "verse", marker: "v", number: "2" },
-        "two",
-      ],
-    };
     const { ref, lexicalEditor, originalUsj } = await mountEditorForUndo({
       usj: usjWithVersesOutsideAnyParagraph,
       scrRef: { book: "GEN", chapterNum: 1, verseNum: 2 },
@@ -2136,6 +2139,102 @@ describe("formatPara (standard view)", () => {
     await flushQueuedEvents();
 
     expect(getEditorRef(ref).getUsj()).toEqual(originalUsj);
+  });
+
+  // A selection from the `\id` line into verses outside any paragraph marker takes the book path:
+  // split the `\id` line, then walk the root siblings up to the block the selection ends in. That
+  // end block is an implied paragraph, which the walk must retag like any other paragraph.
+  it("retags an implied paragraph that a selection from the \\id line ends in", async () => {
+    const { ref, lexicalEditor, originalUsj } = await mountEditorForUndo({
+      usj: usjWithVersesOutsideAnyParagraph,
+      scrRef: { book: "GEN", chapterNum: 1, verseNum: 2 },
+      structureProtectionMode: "off",
+      view: editorView("standard"),
+    });
+    act(() => {
+      lexicalEditor.update(() => {
+        const textNodes = $getRoot().getAllTextNodes();
+        const bookText = textNodes.find((node) => node.getTextContent().includes("Test Book"));
+        const verseText = textNodes.find((node) => node.getTextContent() === "two");
+        if (!bookText || !$isTextNode(bookText)) throw new Error("seed book text node not found");
+        if (!verseText || !$isTextNode(verseText))
+          throw new Error("seed verse text node not found");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(bookText.getKey(), 4, "text");
+        selection.focus = $createPoint(verseText.getKey(), 1, "text");
+        $setSelection(selection);
+      });
+    });
+
+    await act(async () => {
+      getEditorRef(ref).formatPara("q1");
+    });
+    await flushQueuedEvents();
+
+    expect(getEditorRef(ref).getUsj()?.content).toEqual([
+      { type: "book", marker: "id", code: "GEN", content: ["Test"] },
+      { type: "para", marker: "q1", content: ["Book"] },
+      originalUsj.content[1],
+      {
+        type: "para",
+        marker: "q1",
+        content: [
+          { type: "verse", marker: "v", number: "1" },
+          "one ",
+          { type: "verse", marker: "v", number: "2" },
+          "two",
+        ],
+      },
+    ]);
+
+    await act(async () => {
+      getEditorRef(ref).undo();
+    });
+    await flushQueuedEvents();
+
+    expect(getEditorRef(ref).getUsj()).toEqual(originalUsj);
+  });
+});
+
+describe("onStateChange in an implied paragraph", () => {
+  // The host scopes its character-marker menu by the reported block marker. Moving from the `\id`
+  // line into verses outside any paragraph marker must report the default paragraph marker, or the
+  // host keeps `id` and offers `\id`'s character markers in body text.
+  it("reports `p` when the caret moves from the \\id line into an implied paragraph", async () => {
+    const onStateChange = vi.fn<NonNullable<EditorProps<LoggerBasic>["onStateChange"]>>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          defaultUsj={usjWithVersesOutsideAnyParagraph}
+          onStateChange={onStateChange}
+          options={{ hasExternalUI: true, view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+    const selectTextAndReportBlockMarker = async (text: string): Promise<string | undefined> => {
+      onStateChange.mockClear();
+      await act(async () => {
+        lexical.update(() => {
+          const textNode = $getRoot()
+            .getAllTextNodes()
+            .find((node) => node.getTextContent().includes(text));
+          if (!textNode || !$isTextNode(textNode)) throw new Error(`"${text}" text node not found`);
+          textNode.select(1, 1);
+        });
+      });
+      const { calls } = onStateChange.mock;
+      return calls.length > 0 ? calls[calls.length - 1][0].blockMarker : undefined;
+    };
+    const bookLineMarker = await selectTextAndReportBlockMarker("Test Book");
+
+    const blockMarker = await selectTextAndReportBlockMarker("two");
+
+    expect(bookLineMarker).toBe("id");
+    expect(blockMarker).toBe("p");
   });
 });
 
