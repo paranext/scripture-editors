@@ -299,6 +299,17 @@ interface AppliedAnnotations {
 }
 
 /**
+ * An `onRemove` that records each call into `calls`. Built here, away from any mounted editor, and
+ * not as a `vi.fn`: vitest keeps every `vi.fn` and the function it wraps alive until the file ends,
+ * so a recorder closing over a scope that holds the editor kept every editor the oracle mounted.
+ */
+function removalRecorder(calls: Parameters<TypedMarkOnRemove>[]): TypedMarkOnRemove {
+  return (...args) => {
+    calls.push(args);
+  };
+}
+
+/**
  * Set every annotation of `plan` on `mounted`; only those that then hold a byte are kept, so a
  * plan entry holding nothing is reported once per row ({@link $holdMismatches}) rather than as a
  * removal failure in every case.
@@ -309,10 +320,9 @@ async function applyAnnotations(
 ): Promise<AppliedAnnotations> {
   const removals = new Map<string, Parameters<TypedMarkOnRemove>[]>();
   for (const { id, range } of plan) {
-    removals.set(id, []);
-    const onRemove = vi.fn<TypedMarkOnRemove>((...args) => {
-      removals.get(id)?.push(args);
-    });
+    const calls: Parameters<TypedMarkOnRemove>[] = [];
+    removals.set(id, calls);
+    const onRemove = removalRecorder(calls);
     await act(async () => {
       mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, id, undefined, onRemove);
       await Promise.resolve();
