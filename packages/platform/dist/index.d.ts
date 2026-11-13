@@ -2102,8 +2102,12 @@ export declare interface StateChangeSnapshot {
   /** Can redo the last undone change. */
   canRedo: boolean;
   /**
-   * The block marker that the current selection is contained in. A block is paragraph-like. `p`
-   * for text outside any paragraph marker (an implied paragraph).
+   * The block marker that the current selection is contained in. A block is paragraph-like.
+   *
+   * `p` for text outside any paragraph marker (an implied paragraph). That `p` is not in the file:
+   * if a host offers it as the current style (for example, pre-highlighted in a paragraph-style
+   * menu) and the user accepts it, the resulting `EditorRef.formatPara("p")` call replaces the
+   * implied paragraph with an explicit `\p` paragraph.
    */
   blockMarker: string | undefined;
   /** The actual marker of the current selection. */
