@@ -12,11 +12,7 @@ import {
   $paraMarkerDeletionTransform,
   $prepareReplaceSelection,
 } from "./markerEditDeletion.utils";
-import {
-  $pasteOnChapterLine,
-  $refuseLineBreakOnChapterLine,
-  $splitOnChapterLine,
-} from "./chapterLine.utils";
+import { $pasteOnChapterLine, $splitOnChapterLine } from "./chapterLine.utils";
 import {
   $adoptDomCaretInExpandedNote,
   $handleEnterInNote,
@@ -48,6 +44,7 @@ import {
   getPastePayload,
 } from "./whitespaceDisplay.plugin.utils";
 import { registerNbspStandInFont } from "./nbspStandInFont";
+import { LINE_BREAK_IN_TEXT, withNewlineLineBreaks } from "../lineBreakText.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -72,7 +69,6 @@ import {
   EditorState,
   HISTORIC_TAG,
   HISTORY_MERGE_TAG,
-  INSERT_LINE_BREAK_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
@@ -170,6 +166,19 @@ export const COMMIT_PENDING_MARKERS_COMMAND: LexicalCommand<void> = createComman
 export const SET_MARKER_SETTLE_SUSPENDED_COMMAND: LexicalCommand<boolean> = createCommand(
   "SET_MARKER_SETTLE_SUSPENDED_COMMAND",
 );
+
+/**
+ * A paste of `text` alone, as plain text: what typed text holding a line break goes in as in
+ * Standard view. Read as every paste claim reads one, through `clipboardData`.
+ */
+function plainTextPaste(text: string): ClipboardEvent {
+  const clipboardData: Pick<DataTransfer, "types" | "files" | "getData"> = {
+    types: ["text/plain"],
+    files: [] as unknown as FileList,
+    getData: (type: string) => (type === "text/plain" ? text : ""),
+  };
+  return { clipboardData, preventDefault: () => undefined } as unknown as ClipboardEvent;
+}
 
 /**
  * Runs `settle` inside the surrounding commit and marks that commit as a settle: it merges into
@@ -1360,18 +1369,32 @@ export function MarkerEditPlugin({
         },
         COMMAND_PRIORITY_HIGH,
       ),
-      // A chapter line cannot be split: Enter there starts a `\p` after it and a line break is
-      // refused (see chapterLine.utils.ts). CRITICAL so both run ahead of every split, including
-      // this plugin's own char-stack split below.
+      // A chapter line cannot be split: Enter there starts a `\p` after it (see
+      // chapterLine.utils.ts), and so does a line break, which `LineBreakPlugin` runs as Enter.
+      // CRITICAL so it runs ahead of every split, including this plugin's own char-stack split
+      // below.
       editor.registerCommand(
         INSERT_PARAGRAPH_COMMAND,
         () => $splitOnChapterLine(PARA_MARKER_DEFAULT, context.viewOptions),
         COMMAND_PRIORITY_CRITICAL,
       ),
+      // Typed text holding a line break (dictation, autocorrect, an extension's insertion) goes in,
+      // in Standard view, as a plain-text paste of it does: Standard's paste claims (a note's `\fp`
+      // break, a chapter line, the character-stack and external-paste line replays) then give it
+      // the paragraph breaks a pasted line break gets, where Lexical's own insertion would keep the
+      // line break in the text. LOW, as the drop claim below.
       editor.registerCommand(
-        INSERT_LINE_BREAK_COMMAND,
-        () => $refuseLineBreakOnChapterLine(),
-        COMMAND_PRIORITY_CRITICAL,
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        (payload) => {
+          if (typeof payload !== "string" || !hasStandardViewWhitespace(context.viewOptions))
+            return false;
+          if (!LINE_BREAK_IN_TEXT.test(payload)) return false;
+          return editor.dispatchCommand(
+            PASTE_COMMAND,
+            plainTextPaste(withNewlineLineBreaks(payload)),
+          );
+        },
+        COMMAND_PRIORITY_LOW,
       ),
       // A drop inserts through Lexical's clipboard path, which splits at every line break without
       // going through INSERT_PARAGRAPH_COMMAND, so a drop on a chapter line is claimed and goes in

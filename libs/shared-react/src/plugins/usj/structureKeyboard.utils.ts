@@ -1,4 +1,5 @@
 import { $isSomeVerseNode, SomeVerseNode } from "../../nodes/usj";
+import { $isBookOrChapterLine } from "./bookAndChapterLines.utils";
 import { $isOpaqueBlockNode, $rangeReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $placeCaretAtParaContentStart } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { $findMatchingParent } from "@lexical/utils";
@@ -809,19 +810,20 @@ export function $placeCaretAfterParaChild(para: ParaLikeNode, child: LexicalNode
 }
 
 /**
- * Flattens one pasted/dropped node for a structure-protected document: verse and chapter
- * markers vanish (leaf markers), paragraph wrappers are removed but their children kept,
- * and all other (inline) nodes pass through unchanged.
+ * Flattens one pasted/dropped node for a structure-protected document: verse markers and book and
+ * chapter lines vanish ({@link $isBookOrChapterLine}: the document has its own, text and all),
+ * paragraph wrappers are removed but their children kept, and all other (inline) nodes pass through
+ * unchanged.
  */
 function $flattenForProtectedStructure(node: LexicalNode): LexicalNode[] {
-  if ($isSomeVerseNode(node) || $isSomeChapterNode(node)) return [];
+  if ($isSomeVerseNode(node) || $isBookOrChapterLine(node)) return [];
   if ($isSomeParaNode(node)) return node.getChildren().flatMap($flattenForProtectedStructure);
   return [node];
 }
 
 /**
  * Sanitizes a flat array of pasted/dropped nodes for a structure-protected document by
- * stripping structural markers (paragraph breaks, verse markers, chapter markers) while
+ * stripping structural markers (paragraph breaks, verse markers, book and chapter lines) while
  * preserving text, inline character formatting, and notes. A removed top-level paragraph
  * boundary is replaced with a single space so words from adjacent paragraphs do not fuse;
  * nested paragraphs are flattened without inserting a separator.

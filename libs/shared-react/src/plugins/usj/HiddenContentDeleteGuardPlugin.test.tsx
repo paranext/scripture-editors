@@ -7,10 +7,13 @@ import {
   HiddenContentDeleteHandler,
   HiddenContentDeleteRequest,
 } from "./hidden-content-delete.model";
+import { MARKER_VIEW_CLIPBOARD_NAMESPACE } from "./clipboard.utils";
+import { CommandMenuPlugin } from "./CommandMenuPlugin";
 import { HiddenContentDeleteGuardPlugin } from "./HiddenContentDeleteGuardPlugin";
 import { baseTestEnvironment, pressKey, sutUpdate, updateSelection } from "./react-test.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
+import { UnstorableTextPlugin } from "./UnstorableTextPlugin";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { act } from "@testing-library/react";
 import {
@@ -96,11 +99,19 @@ async function guardedEnvironment(
     isEnabled?: boolean;
     structureProtectionMode?: StructureProtectionMode;
     copyLimit?: number;
+    refusesCommandCharacters?: boolean;
     logger?: LoggerBasic;
     children?: ReactNode;
   } = {},
 ) {
-  const { isEnabled = true, structureProtectionMode, copyLimit, logger, children } = options;
+  const {
+    isEnabled = true,
+    structureProtectionMode,
+    copyLimit,
+    refusesCommandCharacters,
+    logger,
+    children,
+  } = options;
   return baseTestEnvironment(
     $init,
     <>
@@ -108,6 +119,7 @@ async function guardedEnvironment(
         isEnabled={isEnabled}
         structureProtectionMode={structureProtectionMode}
         copyLimit={copyLimit}
+        refusesCommandCharacters={refusesCommandCharacters}
         onHiddenContentDelete={handler}
         logger={logger}
       />
@@ -207,6 +219,27 @@ function clipboardEvent(type: "paste" | "cut", text = "") {
     types: text ? ["text/plain"] : [],
     files: [],
     getData: (format: string) => (format === "text/plain" ? text : ""),
+    setData: vi.fn(),
+  };
+  Object.defineProperty(event, "clipboardData", { value: clipboardData });
+  return event;
+}
+
+/** A paste of a copy of `usfm` as a view that shows markers writes it. */
+function markerViewCopyEvent(usfm: string) {
+  const event = new ClipboardEvent("paste", { cancelable: true });
+  const flavors: { [type: string]: string } = {
+    "application/x-lexical-editor": JSON.stringify({
+      namespace: MARKER_VIEW_CLIPBOARD_NAMESPACE,
+      nodes: [],
+    }),
+    "text/html": `<p>${usfm}</p>`,
+    "text/plain": usfm,
+  };
+  const clipboardData = {
+    types: Object.keys(flavors),
+    files: [],
+    getData: (format: string) => flavors[format] ?? "",
     setData: vi.fn(),
   };
   Object.defineProperty(event, "clipboardData", { value: clipboardData });
@@ -1635,7 +1668,7 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
-    it("does not ask about a paste the command menu refuses, or one of files alone", async () => {
+    it("does not ask about a paste of nothing but unstorable text, or one of files alone", async () => {
       const handler = answering("delete");
       const { editor } = await guardedEnvironment($init, handler);
       updateSelection(editor, before!, 3, after!, 2);
@@ -1643,12 +1676,86 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       Object.defineProperty(filesOnly.clipboardData, "types", { value: ["Files"] });
 
       await act(async () => {
-        editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "and/or"));
+        editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "\\//"));
         editor.dispatchCommand(PASTE_COMMAND, filesOnly);
       });
       await settle();
 
       expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("does not ask about a marker-showing view's copy of nothing but marker tokens", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(PASTE_COMMAND, markerViewCopyEvent("\\ft "));
+      });
+      await settle();
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("asks about a marker-showing view's copy that keeps some text once its marker tokens go", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(PASTE_COMMAND, markerViewCopyEvent("\\ft x"));
+      });
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("asks about a paste that keeps some of its text once unstorable text is removed", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "and/or \\v 1"));
+      });
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("does not ask about a paste holding a `/` where every `\\` or `/` refuses the paste", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler, {
+        refusesCommandCharacters: true,
+        children: <CommandMenuPlugin />,
+      });
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "and/or"));
+      });
+      await settle();
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("asks about a paste without `\\` or `/` where every `\\` or `/` refuses the paste", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler, {
+        refusesCommandCharacters: true,
+        children: <CommandMenuPlugin />,
+      });
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "and or"));
+      });
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
     });
 
     it("drops a selection edit when a verse marker was added inside the selection while asking", async () => {
@@ -1823,5 +1930,82 @@ describe("HiddenContentDeleteGuardPlugin", () => {
         expect.stringContaining("q2"),
       );
     });
+  });
+});
+
+describe("HiddenContentDeleteGuardPlugin beside UnstorableTextPlugin", () => {
+  let first: TextNode;
+  let last: TextNode;
+  // `a/x`, a hidden figure, `y/b`: removing everything from `x` to `y` puts `a/` against `/b`.
+  const $init = () => {
+    first = $createTextNode("a/x");
+    last = $createTextNode("y/b");
+    $getRoot().append($createParaNode("p").append(first, $createFigureNode(), last));
+  };
+
+  async function environment(handler: HiddenContentDeleteHandler) {
+    const onRemoved = vi.fn();
+    const { editor } = await guardedEnvironment($init, handler, {
+      children: <UnstorableTextPlugin onRemoved={onRemoved} />,
+    });
+    return { editor, onRemoved };
+  }
+
+  it("does not ask about a cut that would join two `/`, which is refused instead", async () => {
+    const handler = answering("delete");
+    const { editor, onRemoved } = await environment(handler);
+    updateSelection(editor, first!, 2, last!, 1);
+
+    const cut = clipboardEvent("cut");
+    await act(async () => {
+      editor.dispatchCommand(CUT_COMMAND, cut);
+    });
+    await settle();
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(onRemoved).toHaveBeenCalledWith({ source: "deletion", removed: ["//"] });
+    expect(cut.clipboardData?.setData).not.toHaveBeenCalled();
+    expect(readTree(editor)).toEqual(["a/x[figure: caption]y/b"]);
+  });
+
+  it("asks about a cut over the same hidden content that joins nothing", async () => {
+    const handler = answering("keep");
+    const { editor, onRemoved } = await environment(handler);
+    updateSelection(editor, first!, 2, last!, 2);
+
+    await act(async () => {
+      editor.dispatchCommand(CUT_COMMAND, clipboardEvent("cut"));
+    });
+    await settle();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it("does not ask about a `/` pasted where it would touch a `/` outside the selection", async () => {
+    const handler = answering("delete");
+    const { editor } = await environment(handler);
+    updateSelection(editor, first!, 2, last!, 1);
+
+    await act(async () => {
+      editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "/"));
+    });
+    await settle();
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(readTree(editor)).toEqual(["a/x[figure: caption]y/b"]);
+  });
+
+  it("asks about a paste that keeps a character between the two `/`", async () => {
+    const handler = answering("keep");
+    const { editor } = await environment(handler);
+    updateSelection(editor, first!, 2, last!, 1);
+
+    await act(async () => {
+      editor.dispatchCommand(PASTE_COMMAND, clipboardEvent("paste", "/q/"));
+    });
+    await settle();
+
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

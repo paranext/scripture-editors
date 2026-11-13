@@ -11,6 +11,7 @@ import {
   SelectionLimitOptions,
   sliceToCopyLimit,
 } from "./copyLimit.utils";
+import { $isLeftOutOfHiddenViewCopy } from "../hiddenViewCopy.utils";
 import { $selectionToUsfmViaStandardView } from "../MarkersViewCopyPlugin";
 import {
   $selectionToUsfmText,
@@ -32,6 +33,7 @@ import {
   getDOMTextNode,
   isExactShortcutMatch,
   LexicalEditor,
+  LexicalNode,
   PointType,
   RangeSelection,
   SELECT_ALL_COMMAND,
@@ -187,12 +189,13 @@ export function CopyLimitPlugin({
     };
 
     // Writes an over-limit copy or cut that no view-specific handler claimed (Standard and Markers
-    // views' run at HIGH; the hidden-marker views' runs at LOW, after this one, so it only ever
-    // writes a copy that fits) as the plain text the view shows, which a hidden-marker view writes
-    // as prose without its note layout spacers, as its own copy does. Lexical's own copy would also
-    // write HTML and its internal flavor, which carry text the view does not show, such as a
-    // collapsed footnote. A cut removes the range only when the plain text carries all of it: never
-    // verse or chapter markers, notes or other structure it leaves out.
+    // views' run at HIGH; the hidden-marker views' `HiddenMarkersViewCopyPlugin` runs at LOW, after
+    // this one, so it only ever writes a copy that fits) as the plain text the view shows, which a
+    // hidden-marker view writes as prose without its note layout spacers, gutter glyphs or hidden
+    // constructs, as its own copy does. Lexical's own copy would also write HTML and its internal
+    // flavor, which carry text the view does not show, such as a collapsed footnote. A cut removes
+    // the range only when the plain text carries all of it: never verse or chapter markers, notes
+    // or other structure it leaves out.
     const $writePlainCopy = (event: ClipboardEvent | KeyboardEvent | null, isCut: boolean) => {
       if (limitRef.current === undefined || !isOverLimitRef.current) return false;
       isOverLimitRef.current = false;
@@ -276,22 +279,31 @@ function $copyFit(
     return { $size: $usfmLength, options: { $measure: $usfmLength } };
   }
   const isHiddenMarkerView = viewOptions?.markerMode === "hidden";
+  const $isHidden = hiddenTextPredicate(viewOptions);
   return {
     // A hidden-marker view's copy writes its prose as the plain text, which a note without a caller
     // can make one longer than the text the view shows, so a copy fits only when that does too.
     $size: (selection) =>
       Math.max(
         selection.getTextContent().length + $notePreviewLength(selection.getNodes()),
-        isHiddenMarkerView ? $selectionPlainText(selection).length : 0,
+        isHiddenMarkerView ? $selectionPlainText(selection, $isLeftOutOfHiddenViewCopy).length : 0,
       ),
     // Shortened, the selection is fitted to what the over-limit copy writes.
     options: {
-      $isHidden: isHiddenMarkerView
-        ? (node) => $isInCollapsedNote(node) || $isLayoutText(node)
-        : $isInCollapsedNote,
+      $isHidden: isHiddenMarkerView ? (node) => $isHidden(node) || $isLayoutText(node) : $isHidden,
       $measure: (selection) => $overLimitText(selection, viewOptions).length,
     },
   };
+}
+
+/**
+ * Picks the nodes whose text a shortened copy in the view `viewOptions` describes leaves out: a
+ * collapsed note's text in every view, and in a hidden-marker view also what that view's own copy
+ * leaves out ({@link $isLeftOutOfHiddenViewCopy}).
+ */
+function hiddenTextPredicate(viewOptions: ViewOptions | undefined): (node: LexicalNode) => boolean {
+  if (viewOptions?.markerMode !== "hidden") return $isInCollapsedNote;
+  return (node) => $isLeftOutOfHiddenViewCopy(node) || $isInCollapsedNote(node);
 }
 
 /**
@@ -299,17 +311,18 @@ function $copyFit(
  * view shows, or a hidden-marker view's prose ({@link $selectionPlainText}, a stored no-break
  * space spelled by `hiddenViewCopySpelling`, as its copy that fits spells it) when there is
  * any. A range of only layout bytes has none, and writes the shown text instead, so a cut never
- * removes what it did not copy.
+ * removes what it did not copy. Either leaves out what {@link hiddenTextPredicate} picks.
  */
 function $overLimitText(selection: RangeSelection, viewOptions: ViewOptions | undefined): string {
+  const $isHidden = hiddenTextPredicate(viewOptions);
   return (
     (viewOptions?.markerMode === "hidden" &&
       $selectionPlainText(
         selection,
-        $isInCollapsedNote,
+        $isHidden,
         hiddenViewCopySpelling(viewOptions.allowInvisibleCharacters),
       )) ||
-    $selectionShownText(selection, $isInCollapsedNote)
+    $selectionShownText(selection, $isHidden)
   );
 }
 

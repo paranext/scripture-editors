@@ -2,6 +2,7 @@ export * from "./annotation";
 export * from "./collab";
 
 export * from "./ArrowNavigationPlugin";
+export * from "./bookAndChapterLines.utils";
 export * from "./CharNodePlugin";
 export * from "./clipboard.utils";
 export * from "./ClipboardPlugin";
@@ -35,4 +36,7 @@ export * from "./TextDirectionPlugin";
 export * from "./TextSpacingPlugin";
 export * from "./TrailingNoteCaretGuardPlugin";
 export { CARET_HOST_ATTRIBUTE } from "./transientCaretHost";
+export * from "./unstorable-text.model";
+export * from "./unstorableText.utils";
+export * from "./UnstorableTextPlugin";
 export * from "./UsjNodesMenuPlugin";

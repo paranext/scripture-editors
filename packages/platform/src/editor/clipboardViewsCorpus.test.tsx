@@ -6,10 +6,20 @@
  * flavors. This suite runs the same gestures in all three views, Standard as the reference, over a
  * deterministic sample of ranges from each fixture ({@link sampleRanges}: a whole verse, a range
  * starting or ending inside a char span, one holding a footnote, one across a paragraph boundary,
- * one spanning a whole paragraph, one across a verse number, one inside note content). For each it
- * asserts what matters most to a translator: a cut or paste changes exactly what was selected or
- * pasted and nothing else, what is pasted arrives intact, and undo and redo land exactly on the
- * states before and after.
+ * one spanning a whole paragraph, one across a verse number, one inside note content, one holding
+ * figures, one ending inside a figure's caption, and one holding a milestone, a verse with
+ * alternate or published numbers, an optional break or a sidebar). For each it asserts what
+ * matters most to a translator: a cut or paste changes exactly what was selected or pasted and
+ * nothing else, what is pasted arrives intact, and undo and redo land exactly on the states before
+ * and after. A copy in one view family pasted into the other ({@link runCrossViewRow}) goes in as
+ * its html and plain text alone would, without its marker tokens where it comes from Standard view
+ * into a hidden-marker view; one in another hidden-marker view pasted into paragraph-structure
+ * ({@link hiddenCrossViewRowsFor}) goes in exactly.
+ *
+ * Simple mode's paragraph-structure view runs every row under each structure protection
+ * ({@link protectionsFor}); `protected` is its default. There a paste keeps the document's
+ * paragraphs and verses as they are ({@link protectedFragment}, and {@link plainFragment}'s joined
+ * lines), and a cut that would change them is refused ({@link isRefusedCut}).
  *
  * The oracle is a USJ-level model, not the editor: {@link sliceUsj}, {@link removeRange} and
  * {@link insertFragment} split the editor's own export at the range's ends and rejoin the pieces.
@@ -23,14 +33,14 @@
  * argued where it is applied:
  * - the engine-owned space before a verse ({@link JoinOptions});
  * - the derived `sid`/`vid` a text flavor has no bytes for ({@link withoutDerivedAttributes});
- * - an empty derived `sid` that Standard view's rebuild after a pasted verse drops
- *   ({@link withoutEmptySidsIn});
+ * - an empty derived `sid` that Standard view's rebuild after a pasted verse or paragraph break
+ *   drops ({@link settledAfterPaste});
  * - a hidden-marker view's plain-text paste arrives as prose ({@link plainFragment});
- * - `CommandMenuPlugin` refuses a hidden-view paste of content holding `\` or `/`
- *   ({@link isRefusedByPasteGate});
+ * - a hidden-marker view's paste leaves `\` and `//` out of the text it inserts
+ *   ({@link filterFragment});
  * - Standard view sits out ranges with an end inside a char span ({@link viewsFor}).
  *
- * Every row mounts its own editor. The whole suite runs in about a minute.
+ * Every row mounts its own editor. The whole suite runs in about three minutes.
  */
 import {
   EditorViewName,
@@ -40,6 +50,7 @@ import {
   LIBRARY_VIEWS_ENABLED,
   mountInView,
 } from "./editorViews.test-helpers";
+import { usfmToClipboardHtml } from "./markerEdit/whitespaceDisplay.plugin.utils";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -60,8 +71,15 @@ import {
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NBSP } from "shared";
-import { ViewOptions } from "shared-react";
-import { describe, expect } from "vitest";
+import {
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+  NODE_COPY_HTML_ATTRIBUTE,
+  removeUnstorableText,
+  StructureProtectionMode,
+  UnstorableTextRemovedHandler,
+  ViewOptions,
+} from "shared-react";
+import { describe, expect, vi } from "vitest";
 
 // Located relative to the working directory, as the other testUSFM corpus suites do: the platform
 // project root under nx, the repo root otherwise.
@@ -112,9 +130,13 @@ function withContent(item: MarkerObject, content: Item[], origin: object): Marke
   return copy;
 }
 
-/** Splits `items` at the point `path`/`offset` (the path relative to `items`) into what lies before
- * and after it. */
-function splitAt(items: Item[], path: number[], offset: number): [Item[], Item[]] {
+/**
+ * Splits `items` at the point `path`/`offset` (the path relative to `items`) into what lies before
+ * and after it. A nested object (a char span, a note) split at its very start or end leaves no
+ * empty half behind, as the editor keeps no empty span there; a top-level block keeps both halves,
+ * since the join rule rejoins them.
+ */
+function splitAt(items: Item[], path: number[], offset: number, depth = 0): [Item[], Item[]] {
   const [index, ...rest] = path;
   const item = items[index];
   const before = items.slice(0, index);
@@ -126,11 +148,12 @@ function splitAt(items: Item[], path: number[], offset: number): [Item[], Item[]
     return [head ? [...before, head] : before, tail ? [tail, ...after] : after];
   }
   if (!item) throw new Error(`no item at ${index}`);
-  const [left, right] = splitAt(item.content ?? [], rest, offset);
+  const [left, right] = splitAt(item.content ?? [], rest, offset, depth + 1);
   const origin = originOf(item);
+  const isNested = depth > 0;
   return [
-    [...before, withContent(item, left, origin)],
-    [withContent(item, right, origin), ...after],
+    isNested && left.length === 0 ? before : [...before, withContent(item, left, origin)],
+    isNested && right.length === 0 ? after : [withContent(item, right, origin), ...after],
   ];
 }
 
@@ -238,10 +261,10 @@ function withoutDerivedAttributes(fragment: Item[]): Item[] {
   });
 }
 
-/** `content` with no empty `sid` on the verses of the block at `index`. */
-function withoutEmptySidsIn(content: Item[], index: number): Item[] {
+/** `content` with no empty `sid` on the verses of the blocks at `first` through `last`. */
+function withoutEmptySidsIn(content: Item[], first: number, last = first): Item[] {
   return content.map((block, at) => {
-    if (at !== index || typeof block === "string") return block;
+    if (at < first || at > last || typeof block === "string") return block;
     const items = (block.content ?? []).map((item) => {
       if (typeof item === "string" || item.type !== "verse" || item.sid !== "") return item;
       const { sid: _derived, ...verse } = item;
@@ -308,7 +331,13 @@ type RangeKind =
   | "across a paragraph boundary"
   | "spans a whole paragraph"
   | "across a verse number"
-  | "inside note content";
+  | "inside note content"
+  | "holds a figure"
+  | "ends inside a figure's caption"
+  | "holds a milestone"
+  | "holds a verse with attributes"
+  | "holds an optional break"
+  | "holds a sidebar";
 
 interface SampledRange {
   kind: RangeKind;
@@ -371,6 +400,33 @@ function sampleRanges(usj: Usj): SampledRange[] {
             });
         }
       }
+      if (item.type === "ms" || item.type === "optbreak")
+        if (ok(prev) && ok(next))
+          add(
+            item.type === "ms" ? "holds a milestone" : "holds an optional break",
+            at(index - 1, prev.length - 2),
+            at(index + 1, 2),
+          );
+      // From the end of the text before `item`: in its paragraph, or in the paragraph before.
+      const startBefore = (): TextPoint | undefined => {
+        if (ok(prev)) return at(index - 1, prev.length - 2);
+        const previousBlock = content[blockIndex - 1];
+        if (!isPara(previousBlock)) return undefined;
+        const lastIndex = (previousBlock.content ?? []).length - 1;
+        const lastText = previousBlock.content?.[lastIndex];
+        return ok(lastText)
+          ? { path: [blockIndex - 1, lastIndex], offset: lastText.length - 2 }
+          : undefined;
+      };
+      if (item.type === "verse" && ("altnumber" in item || "pubnumber" in item) && ok(next)) {
+        const start = (ok(prev) || index === 0) && startBefore();
+        if (start) add("holds a verse with attributes", start, at(index + 1, 2));
+      }
+      if (item.type === "figure" && ok(item.content?.[0])) {
+        const start = startBefore();
+        if (start)
+          add("ends inside a figure's caption", start, { path: [blockIndex, index, 0], offset: 3 });
+      }
       if (item.type === "note") {
         if (ok(prev) && ok(next))
           add("contains a footnote", at(index - 1, prev.length - 1), at(index + 1, 1));
@@ -411,6 +467,43 @@ function sampleRanges(usj: Usj): SampledRange[] {
       }
     }
   });
+  // From the end of the paragraph before a sidebar to the start of the one after it.
+  content.forEach((block, blockIndex) => {
+    if (typeof block === "string" || block.type !== "sidebar") return;
+    const before = content[blockIndex - 1];
+    const after = content[blockIndex + 1];
+    if (!isPara(before) || !isPara(after)) return;
+    const lastIndex = (before.content ?? []).length - 1;
+    const lastText = before.content?.[lastIndex];
+    const firstText = after.content?.[0];
+    if (ok(lastText) && ok(firstText))
+      add(
+        "holds a sidebar",
+        { path: [blockIndex - 1, lastIndex], offset: lastText.length - 2 },
+        { path: [blockIndex + 1, 0], offset: 2 },
+      );
+  });
+  // From just before the first figure to just after the last: in a fixture with figures in
+  // successive paragraphs, one range holds each of them and the paragraph boundary between.
+  const figures: [number, number][] = [];
+  content.forEach((block, blockIndex) => {
+    if (!isPara(block)) return;
+    (block.content ?? []).forEach((item, index) => {
+      if (typeof item !== "string" && item.type === "figure") figures.push([blockIndex, index]);
+    });
+  });
+  const firstFigure = figures[0];
+  const lastFigure = figures[figures.length - 1];
+  if (firstFigure && lastFigure) {
+    const before = itemAt(content, [firstFigure[0], firstFigure[1] - 1]);
+    const after = itemAt(content, [lastFigure[0], lastFigure[1] + 1]);
+    if (ok(before) && ok(after))
+      add(
+        "holds a figure",
+        { path: [firstFigure[0], firstFigure[1] - 1], offset: before.length - 2 },
+        { path: [lastFigure[0], lastFigure[1] + 1], offset: 2 },
+      );
+  }
   const ranges: SampledRange[] = [];
   candidates.forEach((list) => ranges.push(list[Math.floor(list.length / 2)]));
   return ranges;
@@ -529,6 +622,9 @@ async function dispatchClipboard(
   command: typeof COPY_COMMAND | typeof CUT_COMMAND,
 ): Promise<Map<string, string>> {
   const store = new Map<string, string>();
+  // A read-only editor does not draw its selection on the page, so a page selection an earlier
+  // test left behind would read as a copy from outside the editor (`isCopyFromOutsideEditor`).
+  if (!editor.isEditable()) document.getSelection()?.removeAllRanges();
   await act(async () =>
     editor.update(() => {
       if (!$isRangeSelection($getSelection())) throw new Error("no range selection to copy");
@@ -573,17 +669,19 @@ async function redo(mounted: Mounted): Promise<void> {
  * the document itself: the footnotes pane's row editor, where the app edits every note, and — in a
  * run that includes the library-only views — each editing view with its notes expanded.
  *
- * Standard view sits out the ranges with an end inside a char span. There the end lies past the
- * span's opening glyph or before its closing one, so the range holds marker bytes without their
- * pair — a marker edit, not the range of text this suite models: a cut that takes the opener
- * unwraps the span as deletion damage, one that takes the closer leaves it running on unclosed, and
- * a copy carries an opener with no closer (`closed="false"`). The marker-edit and
+ * Standard view sits out the ranges with an end inside a char span or a figure. There the end lies
+ * past the construct's opening glyph or before its closing one, so the range holds marker bytes
+ * without their pair — a marker edit, not the range of text this suite models: a cut that takes the
+ * opener unwraps the span as deletion damage, one that takes the closer leaves it running on
+ * unclosed, and a copy carries an opener with no closer (`closed="false"`). The marker-edit and
  * `partialConstructClipboard` suites own that.
  */
 function viewsFor(kind: RangeKind | undefined): { name: string; view: ViewOptions }[] {
-  const isPartialSpan =
-    kind === "starts inside a char style" || kind === "ends inside a char style";
-  const names: EditorViewName[] = isPartialSpan
+  const isPartialConstruct =
+    kind === "starts inside a char style" ||
+    kind === "ends inside a char style" ||
+    kind === "ends inside a figure's caption";
+  const names: EditorViewName[] = isPartialConstruct
     ? ["formatted", "paragraph-structure"]
     : ["standard", "formatted", "paragraph-structure"];
   if (kind !== "inside note content")
@@ -600,38 +698,84 @@ function viewsFor(kind: RangeKind | undefined): { name: string; view: ViewOption
 }
 
 /**
- * The paste payloads. "all flavors" is everything the copy wrote, which a native paste event (the
- * Electron Edit menu) delivers. "html and plain" is what Ctrl+V and the context menu's Paste
- * deliver: `pasteSelection` rebuilds the payload from `navigator.clipboard.read()`, which exposes
- * no private MIME type, so the internal Lexical flavor never reaches them. "plain text" is
- * Ctrl+Shift+V (`pasteSelectionAsPlainText`).
+ * The paste payloads, each what really arrives. "Ctrl+V" is what an async clipboard read delivers,
+ * as the context menu's Paste and the Edit menu's Paste get it too: the html and plain text, with no
+ * `application/x-lexical-editor` flavor. A hidden-marker view's own node copy rides in an attribute
+ * of that html ({@link NODE_COPY_HTML_ATTRIBUTE}). "native paste" is a paste the browser runs itself
+ * (the macOS app menu's Paste, Shift+Insert), which delivers every flavor; Standard view leaves
+ * the `application/x-lexical-editor` flavor unread, so its native rows paste as its Ctrl+V rows
+ * do, while a hidden-marker view reads its node copy from that flavor. "another app's
+ * html" is the html with that attribute gone, as a copy that went through another program arrives,
+ * and the plain text. "plain text" is Ctrl+Shift+V (`pasteSelectionAsPlainText`). A cut is pasted
+ * back where it was cut from, each way.
  */
 type Operation =
-  | "copy, paste all flavors"
-  | "copy, paste html and plain"
+  | "copy, Ctrl+V"
+  | "copy, native paste"
+  | "copy, paste from another app's html"
   | "copy, paste plain text"
   | "cut"
-  | "cut, paste back";
+  | "cut, Ctrl+V back"
+  | "cut, native paste back"
+  | "cut, paste back from another app's html";
 
 const OPERATIONS: Operation[] = [
-  "copy, paste all flavors",
-  "copy, paste html and plain",
+  "copy, Ctrl+V",
+  "copy, paste from another app's html",
   "copy, paste plain text",
   "cut",
-  "cut, paste back",
+  "cut, Ctrl+V back",
+  "cut, paste back from another app's html",
 ];
 
-/** Plain text that looks like USFM, pasted where a copy would be. */
-const USFM_LOOKING_TEXTS = ["\\v 9 x", "\\nd y\\nd*"] as const;
+const NATIVE_OPERATIONS: Operation[] = ["copy, native paste", "cut, native paste back"];
+
+/** The operations a view's rows run. */
+const operationsFor = (): Operation[] => [...OPERATIONS, ...NATIVE_OPERATIONS];
+
+const isCut = (operation: Operation) => operation.startsWith("cut");
+
+const isNativePaste = (operation: Operation) => NATIVE_OPERATIONS.includes(operation);
+
+const isFromAnotherApp = (operation: Operation) => operation.includes("another app's html");
+
+const LEXICAL_FLAVOR = "application/x-lexical-editor";
+
+/**
+ * Plain text pasted where a copy would be: text that looks like USFM, and text holding a `/` — a
+ * lone one, which every view keeps, and a `//`, which a hidden-marker view cannot store as text.
+ * Each with what a hidden-marker view inserts for it and the notice's `removed` (none: no notice).
+ */
+const PLAIN_TEXTS = [
+  { text: "\\v 9 x", hiddenInserts: "v 9 x", removed: ["\\"] },
+  { text: "\\nd y\\nd*", hiddenInserts: "nd ynd*", removed: ["\\"] },
+  { text: "and/or", hiddenInserts: "and/or", removed: [] },
+  { text: "1/2", hiddenInserts: "1/2", removed: [] },
+  { text: "https://example.org", hiddenInserts: "https:example.org", removed: ["//"] },
+] as const;
+
+type PlainText = (typeof PLAIN_TEXTS)[number];
+
+/**
+ * The structure protections a view runs under. Simple mode, the app's paragraph-structure view,
+ * offers all three and defaults to `protected` (`computeEffectiveStructureProtection`); the other
+ * views run as Power mode and the library mounts them, `off`.
+ */
+function protectionsFor(viewName: string): StructureProtectionMode[] {
+  return viewName === "paragraph-structure" ? ["off", "guarded", "protected"] : ["off"];
+}
 
 interface RangeRow {
   key: string;
   range: SampledRange;
   viewName: string;
   view: ViewOptions;
+  protection: StructureProtectionMode;
   operation: Operation;
   /** The document the row mounts, when it is not the fixture: see {@link inNoteScaffold}. */
   usj?: Usj;
+  /** The view the copy is made in, when it is not the row's own: see {@link hiddenCrossViewRowsFor}. */
+  copyFrom?: { name: string; view: ViewOptions };
 }
 
 /**
@@ -658,63 +802,231 @@ function inNoteScaffold(usj: Usj, range: SampledRange): { usj: Usj; range: Sampl
   };
 }
 
-interface UsfmRow {
+interface PlainRow {
   key: string;
   viewName: string;
   view: ViewOptions;
-  text: (typeof USFM_LOOKING_TEXTS)[number];
+  protection: StructureProtectionMode;
+  text: PlainText["text"];
+  /** What a hidden-marker view inserts, and what its one notice names as removed. */
+  hidden: Pick<PlainText, "hiddenInserts" | "removed">;
 }
 
-function rowsFor(fixture: string, usj: Usj): { ranges: RangeRow[]; usfm: UsfmRow[] } {
+/**
+ * A copy in one view family pasted into the other with Ctrl+V: Standard view into Simple mode's
+ * paragraph-structure view, under each of its protections, and back.
+ */
+interface CrossViewRow {
+  key: string;
+  range: SampledRange;
+  from: { name: string; view: ViewOptions };
+  to: { name: string; view: ViewOptions };
+  protection: StructureProtectionMode;
+}
+
+/** The cross-view rows ({@link CrossViewRow}) for the ranges both views run. */
+function crossViewRowsFor(fixture: string, ranges: SampledRange[]): CrossViewRow[] {
+  const views = enabledViews(["standard", "paragraph-structure"]);
+  if (views.length < 2) return [];
+  const standard = { name: "standard", view: editorView("standard") };
+  const hidden = { name: "paragraph-structure", view: editorView("paragraph-structure") };
+  const rows: CrossViewRow[] = [];
+  for (const range of ranges) {
+    if (!viewsFor(range.kind).some(({ name }) => name === "standard")) continue;
+    for (const [from, to] of [
+      [standard, hidden],
+      [hidden, standard],
+    ])
+      for (const protection of protectionsFor(to.name))
+        rows.push({
+          key: `${fixture} | ${range.kind} | ${from.name} to ${to.name} | ${protection} | copy, Ctrl+V`,
+          range,
+          from,
+          to,
+          protection,
+        });
+  }
+  return rows;
+}
+
+/**
+ * A copy in another hidden-marker view pasted into Simple mode's paragraph-structure view with
+ * Ctrl+V, under each of its protections: from Power mode's Preview and the text grid's block-verse
+ * column (read-only, so a copy is all a user does there) and, in a run with the library-only views,
+ * from the formatted view. Every hidden-marker view reads the others' node copy, so the paste is
+ * exactly what a copy and paste within paragraph-structure gives; paragraph-structure's own gutter
+ * glyphs, which no node copy holds, are rebuilt for each pasted paragraph.
+ */
+function hiddenCrossViewRowsFor(fixture: string, usj: Usj): RangeRow[] {
+  const sources = enabledViews(["preview", "block-verse", "formatted"]);
+  const to = { name: "paragraph-structure", view: editorView("paragraph-structure") };
+  const rows: RangeRow[] = [];
+  for (const range of sampleRanges(usj)) {
+    if (!viewsFor(range.kind).some(({ name }) => name === to.name)) continue;
+    for (const from of sources)
+      for (const protection of protectionsFor(to.name))
+        rows.push({
+          key: `${fixture} | ${range.kind} | ${from} to ${to.name} | ${protection} | copy, Ctrl+V`,
+          range,
+          viewName: to.name,
+          view: to.view,
+          protection,
+          operation: "copy, Ctrl+V",
+          copyFrom: { name: from, view: editorView(from) },
+        });
+  }
+  return rows;
+}
+
+function rowsFor(fixture: string, usj: Usj): { ranges: RangeRow[]; plainTexts: PlainRow[] } {
   const ranges: RangeRow[] = [];
   for (const range of sampleRanges(usj))
     for (const { name: viewName, view } of viewsFor(range.kind)) {
       const scaffold = viewName === "footnotes-pane-row" ? inNoteScaffold(usj, range) : undefined;
-      for (const operation of OPERATIONS)
-        ranges.push({
-          key: `${fixture} | ${range.kind} | ${viewName} | ${operation}`,
-          range: scaffold?.range ?? range,
+      for (const protection of protectionsFor(viewName))
+        for (const operation of operationsFor())
+          ranges.push({
+            key: `${fixture} | ${range.kind} | ${viewName} | ${protection} | ${operation}`,
+            range: scaffold?.range ?? range,
+            viewName,
+            view,
+            protection,
+            operation,
+            usj: scaffold?.usj,
+          });
+    }
+  const plainTexts: PlainRow[] = [];
+  for (const { name: viewName, view } of viewsFor(undefined))
+    for (const protection of protectionsFor(viewName))
+      for (const { text, ...hidden } of PLAIN_TEXTS)
+        plainTexts.push({
+          key: `${fixture} | ${viewName} | ${protection} | paste plain ${text}`,
           viewName,
           view,
-          operation,
-          usj: scaffold?.usj,
+          protection,
+          text,
+          hidden,
         });
-    }
-  const usfm: UsfmRow[] = [];
-  for (const { name: viewName, view } of viewsFor(undefined))
-    for (const text of USFM_LOOKING_TEXTS)
-      usfm.push({ key: `${fixture} | ${viewName} | paste plain ${text}`, viewName, view, text });
-  return { ranges, usfm };
+  return { ranges, plainTexts };
+}
+
+/** How a row's paste reaches the editor. */
+type PasteRoute = "lexical" | "html" | "plain";
+
+/**
+ * The route a range row's paste takes: plain text for Ctrl+Shift+V; the node copy for a paste
+ * carrying one, which in a hidden-marker view is Ctrl+V and a native paste — under `protected`
+ * structure too, whose sanitizer (`StructureKeyboardPlugin`) flattens it as it flattens html; html
+ * otherwise, and for a copy that writes no node copy ({@link writesNodeCopy}). Standard view's
+ * Ctrl+V reads its html and plain text.
+ */
+function pasteRoute(row: RangeRow): PasteRoute {
+  if (row.operation === "copy, paste plain text") return "plain";
+  if (
+    !writesNodeCopy(row.range) ||
+    isFromAnotherApp(row.operation) ||
+    row.view.markerMode !== "hidden"
+  )
+    return "html";
+  return "lexical";
+}
+
+/** What a range row's paste carries of what the copy wrote to `clipboard`. */
+function pastePayload(row: RangeRow, clipboard: Map<string, string>): Map<string, string> {
+  const payload = new Map(clipboard);
+  if (!isNativePaste(row.operation)) payload.delete(LEXICAL_FLAVOR);
+  if (row.operation === "copy, paste plain text") payload.delete("text/html");
+  const html = payload.get("text/html");
+  if (html && isFromAnotherApp(row.operation))
+    payload.set("text/html", withoutCarrierAttribute(html));
+  return payload;
+}
+
+/** `html` with {@link NODE_COPY_HTML_ATTRIBUTE} gone, as a program that kept the rest would leave it. */
+function withoutCarrierAttribute(html: string): string {
+  const { body } = new DOMParser().parseFromString(html, "text/html");
+  body
+    .querySelectorAll(`[${NODE_COPY_HTML_ATTRIBUTE}]`)
+    .forEach((element) => element.removeAttribute(NODE_COPY_HTML_ATTRIBUTE));
+  return body.innerHTML;
+}
+
+/** What a copy's html holds in {@link NODE_COPY_HTML_ATTRIBUTE}, if anything. */
+function carriedNodeCopy(html: string | undefined): string | null | undefined {
+  return new DOMParser()
+    .parseFromString(html ?? "", "text/html")
+    .querySelector(`[${NODE_COPY_HTML_ATTRIBUTE}]`)
+    ?.getAttribute(NODE_COPY_HTML_ATTRIBUTE);
+}
+
+/**
+ * Whether a copy of `range` writes the editor's own node copy. Neither Standard view nor a
+ * hidden-marker view writes one for a range ending inside a figure, which a node copy can carry
+ * only whole.
+ */
+function writesNodeCopy(range: SampledRange): boolean {
+  return range.kind !== "ends inside a figure's caption";
+}
+
+/**
+ * Whether a cut of the row's range is refused: one ending inside a figure in every view, and under
+ * `protected` structure (`$shouldBlockSelectionReplacement`) one crossing a paragraph boundary or
+ * holding a verse or chapter marker. A refused cut changes nothing and writes nothing to the
+ * clipboard.
+ */
+function isRefusedCut(row: RangeRow, copied: Item[]): boolean {
+  if (!isCut(row.operation)) return false;
+  // A cut that would take part of a figure is refused in every view (`OpaqueBlockGuardPlugin`).
+  if (row.range.kind === "ends inside a figure's caption") return true;
+  if (row.protection !== "protected") return false;
+  const { start, end } = row.range;
+  return start.path[0] !== end.path[0] || holdsStructuralMarker(copied);
+}
+
+/** Whether `fragment` holds a verse or chapter marker anywhere. */
+function holdsStructuralMarker(fragment: Item[]): boolean {
+  return fragment.some(
+    (item) =>
+      typeof item !== "string" &&
+      (item.type === "verse" ||
+        item.type === "chapter" ||
+        holdsStructuralMarker(item.content ?? [])),
+  );
 }
 
 /**
  * Why a row is known to fail, or `undefined`. Each reason names a finding in paranext-core's
- * Scripture-Data-Fidelity-Catalog, led by the ticket that will fix it where one is filed; a row
- * that starts passing fails, so a fix deletes its rule.
+ * Scripture-Data-Fidelity-Catalog, led by the ticket that will fix it where one is filed, or by
+ * "accepted" where the loss is the intended behavior; a row that starts passing fails, so a fix
+ * deletes its rule.
  */
-function knownFailure(fixture: string, usj: Usj, row: RangeRow | UsfmRow): string | undefined {
+function knownFailure(fixture: string, usj: Usj, row: RangeRow | PlainRow): string | undefined {
   if ("range" in row) {
     const { kind, start, end } = row.range;
     const copied = sliceUsj(usj.content, start, end);
-    // TODO(PT-4911): write a hidden view's text/plain without the gutter glyph text, then remove
-    // this known failure.
-    if (
-      row.viewName === "paragraph-structure" &&
-      (kind === "across a paragraph boundary" || kind === "spans a whole paragraph") &&
-      row.operation !== "cut" &&
-      !isRefusedByPasteGate(row.view, copied)
-    )
-      return "PT-4911: the copy's text/plain carries the next paragraph's gutter glyph (`\\q1 `), so CommandMenuPlugin refuses its paste";
-    // TODO(PT-4921): carry what the html flavor loses (char and note attributes, figures), and
-    // keep a note's display spacers out of it, then remove this known failure.
+    // Accepted: html carries less than the editor's own node copy, which a paste within the
+    // editor takes instead (clipboard-semantics S5).
     if (
       isMarkerHidden(row.view) &&
-      row.operation === "copy, paste html and plain" &&
+      row.operation !== "cut" &&
+      !isRefusedCut(row, copied) &&
       // Inside one string, the copy carries only text, never the note or span around it.
       kind !== "inside note content" &&
-      holdsHtmlLossyContent(copied)
+      pasteRoute(row) === "html" &&
+      // Protected structure drops verses, numbers and all, whichever flavor brings them.
+      holdsHtmlLossyContent(row.protection === "protected" ? protectedFragment(copied) : copied)
     )
-      return "PT-4921: text/html carries no char attributes (`closed`) and brings a note's display spacers back as text";
+      return "accepted: html from another program, or from a copy ending inside a figure, carries no char attributes (`closed`), note details, milestones, alternate or published verse numbers, or figures, and brings a note's display spacers back as text";
+    // Accepted: a hidden-marker view's plain-text paste leaves out the leading spaces of a line it
+    // starts a new paragraph with, which the node copy keeps. The space is never saved anyway:
+    // ParatextData drops a paragraph's plain leading spaces, and Standard view drops them on save.
+    if (
+      isMarkerHidden(row.view) &&
+      pasteRoute(row) === "plain" &&
+      row.protection !== "protected" &&
+      startsALaterParagraphWithASpace(copied)
+    )
+      return "accepted: a hidden-marker view's plain-text paste drops the leading spaces of each line it starts a new paragraph with; the space is never saved anyway, since ParatextData drops a paragraph's plain leading spaces and Standard view drops them on save too";
   }
   // TODO(PT-4388): read a bare `\` as a nameless marker once ParatextData 9.6 is in; the
   // tokenizer change waits on that upgrade. Only a copy that takes in a paragraph boundary
@@ -725,47 +1037,203 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | UsfmRow): strin
     "range" in row &&
     (row.range.kind === "across a paragraph boundary" ||
       row.range.kind === "spans a whole paragraph") &&
-    (row.operation === "copy, paste html and plain" || row.operation === "copy, paste plain text")
+    // Standard view's Ctrl+V and native paste read the html and plain text, as another app's html
+    // arrives.
+    (row.operation === "copy, Ctrl+V" ||
+      row.operation === "copy, native paste" ||
+      row.operation === "copy, paste from another app's html" ||
+      row.operation === "copy, paste plain text" ||
+      row.operation === "cut, Ctrl+V back" ||
+      row.operation === "cut, native paste back" ||
+      row.operation === "cut, paste back from another app's html")
   )
     return "PT-4388: Standard's text path over deliberately damaged USFM: a nameless marker re-tokenizes as text, and a bare backslash keeps the paste a pending literal";
   return undefined;
 }
 
-/** Whether a fragment holds what the html flavor cannot carry: a note, or an implicitly closed
- * char span. */
+/** Whether a fragment holds what the html flavor cannot carry: a note, a milestone, a verse's or
+ * chapter's alternate or published number, an unknown construct (a figure, an optional break), or
+ * an implicitly closed char span. */
 function holdsHtmlLossyContent(fragment: Item[]): boolean {
   return fragment.some(
     (item) =>
       typeof item !== "string" &&
       (item.type === "note" ||
+        item.type === "ms" ||
+        ((item.type === "verse" || item.type === "chapter") &&
+          ("altnumber" in item || "pubnumber" in item)) ||
+        !KNOWN_TYPES.has(item.type) ||
         (item.type === "char" && Reflect.get(item, "closed") === "false") ||
         holdsHtmlLossyContent(item.content ?? [])),
   );
 }
 
+/** The USJ types the editor builds a node of its own for; any other becomes an unknown construct. */
+const KNOWN_TYPES = new Set([
+  "book",
+  "chapter",
+  "verse",
+  "char",
+  "para",
+  "note",
+  "ms",
+  "unmatched",
+  "table",
+  "table:row",
+  "table:cell",
+]);
+
+/** Whether a paragraph after the first in `fragment` starts its text with a space, ahead of any verse
+ * marker (a plain-text copy has none). */
+function startsALaterParagraphWithASpace(fragment: Item[]): boolean {
+  return fragment
+    .slice(1)
+    .some(
+      (item) =>
+        typeof item !== "string" &&
+        item.type === "para" &&
+        /^\s/.test(
+          contentText(
+            (item.content ?? []).filter(
+              (child) => typeof child === "string" || child.type !== "verse",
+            ),
+          ),
+        ),
+    );
+}
+
 const isMarkerHidden = (view: ViewOptions) => view.markerMode !== "editable";
 
+/** The document characters a paste at `at` lands between: the filter's context. */
+interface PasteContext {
+  before: string;
+  after: string;
+}
+
+/** The characters of the string at `at` on either side of it ({@link PasteContext}). */
+function contextAt(content: Item[], at: TextPoint): PasteContext {
+  const text = stringAt(content, at.path);
+  return { before: text[at.offset - 1] ?? "", after: text[at.offset] ?? "" };
+}
+
 /**
- * Whether `CommandMenuPlugin` refuses this paste: in a hidden-marker view it swallows any paste
- * whose text/plain holds `\` or `/`, whatever other flavor it carries — the documented over-broad
- * gate (clipboard-semantics S5, deferred). Only a range whose own content holds one of those is
- * excused by it; a `\` the copy added that the content never had is the copy's defect, not the
- * gate's.
+ * The string a paste of `fragment` puts right at the insertion point on `edge`, if any: inserting
+ * merges a leading (or trailing) paragraph's content into the paragraph there, so the walk goes
+ * down through paragraphs, never into an inline span, whose markers keep its text apart from the
+ * document's.
  */
-function isRefusedByPasteGate(view: ViewOptions, fragment: Item[]): boolean {
-  return isMarkerHidden(view) && /[\\/]/.test(contentText(fragment));
+function stringAtEdge(fragment: Item[], edge: "first" | "last"): string | undefined {
+  const item = edge === "first" ? fragment[0] : fragment[fragment.length - 1];
+  if (typeof item === "string") return item;
+  if (item?.type === "para") return stringAtEdge(item.content ?? [], edge);
+  return undefined;
+}
+
+/**
+ * What a hidden-marker view's paste of `fragment` at a point with `context` inserts: its text
+ * without `\` and `//` (`UnstorableTextPlugin`), which these views cannot store as text — and
+ * without a `/` at either end that would make `//` with a `/` already in the document there. Only
+ * text is filtered: a stray marker (`unmatched`) a node or html flavor carries arrives as that node,
+ * its `\` intact. A plain text flavor carries the stray marker as text, so it reaches here as a
+ * string and loses its `\`.
+ */
+function filterFragment(fragment: Item[], context: PasteContext, removed: string[] = []): Item[] {
+  const first = stringAtEdge(fragment, "first");
+  const last = stringAtEdge(fragment, "last");
+  const filter = (items: Item[]): Item[] =>
+    items.flatMap((item): Item[] => {
+      if (typeof item === "string") {
+        const filtered = removeUnstorableText(
+          item,
+          item === first ? context.before : "",
+          item === last ? context.after : "",
+        );
+        for (const character of filtered.removed)
+          if (!removed.includes(character)) removed.push(character);
+        return filtered.text ? [filtered.text] : [];
+      }
+      if (item.type === "unmatched" || item.content === undefined) return [item];
+      return [withContent(item, filter(item.content), originOf(item))];
+    });
+  return filter(fragment);
+}
+
+/**
+ * What a paste of `fragment` at a point with `context` inserts in `view`, and what it reports: in a
+ * hidden-marker view, {@link filterFragment}'s text and one notice naming what that removed, if
+ * anything; elsewhere, the fragment and no notice.
+ */
+function pastedIn(
+  view: ViewOptions,
+  fragment: Item[],
+  context: PasteContext,
+): { inserted: Item[]; notices: number; removed: string[] } {
+  if (!isMarkerHidden(view)) return { inserted: fragment, notices: 0, removed: [] };
+  const removed: string[] = [];
+  const inserted = filterFragment(fragment, context, removed);
+  return { inserted, notices: removed.length > 0 ? 1 : 0, removed };
 }
 
 /** The text `fragment` holds, a stray marker (`unmatched`, shown as its own bytes in every view)
- * included. */
-function contentText(fragment: Item[]): string {
+ * included. With `isHidden`, without the content of an unknown construct (a figure's caption, a
+ * sidebar), which a hidden-marker view hides. */
+function contentText(fragment: Item[], isHidden = false): string {
   return fragment
     .map((item) => {
       if (typeof item === "string") return item;
       if (item.type === "unmatched") return `\\${item.marker ?? ""}`;
-      return contentText(item.content ?? []);
+      if (isHidden && !KNOWN_TYPES.has(item.type)) return "";
+      return contentText(item.content ?? [], isHidden);
     })
     .join("");
+}
+
+/** Every item of `type` in `fragment`, at any depth. */
+function itemsOfType(fragment: Item[], type: string): MarkerObject[] {
+  return fragment.flatMap((item) =>
+    typeof item === "string"
+      ? []
+      : [...(item.type === type ? [item] : []), ...itemsOfType(item.content ?? [], type)],
+  );
+}
+
+/** How many `\` and `/` characters `text` holds: the characters a hidden-marker view's paste
+ * filter acts on. */
+function slashCounts(text: string): { backslashes: number; slashes: number } {
+  return {
+    backslashes: text.split("\\").length - 1,
+    slashes: text.split("/").length - 1,
+  };
+}
+
+/**
+ * Checks a hidden-marker view's text/plain copy of `copied` against what the view shows. The paste
+ * filter strips `\` and `//` from this text, so a paste cannot reveal one the copy added: a gutter
+ * glyph (`\q1 `) or a marker leaking into the copy. So every `\` and `/` there must be one the
+ * content itself holds, and no paragraph's gutter glyph and no figure caption (hidden) may appear;
+ * a collapsed note's text must (a plain-text paste needs it).
+ */
+function expectHiddenViewPlainCopy(text: string, copied: Item[]): void {
+  const shown = contentText(copied, true);
+  expect(slashCounts(text), "the copy's text/plain adds no `\\` or `/`").toEqual(
+    slashCounts(contentText(copied)),
+  );
+  for (const para of itemsOfType(copied, "para"))
+    if (para.marker && !shown.includes(`\\${para.marker}`))
+      expect(text, `the copy's text/plain holds no \\${para.marker} gutter glyph`).not.toContain(
+        `\\${para.marker}`,
+      );
+  for (const figure of itemsOfType(copied, "figure")) {
+    const caption = contentText(figure.content ?? []);
+    if (caption && !shown.includes(caption))
+      expect(text, "the copy's text/plain holds no figure caption").not.toContain(caption);
+  }
+  for (const note of itemsOfType(copied, "note"))
+    for (const noteText of allStrings(note.content ?? []))
+      if (noteText.trim())
+        expect(text, "the copy's text/plain holds the collapsed note's text").toContain(
+          noteText.trim(),
+        );
 }
 
 /**
@@ -774,8 +1242,30 @@ function contentText(fragment: Item[]): string {
  * marker (`ParaNode.insertNewAfter`). These views have no USFM tokenizer, so a copy's text/plain —
  * prose, no markers — arrives as prose: the documented hidden-view copy-out (clipboard-semantics
  * S5), not a loss this suite can hold the paste to.
+ *
+ * Under `protected` structure the lines go into the paragraph at the caret instead
+ * (`UnstorableTextPlugin`): each tab becomes a space, and each run of line breaks one space, or
+ * nothing where whitespace is already beside it, in the text or in the string at the caret.
  */
-function plainFragment(content: Item[], at: TextPoint, text: string): Item[] {
+function plainFragment(
+  content: Item[],
+  at: TextPoint,
+  text: string,
+  protection: StructureProtectionMode,
+): Item[] {
+  if (protection === "protected" && /[\r\n]/.test(text)) {
+    const host = itemAt(content, at.path);
+    const caretText = typeof host === "string" ? host : "";
+    const before = caretText[at.offset - 1] ?? "";
+    const after = caretText[at.offset] ?? "";
+    const spaced = text.replace(/\t/g, " ");
+    const joined = spaced.replace(/[\r\n]+/g, (run, offset: number) => {
+      const previous = offset > 0 ? spaced[offset - 1] : before;
+      const next = spaced[offset + run.length] ?? after;
+      return /\s/.test(previous) || /\s/.test(next) ? "" : " ";
+    });
+    return wrapLike(content, at.path, joined);
+  }
   const lines = text.split(/\r?\n/);
   if (lines.length === 1) return wrapLike(content, at.path, text);
   const host = itemAt(content, at.path.slice(0, 1));
@@ -783,8 +1273,148 @@ function plainFragment(content: Item[], at: TextPoint, text: string): Item[] {
   return lines.map((line) => ({ type: "para", marker, content: line ? [line] : [] }));
 }
 
+/**
+ * What `protected` structure's html paste inserts for `fragment` (`$sanitizeNodesForProtectedStructure`):
+ * every paragraph unwrapped into the paragraph at the caret, a space between one paragraph's
+ * content and the next so their words do not fuse; every verse and chapter marker in or between
+ * them dropped; everything else (text, char spans, notes) as it is. A paragraph left with nothing
+ * adds no space.
+ */
+function protectedFragment(fragment: Item[]): Item[] {
+  const flatten = (item: Item): Item[] => {
+    if (typeof item === "string") return [item];
+    if (item.type === "verse" || item.type === "chapter") return [];
+    if (item.type === "para") return (item.content ?? []).flatMap(flatten);
+    return [item];
+  };
+  const result: Item[] = [];
+  for (const item of fragment) {
+    const flattened = flatten(item);
+    if (flattened.length === 0) continue;
+    if (typeof item !== "string" && item.type === "para" && result.length > 0) result.push(" ");
+    result.push(...flattened);
+  }
+  // Adjacent text nodes merge once inserted.
+  return result.reduce<Item[]>((merged, item) => {
+    const last = merged[merged.length - 1];
+    if (typeof item === "string" && typeof last === "string")
+      merged[merged.length - 1] = last + item;
+    else merged.push(item);
+    return merged;
+  }, []);
+}
+
+/** `fragment` with each stray marker (`unmatched`) replaced by the text its glyph shows. */
+function strayMarkersAsText(fragment: Item[]): Item[] {
+  return fragment.map((item) => {
+    if (typeof item === "string") return item;
+    if (item.type === "unmatched") return `\\${item.marker ?? ""}`;
+    if (item.content === undefined) return item;
+    return withContent(item, strayMarkersAsText(item.content), originOf(item));
+  });
+}
+
+/** `items` (inline content) inside the top-level block holding `at`, so they join into it. */
+function inHostBlock(content: Item[], at: TextPoint, items: Item[]): Item[] {
+  const host = itemAt(content, at.path.slice(0, 1));
+  if (!host || typeof host === "string") throw new Error("no block to paste into");
+  return [withContent(host, items, originOf(host))];
+}
+
+/**
+ * What a range row's paste of `copied` (whose text/plain is `text`) at `at` in `content` puts in
+ * the document, before the paste filter ({@link pastedIn}).
+ */
+function pasteFragment(
+  row: RangeRow,
+  content: Item[],
+  at: TextPoint,
+  copied: Item[],
+  text: string,
+): Item[] {
+  const route = pasteRoute(row);
+  if (route === "plain" && isMarkerHidden(row.view))
+    return plainFragment(content, at, text, row.protection);
+  if (route === "lexical")
+    // Protected structure flattens a node copy as it flattens html, but keeps every node it
+    // leaves, a stray marker among them.
+    return row.protection === "protected"
+      ? inHostBlock(content, at, protectedFragment(copied))
+      : copied;
+  const fragment = withoutDerivedAttributes(copied);
+  if (row.protection === "protected" && route === "html")
+    // The locked html route doesn't rebuild a stray marker: its sanitizer keeps the glyph's text
+    // but not its element, so the `\` is filtered like any pasted `\`.
+    return inHostBlock(content, at, protectedFragment(strayMarkersAsText(fragment)));
+  return fragment;
+}
+
+/**
+ * How a range row reads the document after its paste: as it is, except where Standard view
+ * rebuilds. A paste through a text flavor that brings a verse or a paragraph break makes Standard
+ * view rebuild the paragraphs it lands in, re-deriving their verses, and an empty derived `sid`
+ * there (the 2SA-3 and web-matthew-5 fixtures') does not survive that. Dropping derived metadata
+ * is accepted (data-fidelity catalog F-8), so in those paragraphs an empty `sid` is left out on
+ * both sides.
+ */
+function settledAfterPaste(
+  row: RangeRow,
+  at: TextPoint,
+  inserted: Item[],
+): (content: Item[] | undefined) => Item[] | undefined {
+  const blocks = inserted.length;
+  if (
+    isMarkerHidden(row.view) ||
+    pasteRoute(row) === "lexical" ||
+    (itemsOfType(inserted, "verse").length === 0 && blocks < 2)
+  )
+    return (content) => content;
+  return (content) => content && withoutEmptySidsIn(content, at.path[0], at.path[0] + blocks - 1);
+}
+
+/** Selects `start`..`end` and copies it, returning what reached the clipboard. */
+async function copyHere(
+  editor: LexicalEditor,
+  usj: Usj,
+  start: TextPoint,
+  end: TextPoint,
+): Promise<Map<string, string>> {
+  await select(editor, usj, start, end);
+  return dispatchClipboard(editor, COPY_COMMAND);
+}
+
+/** Copies `start`..`end` of `usj` in an editor of its own mounted in `view`. */
+async function copyIn(
+  view: ViewOptions,
+  usj: Usj,
+  start: TextPoint,
+  end: TextPoint,
+): Promise<Map<string, string>> {
+  const source = await mountInView(usj, view);
+  try {
+    return await copyHere(source.lexical, usj, start, end);
+  } finally {
+    source.unmount();
+  }
+}
+
+/** Selects `start`..`end` and cuts it, returning what reached the clipboard. */
+async function cut(
+  editor: LexicalEditor,
+  usj: Usj,
+  start: TextPoint,
+  end: TextPoint,
+): Promise<Map<string, string>> {
+  await select(editor, usj, start, end);
+  return dispatchClipboard(editor, CUT_COMMAND);
+}
+
 async function runRangeRow(row: RangeRow, usj: Usj): Promise<void> {
-  const mounted = await mountInView(usj, row.view);
+  const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+  const mounted = await mountInView(usj, row.view, {
+    onUnstorableTextRemoved: onRemoved,
+    structureProtectionMode: row.protection,
+  });
   try {
     const original = contentOf(mounted);
     // The load round trip is another suite's subject; this one starts from what loaded.
@@ -795,10 +1425,16 @@ async function runRangeRow(row: RangeRow, usj: Usj): Promise<void> {
     const options: JoinOptions = { spaceBeforeVerse: isMarkerHidden(row.view) };
     const copied = sliceUsj(original, start, end);
 
-    if (row.operation === "cut" || row.operation === "cut, paste back") {
-      await select(lexical, usj, start, end);
-      const clipboard = await dispatchClipboard(lexical, CUT_COMMAND);
-      const cutContent = plain(removeRange(original, start, end, options));
+    if (isCut(row.operation)) {
+      const clipboard = await cut(lexical, usj, start, end);
+      if (isRefusedCut(row, copied)) {
+        expect(contentOf(mounted), "after the refused cut").toEqual(original);
+        expect([...clipboard.keys()], "what the refused cut wrote").toEqual([]);
+        return;
+      }
+      // The model, not its plain copy, keeps the identity a split object's halves rejoin by.
+      const cutModel = removeRange(original, start, end, options);
+      const cutContent = plain(cutModel);
       expect(contentOf(mounted), "after the cut").toEqual(cutContent);
       if (row.operation === "cut") {
         await undo(mounted);
@@ -807,61 +1443,80 @@ async function runRangeRow(row: RangeRow, usj: Usj): Promise<void> {
         expect(contentOf(mounted), "after redoing the cut").toEqual(cutContent);
         return;
       }
-      await paste(lexical, clipboard);
-      if (isRefusedByPasteGate(row.view, copied)) {
-        expect(contentOf(mounted), "after the refused paste").toEqual(cutContent);
-        return;
-      }
-      expect(contentOf(mounted), "after pasting the cut back").toEqual(original);
+      // The caret the cut leaves where the range started.
+      await paste(lexical, pastePayload(row, clipboard));
+      const { inserted, notices, removed } = pastedIn(
+        row.view,
+        pasteFragment(row, cutModel, start, copied, clipboard.get("text/plain") ?? ""),
+        contextAt(cutModel, start),
+      );
+      const settled = settledAfterPaste(row, start, inserted);
+      const expected = settled(plain(insertFragment(cutModel, start, inserted, options)));
+      expect(settled(contentOf(mounted)), "after pasting the cut back").toEqual(expected);
+      expect(onRemoved, "notices").toHaveBeenCalledTimes(notices);
+      if (notices > 0) expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed });
       await undo(mounted);
       expect(contentOf(mounted), "after undoing the paste").toEqual(cutContent);
       await redo(mounted);
-      expect(contentOf(mounted), "after redoing the paste").toEqual(original);
+      expect(settled(contentOf(mounted)), "after redoing the paste").toEqual(expected);
       return;
     }
 
-    await select(lexical, usj, start, end);
-    const clipboard = await dispatchClipboard(lexical, COPY_COMMAND);
+    const copyView = row.copyFrom?.view ?? row.view;
+    const clipboard = row.copyFrom
+      ? await copyIn(row.copyFrom.view, usj, start, end)
+      : await copyHere(lexical, usj, start, end);
     const text = clipboard.get("text/plain") ?? "";
     expect(text, "the copy wrote text/plain").toBeTruthy();
-    const payload = new Map(clipboard);
-    const isInternal = row.operation === "copy, paste all flavors";
-    if (!isInternal) payload.delete("application/x-lexical-editor");
-    if (row.operation === "copy, paste plain text") payload.delete("text/html");
+    expect(clipboard.has(LEXICAL_FLAVOR), "the copy wrote its node copy").toBe(
+      writesNodeCopy(row.range),
+    );
+    if (isMarkerHidden(copyView) && writesNodeCopy(row.range))
+      expect(JSON.parse(clipboard.get(LEXICAL_FLAVOR) ?? "{}").namespace).toBe(
+        HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+      );
+    if (isMarkerHidden(copyView)) expectHiddenViewPlainCopy(text, copied);
+    expect(carriedNodeCopy(clipboard.get("text/html")), "what the copy's html carries").toBe(
+      copyView.markerMode === "hidden" && writesNodeCopy(row.range)
+        ? clipboard.get(LEXICAL_FLAVOR)
+        : undefined,
+    );
 
     const destination = pasteDestination(usj, row.range);
     await select(lexical, usj, destination);
-    await paste(lexical, payload);
+    await paste(lexical, pastePayload(row, clipboard));
 
-    let expected: Item[];
-    if (isRefusedByPasteGate(row.view, copied)) {
-      expected = original;
-    } else if (isMarkerHidden(row.view) && row.operation === "copy, paste plain text") {
-      expected = plain(
-        insertFragment(original, destination, plainFragment(original, destination, text), options),
-      );
-    } else {
-      const fragment = isInternal ? copied : withoutDerivedAttributes(copied);
-      expected = plain(insertFragment(original, destination, fragment, options));
-    }
-    expect(contentOf(mounted), "after the paste").toEqual(expected);
-    if (expected === original) return;
+    const { inserted, notices, removed } = pastedIn(
+      row.view,
+      pasteFragment(row, original, destination, copied, text),
+      contextAt(original, destination),
+    );
+    const settled = settledAfterPaste(row, destination, inserted);
+    const expected = settled(plain(insertFragment(original, destination, inserted, options)));
+    expect(settled(contentOf(mounted)), "after the paste").toEqual(expected);
+    expect(onRemoved, "notices").toHaveBeenCalledTimes(notices);
+    if (notices > 0) expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed });
     await undo(mounted);
     expect(contentOf(mounted), "after undoing the paste").toEqual(original);
     await redo(mounted);
-    expect(contentOf(mounted), "after redoing the paste").toEqual(expected);
+    expect(settled(contentOf(mounted)), "after redoing the paste").toEqual(expected);
   } finally {
     mounted.unmount();
   }
 }
 
 /**
- * Plain text that looks like USFM. Standard view tokenizes a paste (clipboard-semantics S3), so the
- * markers arrive as structure. The hidden-marker views have no tokenizer and refuse any paste
- * holding `\` (`CommandMenuPlugin`, S5): nothing is inserted, and nothing else changes.
+ * Plain text pasted at a paragraph's end. Standard view tokenizes a paste (clipboard-semantics S3),
+ * so USFM markers arrive as structure. The hidden-marker views have no tokenizer and cannot store a
+ * `\` or a `//` as text, so the text goes in without them ({@link filterFragment}) and the host is
+ * told once; a lone `/` goes in as it is, untold.
  */
-async function runUsfmRow(row: UsfmRow, usj: Usj): Promise<void> {
-  const mounted = await mountInView(usj, row.view);
+async function runPlainRow(row: PlainRow, usj: Usj): Promise<void> {
+  const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+  const mounted = await mountInView(usj, row.view, {
+    onUnstorableTextRemoved: onRemoved,
+    structureProtectionMode: row.protection,
+  });
   try {
     const original = contentOf(mounted);
     expect(original).toEqual(usj.content);
@@ -870,13 +1525,41 @@ async function runUsfmRow(row: UsfmRow, usj: Usj): Promise<void> {
     await select(mounted.lexical, usj, destination);
     await paste(mounted.lexical, new Map([["text/plain", row.text]]));
     if (isMarkerHidden(row.view)) {
-      expect(contentOf(mounted), "after the refused paste").toEqual(original);
+      // The literal expectations hold only away from a `/` already in the document, which a
+      // pasted `/` beside it would make `//`.
+      const { before, after } = contextAt(original, destination);
+      expect([before, after], "no `/` beside the paste").not.toContain("/");
+      const { hiddenInserts, removed } = row.hidden;
+      const expected = plain(
+        insertFragment(
+          original,
+          destination,
+          plainFragment(original, destination, hiddenInserts, row.protection),
+          { spaceBeforeVerse: true },
+        ),
+      );
+      expect(contentOf(mounted), "after the paste").toEqual(expected);
+      expect(onRemoved, "notices").toHaveBeenCalledTimes(removed.length > 0 ? 1 : 0);
+      if (removed.length > 0)
+        expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: [...removed] });
+      await undo(mounted);
+      expect(contentOf(mounted), "after undoing the paste").toEqual(original);
+      await redo(mounted);
+      expect(contentOf(mounted), "after redoing the paste").toEqual(expected);
       return;
     }
     const tokens: Item[] =
       row.text === "\\v 9 x"
         ? [{ type: "verse", marker: "v", number: "9" }, "x"]
-        : [{ type: "char", marker: "nd", content: ["y"] }];
+        : row.text === "\\nd y\\nd*"
+          ? [{ type: "char", marker: "nd", content: ["y"] }]
+          : // USFM's optional line break.
+            row.text
+              .split("//")
+              .flatMap((part, index): Item[] => [
+                ...(index > 0 ? [{ type: "optbreak" }] : []),
+                ...(part ? [part] : []),
+              ]);
     const pasted = insertFragment(original, destination, [{ type: "para", content: tokens }], {
       spaceBeforeVerse: false,
     });
@@ -890,6 +1573,7 @@ async function runUsfmRow(row: UsfmRow, usj: Usj): Promise<void> {
         : content;
     const expected = settled(plain(pasted));
     expect(settled(contentOf(mounted)), "after the paste").toEqual(expected);
+    expect(onRemoved, "notices").not.toHaveBeenCalled();
     await undo(mounted);
     expect(contentOf(mounted), "after undoing the paste").toEqual(original);
     await redo(mounted);
@@ -899,14 +1583,86 @@ async function runUsfmRow(row: UsfmRow, usj: Usj): Promise<void> {
   }
 }
 
+/**
+ * `usfm` with its marker tokens gone: each `\`, with a nested marker's `+`, its name, and a closer's
+ * `*` or, after a name, one separator space; a bare `\` leaves the space after it. Spelled here
+ * rather than taken from the editor, so the model does not lean on what it checks.
+ */
+function withoutMarkers(usfm: string): string {
+  return usfm.replace(/\\\+?(?:[\w-]+(?:\*| ?)|\*?)/g, "");
+}
+
+/**
+ * A copy in one view family, pasted into the other, goes in as its text alone would, whether by
+ * Ctrl+V (html and plain text) or a native paste (every flavor it wrote): each family's node copy
+ * holds node shapes only that family builds (Standard view's marker text, a hidden-marker view's
+ * display nodes), so neither reads the other's, as a flavor or from the html. Into a hidden-marker
+ * view that means Standard view's text with its marker tokens gone ({@link withoutMarkers}), which
+ * the node copy, or its html's mark on a Ctrl+V, is what permits.
+ * What the html and plain text make of a copy is the other rows' subject; this pins that the node
+ * copy is passed over.
+ */
+async function runCrossViewRow(row: CrossViewRow, usj: Usj): Promise<void> {
+  const { start, end } = row.range;
+  const source = await mountInView(usj, row.from.view);
+  let clipboard: Map<string, string>;
+  try {
+    await select(source.lexical, usj, start, end);
+    clipboard = await dispatchClipboard(source.lexical, COPY_COMMAND);
+  } finally {
+    source.unmount();
+  }
+  expect(clipboard.has(LEXICAL_FLAVOR), "the copy wrote its node copy").toBe(true);
+  const ctrlV = new Map(clipboard);
+  ctrlV.delete(LEXICAL_FLAVOR);
+  const textAlone = new Map(ctrlV);
+  // Standard view's copy is USFM, and says so to a hidden-marker view: the view takes the marker
+  // tokens out, so what goes in is that text without them. Into Standard view, a hidden-marker
+  // view's html with the node copy gone.
+  if (isMarkerHidden(row.to.view)) {
+    const text = withoutMarkers(clipboard.get("text/plain") ?? "");
+    textAlone.set("text/plain", text);
+    textAlone.set("text/html", usfmToClipboardHtml(text));
+  } else {
+    textAlone.set("text/html", withoutCarrierAttribute(ctrlV.get("text/html") ?? ""));
+  }
+
+  const target = await mountInView(usj, row.to.view, { structureProtectionMode: row.protection });
+  try {
+    const original = contentOf(target);
+    const destination = pasteDestination(usj, row.range);
+    await select(target.lexical, usj, destination);
+    await paste(target.lexical, clipboard);
+    const pasted = contentOf(target);
+    expect(pasted, "the paste changed the document").not.toEqual(original);
+    await undo(target);
+    expect(contentOf(target), "after undoing the paste").toEqual(original);
+    await select(target.lexical, usj, destination);
+    await paste(target.lexical, textAlone);
+    expect(pasted, "as the html and plain text alone go in").toEqual(contentOf(target));
+    await undo(target);
+    await select(target.lexical, usj, destination);
+    await paste(target.lexical, ctrlV);
+    expect(pasted, "as Ctrl+V goes in").toEqual(contentOf(target));
+  } finally {
+    target.unmount();
+  }
+}
+
 const fixtureRows = FIXTURES.map((fixture) => {
   const usj = readFixture(fixture);
-  return { fixture, usj, ...rowsFor(fixture, usj) };
+  return {
+    fixture,
+    usj,
+    ...rowsFor(fixture, usj),
+    crossViews: crossViewRowsFor(fixture, sampleRanges(usj)),
+    hiddenCrossViews: hiddenCrossViewRowsFor(fixture, usj),
+  };
 });
 
 const KNOWN_FAILURES: { [key: string]: string } = Object.fromEntries(
-  fixtureRows.flatMap(({ fixture, usj, ranges, usfm }) =>
-    [...ranges, ...usfm].flatMap((row) => {
+  fixtureRows.flatMap(({ fixture, usj, ranges, plainTexts, hiddenCrossViews }) =>
+    [...ranges, ...plainTexts, ...hiddenCrossViews].flatMap((row) => {
       const reason = knownFailure(fixture, ("usj" in row && row.usj) || usj, row);
       return reason ? [[row.key, reason]] : [];
     }),
@@ -915,22 +1671,36 @@ const KNOWN_FAILURES: { [key: string]: string } = Object.fromEntries(
 
 const register = knownFailureRunner(
   KNOWN_FAILURES,
-  fixtureRows.flatMap(({ ranges, usfm }) => [...ranges, ...usfm].map((row) => row.key)),
+  fixtureRows.flatMap(({ ranges, plainTexts, crossViews, hiddenCrossViews }) =>
+    [...ranges, ...plainTexts, ...crossViews, ...hiddenCrossViews].map((row) => row.key),
+  ),
 );
 
 describe("clipboard over the testUSFM corpus, per editing view", () => {
-  for (const { fixture, usj, ranges, usfm } of fixtureRows)
+  for (const { fixture, usj, ranges, plainTexts, crossViews, hiddenCrossViews } of fixtureRows)
     describe(fixture, () => {
       for (const row of ranges)
         register(row.key)(
-          `${row.range.kind} | ${row.viewName} | ${row.operation}`,
+          `${row.range.kind} | ${row.viewName} | ${row.protection} | ${row.operation}`,
           () => runRangeRow(row, row.usj ?? usj),
           30_000,
         );
-      for (const row of usfm)
+      for (const row of plainTexts)
         register(row.key)(
-          `${row.viewName} | paste plain ${row.text}`,
-          () => runUsfmRow(row, usj),
+          `${row.viewName} | ${row.protection} | paste plain ${row.text}`,
+          () => runPlainRow(row, usj),
+          30_000,
+        );
+      for (const row of crossViews)
+        register(row.key)(
+          `${row.range.kind} | ${row.from.name} to ${row.to.name} | ${row.protection} | copy, Ctrl+V`,
+          () => runCrossViewRow(row, usj),
+          30_000,
+        );
+      for (const row of hiddenCrossViews)
+        register(row.key)(
+          `${row.range.kind} | ${row.copyFrom?.name} to ${row.viewName} | ${row.protection} | copy, Ctrl+V`,
+          () => runRangeRow(row, usj),
           30_000,
         );
     });

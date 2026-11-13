@@ -27,10 +27,12 @@ import {
 import { $getMarkerMenuContext } from "./markerMenu/markerMenuContext.utils";
 import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
 import { $insertFirstChapter } from "./markerEdit/firstChapter.utils";
+import { BookAndChapterLinesPlugin } from "./BookAndChapterLinesPlugin";
 import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
 import { HiddenMarkersViewCopyPlugin } from "./HiddenMarkersViewCopyPlugin";
 import { InlineRangeEditPlugin } from "./InlineRangeEditPlugin";
 import { InvisibleCharactersPlugin } from "./InvisibleCharactersPlugin";
+import { LineBreakPlugin } from "./LineBreakPlugin";
 import {
   COMMIT_PENDING_MARKERS_COMMAND,
   MarkerEditPlugin,
@@ -145,6 +147,7 @@ import {
 } from "shared";
 import {
   $applyUpdate,
+  $filterUnstorablePastedNodes,
   $getNodeFromLocation,
   $getNoteByKeyOrIndex,
   $getNoteIndex,
@@ -187,8 +190,10 @@ import {
   getInsertedNodeKey,
   getViewClassList,
   HiddenContentDeleteGuardPlugin,
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   isBlockVerseLayout,
   LoadStatePlugin,
+  MARKER_VIEW_CLIPBOARD_NAMESPACE,
   NoteCallerHighlightHandle,
   NoteCallerHighlightPlugin,
   NoteEnterGuardPlugin,
@@ -211,6 +216,7 @@ import {
   TextDirectionPlugin,
   TextSpacingPlugin,
   TrailingNoteCaretGuardPlugin,
+  UnstorableTextPlugin,
   usjBlockVerseNodes,
   UsjNodeOptions,
   UsjNodesMenuPlugin,
@@ -483,6 +489,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     isReadonly = false,
     structureProtectionMode = "off",
     onHiddenContentDelete,
+    onUnstorableTextRemoved,
     hasExternalUI = false,
     hasSpellCheck = false,
     textDirection = "ltr",
@@ -602,6 +609,28 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     loggerRef.current = logger;
   }
   const stableLogger = loggerRef.current;
+
+  // Hidden-marker views keep `\` and `//` out of what protected structure's sanitizer inserts, as
+  // `UnstorableTextPlugin` does for every other paste and drop. Built once per logger, reading the
+  // host's latest handler from a ref: a fresh handler each render must not hand
+  // `StructureKeyboardPlugin` a new filter (it keeps its own ref, so its registrations stay put
+  // either way).
+  const onUnstorableTextRemovedRef = useRef(onUnstorableTextRemoved);
+  useEffect(() => {
+    onUnstorableTextRemovedRef.current = onUnstorableTextRemoved;
+  }, [onUnstorableTextRemoved]);
+  const $filterHiddenViewPastedNodes = useCallback(
+    (nodes: LexicalNode[], selection: RangeSelection, source: "paste" | "drop") => {
+      $filterUnstorablePastedNodes(
+        nodes,
+        selection,
+        source,
+        onUnstorableTextRemovedRef.current,
+        stableLogger,
+      );
+    },
+    [stableLogger],
+  );
 
   // The block verse layout regroups each verse into its own element, splitting paragraphs that span
   // verses. That shape cannot be exported back to USJ, so the layout is read-only by construction
@@ -726,7 +755,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
 
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
-      namespace: "platformEditor",
+      namespace: MARKER_VIEW_CLIPBOARD_NAMESPACE,
       theme: { ...editorTheme, showCharMarkerTitles: viewOptions.showCharMarkerTitles },
       editable: !effectiveIsReadonly,
       editorState: undefined,
@@ -1105,11 +1134,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     paste() {
       assertEditable("paste");
-      if (editorRef.current) pasteSelection(editorRef.current);
+      if (editorRef.current) pasteSelection(editorRef.current, loggerRef.current);
     },
     pastePlainText() {
       assertEditable("paste as plain text");
-      if (editorRef.current) pasteSelectionAsPlainText(editorRef.current);
+      if (editorRef.current) pasteSelectionAsPlainText(editorRef.current, loggerRef.current);
     },
     getUsj() {
       return readSettledUsj();
@@ -2095,18 +2124,38 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <AnnotationPlugin ref={annotationRef} logger={stableLogger} viewOptions={viewOptions} />
           <ArrowNavigationPlugin viewOptions={viewOptions} />
           <CharNodePlugin />
-          <ClipboardPlugin />
+          {/* Before every plugin that handles a paste but InvisibleCharactersPlugin, a filter that
+              sees the paste a second time to no effect. In the views that show markers, a paste the
+              browser delivers itself (macOS's Edit > Paste, Shift+Insert) takes what Ctrl+V takes,
+              without the node copy flavor; the hidden-marker views read their own node copy from
+              it (UnstorableTextPlugin, StructureKeyboardPlugin). */}
+          <ClipboardPlugin
+            pastesAsClipboardRead={viewOptions?.markerMode !== "hidden"}
+            logger={stableLogger}
+          />
           {/* Editable marker modes require literal backslash input (the marker-edit engine and
-              the `\` marker menu consume it), so CommandMenuPlugin - which preventDefaults typed
-              or pasted `\` and `/` - only guards the non-editable views. */}
-          {viewOptions?.markerMode !== "editable" && <CommandMenuPlugin logger={stableLogger} />}
-          <ContextMenuPlugin options={contextMenuOptions} />
+              the `\` marker menu consume it), so neither plugin here acts in Standard view. The
+              hidden-marker views take a paste or drop with `\` or `//` in it, leaving those out,
+              and refuse a typed `\` or `//` (UnstorableTextPlugin); the Markers view still
+              refuses typed or pasted `\` and `/` outright (CommandMenuPlugin).
+              UnstorableTextPlugin is mounted in every view, acting only in one that hides
+              markers, so a view switch keeps its handlers ahead of the same-priority ones mounted
+              after it (ParaMarkerSelectionPlugin's among them). */}
+          <UnstorableTextPlugin
+            isEnabled={viewOptions?.markerMode === "hidden"}
+            structureProtectionMode={structureProtectionMode}
+            onRemoved={onUnstorableTextRemoved}
+            logger={stableLogger}
+          />
+          {viewOptions?.markerMode === "visible" && <CommandMenuPlugin logger={stableLogger} />}
+          <ContextMenuPlugin options={contextMenuOptions} logger={stableLogger} />
           {/* Must mount before every plugin with a CRITICAL cut handler (MarkerEditPlugin,
               OpaqueBlockGuardPlugin, StructureKeyboardPlugin). Its CRITICAL fit shortens the
               selection of a limited copy or cut, and at equal priority handlers run in the order
               they were registered: the guards and the whole-paragraph cut arm have to judge the
               selection the cut will actually take. */}
           <CopyLimitPlugin limit={copyLimit} viewOptions={viewOptions} />
+          {viewOptions?.markerMode === "hidden" && <BookAndChapterLinesPlugin />}
           {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
               normalization that keeps a point out of one is too. */}
           <DecoratorBoundarySelectionPlugin />
@@ -2127,6 +2176,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             isEnabled={viewOptions?.markerMode !== "editable"}
             structureProtectionMode={structureProtectionMode}
             copyLimit={copyLimit}
+            refusesCommandCharacters={viewOptions?.markerMode === "visible"}
             onHiddenContentDelete={onHiddenContentDelete}
             logger={stableLogger}
           />
@@ -2140,6 +2190,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           {viewOptions?.markerMode === "hidden" && (
             <InlineRangeEditPlugin structureProtectionMode={structureProtectionMode} />
           )}
+          <LineBreakPlugin
+            viewOptions={viewOptions}
+            structureProtectionMode={structureProtectionMode}
+          />
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects
               depend on it, so a host handing over a fresh-but-equivalent logger object each
               render would re-register their command listeners at the END of Lexical's
@@ -2183,7 +2237,21 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             structureProtectionMode={structureProtectionMode}
           />
           <ParaNodePlugin />
-          <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
+          {/* Only the hidden-marker views filter what the sanitizer inserts and take marker tokens
+              out of a marker-showing view's copy: Standard view stores a pasted `\` as the marker
+              it spells. And only they read their own node copy, which Standard view's node shapes
+              do not match. */}
+          <StructureKeyboardPlugin
+            structureProtectionMode={structureProtectionMode}
+            $filterPastedNodes={
+              viewOptions?.markerMode === "hidden" ? $filterHiddenViewPastedNodes : undefined
+            }
+            nodeCopyNamespace={
+              viewOptions?.markerMode === "hidden" ? HIDDEN_VIEW_CLIPBOARD_NAMESPACE : undefined
+            }
+            removesMarkerTokens={viewOptions?.markerMode === "hidden"}
+            logger={stableLogger}
+          />
           <TextDirectionPlugin textDirection={textDirection} />
           <TextSpacingPlugin />
           <TrailingNoteCaretGuardPlugin />

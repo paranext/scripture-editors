@@ -8,6 +8,8 @@ import {
   EditorViewName,
   editorView,
   enabledViews,
+  footnotePopoverView,
+  isPopoverHostEnabled,
   mountInView,
   MountedEditor,
   paneRowScaffold,
@@ -28,8 +30,14 @@ import {
   TextNode,
 } from "lexical";
 import { NBSP, NBSP_STAND_IN } from "shared";
-import { hasStandardViewWhitespace, ViewOptions } from "shared-react";
-import { describe, expect, it } from "vitest";
+import {
+  hasStandardViewWhitespace,
+  LEXICAL_CLIPBOARD_TYPE,
+  NODE_COPY_HTML_ATTRIBUTE,
+  UnstorableTextRemovedHandler,
+  ViewOptions,
+} from "shared-react";
+import { describe, expect, it, vi } from "vitest";
 
 /** How Standard view shows a stored no-break space when `~` is an ordinary character. */
 const NBSP_GLYPH = NBSP_STAND_IN;
@@ -530,6 +538,208 @@ describe.each(ENTRY_VIEWS)("%s view: invisible characters entered as in Paratext
       expect(saved()).toEqual([`a${ZWNBSP}b cxd`]);
     },
   );
+});
+
+/**
+ * Text entered with a control character in it: each C0 control character but tab, line feed and
+ * carriage return, which Paratext reads as a space, a few at a time.
+ */
+const WITH_CONTROLS = "x\u0000y\u0001z\u000Bw\u000Cv\u001Au\u001Ft";
+
+/** {@link WITH_CONTROLS} as the editor takes it in. */
+const CONTROLS_AS_SPACES = "x y z w v u t";
+
+/** Where text is entered: an entry view, or the footnote popover over a host that hides markers. */
+const CONTROL_ENTRY_TARGETS: { label: string; view: ViewOptions; isNote: boolean }[] = [
+  ...ENTRY_VIEWS.map((name) => ({
+    label: `${name} view`,
+    view: withInvisibleCharacters(name, false),
+    isNote: name === "footnotes-pane-row",
+  })),
+  ...(["formatted", "paragraph-structure"] as const).filter(isPopoverHostEnabled).map((host) => ({
+    label: `the footnote popover over ${host} view`,
+    view: footnotePopoverView(withInvisibleCharacters(host, false)),
+    isNote: true,
+  })),
+];
+
+/** `text` mounted in `target`: a paragraph, or the `\ft` of a note. */
+async function mountEntryTarget(
+  target: (typeof CONTROL_ENTRY_TARGETS)[number],
+  text: string,
+): Promise<{ mounted: MountedEditor; saved: () => unknown }> {
+  if (target.isNote) {
+    const mounted = await mountInView(paneRowScaffold(noteHolding(text)), target.view);
+    const saved = () => {
+      const para = mounted.ref.current?.getUsj()?.content[0];
+      const note = typeof para === "object" ? para.content?.[0] : undefined;
+      const ft = typeof note === "object" ? note.content?.[0] : undefined;
+      return typeof ft === "object" ? ft.content : ft;
+    };
+    return { mounted, saved };
+  }
+  const mounted = await mountInView(oneParaUsj([text]), target.view);
+  return { mounted, saved: () => firstParaContent(mounted) };
+}
+
+/** What a paste or a drop of `flavors` delivers, by route. */
+const ENTRY_ROUTES: [
+  string,
+  (lexical: LexicalEditor, flavors: [string, string][]) => Promise<void>,
+][] = [
+  ["pasted", pasteFlavors],
+  [
+    "dropped",
+    async (lexical, flavors) => {
+      const store = new Map(flavors);
+      const dataTransfer = {
+        types: [...store.keys()],
+        files: [],
+        getData: (type: string) => store.get(type) ?? "",
+      };
+      const event = new InputEvent("beforeinput", {
+        inputType: "insertFromDrop",
+        cancelable: true,
+      });
+      Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+      await act(async () => {
+        lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, event);
+      });
+      await settle();
+    },
+  ],
+];
+
+describe.each(CONTROL_ENTRY_TARGETS)("$label: control characters entered", (target) => {
+  it("takes each typed one in as a space", async () => {
+    const pressed = await mountEntryTarget(target, "ab");
+    await placeCaret(pressed.mounted.lexical, "ab", 1);
+    expect(await press(pressed.mounted, "x", WITH_CONTROLS)).toEqual([]);
+    expect(pressed.saved()).toEqual([`a${CONTROLS_AS_SPACES}b`]);
+
+    const inserted = await mountEntryTarget(target, "ab");
+    await placeCaret(inserted.mounted.lexical, "ab", 1);
+    await typeText(inserted.mounted.lexical, WITH_CONTROLS);
+    expect(inserted.saved()).toEqual([`a${CONTROLS_AS_SPACES}b`]);
+  });
+
+  it("takes one typed alone over a selection in as a space", async () => {
+    const { mounted, saved } = await mountEntryTarget(target, "abc");
+    await selectInText(mounted.lexical, "abc", 1, 2);
+
+    await typeText(mounted.lexical, "\u000B");
+
+    expect(saved()).toEqual(["a c"]);
+  });
+
+  it.each(ENTRY_ROUTES)("takes each one %s as plain text in as a space", async (_route, enter) => {
+    const { mounted, saved } = await mountEntryTarget(target, "ab");
+    await placeCaret(mounted.lexical, "ab", 1);
+
+    await enter(mounted.lexical, [["text/plain", WITH_CONTROLS]]);
+
+    expect(saved()).toEqual([`a${CONTROLS_AS_SPACES}b`]);
+  });
+
+  it.each(ENTRY_ROUTES)("takes each one %s as html in as a space", async (_route, enter) => {
+    const { mounted, saved } = await mountEntryTarget(target, "ab");
+    await placeCaret(mounted.lexical, "ab", 1);
+
+    await enter(mounted.lexical, [["text/html", `<span>${WITH_CONTROLS}</span>`]]);
+
+    expect(saved()).toEqual([`a${CONTROLS_AS_SPACES}b`]);
+  });
+
+  it("keeps the ones the text holds when it is edited", async () => {
+    const stored = "a\u000Bb\u0001c de";
+    const { mounted, saved } = await mountEntryTarget(target, stored);
+    // Standard view reads each control character but U+0000 as a space when it loads text, as
+    // Paratext does; every other view shows the text as it is.
+    const loaded = hasStandardViewWhitespace(target.view) ? "a b c de" : stored;
+    expect(saved()).toEqual([loaded]);
+    await placeCaret(mounted.lexical, "de", 1);
+
+    await typeText(mounted.lexical, "x");
+
+    expect(saved()).toEqual([loaded.replace("de", "dxe")]);
+  });
+
+  it("leaves text without one exactly as it was", async () => {
+    const plain = `a${NBSP}b${ZWNBSP}c d e`;
+    const { mounted, saved } = await mountEntryTarget(target, plain);
+    expect(saved()).toEqual([plain]);
+    await placeCaret(mounted.lexical, " e", 1);
+
+    await typeText(mounted.lexical, "x");
+    await paste(mounted.lexical, "y");
+
+    expect(saved()).toEqual([`a${NBSP}b${ZWNBSP}c d xye`]);
+  });
+});
+
+/** The views that hide markers, which paste their own node copy. */
+const NODE_COPY_VIEWS = enabledViews<EditorViewName>(["formatted", "paragraph-structure"]);
+
+describe.each(NODE_COPY_VIEWS)("%s view: control characters in its own node copy", (name) => {
+  /** A copy of `a<VT>b` from text that holds it, and the text to paste it into. */
+  async function copiedFromStoredText(): Promise<{
+    mounted: MountedEditor;
+    copied: Map<string, string>;
+  }> {
+    const mounted = await mountInView(
+      oneParaUsj(["a\u000Bb cd"]),
+      withInvisibleCharacters(name, false),
+    );
+    const copied = await copyStore(mounted.lexical, "a\u000Bb");
+    await placeCaret(mounted.lexical, "cd", 1);
+    return { mounted, copied };
+  }
+
+  it("writes the control character into the node copy, in its flavor and its html", async () => {
+    const { copied } = await copiedFromStoredText();
+
+    expect(copied.get(LEXICAL_CLIPBOARD_TYPE)).toContain("\\u000b");
+    expect(copied.get("text/html")).toContain(NODE_COPY_HTML_ATTRIBUTE);
+  });
+
+  it.each<[string, (copied: Map<string, string>) => [string, string][]]>([
+    [
+      "the node copy flavor",
+      (copied) => [[LEXICAL_CLIPBOARD_TYPE, copied.get(LEXICAL_CLIPBOARD_TYPE) ?? ""]],
+    ],
+    ["the node copy in the html", (copied) => [["text/html", copied.get("text/html") ?? ""]]],
+    ["every flavor", (copied) => [...copied]],
+  ])("takes the control character a paste of %s carries in as a space", async (_, flavors) => {
+    const { mounted, copied } = await copiedFromStoredText();
+
+    await pasteFlavors(mounted.lexical, flavors(copied));
+
+    expect(firstParaContent(mounted)).toEqual(["a\u000Bb ca bd"]);
+  });
+
+  it("takes the control character a drop of the node copy carries in as a space", async () => {
+    const { mounted, copied } = await copiedFromStoredText();
+
+    await ENTRY_ROUTES[1][1](mounted.lexical, [
+      [LEXICAL_CLIPBOARD_TYPE, copied.get(LEXICAL_CLIPBOARD_TYPE) ?? ""],
+    ]);
+
+    expect(firstParaContent(mounted)).toEqual(["a\u000Bb ca bd"]);
+  });
+
+  it("says once that a pasted \\ was left out, and takes a control character in as a space", async () => {
+    const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+    const mounted = await mountInView(oneParaUsj(["ab"]), withInvisibleCharacters(name, false), {
+      onUnstorableTextRemoved: onRemoved,
+    });
+    await placeCaret(mounted.lexical, "ab", 1);
+
+    await paste(mounted.lexical, "x\\y\u000B/z");
+
+    expect(firstParaContent(mounted)).toEqual(["axy /zb"]);
+    expect(onRemoved).toHaveBeenCalledTimes(1);
+    expect([...onRemoved.mock.calls[0][0].removed]).toEqual(["\\"]);
+  });
 });
 
 /**

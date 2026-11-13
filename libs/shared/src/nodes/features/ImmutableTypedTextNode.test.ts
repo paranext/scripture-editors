@@ -19,6 +19,7 @@
  */
 
 import {
+  $createGutterMarkerNode,
   $createImmutableTypedTextNode,
   $isImmutableTypedTextNode,
 } from "./ImmutableTypedTextNode.js";
@@ -88,5 +89,34 @@ describe("ImmutableTypedTextNode rendering", () => {
     );
 
     expect(editor.getElementByKey(key)?.textContent).toBe("\\wj");
+  });
+});
+
+describe("ImmutableTypedTextNode HTML export", () => {
+  it("exports an inline glyph as a typed span", () => {
+    const { editor } = createBasicTestEnvironment();
+    let html: string | undefined;
+    editor.update(
+      () => {
+        const { element } = $createImmutableTypedTextNode("marker", "\\nd ").exportDOM(editor);
+        html = element instanceof HTMLElement ? element.outerHTML : undefined;
+      },
+      { discrete: true },
+    );
+
+    expect(html).toContain('data-text-type="marker"');
+  });
+
+  it("exports no element for a gutter glyph, so an HTML copy leaves it out", () => {
+    const { editor } = createBasicTestEnvironment();
+    let element: unknown;
+    editor.update(
+      () => {
+        ({ element } = $createGutterMarkerNode("\\q1 ").exportDOM(editor));
+      },
+      { discrete: true },
+    );
+
+    expect(element).toBeNull();
   });
 });

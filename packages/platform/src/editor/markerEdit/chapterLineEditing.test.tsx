@@ -8,8 +8,8 @@
  * Delete, Backspace, typing over it, cut, Enter, and paste — it deletes the chapter marker, as it
  * does in the USFM text, and leaves the text after the selection in its own paragraph. The other
  * half pins editing on the chapter line itself:
- * it cannot be split, so Enter there starts a new paragraph after it, Shift+Enter does nothing, and
- * a paste or a drop goes in as it would be typed there.
+ * it cannot be split, so Enter there starts a new paragraph after it, Shift+Enter does what Enter
+ * does, and a paste or a drop goes in as it would be typed there.
  */
 import { getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
 import { enabledViews } from "../editorViews.test-helpers";
@@ -388,28 +388,38 @@ describe("a caret on the chapter line", () => {
     expect(ref.current?.getUsj()?.content).toEqual(chapterDoc.content);
   });
 
-  it("Shift+Enter does nothing", async () => {
+  // Shift+Enter is Enter, as in Paratext 9: a line break has no USFM representation.
+  it("Shift+Enter starts a \\p paragraph after it, as Enter does", async () => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
     await onChapterLine(lexical, () => lexical.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false));
-    lexical
-      .getEditorState()
-      .read(() => expect($glyph().getTextContent()).toBe(getVisibleOpenMarkerText("c", "2")));
-    expect(ref.current?.getUsj()?.content).toEqual(chapterDoc.content);
+    await typeText(lexical, "new");
+    expect(ref.current?.getUsj()?.content).toEqual([
+      CHAPTER_2,
+      { type: "para", marker: "p", content: ["new"] },
+      VERSE_1_PARA,
+      POETRY_PARA,
+    ]);
   });
 
-  // The selection is not deleted either: the line break that would replace it is refused, so all a
-  // deletion could do is take the chapter's number out of its marker.
-  it("Shift+Enter over a selection on the chapter line does nothing", async () => {
-    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
-    await act(async () =>
-      lexical.update(() => {
-        const numberAt = CHAPTER_2_GLYPH.indexOf("2");
-        $glyph().select(numberAt, numberAt + 1);
-        lexical.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
-      }),
+  it("Shift+Enter over a selection on the chapter line does what Enter does", async () => {
+    const afterBreak = async (gesture: (editor: LexicalEditor) => void) => {
+      const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+      await act(async () =>
+        lexical.update(() => {
+          const numberAt = CHAPTER_2_GLYPH.indexOf("2");
+          $glyph().select(numberAt, numberAt + 1);
+          gesture(lexical);
+        }),
+      );
+      return ref.current?.getUsj()?.content;
+    };
+    const enter = await afterBreak((editor) =>
+      editor.dispatchCommand(KEY_ENTER_COMMAND, keyDown("Enter")),
     );
-    lexical.getEditorState().read(() => expect($glyph().getTextContent()).toBe(CHAPTER_2_GLYPH));
-    expect(ref.current?.getUsj()?.content).toEqual(chapterDoc.content);
+    const lineBreak = await afterBreak((editor) =>
+      editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false),
+    );
+    expect(lineBreak).toEqual(enter);
   });
 
   // As in Paratext 9, the paragraph goes directly after the chapter even with a `\cp` paragraph
@@ -478,6 +488,46 @@ describe("a caret on the chapter line", () => {
     VERSE_1_PARA,
     POETRY_PARA,
   ];
+
+  // Dictation, autocorrect or an extension can insert one string holding a line break.
+  it.each([
+    ["\\n", "aa\nbb"],
+    ["\\r\\n", "aa\r\nbb"],
+    ["a lone \\r", "aa\rbb"],
+  ])("takes typed text holding a line break (%s) as a multi-line paste", async (_name, text) => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await onChapterLine(lexical, () =>
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text),
+    );
+    expect(ref.current?.getUsj()?.content).toEqual(TYPED_AA_BB);
+  });
+
+  // As in Paratext 9, Unicode's line and paragraph separators are characters, not line breaks.
+  async function savedAfterTyping(text: string): Promise<MarkerContent[] | undefined> {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await onChapterLine(lexical, () =>
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text),
+    );
+    return ref.current?.getUsj()?.content;
+  }
+
+  it("keeps a U+2029 in typed text there as a character", async () => {
+    expect(await savedAfterTyping("aa\u2029bb")).toEqual([
+      CHAPTER_2,
+      "aa\u2029bb",
+      VERSE_1_PARA,
+      POETRY_PARA,
+    ]);
+  });
+
+  it("keeps a U+2028 in typed text there as a character", async () => {
+    expect(await savedAfterTyping("aa\u2028bb")).toEqual([
+      CHAPTER_2,
+      "aa\u2028bb",
+      VERSE_1_PARA,
+      POETRY_PARA,
+    ]);
+  });
 
   it("takes a multi-line paste as it would be typed", async () => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
