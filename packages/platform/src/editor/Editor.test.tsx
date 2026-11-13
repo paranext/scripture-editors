@@ -2078,6 +2078,65 @@ describe("formatPara (standard view)", () => {
       expect(para.getMarker()).toBe("p"); // untouched
     });
   });
+
+  // Verses outside any paragraph marker load as an implied paragraph, which reports `p` as its
+  // block marker, so the paragraph menu offers to retag it like any other paragraph.
+  it("retags an implied paragraph into a real paragraph that keeps its verses", async () => {
+    const usjWithVersesOutsideAnyParagraph: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "verse", marker: "v", number: "1" },
+        "one ",
+        { type: "verse", marker: "v", number: "2" },
+        "two",
+      ],
+    };
+    const { ref, lexicalEditor, originalUsj } = await mountEditorForUndo({
+      usj: usjWithVersesOutsideAnyParagraph,
+      scrRef: { book: "GEN", chapterNum: 1, verseNum: 2 },
+      structureProtectionMode: "off",
+      view: getViewOptions(STANDARD_VIEW_MODE),
+    });
+    act(() => {
+      lexicalEditor.update(() => {
+        const textNode = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === "two");
+        if (!textNode || !$isTextNode(textNode)) throw new Error("seed text node not found");
+        textNode.select(1, 1);
+      });
+    });
+
+    await act(async () => {
+      getEditorRef(ref).formatPara("q1");
+    });
+    await flushQueuedEvents();
+
+    expect(getEditorRef(ref).getUsj()?.content).toEqual([
+      originalUsj.content[0],
+      originalUsj.content[1],
+      {
+        type: "para",
+        marker: "q1",
+        content: [
+          { type: "verse", marker: "v", number: "1" },
+          "one ",
+          { type: "verse", marker: "v", number: "2" },
+          "two",
+        ],
+      },
+    ]);
+
+    await act(async () => {
+      getEditorRef(ref).undo();
+    });
+    await flushQueuedEvents();
+
+    expect(getEditorRef(ref).getUsj()).toEqual(originalUsj);
+  });
 });
 
 describe("commitPendingMarkerEdits (abandonment window)", () => {
