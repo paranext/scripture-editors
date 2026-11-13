@@ -294,6 +294,9 @@ refused. The public surface grew substantially; nothing was removed.
 - `onStateChange` now fires when the caret moves into text outside any paragraph marker (an
   implied paragraph), with `blockMarker` set to `p`. It used to stay silent there, so a host kept
   the previous block's marker, often `id`, and scoped its character-marker menu to `\id`.
+- `EditorRef.formatPara` with a selection from the `\id` line into verses outside any paragraph
+  marker now retags those verses too. It used to split the `\id` line and leave the verses with no
+  paragraph marker.
 - Undoing an edit that restores a char span's separator (its no-break space after the glyph) sends
   the separator to the host as U+00A0, not a space, so the span gains no leading content space.
 - A delta applied in Standard view places the ops after an inserted char span correctly. An insert

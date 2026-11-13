@@ -123,6 +123,7 @@ import {
   $isBookNode,
   $isNoteNode,
   $isParaNode,
+  $isSomeParaNode,
   blackListedChangeTags,
   createMarkerLookup,
   defaultStyleInfo,
@@ -1441,13 +1442,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             // root-level sibling like any of them, and `$setBlocksType` has no notion of "skip
             // this sibling" — given a selection that merely passes over a chapter on its way to a
             // later paragraph, it converts the chapter into a paragraph right along with them. The
-            // `$isParaNode(sibling)` guard below is what keeps the chapter itself from ever being
-            // retagged even when it is the END block the walk stops at.
+            // `$isSomeParaNode(sibling)` guard below is what keeps the chapter itself from ever
+            // being retagged even when it is the END block the walk stops at. It also admits an
+            // implied paragraph (verses outside any paragraph marker), which is retagged into a
+            // real paragraph like any other.
             let sibling: LexicalNode | null = newPara.getNextSibling();
             while (sibling) {
               const isEndBlock = sibling.is(endBlock);
               const next = sibling.getNextSibling();
-              if ($isParaNode(sibling)) {
+              if ($isSomeParaNode(sibling)) {
                 const paraSelection = $createRangeSelection();
                 paraSelection.anchor.set(sibling.getKey(), 0, "element");
                 paraSelection.focus.set(sibling.getKey(), sibling.getChildrenSize(), "element");
