@@ -1,0 +1,62 @@
+name: Full test suite
+
+# The long-running oracles run a reduced set of their cases in the Test workflow, so every pull
+# request still covers every view, row and keystroke, at fewer places. This workflow runs them
+# with far more cases, together with the opt-in suites no pull request runs:
+# - ANNOTATION_TRANSPARENCY_FULL: every keystroke at every site of the annotation-transparency
+#   oracle (by default: the core keystrokes where the annotations change the tree, plus a sample).
+# - ANNOTATION_TRANSPARENCY_CLIPBOARD: that oracle's clipboard and range gestures.
+# - ANNOTATION_ORACLE_2SA: the annotation-location oracle over the 2 Samuel corpus.
+# - TYPING_FIDELITY_ORACLE_CARETS=256: 256 carets of each typing-fidelity document, not the
+#   default spread of 32. Every caret ("all") takes over an hour for one whole chapter, and 1024
+#   still finds a failure on `main` that is not fixed yet: in the paragraph-structure view, Delete
+#   at the end of a paragraph before a sidebar merges the sidebar's first paragraph into it.
+# A scheduled run tests `main`; run it by hand on a branch before merging a risky editor change.
+on:
+  schedule:
+    # Tuesdays and Fridays, 06:00 UTC.
+    - cron: "0 6 * * 2,5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Full suite, shard ${{ matrix.shard }} of 4
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    env:
+      ANNOTATION_TRANSPARENCY_FULL: "1"
+      ANNOTATION_TRANSPARENCY_CLIPBOARD: "1"
+      ANNOTATION_ORACLE_2SA: "1"
+      TYPING_FIDELITY_ORACLE_CARETS: "256"
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      - name: Install PNPM
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "package.json"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Every suite these flags reach is in the platform editor package.
+      - name: Run the platform editor's tests in full
+        run: pnpm nx run @eten-tech-foundation/platform-editor:test --skip-nx-cache -- --shard=${{ matrix.shard }}/4
