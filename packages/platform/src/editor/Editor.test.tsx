@@ -7,7 +7,7 @@ import { MarkerMenuItem } from "./markerMenu/markerItemSource";
 import Editorial from "../Editorial";
 import usjEditorAdaptor from "./adaptors/usj-editor.adaptor";
 import { flushQueuedEvents } from "./editor-test.utils";
-import { EDITING_VIEWS, knownFailureRunner } from "./editorViews.test-helpers";
+import { EDITING_VIEWS, editorView, knownFailureRunner } from "./editorViews.test-helpers";
 import {
   $selectionToUsfmText,
   usfmToClipboardHtml,
@@ -2098,7 +2098,7 @@ describe("formatPara (standard view)", () => {
       usj: usjWithVersesOutsideAnyParagraph,
       scrRef: { book: "GEN", chapterNum: 1, verseNum: 2 },
       structureProtectionMode: "off",
-      view: getViewOptions(STANDARD_VIEW_MODE),
+      view: editorView("standard"),
     });
     act(() => {
       lexicalEditor.update(() => {
