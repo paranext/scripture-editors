@@ -147,6 +147,35 @@ const ACCOUNTING = process.env.ANNOTATION_TRANSPARENCY_ACCOUNTING === "1";
 const CLIPBOARD = process.env.ANNOTATION_TRANSPARENCY_CLIPBOARD === "1";
 
 /**
+ * Run every keystroke at every site (`ANNOTATION_TRANSPARENCY_FULL=1`), as the scheduled full-suite
+ * workflow does. By default a row runs the {@link isCoreKeystroke | core keystrokes} at every site
+ * the annotations change the tree at ({@link $isTouched}), and every keystroke at a sample of all
+ * its sites, every {@link SAMPLE_STRIDE}th, shifted by the row's index so each row samples
+ * different positions: every view, row and keystroke still runs on every pull request, at fewer
+ * places, for about a third of the full run's time.
+ */
+const FULL = process.env.ANNOTATION_TRANSPARENCY_FULL === "1";
+const SAMPLE_STRIDE = 8;
+
+/** The characters a core keystroke types: plain text, a space (where whitespace display joins
+ * runs) and a backslash (where a marker begins). */
+const CORE_TYPED_NAMES = new Set(["x", " ", "\\"].map((typed) => `type ${JSON.stringify(typed)}`));
+
+/** Whether `keystroke` runs at every touched site even when the row is not run in full: typing
+ * one of {@link CORE_TYPED_NAMES}, Backspace, Delete, Enter, a paste between a carrier's pieces,
+ * and any keystroke in a protected note shell, whose sites are few. */
+function isCoreKeystroke(keystroke: OracleKeystroke, shell: boolean): boolean {
+  return (
+    shell ||
+    CORE_TYPED_NAMES.has(keystroke.name) ||
+    keystroke.name === "Backspace" ||
+    keystroke.name === "Delete" ||
+    ENTER_KEYSTROKES.some((enter) => enter === keystroke) ||
+    PASTE_KEYSTROKES.some((paste) => paste === keystroke)
+  );
+}
+
+/**
  * The bytes a range crossing between content and a carrier is planned to hold, by byte index (the
  * indexing of {@link $byteNodes}): the first and the last. It holds every byte between them too,
  * but for a byte no hold has to cover ({@link $isGapByte}).
@@ -1337,6 +1366,10 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
   const rows = oracleRows(view);
   const listed = readExpectedFailures(listFile);
   const written: ExpectedFailures = {};
+  if (WRITE && !FULL)
+    throw new Error(
+      "ANNOTATION_TRANSPARENCY_WRITE=1 rewrites the list from the cases run, so it needs ANNOTATION_TRANSPARENCY_FULL=1",
+    );
   afterAll(() => {
     if (WRITE) writeFileSync(listFile, `${JSON.stringify(written, null, 2)}\n`);
   });
@@ -1345,6 +1378,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
     it.each(rows)(
       "%s",
       async (row, usj) => {
+        const rowIndex = rows.findIndex(([name]) => name === row);
         const viewOptions = pendingOracleView(view);
         const probe = await mountInView(usj, viewOptions);
         const { plan, loadedOutsideNotes, sites, unrestated } = probe.lexical
@@ -1397,16 +1431,18 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
           siteIndex,
           { index, offset, global: site, label: siteLabel, text, isCrossed, isInsideCarrier },
         ] of sites.entries()) {
+          const isSampled = FULL || (siteIndex + rowIndex) % SAMPLE_STRIDE === 0;
+          if (!isSampled && !touched[siteIndex]) continue;
           const added =
             CLIPBOARD && touched[siteIndex]
               ? clipboardKeystrokes(view, site.shell, siteIndex === firstTouched)
               : [];
-          for (const keystroke of [
+          const ownKeystrokes = [
             ...keystrokesFor(view, site.shell),
             ...ENTER_KEYSTROKES,
             ...(isInsideCarrier ? PASTE_KEYSTROKES : []),
-            ...added,
-          ]) {
+          ].filter((keystroke) => isSampled || isCoreKeystroke(keystroke, site.shell));
+          for (const keystroke of [...ownKeystrokes, ...added]) {
             // After a cut or a copy pasted back the whole paragraph's copy is compared by what it
             // pastes as too; after any other keystroke by its text, as the paste of it after each
             // of them would double the oracle's run.
@@ -1689,7 +1725,16 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
           // eslint-disable-next-line no-console -- ANNOTATION_TRANSPARENCY_ACCOUNTING asks for this output.
           console.info(describeAccounting(row, accounting, true));
         expect(accounting.compared, `no case was compared\n${summary}`).toBeGreaterThan(0);
-        expectMismatchesListed(row, mismatches, listed, written, WRITE, summary);
+        // A case listed as failing that this run did not sample is not "passing": compare only the
+        // listed cases that ran, which a failing one always is by its mismatch.
+        const listedHere = FULL
+          ? listed
+          : {
+              [row]: Object.fromEntries(
+                Object.entries(listed[row] ?? {}).filter(([label]) => mismatches.has(label)),
+              ),
+            };
+        expectMismatchesListed(row, mismatches, listedHere, written, WRITE, summary);
       },
       1_200_000,
     );
