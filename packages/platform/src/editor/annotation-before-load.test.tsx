@@ -1,19 +1,21 @@
 /**
- * An annotation requested while a load is in flight lands on the loaded document.
+ * Annotations requested while a document load is pending land on the loaded document.
  *
  * `LoadStatePlugin` commits USJ from inside a `queueMicrotask`, so a consumer that calls
- * `setAnnotation` right after mount — or right after `setUsj` — runs while the document is
- * still the empty initial state. Applied then, the annotation would be lost one of two ways:
+ * `setAnnotation` right after mount — or right after `setUsj` — runs while the editor still holds
+ * the empty initial document or the outgoing one. Applied then, the annotation would be lost one
+ * of two ways:
  *   a) the range cannot resolve, so `$getRangeFromUsjSelection` returns undefined and the
  *      plugin only logs "Failed to find start or end node of the annotation.";
  *   b) the range does resolve against the outgoing document, and the load's
  *      `editor.setEditorState()` then replaces the whole state, discarding the mark.
  *
- * Neither surfaces to the caller, so the editor defers annotation calls until the load settles.
+ * Neither surfaces to the caller, so the editor defers annotation calls until the load finishes.
  * These tests drive the real Editor through its ref, the way an app does.
  * The gate's own ordering rules are pinned in `use-load-gate.hook.test.ts`.
  */
 import {
+  allRange,
   chapterNumbers,
   createLogMock,
   createLoggerMock,
@@ -29,6 +31,7 @@ import { Usj, USJ_TYPE, USJ_VERSION } from "@eten-tech-foundation/scripture-util
 import { act, render } from "@testing-library/react";
 import { createRef, useEffect, useLayoutEffect, useRef } from "react";
 import { getViewOptions, ViewOptions } from "shared-react";
+import { vi } from "vitest";
 
 const NO_RANGE_LOGGED = "Failed to find start or end node of the annotation.";
 
@@ -107,11 +110,37 @@ describe("annotating before the first content commit", () => {
     expect(markTexts()).toEqual(["earth"]);
   });
 
-  it("keeps a set-then-remove pair behaving exactly as it does with no load in flight", async () => {
-    // The paranext Insert-Comment shape: set then remove in one handler. Both are gated, so the
-    // pair keeps its issue order and the gate changes WHEN it runs, not what it does. (What it
-    // does, either way, is leave the mark: `AnnotationPlugin` resolves a removal through a map
-    // its node-mutation listener fills at commit, which a same-tick set has not reached yet.)
+  it("applies a removal issued after a deferred set but before the load lands", async () => {
+    // Both calls queue behind the load, so they would drain back to back — and `AnnotationPlugin`
+    // resolves a removal through a map its node-mutation listener fills only at commit, so a
+    // removal run in the same tick as its set finds nothing. The queue keeps only the last call
+    // per annotation, so the set is dropped and nothing is left marked. `onRemove` does not fire:
+    // the set never ran, so the host never saw a mark to lose.
+    const logError = createLogMock();
+    const onRemove = vi.fn();
+    const ref = createRef<EditorRef>();
+
+    await act(async () => {
+      render(<Editor ref={ref} defaultUsj={usjGen2} logger={createLoggerMock(logError)} />);
+    });
+
+    await act(async () => {
+      ref.current?.setUsj(usjGen3);
+      ref.current?.setAnnotation(earthRange, "spelling", "a", { onRemove });
+      // A later host message, still before React re-renders for the load.
+      await Promise.resolve();
+      await Promise.resolve();
+      ref.current?.removeAnnotation("spelling", "a");
+    });
+
+    expect(logError).not.toHaveBeenCalled();
+    expect(chapterNumbers()).toEqual(["3"]);
+    expect(markTexts()).toEqual([]);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it("leaves one mark when the same annotation is re-set before the load lands", async () => {
+    // The Find shape: one fixed id re-set as the user steps through results.
     const logError = createLogMock();
     const ref = createRef<EditorRef>();
 
@@ -119,30 +148,23 @@ describe("annotating before the first content commit", () => {
       render(<Editor ref={ref} defaultUsj={usjGen2} logger={createLoggerMock(logError)} />);
     });
 
-    // Nothing loading: both calls run immediately.
-    await act(async () => {
-      ref.current?.setAnnotation(earthRange, "translator-comment", "pending");
-      ref.current?.removeAnnotation("translator-comment", "pending");
-    });
-    const withoutLoadInFlight = markTexts();
-    expect(withoutLoadInFlight).toEqual(["earth"]);
-
-    // Same pair, this time issued in the same tick as a document swap, so both are queued.
     await act(async () => {
       ref.current?.setUsj(usjGen3);
-      ref.current?.setAnnotation(earthRange, "translator-comment", "pending");
-      ref.current?.removeAnnotation("translator-comment", "pending");
+      ref.current?.setAnnotation(earthRange, "find", "current");
+      await Promise.resolve();
+      await Promise.resolve();
+      ref.current?.setAnnotation(allRange, "find", "current");
     });
 
     expect(logError).not.toHaveBeenCalled();
     expect(chapterNumbers()).toEqual(["3"]);
-    expect(markTexts()).toEqual(withoutLoadInFlight);
+    expect(markTexts()).toEqual(["all"]);
   });
 
   it("applies an annotation a host re-requests in its layout effect when it changes the view", async () => {
-    // A view-option change reloads the document, and `LoadStatePlugin` reports that load from a
-    // passive effect. A host's passive effect runs after it, but a host's LAYOUT effect runs before
-    // every passive effect, so only the editor's own layout effect can close the gate in time.
+    // A view-option change reloads the document. A host's layout effect runs before every passive
+    // effect, so the load's start has to be reported in the layout phase too: `LoadStatePlugin`, a
+    // descendant of the host, reports it from its own layout effect, which runs first.
     const logError = createLogMock();
     const formatted = getViewOptions("formatted");
     if (!formatted) throw new Error("Expected formatted view options to exist");
@@ -187,6 +209,93 @@ describe("annotating before the first content commit", () => {
     });
 
     expect(logError).not.toHaveBeenCalled();
+    expect(markTexts()).toEqual(["earth"]);
+  });
+
+  it("keeps deferred annotations of different types that share an id", async () => {
+    // Only a later call for the SAME annotation replaces a deferred one; type and id together name
+    // an annotation.
+    const logError = createLogMock();
+    const ref = createRef<EditorRef>();
+
+    await act(async () => {
+      render(<Editor ref={ref} defaultUsj={usjGen2} logger={createLoggerMock(logError)} />);
+    });
+
+    await act(async () => {
+      ref.current?.setUsj(usjGen3);
+      ref.current?.setAnnotation(earthRange, "spelling", "shared-id");
+      ref.current?.setAnnotation(allRange, "find", "shared-id");
+    });
+
+    expect(logError).not.toHaveBeenCalled();
+    expect(chapterNumbers()).toEqual(["3"]);
+    expect(markTexts()).toEqual(["earth", "all"]);
+  });
+
+  it("reloads on a forced setUsj through an API object from an earlier render", async () => {
+    // The ref's API object is rebuilt every render, so an older one compares the incoming document
+    // against an older `usj`. A forced load must happen anyway: the gate is already closed for it.
+    const logError = createLogMock();
+    const ref = createRef<EditorRef>();
+
+    await act(async () => {
+      render(<Editor ref={ref} defaultUsj={usjGen2} logger={createLoggerMock(logError)} />);
+    });
+    const earlierApi = ref.current;
+
+    await act(async () => {
+      ref.current?.setUsj(usjGen3);
+    });
+    await act(async () => {
+      earlierApi?.setUsj(usjGen3, { force: true });
+    });
+
+    // Nothing is loading now, so this has to land rather than wait for a load that never comes.
+    await act(async () => {
+      ref.current?.setAnnotation(earthRange, "spelling", "after-forced");
+    });
+
+    expect(logError).not.toHaveBeenCalled();
+    expect(chapterNumbers()).toEqual(["3"]);
+    expect(markTexts()).toEqual(["earth"]);
+  });
+
+  it("reloads on an unforced setUsj of the held document through an API object from an earlier render, after an edit", async () => {
+    // The edit makes the document differ from the one re-sent, so the call loads. The earlier
+    // object's own `usj` differs too, while the state already holds this very object, so the
+    // decision to remount the loader cannot rest on either of those.
+    const logError = createLogMock();
+    const ref = createRef<EditorRef>();
+
+    await act(async () => {
+      render(<Editor ref={ref} defaultUsj={usjGen2} logger={createLoggerMock(logError)} />);
+    });
+    const earlierApi = ref.current;
+
+    await act(async () => {
+      ref.current?.setUsj(usjGen3);
+    });
+    // The fixture text has no capital Z, so it marks the edit on screen.
+    await act(async () => {
+      ref.current?.applyUpdate([{ retain: 3 }, { insert: "Z" }], "local");
+    });
+    expect(document.body.textContent).toContain("Z");
+
+    await act(async () => {
+      earlierApi?.setUsj(usjGen3);
+    });
+    // Read from the screen, not `getUsj()`, which reports the re-sent document whether or not it
+    // loaded: the edit is gone only if the load really happened.
+    expect(document.body.textContent).not.toContain("Z");
+
+    // Nothing is loading now, so this has to land rather than wait for a load that never comes.
+    await act(async () => {
+      ref.current?.setAnnotation(earthRange, "spelling", "after-unforced");
+    });
+
+    expect(logError).not.toHaveBeenCalled();
+    expect(chapterNumbers()).toEqual(["3"]);
     expect(markTexts()).toEqual(["earth"]);
   });
 

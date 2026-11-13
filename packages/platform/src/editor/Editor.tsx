@@ -231,6 +231,12 @@ const defaultOptions: EditorOptions = {};
  */
 const commitIgnoredTags = blackListedChangeTags.filter((tag) => tag !== DELTA_CHANGE_TAG);
 
+/** The load gate's key for one annotation, shared by its set and its removal. */
+function annotationQueueKey(type: string, id: string): string {
+  // JSON, not a separator character: a type or id may contain any character.
+  return JSON.stringify([type, id]);
+}
+
 function Placeholder(): ReactElement {
   return <div className="editor-placeholder">Enter some Scripture...</div>;
 }
@@ -478,6 +484,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // equal to that earlier state and suppress the one notification that matters.
   const lastNotifiedUsjRef = useRef<Usj | undefined>(undefined);
   const [usj, setUsj] = useState(defaultUsj);
+  // The document `usj` holds, or is about to hold, read when an API call decides whether a state
+  // update alone will load. The `usj` an API object captured is the one its own render saw, and an
+  // object kept from an earlier render would compare against an outdated document.
+  const requestedUsjRef = useRef(usj);
   const [loadTrigger, setLoadTrigger] = useState(0);
   const [contextMarker, setContextMarker] = useState<string>();
 
@@ -606,17 +616,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   const stableLogger = loggerRef.current;
 
   // Annotations address the loaded document, so they wait for the load in flight.
+  // `LoadStatePlugin` reports each load's start in the layout phase of the commit that renders it,
+  // before a host's own layout effects; `setUsj` closes the gate earlier still, at the call.
   const { handleLoadingChange, noteLoadRequested, runWhenLoaded } = useLoadGate(stableLogger);
-  // `LoadStatePlugin` only reports a load from its own passive effect, and a consumer's LAYOUT
-  // effect runs before every passive effect in the commit — including at mount, which is the first
-  // moment a consumer can touch the ref at all. So close the gate here instead: a change to any
-  // input of that plugin's reload effect means a reload is coming, and this layout effect runs
-  // before the consumer's own. Keep these dependencies a SUBSET of that effect's (`scripture`,
-  // `viewOptions`, `logger`, plus the `key={loadTrigger}` remount below) — anything else would
-  // close the gate for a load that never arrives.
-  useLayoutEffect(() => {
-    noteLoadRequested();
-  }, [loadTrigger, noteLoadRequested, stableLogger, usj, viewOptions]);
 
   // The block verse layout regroups each verse into its own element, splitting paragraphs that span
   // verses. That shape cannot be exported back to USJ, so the layout is read-only by construction
@@ -1210,11 +1212,14 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         // A replaced document invalidates any in-progress declaration: its anchor node key
         // belongs to the outgoing tree, and the surface that declared it is now stale too.
         transientInputRef.current = undefined;
-        // This can happen when using `applyUpdate` since `usj` won't change.
-        const shouldForceReload = deepEqual(usj, incomingUsj);
-        // A load is now certain, but React hasn't re-rendered yet, so neither the gate's layout
-        // effect above nor LoadStatePlugin has seen it. Without this, an annotation set in this
-        // same tick would address the outgoing document and be discarded by the load.
+        // When the state already holds this document — after `applyUpdate` or a user edit has
+        // moved the content on, or on a forced reload — setting it again renders nothing, so the
+        // loader is remounted instead.
+        const shouldForceReload = deepEqual(requestedUsjRef.current, incomingUsj);
+        requestedUsjRef.current = incomingUsj;
+        // A load is now certain, but React hasn't re-rendered yet, so LoadStatePlugin hasn't
+        // reported it. Without this, an annotation set in this same tick would address the
+        // outgoing document and be discarded by the load.
         noteLoadRequested();
         setUsj(incomingUsj);
         if (shouldForceReload) setLoadTrigger((prev) => prev + 1);
@@ -1342,38 +1347,45 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       const hostText = (text: string) => toUsfmNbspSpelling(text, viewOptions);
       // The settled-to-live translation reads the document too, so it waits with the rest: run
       // early, it would resolve against the outgoing document.
-      runWhenLoaded(() => {
-        const live = liveSelectionFromSettled(selection);
-        if (!live) {
-          stableLogger?.warn(
-            `setAnnotation refused for ${type} "${id}": the range could not be resolved against ` +
-              "the document currently being edited",
-          );
-          return;
-        }
+      runWhenLoaded(
+        () => {
+          const live = liveSelectionFromSettled(selection);
+          if (!live) {
+            stableLogger?.warn(
+              `setAnnotation refused for ${type} "${id}": the range could not be resolved against ` +
+                "the document currently being edited",
+            );
+            return;
+          }
 
-        annotationRef.current?.setAnnotation(
-          live,
-          externalTypedMarkType(type),
-          id,
-          onClick &&
-            ((event, markType, markId, text) => onClick(event, markType, markId, hostText(text))),
-          onRemove &&
-            ((markType, markId, cause, text) => onRemove(markType, markId, cause, hostText(text))),
-          onMouseEnter &&
-            ((event, markType, markId, text) =>
-              onMouseEnter(event, markType, markId, hostText(text))),
-          onMouseLeave &&
-            ((event, markType, markId, text) =>
-              onMouseLeave(event, markType, markId, hostText(text))),
-        );
-      });
+          annotationRef.current?.setAnnotation(
+            live,
+            externalTypedMarkType(type),
+            id,
+            onClick &&
+              ((event, markType, markId, text) => onClick(event, markType, markId, hostText(text))),
+            onRemove &&
+              ((markType, markId, cause, text) =>
+                onRemove(markType, markId, cause, hostText(text))),
+            onMouseEnter &&
+              ((event, markType, markId, text) =>
+                onMouseEnter(event, markType, markId, hostText(text))),
+            onMouseLeave &&
+              ((event, markType, markId, text) =>
+                onMouseLeave(event, markType, markId, hostText(text))),
+          );
+        },
+        annotationQueueKey(type, id),
+      );
     },
     removeAnnotation(type, id) {
       // Gated for the same reason `setAnnotation` is, and so the pair keeps its issue order: an
       // un-gated removal alongside a queued set would run against the outgoing document while its
-      // set ran against the loaded one.
-      runWhenLoaded(() => annotationRef.current?.removeAnnotation(externalTypedMarkType(type), id));
+      // set ran against the loaded one. Shares the set's key, so a removal replaces a queued set.
+      runWhenLoaded(
+        () => annotationRef.current?.removeAnnotation(externalTypedMarkType(type), id),
+        annotationQueueKey(type, id),
+      );
     },
     getAnnotationRanges(type, id) {
       return annotationRef.current?.getAnnotationRanges(externalTypedMarkType(type), id) ?? [];

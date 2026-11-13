@@ -372,14 +372,16 @@ export interface EditorRef {
   /**
    * Set an ephemeral annotation with optional event callbacks.
    *
-   * Deferred while a load is in flight — a `setUsj`, or a change to `options.view` or `logger` —
-   * because the load replaces the whole document and would discard the mark. It then runs at the
-   * first moment nothing is loading, against the document `getUsj()` already returned for it.
-   * `setAnnotation` and {@link EditorRef.removeAnnotation} keep their order with each other, but
-   * the rest of this API is not deferred, so during a load an annotation call is applied after any
-   * other ref call made alongside it. An error from a deferred call (for example, a reserved
-   * annotation type) is reported through the logger rather than thrown, since its caller has
-   * already returned.
+   * Deferred while a load is pending — the load at mount, a `setUsj`, or a re-render with a new
+   * `options.view` or `logger` — because the load replaces the whole document and would discard
+   * the mark. A call made after a host changes `options.view` but before the editor re-renders is
+   * not deferred, and that reload discards it. `setAnnotation` and
+   * {@link EditorRef.removeAnnotation} keep their order with each other; other ref calls are not
+   * deferred, so during a load they apply before annotation calls made alongside them. While
+   * deferred, a later set or removal of the same annotation replaces this call, since the load
+   * would drop its effect anyway; the replaced call never runs, so its `onRemove` is not called.
+   * An error from a deferred call is logged rather than thrown, since its caller has already
+   * returned.
    *
    * @remarks
    * **Settled**: positions and indexes refer to the document `getUsj()` returns at that moment —
@@ -494,8 +496,9 @@ export interface EditorRef {
   ): void;
   /**
    * Remove an ephemeral annotation. Removes it from text and display bytes alike. Deferred
-   * alongside {@link EditorRef.setAnnotation} while a load is in flight, and through the same
-   * queue, so the two keep the order they were issued in.
+   * alongside {@link EditorRef.setAnnotation} while a load is pending, and through the same
+   * queue, so the two keep the order they were issued in; a removal replaces a set of the same
+   * annotation still waiting there. That set never runs, so its `onRemove` is not called.
    * @param type - Type of the annotation.
    * @param id - ID of the annotation.
    */

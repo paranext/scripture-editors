@@ -1,13 +1,6 @@
 /**
- * An external USJ mutation (PDP echo / chapter reload) is a whole-state `setEditorState` replace
- * whose parsed state carries a null selection. When the editor being replaced does NOT have DOM
- * focus (e.g. the user is typing in the footnote-editor POPOVER while the parent editor's PDP echo
- * lands ~150-250ms after an edit), reconciling that null selection writes to the SHARED document
- * selection anyway — clearing the popover's caret and dragging focus back into the parent editor
- * (observed live: popover focus stolen, Enter landing nowhere; a focusin trace shows the main
- * editor stealing focus at ~t+250ms). An editor without focus has no claim on the DOM selection, so
- * the external apply must skip DOM-selection reconciliation entirely (Lexical's
- * SKIP_DOM_SELECTION_TAG). An editor WITH focus keeps the current behavior.
+ * `LoadStatePlugin`'s loading behavior: DOM-selection containment when an external load replaces
+ * the document, the `onLoadingChange` contract, and when a load's start is reported.
  */
 
 import { LoadStatePlugin } from "./LoadStatePlugin";
@@ -18,7 +11,7 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { act, render } from "@testing-library/react";
 import { $getRoot, LexicalEditor, SerializedEditorState, SKIP_DOM_SELECTION_TAG } from "lexical";
-import { ReactElement, useEffect } from "react";
+import { ReactElement, StrictMode, Suspense, useEffect, useLayoutEffect } from "react";
 import { EditorAdaptor, EXTERNAL_USJ_MUTATION_TAG } from "shared";
 import { vi } from "vitest";
 
@@ -111,6 +104,16 @@ function recordExternalCommitTags(editor: LexicalEditor): { commits: string[][] 
 }
 
 describe("LoadStatePlugin external-mutation DOM-selection containment", () => {
+  // An external USJ mutation (PDP echo / chapter reload) is a whole-state `setEditorState` replace
+  // whose parsed state carries a null selection. When the editor being replaced does NOT have DOM
+  // focus (e.g. the user is typing in the footnote-editor POPOVER while the parent editor's PDP
+  // echo lands ~150-250ms after an edit), reconciling that null selection writes to the SHARED
+  // document selection anyway — clearing the popover's caret and dragging focus back into the
+  // parent editor (observed live: popover focus stolen, Enter landing nowhere; a focusin trace
+  // shows the main editor stealing focus at ~t+250ms). An editor without focus has no claim on the
+  // DOM selection, so the external apply must skip DOM-selection reconciliation entirely (Lexical's
+  // SKIP_DOM_SELECTION_TAG). An editor WITH focus keeps the current behavior.
+
   it("skips DOM-selection reconciliation when the editor does not have focus", async () => {
     const { editor, setScripture } = await testEnvironment();
     const record = recordExternalCommitTags(editor);
@@ -139,14 +142,6 @@ describe("LoadStatePlugin external-mutation DOM-selection containment", () => {
   });
 });
 
-/**
- * The `onLoadingChange` contract, which callers gate document-addressing work on (see the platform
- * editor's load gate): calls are balanced, and when `false` is reported the document this
- * load leaves behind is already live — the loaded one, or the previous one when the load was
- * skipped or failed. A settle that lands before the commit is a silent regression for every such
- * caller, so it is pinned here rather than left to Lexical's internal scheduling.
- */
-
 /** `mockAdaptor` with a spy, for suites that count how many times the document was loaded. */
 function createCountingAdaptor(): EditorAdaptor & {
   serializeEditorState: ReturnType<typeof vi.fn>;
@@ -167,7 +162,7 @@ function createLogger() {
 
 /**
  * The editor the reporting environment below is driving. Module scope, not a return value: the
- * first settle is reported from inside `loadReportingEnvironment`, before it has returned
+ * first finish is reported from inside `loadReportingEnvironment`, before it has returned
  * anything a test could read.
  */
 let reportingEditor: LexicalEditor | undefined;
@@ -187,6 +182,12 @@ async function loadReportingEnvironment(props: {
   editorAdaptor: EditorAdaptor;
   onLoadingChange?: (isLoading: boolean) => void;
   logger?: ReturnType<typeof createLogger>;
+  /** Run from the composer's parent's layout effect, keyed on `scripture`. */
+  onParentLayoutEffect?: () => void;
+  /** Render under `StrictMode`. */
+  isStrict?: boolean;
+  /** While set, a sibling of the plugin suspends on it, hiding the plugin under a Suspense boundary. */
+  suspendOn?: Promise<void>;
 }) {
   reportingEditor = undefined;
 
@@ -198,68 +199,87 @@ async function loadReportingEnvironment(props: {
     return null;
   }
 
+  function Suspender({ on }: { on?: Promise<void> }): null {
+    if (on) throw on;
+    return null;
+  }
+
   function App(appProps: typeof props): ReactElement {
+    const { onParentLayoutEffect, scripture } = appProps;
+    useLayoutEffect(() => {
+      onParentLayoutEffect?.();
+    }, [onParentLayoutEffect, scripture]);
     return (
-      <LexicalComposer
-        initialConfig={{
-          namespace: "TestEditor",
-          nodes: [],
-          onError: (error) => {
-            throw error;
-          },
-          theme: {},
-        }}
-      >
-        <GrabEditor />
-        <RichTextPlugin
-          contentEditable={<ContentEditable />}
-          placeholder={null}
-          ErrorBoundary={LexicalErrorBoundary}
-        />
-        <LoadStatePlugin
-          scripture={appProps.scripture}
-          editorAdaptor={appProps.editorAdaptor}
-          onLoadingChange={appProps.onLoadingChange}
-          logger={appProps.logger}
-        />
-      </LexicalComposer>
+      <Suspense fallback={null}>
+        <LexicalComposer
+          initialConfig={{
+            namespace: "TestEditor",
+            nodes: [],
+            onError: (error) => {
+              throw error;
+            },
+            theme: {},
+          }}
+        >
+          <GrabEditor />
+          <RichTextPlugin
+            contentEditable={<ContentEditable />}
+            placeholder={null}
+            ErrorBoundary={LexicalErrorBoundary}
+          />
+          <LoadStatePlugin
+            scripture={scripture}
+            editorAdaptor={appProps.editorAdaptor}
+            onLoadingChange={appProps.onLoadingChange}
+            logger={appProps.logger}
+          />
+          <Suspender on={appProps.suspendOn} />
+        </LexicalComposer>
+      </Suspense>
     );
   }
 
+  const wrap = (ui: ReactElement) => (props.isStrict ? <StrictMode>{ui}</StrictMode> : ui);
   let rerender: (ui: ReactElement) => void = () => undefined;
   await act(async () => {
-    ({ rerender } = render(<App {...props} />));
+    ({ rerender } = render(wrap(<App {...props} />)));
   });
 
   return {
     reload: async (nextProps: Partial<typeof props>) =>
       act(async () => {
-        rerender(<App {...props} {...nextProps} />);
+        rerender(wrap(<App {...props} {...nextProps} />));
       }),
   };
 }
 
 describe("LoadStatePlugin onLoadingChange", () => {
-  it("reports the load balanced, and the loaded document is live at the settle", async () => {
+  // The contract callers gate document-addressing work on (see the platform editor's load gate):
+  // calls are balanced, and when `false` is reported the document this load leaves behind is
+  // already live — the loaded one, or the previous one when the load was skipped or failed. A
+  // finish reported before the commit is a silent regression for every such caller, so it is pinned
+  // here rather than left to Lexical's internal scheduling.
+
+  it("reports the load balanced, and the loaded document is live at the finish", async () => {
     const calls: boolean[] = [];
-    const settledWith: string[] = [];
+    const finishedWith: string[] = [];
     await loadReportingEnvironment({
       scripture: "first",
       editorAdaptor: createCountingAdaptor(),
       onLoadingChange: (isLoading) => {
         calls.push(isLoading);
-        if (!isLoading) settledWith.push(liveText());
+        if (!isLoading) finishedWith.push(liveText());
       },
     });
 
     expect(calls).toEqual([true, false]);
-    expect(settledWith).toEqual(["first"]);
+    expect(finishedWith).toEqual(["first"]);
   });
 
   it("reports each reload the same way, with the new document live", async () => {
-    const settledWith: string[] = [];
+    const finishedWith: string[] = [];
     const onLoadingChange = (isLoading: boolean) => {
-      if (!isLoading) settledWith.push(liveText());
+      if (!isLoading) finishedWith.push(liveText());
     };
 
     const environment = await loadReportingEnvironment({
@@ -269,18 +289,18 @@ describe("LoadStatePlugin onLoadingChange", () => {
     });
     await environment.reload({ scripture: "second" });
 
-    expect(settledWith).toEqual(["first", "second"]);
+    expect(finishedWith).toEqual(["first", "second"]);
     expect(liveText()).toBe("second");
   });
 
-  it("settles with the previous document live when there is nothing to serialize", async () => {
+  it("finishes with the previous document live when there is nothing to serialize", async () => {
     const calls: boolean[] = [];
-    const settledWith: string[] = [];
+    const finishedWith: string[] = [];
     const logger = createLogger();
     const editorAdaptor = createCountingAdaptor();
     const onLoadingChange = (isLoading: boolean) => {
       calls.push(isLoading);
-      if (!isLoading) settledWith.push(liveText());
+      if (!isLoading) finishedWith.push(liveText());
     };
 
     const environment = await loadReportingEnvironment({
@@ -295,13 +315,13 @@ describe("LoadStatePlugin onLoadingChange", () => {
     await environment.reload({ scripture: "skipped" });
 
     expect(calls).toEqual([true, false, true, false]);
-    // The invariant the prop documents: a settle means the document is stable, and a skipped load
+    // The invariant the prop documents: a finish means the document is stable, and a skipped load
     // leaves the previous one in place.
-    expect(settledWith).toEqual(["first", "first"]);
+    expect(finishedWith).toEqual(["first", "first"]);
     expect(logger.warn).toHaveBeenCalled();
   });
 
-  it("settles when the adaptor throws", async () => {
+  it("finishes when the adaptor throws", async () => {
     const calls: boolean[] = [];
     const logger = createLogger();
 
@@ -348,15 +368,15 @@ describe("LoadStatePlugin onLoadingChange", () => {
       scripture: "first",
       editorAdaptor: createCountingAdaptor(),
       onLoadingChange: (isLoading) => {
-        if (!isLoading) throw new Error("consumer exploded on settle");
+        if (!isLoading) throw new Error("consumer exploded on finish");
       },
       logger,
     });
 
-    // The settle is reported from a microtask, so an escaping error would be an unhandled one.
+    // The finish is reported from a microtask, so an escaping error would be an unhandled one.
     expect(liveText()).toBe("first");
     expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining("consumer exploded on settle"),
+      expect.stringContaining("consumer exploded on finish"),
     );
   });
 
@@ -385,5 +405,89 @@ describe("LoadStatePlugin onLoadingChange", () => {
 
     expect(editorAdaptor.serializeEditorState).toHaveBeenCalledTimes(2);
     expect(laterCalls).toEqual([true, false]);
+  });
+});
+
+describe("LoadStatePlugin start report timing", () => {
+  it("reports a load starting before any ancestor's layout effect in the same commit", async () => {
+    // A host can touch the editor from its own layout effect, which runs after the plugin's layout
+    // effects but before every passive effect. Reporting the start any later leaves a window in
+    // which work aimed at the incoming document runs against the outgoing one.
+    const calls: boolean[] = [];
+    const seenByParentLayoutEffect: boolean[][] = [];
+    const environment = await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor: createCountingAdaptor(),
+      onLoadingChange: (isLoading) => calls.push(isLoading),
+      onParentLayoutEffect: () => seenByParentLayoutEffect.push([...calls]),
+    });
+    await environment.reload({ scripture: "second" });
+
+    expect(seenByParentLayoutEffect).toEqual([[true], [true, false, true]]);
+    expect(calls).toEqual([true, false, true, false]);
+  });
+
+  it("stays balanced under StrictMode's double-invoked effects", async () => {
+    const calls: boolean[] = [];
+    await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor: createCountingAdaptor(),
+      onLoadingChange: (isLoading) => calls.push(isLoading),
+      isStrict: true,
+    });
+
+    expect(calls.filter(Boolean)).toHaveLength(calls.filter((isLoading) => !isLoading).length);
+    expect(calls.at(-1)).toBe(false);
+    expect(liveText()).toBe("first");
+  });
+
+  it("does not report a load when Suspense hides and re-shows the plugin", async () => {
+    // Re-showing re-runs layout effects but not passive ones, so a start reported from a layout
+    // effect would have no load, and no finish, to balance it.
+    const calls: boolean[] = [];
+    const onLoadingChange = (isLoading: boolean) => calls.push(isLoading);
+    const editorAdaptor = createCountingAdaptor();
+    const environment = await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor,
+      onLoadingChange,
+    });
+
+    let resume: () => void = () => undefined;
+    const suspended = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    await environment.reload({ suspendOn: suspended });
+    resume();
+    await environment.reload({ suspendOn: undefined });
+
+    expect(calls).toEqual([true, false]);
+    expect(editorAdaptor.serializeEditorState).toHaveBeenCalledTimes(1);
+    expect(liveText()).toBe("first");
+  });
+
+  it("reports the start in the layout phase when Suspense re-shows the plugin with new inputs", async () => {
+    // The Suspense guard skips only an unchanged re-show. New inputs mean a real load, whose start
+    // must still come in the layout phase rather than fall through to the load effect's own report.
+    const calls: boolean[] = [];
+    const seenByParentLayoutEffect: boolean[][] = [];
+    const environment = await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor: createCountingAdaptor(),
+      onLoadingChange: (isLoading) => calls.push(isLoading),
+      onParentLayoutEffect: () => seenByParentLayoutEffect.push([...calls]),
+    });
+
+    let resume: () => void = () => undefined;
+    const suspended = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    await environment.reload({ suspendOn: suspended });
+    resume();
+    await environment.reload({ suspendOn: undefined, scripture: "second" });
+
+    expect(seenByParentLayoutEffect.at(-1)).toEqual([true, false, true]);
+    expect(calls).toEqual([true, false, true, false]);
+    expect(liveText()).toBe("second");
   });
 });

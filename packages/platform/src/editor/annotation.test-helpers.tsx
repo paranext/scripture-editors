@@ -50,8 +50,8 @@ export const earthRange: AnnotationRange = {
   end: { jsonPath, offset: earthStart + "earth".length },
 };
 
-// Used to pin the original defect's step 5: after the rewrap, every reported selection in that
-// paragraph (not just the annotated range itself) must still resolve to correct USJ coordinates.
+// Used by the rewrap suite to check that every selection reported in that paragraph, not just the
+// annotated range, still resolves to correct USJ coordinates.
 const allStart = v1Text.indexOf("all");
 export const allRange: AnnotationRange = {
   start: { jsonPath, offset: allStart },
