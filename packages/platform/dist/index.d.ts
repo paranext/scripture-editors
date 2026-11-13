@@ -2101,7 +2101,10 @@ export declare interface StateChangeSnapshot {
   canUndo: boolean;
   /** Can redo the last undone change. */
   canRedo: boolean;
-  /** The block marker that the current selection is contained in. A block is paragraph-like. */
+  /**
+   * The block marker that the current selection is contained in. A block is paragraph-like. `p`
+   * for text outside any paragraph marker (an implied paragraph).
+   */
   blockMarker: string | undefined;
   /** The actual marker of the current selection. */
   contextMarker: string | undefined;

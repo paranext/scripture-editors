@@ -14,7 +14,7 @@ import {
   $getCommonAncestorCompatible,
   $getSelectedParaMarkerPara,
   $isBookNode,
-  $isParaNode,
+  $isSomeParaNode,
   $isImmutableChapterNode,
   $isVerseBlockNode,
 } from "shared";
@@ -29,7 +29,10 @@ export interface StateChangeSnapshot {
   canUndo: boolean;
   /** Can redo the last undone change. */
   canRedo: boolean;
-  /** The block marker that the current selection is contained in. A block is paragraph-like. */
+  /**
+   * The block marker that the current selection is contained in. A block is paragraph-like. `p`
+   * for text outside any paragraph marker (an implied paragraph).
+   */
   blockMarker: string | undefined;
   /** The actual marker of the current selection. */
   contextMarker: string | undefined;
@@ -89,10 +92,14 @@ export function StateChangePlugin({ onStateChange }: { onStateChange?: OnStateCh
 
       // In the block verse layout the top-level element is the verse block, which carries no
       // marker of its own. The block marker the host wants is still the paragraph inside it that
-      // holds the caret, so resolve through the block. `$isParaNode`, not `$isSomeParaNode`: an
-      // implied paragraph has no marker to report, and the reporting guard below is the same
-      // predicate - resolving to a node that guard then rejects would emit no state change at all.
-      if ($isVerseBlockNode(node)) node = $findMatchingParent(anchorNode, $isParaNode) ?? node;
+      // holds the caret, so resolve through the block.
+      //
+      // An implied paragraph (text outside any paragraph marker) counts as a paragraph here and in
+      // the reporting guard below, and reports the default paragraph marker. Hosts scope their
+      // character-marker menus by `blockMarker`, so a block that reports nothing leaves them scoped
+      // to whichever block they last heard about. Keep both sites on the same predicate: resolving
+      // to a node the guard then rejects would emit no state change at all.
+      if ($isVerseBlockNode(node)) node = $findMatchingParent(anchorNode, $isSomeParaNode) ?? node;
 
       const nodeKey = node.getKey();
       const elementDOM = activeEditor.getElementByKey(nodeKey);
@@ -104,7 +111,7 @@ export function StateChangePlugin({ onStateChange }: { onStateChange?: OnStateCh
 
       if (
         elementDOM !== null &&
-        ($isParaNode(node) || $isBookNode(node) || $isImmutableChapterNode(node))
+        ($isSomeParaNode(node) || $isBookNode(node) || $isImmutableChapterNode(node))
       ) {
         blockMarkerRef.current = node.getMarker();
         contextMarkerRef.current = contextMarker;
