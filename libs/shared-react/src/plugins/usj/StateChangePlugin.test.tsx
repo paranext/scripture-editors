@@ -6,8 +6,11 @@ import { StateChangePlugin, StateChangeSnapshot } from "./StateChangePlugin";
 import { $createTextNode, $getRoot, LexicalEditor, LexicalNode } from "lexical";
 import { describe, expect, it, vi } from "vitest";
 import {
+  $createBookNode,
+  $createCharNode,
   $createGutterMarkerNode,
   $createImmutableChapterNode,
+  $createImpliedParaNode,
   $createParaNode,
   $createVerseBlockNode,
   $isParaNode,
@@ -17,12 +20,17 @@ import {
   NBSP,
 } from "shared";
 
-/** The paragraph marker the plugin most recently reported, or `undefined` if it never fired. */
-function lastBlockMarker(onStateChange: ReturnType<typeof vi.fn>): string | undefined {
+/** The snapshot the plugin most recently reported, or `undefined` if it never fired. */
+function lastSnapshot(onStateChange: ReturnType<typeof vi.fn>): StateChangeSnapshot | undefined {
   const { calls } = onStateChange.mock;
   if (calls.length === 0) return undefined;
 
-  return (calls[calls.length - 1][0] as StateChangeSnapshot).blockMarker;
+  return calls[calls.length - 1][0] as StateChangeSnapshot;
+}
+
+/** The paragraph marker the plugin most recently reported, or `undefined` if it never fired. */
+function lastBlockMarker(onStateChange: ReturnType<typeof vi.fn>): string | undefined {
+  return lastSnapshot(onStateChange)?.blockMarker;
 }
 
 /** Puts the caret in the chosen node and returns the marker the plugin reported for it. */
@@ -123,6 +131,97 @@ describe("StateChangePlugin block marker", () => {
 
       return para.getLastChild();
     });
+
+    expect(blockMarker).toBe("p");
+  });
+});
+
+// Verses outside any paragraph marker sit in an implied paragraph. Hosts scope their
+// character-marker menus by the reported block marker, so an implied paragraph must report one -
+// the default paragraph marker - or the host stays on whichever block it last heard about.
+describe("StateChangePlugin in an implied paragraph", () => {
+  it("reports the default paragraph marker for a caret in an implied paragraph", async () => {
+    const onStateChange = vi.fn();
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          $createImpliedParaNode().append(
+            $createImmutableVerseNode("1"),
+            $createTextNode("this has text"),
+          ),
+        );
+      },
+      <StateChangePlugin onStateChange={onStateChange} />,
+    );
+
+    const blockMarker = reportedBlockMarkerAfterSelecting(editor, onStateChange, () =>
+      $getRoot().getLastDescendant(),
+    );
+
+    expect(blockMarker).toBe("p");
+  });
+
+  it("replaces the previous block's marker when the caret moves into an implied paragraph", async () => {
+    const onStateChange = vi.fn();
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append(
+          $createBookNode("JDT"),
+          $createImmutableChapterNode("1"),
+          $createImpliedParaNode().append(
+            $createImmutableVerseNode("1"),
+            $createTextNode("this has text"),
+          ),
+        );
+      },
+      <StateChangePlugin onStateChange={onStateChange} />,
+    );
+    const bookLineMarker = reportedBlockMarkerAfterSelecting(editor, onStateChange, () =>
+      $getRoot().getFirstChild(),
+    );
+
+    const blockMarker = reportedBlockMarkerAfterSelecting(editor, onStateChange, () =>
+      $getRoot().getLastDescendant(),
+    );
+
+    expect(bookLineMarker).toBe("id");
+    expect(blockMarker).toBe("p");
+  });
+
+  it("reports a character marker inside an implied paragraph as the context marker", async () => {
+    const onStateChange = vi.fn();
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          $createImpliedParaNode().append(
+            $createImmutableVerseNode("1"),
+            $createTextNode("the "),
+            $createCharNode("nd").append($createTextNode("Lord")),
+          ),
+        );
+      },
+      <StateChangePlugin onStateChange={onStateChange} />,
+    );
+
+    reportedBlockMarkerAfterSelecting(editor, onStateChange, () => $getRoot().getLastDescendant());
+
+    expect(lastSnapshot(onStateChange)).toMatchObject({ blockMarker: "p", contextMarker: "nd" });
+  });
+
+  it("reports the default paragraph marker in an empty document's implied paragraph", async () => {
+    const onStateChange = vi.fn();
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append($createImpliedParaNode());
+      },
+      <StateChangePlugin onStateChange={onStateChange} />,
+    );
+
+    const blockMarker = reportedBlockMarkerAfterSelecting(editor, onStateChange, () =>
+      $getRoot().getFirstChild(),
+    );
 
     expect(blockMarker).toBe("p");
   });
