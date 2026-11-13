@@ -14,6 +14,7 @@ import {
   $createParaNode,
   $createVerseBlockNode,
   $isParaNode,
+  $isSomeParaNode,
   $isVerseBlockNode,
   $selectParaMarker,
   ImmutableTypedTextNode,
@@ -48,12 +49,15 @@ function reportedBlockMarkerAfterSelecting(
   return lastBlockMarker(onStateChange);
 }
 
-/** The last text of the nth paragraph inside the verse block at `blockIndex` among root children. */
+/**
+ * The last text of the nth paragraph (real or implied) inside the verse block at `blockIndex` among
+ * root children.
+ */
 function $textInBlockPara(blockIndex: number, paraIndex: number): LexicalNode | null {
   const verseBlock = $getRoot().getChildren()[blockIndex];
   if (!$isVerseBlockNode(verseBlock)) throw new Error("expected a verse block");
   const para = verseBlock.getChildren()[paraIndex];
-  if (!$isParaNode(para)) throw new Error("expected a para");
+  if (!$isSomeParaNode(para)) throw new Error("expected a para");
 
   return para.getLastChild();
 }
@@ -208,6 +212,34 @@ describe("StateChangePlugin in an implied paragraph", () => {
     reportedBlockMarkerAfterSelecting(editor, onStateChange, () => $getRoot().getLastDescendant());
 
     expect(lastSnapshot(onStateChange)).toMatchObject({ blockMarker: "p", contextMarker: "nd" });
+  });
+
+  // In the block verse layout the caret's top-level element is the verse block, so the plugin
+  // resolves through it to the paragraph holding the caret. That resolution and the reporting guard
+  // must accept the same nodes, or an implied paragraph inside a verse block reports nothing.
+  it("reports the default paragraph marker for an implied paragraph inside a verse block", async () => {
+    const onStateChange = vi.fn();
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          $createVerseBlockNode("1").append(
+            $createImpliedParaNode().append(
+              $createImmutableVerseNode("1"),
+              $createTextNode("this has text"),
+            ),
+          ),
+        );
+      },
+      <StateChangePlugin onStateChange={onStateChange} />,
+      usjBlockVerseNodes,
+    );
+
+    const blockMarker = reportedBlockMarkerAfterSelecting(editor, onStateChange, () =>
+      $textInBlockPara(1, 0),
+    );
+
+    expect(blockMarker).toBe("p");
   });
 
   it("reports the default paragraph marker in an empty document's implied paragraph", async () => {
