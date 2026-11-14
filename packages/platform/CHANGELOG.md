@@ -297,6 +297,11 @@ refused. The public surface grew substantially; nothing was removed.
 - `EditorRef.formatPara` with a selection from the `\id` line into verses outside any paragraph
   marker now retags those verses too. It used to split the `\id` line and leave the verses with no
   paragraph marker.
+- `EditorRef.setAnnotation` and `removeAnnotation` no longer drop an annotation requested while a
+  document load is pending — at mount, after `setUsj`, or once the editor re-renders with a new
+  `options.view` or `logger`. Both wait until the load finishes, keep their order with each other,
+  and run after any other ref call made alongside them; only the last of several calls for one
+  annotation runs.
 - Undoing an edit that restores a char span's separator (its no-break space after the glyph) sends
   the separator to the host as U+00A0, not a space, so the span gains no leading content space.
 - A delta applied in Standard view places the ops after an inserted char span correctly. An insert

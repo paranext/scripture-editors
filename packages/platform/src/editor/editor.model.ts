@@ -372,6 +372,17 @@ export interface EditorRef {
   /**
    * Set an ephemeral annotation with optional event callbacks.
    *
+   * Deferred while a load is pending — the load at mount, a `setUsj`, or a re-render with a new
+   * `options.view` or `logger` — because the load replaces the whole document and would discard
+   * the mark. A call made after a host changes `options.view` but before the editor re-renders is
+   * not deferred, and that reload discards it. `setAnnotation` and
+   * {@link EditorRef.removeAnnotation} keep their order with each other; other ref calls are not
+   * deferred, so during a load they apply before annotation calls made alongside them. While
+   * deferred, a later set or removal of the same annotation replaces this call, since the load
+   * would drop its effect anyway; the replaced call never runs, so its `onRemove` is not called.
+   * An error from a deferred call is logged rather than thrown, since its caller has already
+   * returned.
+   *
    * @remarks
    * **Settled**: positions and indexes refer to the document `getUsj()` returns at that moment —
    * pending marker edits count as already settled. See {@link EditorRef.getSelection} for the
@@ -484,7 +495,10 @@ export interface EditorRef {
     onRemove?: TypedMarkOnRemove,
   ): void;
   /**
-   * Remove an ephemeral annotation. Removes it from text and display bytes alike.
+   * Remove an ephemeral annotation. Removes it from text and display bytes alike. Deferred
+   * alongside {@link EditorRef.setAnnotation} while a load is pending, and through the same
+   * queue, so the two keep the order they were issued in; a removal replaces a set of the same
+   * annotation still waiting there. That set never runs, so its `onRemove` is not called.
    * @param type - Type of the annotation.
    * @param id - ID of the annotation.
    */
