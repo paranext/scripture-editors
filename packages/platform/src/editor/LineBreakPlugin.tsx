@@ -240,7 +240,7 @@ function replacementText(payload: InputEvent): string | undefined {
  * A line break (`LineBreakNode`) has no USFM representation: no paragraph saves one, so the text
  * either side of it saved run together. USFM's own `//` is an optional break a typesetter may use,
  * not a line break, and the views that hide markers cannot store it. So the editor holds no line
- * break of the user's:
+ * break of the user's (in a view with spacing; one without keeps its own, below):
  *
  * - **Shift+Enter is Enter**, as in Paratext 9, whose editor has no Shift+Enter of its own. A line
  *   break requested any way (`INSERT_LINE_BREAK_COMMAND`: Shift+Enter, macOS Ctrl+O, a `beforeinput`
@@ -267,9 +267,10 @@ function replacementText(payload: InputEvent): string | undefined {
  * becomes a space, which keeps the text in the note or span at the caret, but any other line break,
  * and one written in inserted text, stays a line break.
  *
- * Registered at `COMMAND_PRIORITY_HIGH`, below the guards that refuse or ask about a line break at
- * `CRITICAL` (inside a note, over hidden content, the note shell), which treat one as they treat a
- * paragraph break.
+ * `INSERT_LINE_BREAK_COMMAND` is handled at `COMMAND_PRIORITY_HIGH`, below the guards that refuse or
+ * ask about a line break at `CRITICAL` (inside a note, over hidden content, the note shell), which
+ * treat one as they treat a paragraph break. The handlers for a paste's nodes and for inserted text
+ * are `CRITICAL`, so they see the text before any other handler of those commands.
  *
  * @param viewOptions - The view's options: whether it has spacing.
  * @param structureProtectionMode - The editor's structure protection; `"protected"` makes a line
