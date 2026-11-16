@@ -308,40 +308,27 @@ export function $removeTextKeepingBookAndChapterLines(selection: RangeSelection)
     selection.removeText();
     return;
   }
-  const [start, end] = (
-    selection.isBackward()
-      ? [selection.focus, selection.anchor]
-      : [selection.anchor, selection.focus]
-  ).map(snapshotOf);
-  const runs: LexicalNode[][] = [];
-  let run: LexicalNode[] = [];
-  for (const line of lines)
-    if ($isBookOrChapterLine(line)) {
-      if (run.length > 0) runs.push(run);
-      run = [];
-    } else run.push(line);
-  if (run.length > 0) runs.push(run);
+  const runs = $runsBetweenBookAndChapterLines(selection, lines);
   const lastChapterAt = lines.findLastIndex($isSomeChapterNode);
   const host =
     lastChapterAt < 0
       ? runs.at(-1)
-      : runs.find((lineRun) => lineRun[0] === lines[lastChapterAt + 1]);
+      : runs.find(({ lines: lineRun }) => lineRun[0] === lines[lastChapterAt + 1]);
 
   let caret: Snapshot | undefined;
   // Last run first, so the lines and points of the runs before it stay as they were.
-  for (const lineRun of [...runs].reverse()) {
+  for (const lineRunAndRange of [...runs].reverse()) {
+    const { lines: lineRun, from, to } = lineRunAndRange;
     const firstLine = lineRun[0];
     const lastLine = lineRun[lineRun.length - 1];
-    const from = firstLine === lines[0] ? start : $lineStart(firstLine);
-    const to = lastLine === lines[lines.length - 1] ? end : $lineEnd(lastLine);
-    if (lineRun !== host && $holdsNoTextOutside(from, firstLine, to, lastLine)) {
+    if (lineRunAndRange !== host && $holdsNoTextOutside(from, firstLine, to, lastLine)) {
       lineRun.forEach((line) => line.remove());
       continue;
     }
     selection.anchor.set(from.key, from.offset, from.type);
     selection.focus.set(to.key, to.offset, to.type);
     selection.removeText();
-    if (lineRun === host) caret = snapshotOf(selection.anchor);
+    if (lineRunAndRange === host) caret = snapshotOf(selection.anchor);
   }
 
   if (!caret) {
@@ -361,6 +348,61 @@ export function $removeTextKeepingBookAndChapterLines(selection: RangeSelection)
   }
   selection.anchor.set(caret.key, caret.offset, caret.type);
   selection.focus.set(caret.key, caret.offset, caret.type);
+}
+
+/**
+ * The ranges {@link $removeTextKeepingBookAndChapterLines} removes text by, first to last: one for
+ * each run of lines between the book and chapter lines `selection` runs across, from the
+ * selection's start or the run's first line's start to the selection's end or the run's last
+ * line's end. So a check of what that removal joins judges each range on its own. `undefined` when
+ * `selection` does not span a book or chapter line ({@link $selectionSpansBookOrChapterLine}), and
+ * so goes as Lexical removes a range.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+export function $rangesRemovedKeepingBookAndChapterLines(
+  selection: RangeSelection,
+): { start: PointType; end: PointType }[] | undefined {
+  const lines = $topLevelNodesOf(selection);
+  if (!lines || !$selectionSpansBookOrChapterLine(selection)) return undefined;
+  return $runsBetweenBookAndChapterLines(selection, lines).map(({ from, to }) => {
+    const range = $createRangeSelection();
+    range.anchor.set(from.key, from.offset, from.type);
+    range.focus.set(to.key, to.offset, to.type);
+    return { start: range.anchor, end: range.focus };
+  });
+}
+
+/**
+ * The runs of `lines`, the top-level lines `selection` runs across, between their book and chapter
+ * lines, first to last, each with the range of it the selection covers (see
+ * {@link $rangesRemovedKeepingBookAndChapterLines}).
+ */
+function $runsBetweenBookAndChapterLines(
+  selection: RangeSelection,
+  lines: LexicalNode[],
+): { lines: LexicalNode[]; from: Snapshot; to: Snapshot }[] {
+  const [start, end] = (
+    selection.isBackward()
+      ? [selection.focus, selection.anchor]
+      : [selection.anchor, selection.focus]
+  ).map(snapshotOf);
+  const runs: LexicalNode[][] = [];
+  let run: LexicalNode[] = [];
+  for (const line of lines)
+    if ($isBookOrChapterLine(line)) {
+      if (run.length > 0) runs.push(run);
+      run = [];
+    } else run.push(line);
+  if (run.length > 0) runs.push(run);
+  return runs.map((lineRun) => {
+    const lastLine = lineRun[lineRun.length - 1];
+    return {
+      lines: lineRun,
+      from: lineRun[0] === lines[0] ? start : $lineStart(lineRun[0]),
+      to: lastLine === lines[lines.length - 1] ? end : $lineEnd(lastLine),
+    };
+  });
 }
 
 /** A point's position, kept to set a point to later. */

@@ -1008,7 +1008,8 @@ function $insertTransferForStandardView(
 
 /** Whether `selection` starts in the book (`\id`) line. */
 function $isInBookLine(selection: RangeSelection): boolean {
-  return !!$findMatchingParent(selection.anchor.getNode(), $isBookNode);
+  const start = selection.isBackward() ? selection.focus : selection.anchor;
+  return !!$findMatchingParent(start.getNode(), $isBookNode);
 }
 
 /**
