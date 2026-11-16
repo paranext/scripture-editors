@@ -121,6 +121,7 @@ export type {
   UnstorableCharacter,
   UnstorableTextRemoved,
   UnstorableTextRemovedHandler,
+  UnstorableTextSource,
   UsjLocation,
   UsjNodeOptions,
   VerseLayout,

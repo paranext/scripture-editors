@@ -36,6 +36,12 @@ import { LINE_BREAK_IN_TEXT } from "./lineBreakText.utils";
  * protection refuses a paragraph break there), then `KEY_ENTER_COMMAND` (a note's `\fp` break, a
  * marker menu, Lexical's own split). Should nothing take it, the split itself.
  *
+ * Every key handler sees it as a real keystroke, so it splits at the DOM caret
+ * (`KeyDownCaretSyncPlugin` takes the editor's selection from it): right for a line break the
+ * user asked for at the caret (Shift+Enter, macOS Ctrl+O, an `insertLineBreak`), wrong for an
+ * `INSERT_LINE_BREAK_COMMAND` dispatched with a selection the page does not show. Like Enter, it
+ * leaves the caret after the split, Ctrl+O included.
+ *
  * Mutating: call inside `editor.update()` or a command handler.
  */
 function $runEnter(editor: LexicalEditor): void {
