@@ -28,7 +28,9 @@ import {
 import Editor from "./Editor";
 import { EditorRef } from "./editor.model";
 import { Usj, USJ_TYPE, USJ_VERSION } from "@eten-tech-foundation/scripture-utilities";
+import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
 import { act, render } from "@testing-library/react";
+import { LexicalEditor } from "lexical";
 import { createRef, useEffect, useLayoutEffect, useRef } from "react";
 import { getViewOptions, ViewOptions } from "shared-react";
 import { vi } from "vitest";
@@ -139,6 +141,44 @@ describe("annotating before the first content commit", () => {
     expect(markTexts()).toEqual([]);
     expect(onRemove).toHaveBeenCalledTimes(1);
     expect(onRemove).toHaveBeenCalledWith("external-spelling", "a", "removed", "");
+  });
+
+  it("hands a throwing onRemove of a replaced queued set to the error handler, not the caller", async () => {
+    // As for a set that had run: a host's throwing `onRemove` does not stop the call that removed
+    // the annotation, or the host's next call.
+    const logError = createLogMock();
+    const ref = createRef<EditorRef>();
+    const lexicalRef = createRef<LexicalEditor>();
+    const error = new Error("host failure");
+    const onRemoveA = vi.fn(() => {
+      throw error;
+    });
+    const onRemoveB = vi.fn();
+
+    await act(async () => {
+      render(
+        <Editor ref={ref} defaultUsj={usjGen2} logger={createLoggerMock(logError)}>
+          <EditorRefPlugin editorRef={lexicalRef} />
+        </Editor>,
+      );
+    });
+    if (!lexicalRef.current) throw new Error("Lexical editor did not mount");
+    const onError = vi.spyOn(lexicalRef.current, "_onError").mockImplementation(() => undefined);
+
+    await act(async () => {
+      ref.current?.setUsj(usjGen3);
+      ref.current?.setAnnotation(earthRange, "spelling", "a", { onRemove: onRemoveA });
+      ref.current?.setAnnotation(allRange, "spelling", "b", { onRemove: onRemoveB });
+      await Promise.resolve();
+      await Promise.resolve();
+      ref.current?.removeAnnotation("spelling", "a");
+      ref.current?.removeAnnotation("spelling", "b");
+    });
+
+    expect(onRemoveA).toHaveBeenCalledTimes(1);
+    expect(onRemoveB).toHaveBeenCalledWith("external-spelling", "b", "removed", "");
+    expect(onError).toHaveBeenCalledWith(error);
+    expect(markTexts()).toEqual([]);
   });
 
   it("leaves one mark when the same annotation is re-set before the load lands", async () => {

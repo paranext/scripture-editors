@@ -1399,7 +1399,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       );
       // The replaced set never runs, but its host is still owed the removal a set that had run would
       // report: a host forgets an annotation, and tells whoever asked for it, from `onRemove`.
-      reportReplacedSetRemoved?.();
+      try {
+        reportReplacedSetRemoved?.();
+      } catch (error) {
+        // As for a set that had run: a throwing `onRemove` does not stop this call or the host's
+        // next one. The editor's error handler gets it in a later microtask instead.
+        queueMicrotask(() =>
+          editorRef.current?._onError(error instanceof Error ? error : new Error(String(error))),
+        );
+      }
     },
     getAnnotationRanges(type, id) {
       return annotationRef.current?.getAnnotationRanges(externalTypedMarkType(type), id) ?? [];
