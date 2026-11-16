@@ -126,6 +126,7 @@ import {
   getNbspSpelling,
   hasStandardViewWhitespace,
   keyDownToIntent,
+  plainTextTransfer,
   releaseTagsAfterNextCommit,
   StructureProtectionMode,
   ViewOptions,
@@ -172,12 +173,10 @@ export const SET_MARKER_SETTLE_SUSPENDED_COMMAND: LexicalCommand<boolean> = crea
  * Standard view. Read as every paste claim reads one, through `clipboardData`.
  */
 function plainTextPaste(text: string): ClipboardEvent {
-  const clipboardData: Pick<DataTransfer, "types" | "files" | "getData"> = {
-    types: ["text/plain"],
-    files: [] as unknown as FileList,
-    getData: (type: string) => (type === "text/plain" ? text : ""),
-  };
-  return { clipboardData, preventDefault: () => undefined } as unknown as ClipboardEvent;
+  return {
+    clipboardData: plainTextTransfer(text),
+    preventDefault: () => undefined,
+  } as unknown as ClipboardEvent;
 }
 
 /**
