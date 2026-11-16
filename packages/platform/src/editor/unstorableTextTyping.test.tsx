@@ -321,6 +321,43 @@ describe.each(["paragraph-structure", "formatted"])("typing into %s view", (view
     expect(onRemoved).toHaveBeenCalledWith({ source: "typing", removed: ["\\"] });
   });
 
+  it("puts claimed text in over the word the browser replaces, as Lexical would", async () => {
+    // A mobile keyboard's suggestion or macOS text replacement sends the word it replaces as the
+    // event's target range, with the caret collapsed after it.
+    const { mounted, onRemoved } = await mount(viewName, "teh cat", 3);
+    const textNode = mounted.lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no caret");
+      return {
+        key: selection.anchor.key,
+        start: selection.anchor.getNode().getTextContent().indexOf("teh"),
+      };
+    });
+    const domText = mounted.lexical.getElementByKey(textNode.key)?.firstChild;
+    if (!domText) throw new Error("no DOM text");
+    const word = document.createRange();
+    word.setStart(domText, textNode.start);
+    word.setEnd(domText, textNode.start + 3);
+    const root = mounted.lexical.getRootElement();
+    if (!root) throw new Error("editor root not found");
+    const beforeInput = new InputEvent("beforeinput", {
+      inputType: "insertText",
+      data: "the\\",
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(beforeInput, "getTargetRanges", { value: () => [word] });
+
+    await act(async () => {
+      syncDomSelection(mounted);
+      root.dispatchEvent(beforeInput);
+    });
+
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(savedParas(mounted)).toEqual(["the cat"]);
+    expect(onRemoved).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses a `/` that arrives with no keydown beside a `/`", async () => {
     const { mounted, onRemoved } = await mount(viewName, "a/b", 2);
 

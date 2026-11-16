@@ -4,6 +4,7 @@ export * from "./collab";
 export * from "./ArrowNavigationPlugin";
 export * from "./bookAndChapterLines.utils";
 export * from "./CharNodePlugin";
+export * from "./claimedBeforeInput.utils";
 export * from "./clipboard.utils";
 export * from "./ClipboardPlugin";
 export * from "./CommandMenuPlugin";
