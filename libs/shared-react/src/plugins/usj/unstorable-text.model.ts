@@ -4,6 +4,9 @@
  */
 export type UnstorableCharacter = "\\" | "//";
 
+/** What brought about an {@link UnstorableTextRemoved}: see its `source`. */
+export type UnstorableTextSource = "paste" | "drop" | "typing" | "deletion" | "move";
+
 /**
  * Passed to {@link UnstorableTextRemovedHandler} when an edit's text lost unstorable characters, or
  * a delete or a drag-move was refused because it would have made or lost one.
@@ -18,7 +21,7 @@ export interface UnstorableTextRemoved {
    * refused transpose (macOS Ctrl+T) that would have put a `/` against another `/`. More sources
    * may be added; a host that branches on this should handle values it does not know.
    */
-  readonly source: "paste" | "drop" | "typing" | "deletion" | "move";
+  readonly source: UnstorableTextSource;
   /**
    * What was removed or refused, each kind once, in the order first met. Never empty. A refused
    * deletion is always `["//"]`; a refused move names what the drop would have removed.

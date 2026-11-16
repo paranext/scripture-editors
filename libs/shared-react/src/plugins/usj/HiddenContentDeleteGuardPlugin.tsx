@@ -676,7 +676,9 @@ function preventAndClaim(event: Event | null): true {
  * it, against the document characters `around` the selection, so a lone `/` that would touch a `/`
  * there counts; or a marker-showing view's copy of nothing but marker tokens
  * ({@link withoutMarkerTokens}), which that plugin and protected structure's sanitizer claim,
- * changing nothing. Any other node copy or html goes in as nodes, so it is asked about.
+ * changing nothing. Any other node copy or html is asked about, even when that plugin's filter then
+ * leaves nothing of it to insert (a paste of `<span>/</span>` beside a `/`): its nodes are not
+ * built until after the answer.
  */
 function pasteInsertsNothing(
   event: PasteCommandType,
