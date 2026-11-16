@@ -13,10 +13,13 @@ import {
   $nodesFromNodeCopy,
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   nodeCopyIn,
+  plainTextTransfer,
   removeMarkerGlyphElements,
+  transferWith,
   withoutMarkerTokens,
   withoutNodeCopy,
 } from "./clipboard.utils";
+import { insertClaimedBeforeInputText } from "./claimedBeforeInput.utils";
 import { $selectionAtDropPoint } from "./dropPoint.utils";
 import { DeleteGranularity, deleteChordOf } from "./HiddenContentDeleteGuardPlugin";
 import { $probeDeleteExtent } from "./hiddenContentDelete.utils";
@@ -539,7 +542,7 @@ export function UnstorableTextPlugin({
       if (editor.read(() => $filterTypedText(text)).removed.length === 0) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+      insertClaimedBeforeInputText(editor, event, text);
     };
 
     /**
@@ -611,13 +614,9 @@ export function UnstorableTextPlugin({
       if (source === "paste") $addUpdateTag(PASTE_TAG);
       if (filtered.text) {
         if (keepsLines) $removeTextKeepingBookAndChapterLines(selection);
-        // Lexical reads only `getData` from the transfer, and finds no flavor here but plain text,
-        // so its own plain-text insertion runs on the filtered text; a real `DataTransfer` cannot
-        // be constructed everywhere this runs.
-        const plainOnly = {
-          getData: (type: string) => (type === "text/plain" ? filtered.text : ""),
-        } as Pick<DataTransfer, "getData"> as DataTransfer;
-        $insertAsLexicalDoes(plainOnly);
+        // Lexical finds no flavor here but plain text, so its own plain-text insertion runs on the
+        // filtered text.
+        $insertAsLexicalDoes(plainTextTransfer(filtered.text));
       }
       if (filtered.removed.length > 0)
         reportRemoved(
@@ -644,11 +643,8 @@ export function UnstorableTextPlugin({
       const html = htmlWithoutMarkerGlyphs(data.getData("text/html"));
       if (html === undefined) return false;
       if (source === "paste") $addUpdateTag(PASTE_TAG);
-      // As for plain text above: Lexical reads only `getData`, and finds the same flavors as
-      // before but for the html.
-      const withoutGlyphs = {
-        getData: (type: string) => (type === "text/html" ? html : data.getData(type)),
-      } as Pick<DataTransfer, "getData"> as DataTransfer;
+      // Lexical finds the same flavors as before but for the html.
+      const withoutGlyphs = transferWith(data, { "text/html": html });
       isInsertingWithoutGlyphs = true;
       try {
         $insertDataTransferForRichText(withoutGlyphs, selection, editor);
