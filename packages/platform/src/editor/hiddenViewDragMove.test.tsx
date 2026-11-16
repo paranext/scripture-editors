@@ -63,16 +63,22 @@ function dragged(text: string): Flavors {
   return { "text/html": `<span>${text}</span>`, "text/plain": text };
 }
 
-/** A place in the text: `offset` characters into the stored text node holding exactly `text`. */
+/**
+ * A place in the text: `offset` characters into the stored text node holding exactly `text` (the
+ * `nth`, from 0, of those in document order when several hold it).
+ */
 interface At {
   text: string;
   offset: number;
+  nth?: number;
 }
 
-function $textNodeHolding(text: string): TextNode {
+function $textNodeHolding(text: string, nth = 0): TextNode {
   const node = $getRoot()
     .getAllTextNodes()
-    .find((candidate) => candidate.getType() === "text" && candidate.getTextContent() === text);
+    .filter((candidate) => candidate.getType() === "text" && candidate.getTextContent() === text)[
+    nth
+  ];
   if (!node) throw new Error(`no text node holding ${JSON.stringify(text)}`);
   return node;
 }
@@ -82,8 +88,8 @@ async function select(lexical: LexicalEditor, from: At, to: At = from): Promise<
     lexical.update(
       () => {
         const selection = $createRangeSelection();
-        selection.anchor.set($textNodeHolding(from.text).getKey(), from.offset, "text");
-        selection.focus.set($textNodeHolding(to.text).getKey(), to.offset, "text");
+        selection.anchor.set($textNodeHolding(from.text, from.nth).getKey(), from.offset, "text");
+        selection.focus.set($textNodeHolding(to.text, to.nth).getKey(), to.offset, "text");
         $setSelection(selection);
       },
       { discrete: true },
@@ -93,7 +99,7 @@ async function select(lexical: LexicalEditor, from: At, to: At = from): Promise<
 
 /** The DOM position of `at`, as `caretRangeFromPoint` answers for a drop there. */
 function domRangeAt(lexical: LexicalEditor, at: At): Range {
-  const key = lexical.getEditorState().read(() => $textNodeHolding(at.text).getKey());
+  const key = lexical.getEditorState().read(() => $textNodeHolding(at.text, at.nth).getKey());
   const textElement = lexical.getElementByKey(key);
   const domText = textElement?.firstChild;
   if (!domText) throw new Error(`no DOM text for ${JSON.stringify(at.text)}`);
@@ -425,5 +431,40 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
 
     expect(savedParas(mounted)).toEqual(["a/b c/ d"]);
     expect(onRemoved).not.toHaveBeenCalledWith(REFUSED_MOVE);
+  });
+});
+
+describe("a drag-move in paragraph-structure view, inside a note", () => {
+  // A note's text between two char spans sits between two separators, each a no-break space in a
+  // text node of its own (atomic, so never merged with the text beside it): the end of one
+  // separator and the start of the loose text are the same place in two sibling nodes.
+  const NOTE: MarkerObject = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [
+      { type: "char", marker: "fr", content: ["1:1"] },
+      " ",
+      { type: "char", marker: "ft", content: ["n"] },
+    ],
+  };
+  /** The separator before the note's loose space, and the loose space itself. */
+  const BEFORE = { text: "\u00a0", nth: 1 };
+  const LOOSE_SPACE = { text: " " };
+
+  it("takes a drop at the start of what is dragged, written as the end of the text node before it, as a no-op", async () => {
+    const { mounted, onRemoved } = await mount("paragraph-structure", "off", "a b ", NOTE, " c");
+    const before = JSON.stringify(mounted.ref.current?.getUsj());
+
+    const isTaken = await dragAndDrop(mounted, {
+      from: { ...LOOSE_SPACE, offset: 0 },
+      to: { ...LOOSE_SPACE, offset: 1 },
+      dropAt: { ...BEFORE, offset: 1 },
+      flavors: dragged("/"),
+    });
+
+    expect(isTaken).toBe(true);
+    expect(JSON.stringify(mounted.ref.current?.getUsj())).toBe(before);
+    expect(onRemoved).not.toHaveBeenCalled();
   });
 });
