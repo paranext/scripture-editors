@@ -98,19 +98,14 @@ export function registerEmptyCopyGuard(editor: LexicalEditor): () => void {
  * as a tab node, and USJ has nothing to save one as, so `word1⇥word2` would save as `word1word2`.
  * A transform covers every way a tab node gets in — the browser's own paste, which reaches the
  * editor without the clipboard read that cleans it, a drop, and pasted html — wherever it lands.
- * A caret on the tab stays where it was, on the space. A tab inside a text node is not a tab node,
- * so it stays: Standard view's own paste, which inserts text, can store one that way.
+ * A selection point on the tab moves to the space's end, as `LexicalNode.replace` moves it. A tab
+ * inside a text node is not a tab node, so it stays: Standard view's own paste, which inserts text,
+ * can store one that way.
  */
 export function registerTabsAsSpaces(editor: LexicalEditor): () => void {
   return editor.registerNodeTransform(TabNode, (tab) => {
     const space = $createTextNode(" ").setFormat(tab.getFormat()).setStyle(tab.getStyle());
-    const selection = $getSelection();
-    const pointsOnTab = $isRangeSelection(selection)
-      ? [selection.anchor, selection.focus].filter((point) => point.key === tab.getKey())
-      : [];
-    const offsets = pointsOnTab.map((point) => point.offset);
     tab.replace(space);
-    pointsOnTab.forEach((point, index) => point.set(space.getKey(), offsets[index], "text"));
   });
 }
 
@@ -395,12 +390,23 @@ export function withoutMarkerTokens(data: DataTransfer): DataTransfer | undefine
  * handler `types` and `files` too; a real `DataTransfer` cannot be constructed everywhere this
  * runs.
  */
-function transferWith(data: DataTransfer, overrides: { [type: string]: string }): DataTransfer {
+export function transferWith(
+  data: Pick<DataTransfer, "getData" | "types" | "files">,
+  overrides: { [type: string]: string },
+): DataTransfer {
   return {
     getData: (type: string) => overrides[type] ?? data.getData(type),
     types: (data.types ?? []).filter((type) => overrides[type] !== ""),
     files: data.files ?? [],
   } as Pick<DataTransfer, "getData" | "types" | "files"> as DataTransfer;
+}
+
+/** A transfer holding `text` alone, as plain text (see {@link transferWith}). */
+export function plainTextTransfer(text: string): DataTransfer {
+  return transferWith(
+    { getData: () => "", types: ["text/plain"], files: [] as unknown as FileList },
+    { "text/plain": text },
+  );
 }
 
 /**
