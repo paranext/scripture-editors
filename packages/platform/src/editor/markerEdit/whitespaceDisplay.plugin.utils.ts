@@ -66,6 +66,7 @@ import {
   $selectionReachesIntoOpaqueBlock,
   $shouldBlockSelectionReplacement,
   MARKER_TEXT_HTML_ATTRIBUTE,
+  stripPastedChapterAndBookId,
 } from "shared-react";
 import {
   $liesBeforeElementPoint,
@@ -510,88 +511,10 @@ export function normalizePastedNbsp(text: string, nbspSpelling = "~"): string {
   return text.replace(OPENING_MARKER_SEPARATOR_NBSP, " ").replaceAll(NBSP, nbspSpelling);
 }
 
-/** A `\c` chapter token ANYWHERE in a line: the marker, its separator, and the ONE
- * whitespace-delimited word the tokenizer reads as the chapter number (`getNextWord`,
- * usfmFragmentToUsj.ts) — and nothing more, because everything past that word is ordinary content
- * the paste must keep. Stops at a backslash too, so `\c\nd x` strips the bare `\c` and leaves
- * `\nd x` whole. Not anchored to the line's start: a chapter token can sit mid-line (`x \c 5 y`,
- * a paste landing mid-sentence), and an anchor there would silently miss it. Global so more than
- * one occurrence on the same line is fully swept, not just the first. */
-const CHAPTER_TOKEN = new RegExp(
-  String.raw`\\c(?![${ENGINE_MARKER_NAME_BYTES}])[ \u00A0]*[^\s\\]*`,
-  "g",
-);
-
-/** A `\id` book-id token ANYWHERE in a line, capturing its payload up to — but not including —
- * the next marker or line end. Wider than {@link CHAPTER_TOKEN} on purpose: an `\id` line's whole
- * remainder IS the token's payload (book code plus an optional free-text description), so there is
- * no trailing content to preserve the way there is after a chapter number. */
-const BOOK_ID_TOKEN = new RegExp(String.raw`\\id(?![${ENGINE_MARKER_NAME_BYTES}])[^\n\\]*`, "g");
-
-/**
- * Either stripped token at the very START of a line — the one placement whose whole line may be
- * dropped. Non-global on purpose: `.test` on a global regex carries `lastIndex` between calls.
- */
-const LINE_LEADING_STRIPPED_TOKEN = new RegExp(
-  String.raw`^(?:${CHAPTER_TOKEN.source}|${BOOK_ID_TOKEN.source})`,
-);
-
-/**
- * Drops every pasted `\c`/`\id` token and its payload (the chapter number / book code, up to the
- * next marker or newline) before insertion. Both create a document-structural node PT9 allows
- * only once per book (a `ChapterNode`/`BookNode`, materialized from the marker name alone —
- * `usj-editor.adaptor.ts` — same as a real load), and Standard view has no per-paste "am I the
- * only one" check the way an initial document load does. A pasted bare `\c 2` mid-chapter would
- * otherwise create a second chapter node in the editor, and every subsequent save would then fail
- * with the PDP's "Multiple chapter markers present" (an error that surfaces only in the renderer
- * log — disk and other editors would silently stop updating). `\id` is the book-level twin of the
- * same hazard and is stripped identically. A token need not be its own line — `x \c 5 y`
- * mid-paragraph reaches the same tokenizer branch (chapter/book-id tokens are recognized wherever
- * they occur, not just at a fragment's start) and left unstripped produces the identical poisoned
- * shape: a second chapter node PLUS the trailing bytes (`y`) stranding as a bare top-level USJ
- * string outside any paragraph, since a chapter token closes the enclosing paragraph the same way
- * it does on a real load.
- *
- * Only the token's OWN bytes go: `\c` plus the one word the tokenizer reads as the chapter
- * number. Content that merely follows it on the same line is the user's and survives — `x \c 5 y`
- * strips to `x  y`, not to `x `. Removing more would trade one silent corruption for another, and
- * the poisoning this exists to prevent is fully undone once the marker and its number are gone.
- * A token sharing a line with a LATER marker — `\c 5\v 1 In the beginning` — likewise only loses
- * its own bytes: both token regexes stop at the next `\`.
- *
- * Splits on lines and strips per line (not one global pass over the whole text) so a token that
- * consumes an ENTIRE line can cleanly take that line's own newline with it too (no stray empty
- * paragraph left behind). Only a line the token OPENS may go whole: whatever whitespace trails it
- * is the glyph's own separator (a chapter line copies as `\c 5 `, and the token stops short of
- * that space), so it goes with the token. Whitespace BEFORE the token is the user's: a space or
- * NBSP ahead of `\c 5` survives as a one-character line instead of going with the token, because
- * a byte the user wrote is never dropped. A line that was ALREADY blank in the source paste
- * (nothing to do with `\c`/`\id`) is left alone.
- *
- * Exported for the in-note CRITICAL multi-line paste claim (`MarkerEditPlugin.tsx`), which shares
- * this strip the same way it shares `normalizePastedNbsp` — a `\c`/`\id` token pasted into note
- * content is just as reachable (the note-content Tier 2 rebuild tokenizes literal text the same
- * way a paragraph rebuild does) and just as harmful there.
- */
-export function stripPastedChapterAndBookId(text: string): string {
-  return text
-    .split("\n")
-    .map((line) => {
-      const stripped = line.replace(CHAPTER_TOKEN, "").replace(BOOK_ID_TOKEN, "");
-      // Anchored, so the line goes only when the token is what opened it. A token further in
-      // leaves whatever preceded it behind, whitespace included: that byte is content the user
-      // wrote, and dropping the line would take it — and the line break — with the token.
-      const isTokenOnlyLine =
-        LINE_LEADING_STRIPPED_TOKEN.test(line) && stripped.trim() === "" && line.trim() !== "";
-      return isTokenOnlyLine ? undefined : stripped;
-    })
-    .filter((line): line is string => line !== undefined)
-    .join("\n");
-}
-
 /**
  * A `\v` token: the marker, its separator, the one word the tokenizer reads as the verse number, and
- * the one space that ends the token — the same shape {@link CHAPTER_TOKEN} reads for a chapter.
+ * the one space that ends the token — the same shape `stripPastedChapterAndBookId` (shared-react)
+ * reads for a chapter.
  */
 const VERSE_TOKEN = new RegExp(
   String.raw`\\v(?![${ENGINE_MARKER_NAME_BYTES}*])[ \u00A0]*[^\s\\]*[ \u00A0]?`,
