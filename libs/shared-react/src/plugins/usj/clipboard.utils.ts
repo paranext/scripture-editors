@@ -12,6 +12,7 @@ import {
   COPY_COMMAND,
   CUT_COMMAND,
   LexicalEditor,
+  LineBreakNode,
   LexicalNode,
   PASTE_COMMAND,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
@@ -19,7 +20,28 @@ import {
   TabNode,
   TextNode,
 } from "lexical";
-import { ENGINE_MARKER_NAME_BYTES, LoggerBasic, MARKER_TEXT_TYPE, textTypeState } from "shared";
+import {
+  BookNode,
+  CharNode,
+  ENGINE_MARKER_NAME_BYTES,
+  ImmutableChapterNode,
+  ImmutableTableCellNode,
+  ImmutableTableNode,
+  ImmutableTableRowNode,
+  ImmutableTypedTextNode,
+  ImmutableUnmatchedNode,
+  ImpliedParaNode,
+  LoggerBasic,
+  MARKER_TEXT_TYPE,
+  MilestoneNode,
+  NoteNode,
+  ParaNode,
+  TypedMarkNode,
+  UnknownNode,
+  textTypeState,
+} from "shared";
+import { ImmutableNoteCallerNode } from "../../nodes/usj/ImmutableNoteCallerNode";
+import { ImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
 
 function cleanupText(text: string): string {
   return text.replaceAll("\t", " ");
@@ -486,6 +508,12 @@ function htmlWithoutNodeCopy(html: string): string {
  * an entry that is not a node at all, an `importJSON` that throws). Any program can write the
  * flavor, so a paste then goes on as if it carried no node copy, as Lexical's own paste does.
  *
+ * It also makes none when an entry, at any depth, is of a type a hidden-marker view's document
+ * never holds ({@link HIDDEN_VIEW_NODE_COPY_TYPES}), such as the root or a marker. Any web page can
+ * put a node copy in its html, and such an entry would crash the editor or show text the view never
+ * saves. The types are checked before any node is made, because making some of them changes the
+ * document (`RootNode.importJSON` returns the live root).
+ *
  * Mutating (it creates nodes): call inside an update.
  *
  * @param serialized - The node copy's serialized nodes.
@@ -496,8 +524,17 @@ export function $nodesFromNodeCopy(
   logger?: LoggerBasic,
 ): LexicalNode[] | undefined {
   if (serialized.length === 0) return undefined;
+  const foreignType = typeOutsideHiddenView(serialized);
+  if (foreignType !== undefined) {
+    logger?.warn(
+      `A pasted node copy holds a "${foreignType}" node, which a view that hides markers never holds, so its html or plain text goes in instead`,
+    );
+    return undefined;
+  }
   try {
     const nodes = $generateNodesFromSerializedNodes(serialized);
+    if (nodes.some((node) => node.isAttached()))
+      throw new Error("a node it makes is already in the document");
     return nodes.length > 0 ? nodes : undefined;
   } catch (error) {
     logger?.warn(
@@ -505,6 +542,50 @@ export function $nodesFromNodeCopy(
     );
     return undefined;
   }
+}
+
+/**
+ * The Lexical node types a hidden-marker view's document holds, so the only ones its node copy
+ * (`$hiddenViewLexicalFlavor`, platform) can hold. Left out: the root; the marker, editable chapter
+ * and verse, and attribute-run nodes that only views showing markers build; and the block-verse
+ * layout's wrapper, which a copy leaves out.
+ */
+const HIDDEN_VIEW_NODE_COPY_TYPES: ReadonlySet<string> = new Set([
+  BookNode.getType(),
+  CharNode.getType(),
+  ImmutableChapterNode.getType(),
+  ImmutableNoteCallerNode.getType(),
+  ImmutableTableCellNode.getType(),
+  ImmutableTableNode.getType(),
+  ImmutableTableRowNode.getType(),
+  ImmutableTypedTextNode.getType(),
+  ImmutableUnmatchedNode.getType(),
+  ImmutableVerseNode.getType(),
+  ImpliedParaNode.getType(),
+  LineBreakNode.getType(),
+  MilestoneNode.getType(),
+  NoteNode.getType(),
+  ParaNode.getType(),
+  TabNode.getType(),
+  TextNode.getType(),
+  TypedMarkNode.getType(),
+  UnknownNode.getType(),
+]);
+
+/** The first type in `serialized`, at any depth, outside {@link HIDDEN_VIEW_NODE_COPY_TYPES}, or
+ * `undefined` when every entry's type is in it. */
+function typeOutsideHiddenView(serialized: readonly unknown[]): string | undefined {
+  for (const entry of serialized) {
+    if (typeof entry !== "object" || entry === null) return String(entry);
+    const type = "type" in entry ? entry.type : undefined;
+    if (typeof type !== "string" || !HIDDEN_VIEW_NODE_COPY_TYPES.has(type)) return String(type);
+    const children = "children" in entry ? entry.children : undefined;
+    if (children === undefined) continue;
+    if (!Array.isArray(children)) return type;
+    const childType = typeOutsideHiddenView(children);
+    if (childType !== undefined) return childType;
+  }
+  return undefined;
 }
 
 /** The node copy in `data`, from its flavor or its html, or `undefined` when there is none or it is

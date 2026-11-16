@@ -274,6 +274,50 @@ describe.each(PROTECTIONS)("a hidden-marker view's copy and Ctrl+V, structure %s
     }
   });
 
+  // Any web page can put a node copy in its html, so one must hold only what a hidden-marker
+  // view's document does: a root entry crashed the editor, and a marker showed text never saved.
+  it.each([
+    [
+      "a root",
+      [{ type: "root", version: 1, children: [], direction: null, format: "", indent: 0 }],
+    ],
+    [
+      "a marker inside a paragraph",
+      [
+        {
+          type: "para",
+          version: 1,
+          marker: "p",
+          children: [
+            { type: "marker", version: 1, marker: "w", markerSyntax: "opening", text: "\\w " },
+            { type: "text", version: 1, text: "INJECTED" },
+          ],
+        },
+      ],
+    ],
+  ])("falls back to the html when the node copy holds %s", async (_, nodes) => {
+    const { mounted } = await mount("paragraph-structure", mode);
+    try {
+      await select(mounted, " last", 5, " last", 5);
+      const bookAndChapter = mounted.ref.current?.getUsj()?.content.slice(0, 2);
+      const nodeCopy = JSON.stringify({ namespace: HIDDEN_VIEW_CLIPBOARD_NAMESPACE, nodes })
+        .replaceAll("&", "&amp;")
+        .replaceAll('"', "&quot;");
+
+      await paste(mounted, {
+        "text/html": `<span ${NODE_COPY_HTML_ATTRIBUTE}="${nodeCopy}"><span>harmless</span></span>`,
+        "text/plain": "plain",
+      });
+
+      const content = mounted.ref.current?.getUsj()?.content;
+      expect(content?.slice(0, 2)).toEqual(bookAndChapter);
+      expect(paragraph(mounted).content?.at(-1)).toBe(" lastharmless");
+      expect(JSON.stringify(content)).not.toContain("INJECTED");
+    } finally {
+      mounted.unmount();
+    }
+  });
+
   it("takes an ordinary paste's html as before", async () => {
     const { mounted } = await mount("paragraph-structure", mode);
     try {
