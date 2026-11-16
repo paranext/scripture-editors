@@ -17,8 +17,8 @@ refused. The public surface grew substantially; nothing was removed.
 ### Added
 
 - **Hosts:** `onUnstorableTextRemoved`'s `source` can be `"paste"`, `"drop"`, `"typing"`,
-  `"deletion"` or `"move"`, so a host that switches over `source` needs a case for each, and a
-  fallback for values added later.
+  `"deletion"` or `"move"` (exported as `UnstorableTextSource`), so a host that switches over
+  `source` needs a case for each, and a fallback for values added later.
 - `generateUsjFontCss` — the font part of `generateUsjCss`'s output only (the base font family and
   size, and each marker's font family), for a view that keeps its own marker layout.
 - `EditorOptions.hasBuiltInContextMenu` (experimental) — set to `false` to stop the editor mounting its own
