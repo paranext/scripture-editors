@@ -326,7 +326,10 @@ export function LineBreakPlugin({
         ({ nodes, selection }) => {
           if (
             $isRangeSelection(selection) &&
-            !$canSplitAt(selection.anchor.getNode(), isProtectedRef.current)
+            !$canSplitAt(
+              (selection.isBackward() ? selection.focus : selection.anchor).getNode(),
+              isProtectedRef.current,
+            )
           )
             $spaceLineBreaksAmong(nodes);
           return false;

@@ -5,6 +5,7 @@ import {
   $pasteAroundChapterLine,
   $removeBookAndChapterLines,
   $removeTextKeepingBookAndChapterLines,
+  $rangesRemovedKeepingBookAndChapterLines,
   $selectionSpansBookOrChapterLine,
   $takeStartsMidParagraph,
 } from "./bookAndChapterLines.utils";
@@ -150,6 +151,21 @@ function rangeDeletion(selection: RangeSelection): JudgedDeletion {
     ? [selection.focus, selection.anchor]
     : [selection.anchor, selection.focus];
   return { kind: "range", start, end };
+}
+
+/**
+ * What removing `selection` removes ({@link rangeDeletion}). A selection across a book or chapter
+ * line is removed run by run with those lines kept (`$removeTextKeepingBookAndChapterLines`), so
+ * nothing joins across them, and each run is judged on its own.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+function $selectionDeletions(selection: RangeSelection): JudgedDeletion[] {
+  return (
+    $rangesRemovedKeepingBookAndChapterLines(selection)?.map(
+      ({ start, end }): JudgedDeletion => ({ kind: "range", start, end }),
+    ) ?? [rangeDeletion(selection)]
+  );
 }
 
 /**
@@ -546,7 +562,11 @@ export function UnstorableTextPlugin({
       const joinsLines =
         /[\r\n]/.test(text) &&
         (structureProtectionModeRef.current === "protected" ||
-          (!keepsLines && !!$findMatchingParent(selection.anchor.getNode(), $isBookNode)));
+          (!keepsLines &&
+            !!$findMatchingParent(
+              (selection.isBackward() ? selection.focus : selection.anchor).getNode(),
+              $isBookNode,
+            )));
       const hasLoneReturn = /\r(?!\n)/.test(text);
       const { before, after } = $textAroundSelection(selection);
       const lines = hasLoneReturn ? text.replace(/\r(?!\n)/g, "\n") : text;
@@ -688,7 +708,7 @@ export function UnstorableTextPlugin({
         });
       }
       if (!$isRangeSelection(selection)) return [];
-      if (!selection.isCollapsed()) return [rangeDeletion(selection)];
+      if (!selection.isCollapsed()) return $selectionDeletions(selection);
       if (granularity === "character")
         return [{ kind: "character", caret: selection.anchor, isBackward }];
       const extent = $measureExtent(selection, isBackward, granularity);
@@ -722,7 +742,7 @@ export function UnstorableTextPlugin({
       if (!isJudgingDeletes()) return false;
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-      if (!$refuseSlashJoin([rangeDeletion(selection)])) return false;
+      if (!$refuseSlashJoin($selectionDeletions(selection))) return false;
       event?.preventDefault();
       return true;
     };

@@ -468,6 +468,43 @@ describe.each(CONFIGS)("deleting in the $label view", ({ viewName, structureProt
   });
 });
 
+// The removal keeps a chapter line it runs across, so nothing joins across it: `x/` before the line
+// and `/y` after it never touch.
+describe.each(CONFIGS.filter((config) => config.structureProtectionMode !== "protected"))(
+  "removing a range across a chapter line in the $label view",
+  ({ viewName, structureProtectionMode }) => {
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: [] },
+        { type: "para", marker: "ip", content: ["intro x/"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "para", marker: "p", content: [VERSE_1, "/y z"] },
+      ],
+    };
+
+    it.each([
+      ["Backspace", (mounted: MountedEditor) => pressToDelete(mounted, "Backspace")],
+      ["a cut", (mounted: MountedEditor) => cut(mounted)],
+    ])("by %s is not refused for a `//` it cannot form", async (_, remove) => {
+      const onRemoved = vi.fn<UnstorableTextRemovedHandler>();
+      const mounted = await mountInView(usj, editorView(viewName), {
+        structureProtectionMode,
+        onUnstorableTextRemoved: onRemoved,
+      });
+      await select(mounted, { text: "intro x/", offset: 8 }, { text: "/y z", offset: 0 });
+
+      await remove(mounted);
+
+      const saved = mounted.ref.current?.getUsj()?.content ?? [];
+      expect(saved).toContainEqual({ type: "chapter", marker: "c", number: "1" });
+      expect(saved).not.toContainEqual(expect.objectContaining({ type: "verse" }));
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+  },
+);
+
 describe("deleting a selected paragraph marker in the paragraph-structure view", () => {
   it.each<StructureProtectionMode>(["off", "guarded"])(
     "is refused under %s structure when the join would put `a/` against `/c`",
