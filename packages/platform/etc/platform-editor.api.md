@@ -635,11 +635,14 @@ export type UnstorableCharacter = "\\" | "//";
 // @public
 export interface UnstorableTextRemoved {
     readonly removed: readonly UnstorableCharacter[];
-    readonly source: "paste" | "drop" | "typing" | "deletion" | "move";
+    readonly source: UnstorableTextSource;
 }
 
 // @public
 export type UnstorableTextRemovedHandler = (event: UnstorableTextRemoved) => void;
+
+// @public
+export type UnstorableTextSource = "paste" | "drop" | "typing" | "deletion" | "move";
 
 // @public
 export interface UsjCssOptions {

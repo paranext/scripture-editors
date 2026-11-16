@@ -276,12 +276,13 @@ export declare interface EditorOptions {
    */
   onHiddenContentDelete?: HiddenContentDeleteHandler;
   /**
-   * Called once per paste, drop or blocked keystroke in a hidden-marker view (`view.markerMode` is
-   * `"hidden"`) that removed or refused `\` or `//`: the view cannot show what they would make (a
-   * marker, an optional line break), so they are kept out of its text. Called too, with `source`
-   * `"deletion"`, once per delete refused there because what it left would join two `/` into `//`.
-   * Use it to tell the user why some of what they pasted, dropped or typed is missing, or why a
-   * delete did nothing. Not called in Standard or Markers view.
+   * Called once per paste, drop, keystroke, delete, transpose or drag-move in a hidden-marker view
+   * (`view.markerMode` is `"hidden"`) that removed or refused `\` or `//`, which the view cannot
+   * store: a `\` would start a marker, and `//` is an optional line break. `source` says which: the
+   * text went in as a `"paste"`, `"drop"` or typed (`"typing"`, which also covers a refused
+   * transpose), or a delete (`"deletion"`) or a drag-move (`"move"`) was refused whole. See
+   * `UnstorableTextRemoved`. Use it to tell the user why text is missing, or why a delete,
+   * transpose or move did nothing. Not called in Standard or Markers view.
    */
   onUnstorableTextRemoved?: UnstorableTextRemovedHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */
@@ -2344,7 +2345,7 @@ export declare interface UnstorableTextRemoved {
    * refused transpose (macOS Ctrl+T) that would have put a `/` against another `/`. More sources
    * may be added; a host that branches on this should handle values it does not know.
    */
-  readonly source: "paste" | "drop" | "typing" | "deletion" | "move";
+  readonly source: UnstorableTextSource;
   /**
    * What was removed or refused, each kind once, in the order first met. Never empty. A refused
    * deletion is always `["//"]`; a refused move names what the drop would have removed.
@@ -2361,6 +2362,9 @@ export declare interface UnstorableTextRemoved {
  * edit from here (show a notice, say) rather than change the editor.
  */
 export declare type UnstorableTextRemovedHandler = (event: UnstorableTextRemoved) => void;
+
+/** What brought about an {@link UnstorableTextRemoved}: see its `source`. */
+export declare type UnstorableTextSource = "paste" | "drop" | "typing" | "deletion" | "move";
 
 /**
  * Options controlling {@link generateUsjCss}'s output. {@link generateUsjFontCss} takes `zoom` and
