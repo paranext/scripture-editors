@@ -1126,12 +1126,13 @@ export interface EditorOptions {
    */
   onHiddenContentDelete?: HiddenContentDeleteHandler;
   /**
-   * Called once per paste, drop or blocked keystroke in a hidden-marker view (`view.markerMode` is
-   * `"hidden"`) that removed or refused `\` or `//`: the view cannot show what they would make (a
-   * marker, an optional line break), so they are kept out of its text. Called too, with `source`
-   * `"deletion"`, once per delete refused there because what it left would join two `/` into `//`.
-   * Use it to tell the user why some of what they pasted, dropped or typed is missing, or why a
-   * delete did nothing. Not called in Standard or Markers view.
+   * Called once per paste, drop, keystroke, delete, transpose or drag-move in a hidden-marker view
+   * (`view.markerMode` is `"hidden"`) that removed or refused `\` or `//`, which the view cannot
+   * store: a `\` would start a marker, and `//` is an optional line break. `source` says which: the
+   * text went in as a `"paste"`, `"drop"` or typed (`"typing"`, which also covers a refused
+   * transpose), or a delete (`"deletion"`) or a drag-move (`"move"`) was refused whole. See
+   * `UnstorableTextRemoved`. Use it to tell the user why text is missing, or why a delete,
+   * transpose or move did nothing. Not called in Standard or Markers view.
    */
   onUnstorableTextRemoved?: UnstorableTextRemovedHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */

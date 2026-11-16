@@ -132,8 +132,8 @@ function $restorerFor(selection: RangeSelection): () => void {
  *   no handlers and editing is fully native — no blocking, no two-step delete, no armed state.
  *   `"guarded"`: two-step intentional-delete behavior is active. `"protected"`: structural
  *   keystrokes and paste/drop of structural markers are blocked outright. Defaults to `"off"`.
- * @param $filterPastedNodes - Under `"protected"`, called on the nodes an html paste or drop is
- *   about to insert, after sanitizing, to change them in place before they go in (e.g. to remove
+ * @param $filterPastedNodes - Under `"protected"`, called on the nodes a paste or drop is about to
+ *   insert (from its node copy or its html), after sanitizing, to change them in place before they go in (e.g. to remove
  *   text the view cannot store, with `$filterUnstorablePastedNodes`). Called inside the update.
  *   When it leaves nothing to insert (see `$insertsNothing`), nothing is inserted.
  * @param nodeCopyNamespace - Under `"protected"`, a paste whose node copy

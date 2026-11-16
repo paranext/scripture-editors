@@ -28,8 +28,8 @@ export function domRangeFromPoint(
  * the editor, and where Lexical resolves no point there (inside a decorator, such as a verse
  * number).
  *
- * Read-only: call inside `editor.update()`, an editor read, or a command handler; the selection it
- * returns is not set as the editor's.
+ * Read-only: call inside `editor.update()`, `editor.read()` (`applyDOMRange` needs the active
+ * editor) or a command handler; the selection it returns is not set as the editor's.
  */
 export function $selectionAtDropPoint(
   editor: LexicalEditor,
