@@ -2126,6 +2126,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <ActiveTextPlugin viewOptions={viewOptions} />
           <AnnotationPlugin ref={annotationRef} logger={stableLogger} viewOptions={viewOptions} />
           <ArrowNavigationPlugin viewOptions={viewOptions} />
+          {viewOptions?.markerMode === "hidden" && <BookAndChapterLinesPlugin />}
           <CharNodePlugin />
           {/* Before every plugin that handles a paste but InvisibleCharactersPlugin, a filter that
               sees the paste a second time to no effect. In the views that show markers, a paste the
@@ -2143,7 +2144,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               refuses typed or pasted `\` and `/` outright (CommandMenuPlugin).
               UnstorableTextPlugin is mounted in every view, acting only in one that hides
               markers, so a view switch keeps its handlers ahead of the same-priority ones mounted
-              after it (ParaMarkerSelectionPlugin's among them). */}
+              after it (ParaMarkerSelectionPlugin's among them). Out of alphabetical order on
+              purpose: its CRITICAL key and delete handlers must register ahead of
+              HiddenContentDeleteGuardPlugin and ParaMarkerSelectionPlugin, and moving it makes the
+              unstorableTextDeletion tests fail. */}
           <UnstorableTextPlugin
             isEnabled={viewOptions?.markerMode === "hidden"}
             structureProtectionMode={structureProtectionMode}
@@ -2158,7 +2162,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               they were registered: the guards and the whole-paragraph cut arm have to judge the
               selection the cut will actually take. */}
           <CopyLimitPlugin limit={copyLimit} viewOptions={viewOptions} />
-          {viewOptions?.markerMode === "hidden" && <BookAndChapterLinesPlugin />}
           {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
               normalization that keeps a point out of one is too. */}
           <DecoratorBoundarySelectionPlugin />

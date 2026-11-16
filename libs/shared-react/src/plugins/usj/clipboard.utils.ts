@@ -273,9 +273,9 @@ export const LEXICAL_CLIPBOARD_TYPE = "application/x-lexical-editor";
 export const NODE_COPY_HTML_ATTRIBUTE = "data-platform-editor-node-copy";
 
 /**
- * The html attribute that says `text/html` is text with its markers showing, as a copy from a view
- * that shows them writes it (`usfmToClipboardHtml`): what an async clipboard read keeps of
- * {@link MARKER_VIEW_CLIPBOARD_NAMESPACE}, the node copy's tag, which it does not return.
+ * Marks `text/html` from a view that shows markers (`usfmToClipboardHtml`), so a hidden-marker view
+ * knows its `\` tokens are markup. It stands in for the node copy's namespace
+ * ({@link MARKER_VIEW_CLIPBOARD_NAMESPACE}), which an async clipboard read does not return.
  */
 export const MARKER_TEXT_HTML_ATTRIBUTE = "data-platform-editor-marker-text";
 
@@ -310,13 +310,10 @@ export const HIDDEN_VIEW_CLIPBOARD_NAMESPACE = "platformEditor/hidden-markers";
 
 /**
  * The namespace a view that shows markers leaves on its node copy ({@link LEXICAL_CLIPBOARD_TYPE}):
- * the Lexical namespace of every platform editor, which only a hidden-marker view changes
- * ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}). That is one way a hidden-marker view can tell a `\` that
- * spells a marker from one anyone else wrote ({@link MARKER_TEXT_HTML_ATTRIBUTE} is the other, for a
- * paste an async clipboard read delivers): the text flavors of a paste carrying it are USFM, from
- * Standard view's own copy, or text with its markers showing, from Lexical's own copy in the views
- * with no copy of their own (a Markers-view range `MarkersViewCopyPlugin` declines is one). The html
- * of Lexical's copy, which goes in ahead of the plain text, loses its marker glyphs as well.
+ * Lexical's default, which only a hidden-marker view changes
+ * ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}). A paste carrying it, or
+ * {@link MARKER_TEXT_HTML_ATTRIBUTE} on its html, has text flavors that are USFM or show their
+ * markers, so a hidden-marker view strips their `\` tokens rather than treating them as typed.
  */
 export const MARKER_VIEW_CLIPBOARD_NAMESPACE = "platformEditor";
 
@@ -416,9 +413,9 @@ function transferWith(data: DataTransfer, overrides: { [type: string]: string })
  * them, reads the same transfer, and the event's target and `preventDefault` stay its own.
  *
  * Registered at `COMMAND_PRIORITY_CRITICAL`. Handlers of one priority run in the order they were
- * registered, so register it before every other paste handler: one registered earlier sees the
- * paste twice, which only a filter that passes on a paste it does not change, and dispatches one it
- * changes again, can take.
+ * registered, so register it before other CRITICAL paste handlers. A handler registered earlier
+ * sees each paste twice (with the flavor, then without), so it must return `false` for a paste it
+ * leaves unchanged.
  *
  * @param editor - The editor.
  * @param isEnabled - Whether pastes leave the flavor unread, asked on each paste.

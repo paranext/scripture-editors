@@ -101,10 +101,9 @@ function reportRemoved(
 
 /**
  * Removes unstorable text (`\` and `//`, see {@link removeUnstorableText}) from nodes about to be
- * pasted or dropped at `selection`, and reports the removal once. For code that inserts pasted
- * nodes itself instead of through `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, and for
- * `StructureKeyboardPlugin`'s protected-structure sanitizer: it inserts through that command, but
- * for a drop as well as a paste, and only a filter given the source reports a drop as one.
+ * pasted or dropped at `selection`, and reports the removal once. Use it where nodes are inserted
+ * outside `SELECTION_INSERT_CLIPBOARD_NODES_COMMAND`, and as `StructureKeyboardPlugin`'s
+ * `$filterPastedNodes`, so a drop it inserts is reported as `"drop"`.
  *
  * Mutating: call inside `editor.update()`.
  *
@@ -135,7 +134,7 @@ export function $filterUnstorablePastedNodes(
  * judged by the document characters that will touch it: over a selection, the ones outside it,
  * since the typed text replaces what is selected.
  *
- * Read-only: call inside `editor.update()` or an editor read.
+ * Read-only: call inside `editor.update()`, `editor.getEditorState().read()` or a command handler.
  */
 function $filterTypedText(text: string): { text: string; removed: UnstorableCharacter[] } {
   const selection = $getSelection();
@@ -273,8 +272,8 @@ function $stablePlaceAt(point: PointType): StablePlace | undefined {
 /**
  * A caret at `place`, or `undefined` when its node is gone.
  *
- * Read-only: call inside `editor.update()`, an editor read, or a command handler; the selection it
- * returns is not set as the editor's.
+ * Read-only: call inside `editor.update()`, `editor.getEditorState().read()` or a command handler;
+ * the selection it returns is not set as the editor's.
  */
 function $caretAtPlace(place: StablePlace): RangeSelection | undefined {
   const node = $getNodeByKey(place.key);
@@ -493,6 +492,8 @@ export function UnstorableTextPlugin({
      * the two characters before it asks, so the caret is put back where it was.
      */
     const onTranspose = (event: InputEvent) => {
+      // Runs from a DOM event listener, outside any command dispatch or update, so `editor.read` and
+      // `editor.update` here cannot nest inside another update.
       const caret = editor.read(() => {
         const selection = $getSelection();
         return $isRangeSelection(selection) && $transposeJoinsSlashes(selection)
@@ -508,6 +509,7 @@ export function UnstorableTextPlugin({
 
     /** A `beforeinput` the browser would apply itself, without telling Lexical in a command. */
     const onBeforeInput = (event: InputEvent) => {
+      // A DOM event listener, outside any command dispatch or update: `editor.read` cannot nest.
       if (!isEnabledRef.current || !editor.isEditable() || editor.isComposing()) return;
       if (event.inputType === "insertTranspose") {
         onTranspose(event);
@@ -531,7 +533,8 @@ export function UnstorableTextPlugin({
      * or chapter line it covers, and the text holds a lone carriage return (an old Mac line ending).
      * `undefined` when `data` goes in by another flavor, or holds no text.
      *
-     * Read-only: call inside `editor.update()`, an editor read, or a command handler.
+     * Read-only: call inside `editor.update()`, `editor.getEditorState().read()` or a command
+     * handler.
      */
     const $plainInsertion = (data: DataTransfer, selection: RangeSelection) => {
       if (insertionRoute(data) !== "plain") return undefined;
@@ -638,7 +641,8 @@ export function UnstorableTextPlugin({
     /**
      * What a word or line delete from the caret `selection` would remove (see
      * {@link $probeDeleteExtent}); `undefined` where it reaches nothing or the browser cannot
-     * measure. Mutating, as that is.
+     * measure. Mutating (the probe moves the DOM selection): call inside an update or command
+     * handler.
      */
     const $measureExtent = (
       selection: RangeSelection,
@@ -1052,7 +1056,8 @@ export function UnstorableTextPlugin({
         register(command, onDeleteCommand(granularity), COMMAND_PRIORITY_CRITICAL),
       ),
       // HIGH: after the guards that narrow or refuse a cut (CRITICAL; a copy limit shortens it),
-      // ahead of the copy that performs it (NORMAL).
+      // ahead of the copy that performs it (`CopyLimitPlugin`'s at NORMAL, `HiddenMarkersViewCopyPlugin`
+      // at LOW).
       register(CUT_COMMAND, $onSelectionRemoval, COMMAND_PRIORITY_HIGH),
       // A drag-move's removal of its source (`deleteByDrag`), after the guards that narrow it and
       // ahead of Lexical's own. The drop's insertion is a command of its own, so a refused

@@ -1354,8 +1354,7 @@ function pasteFragment(
  * rebuilds. A paste through a text flavor that brings a verse or a paragraph break makes Standard
  * view rebuild the paragraphs it lands in, re-deriving their verses, and an empty derived `sid`
  * there (the 2SA-3 and web-matthew-5 fixtures') does not survive that. Dropping derived metadata
- * is accepted (data-fidelity catalog F-8), so in those paragraphs an empty `sid` is left out on
- * both sides.
+ * is accepted, so in those paragraphs an empty `sid` is left out on both sides.
  */
 function settledAfterPaste(
   row: RangeRow,
