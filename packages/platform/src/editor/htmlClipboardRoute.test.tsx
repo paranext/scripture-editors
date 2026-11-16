@@ -433,6 +433,25 @@ describe.each(PROTECTIONS)(
       }
     });
 
+    it("leaves out a Standard copy's book line, chapter number and bare paragraph marker", async () => {
+      const { mounted, onRemoved } = await mount("paragraph-structure", mode);
+      try {
+        const before = mounted.ref.current?.getUsj()?.content ?? [];
+        await select(mounted, " last", 5, " last", 5);
+        const usfm = "\\id GEN Genesis\n\\c 2 \n\\p\n\\v 1 In the beginning";
+
+        await paste(mounted, { "text/html": usfmToClipboardHtml(usfm), "text/plain": usfm });
+
+        const after = mounted.ref.current?.getUsj()?.content ?? [];
+        expect(after).toHaveLength(before.length);
+        expect(paragraph(mounted).content?.at(-1)).toBe(" last1 In the beginning");
+        expect(JSON.stringify(after)).not.toContain("Genesis");
+        expect(onRemoved).not.toHaveBeenCalled();
+      } finally {
+        mounted.unmount();
+      }
+    });
+
     it("changes nothing for a copy of nothing but marker tokens, over a selection", async () => {
       const { mounted, onRemoved } = await mount("paragraph-structure", mode);
       try {

@@ -364,7 +364,9 @@ refused. The public surface grew substantially; nothing was removed.
   Standard view, the Markers view and the Footnotes pane's row editor write USFM as html and plain
   text, so a copy of `1 \ft TR and ` saved as `1 ft TR and `, a marker's name as a word of
   Scripture. Such a paste now loses its marker tokens (`1 TR and `), with no
-  `onUnstorableTextRemoved` report for them. Another program's paste is unchanged.
+  `onUnstorableTextRemoved` report for them, and its book line and chapter tokens go whole, so a
+  whole-chapter copy adds no book code, chapter number or empty paragraph. Another program's paste
+  is unchanged.
 - **A line with no paragraph marker keeps the breaks Enter and a paste put in it.** In the blank
   line after a chapter line, or in text USFM holds with no marker, typing `one`, Enter, `two`, or
   pasting those two lines, showed two lines but saved `onetwo`. A split there now starts a `\p`
