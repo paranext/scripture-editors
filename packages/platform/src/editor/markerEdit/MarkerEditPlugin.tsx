@@ -40,7 +40,6 @@ import {
   getDataTransferPayload,
   normalizePastedNbsp,
   stripPastedBlockMarkers,
-  stripPastedChapterAndBookId,
   getPastePayload,
 } from "./whitespaceDisplay.plugin.utils";
 import { registerNbspStandInFont } from "./nbspStandInFont";
@@ -129,6 +128,7 @@ import {
   plainTextTransfer,
   releaseTagsAfterNextCommit,
   StructureProtectionMode,
+  stripPastedChapterAndBookId,
   ViewOptions,
 } from "shared-react";
 

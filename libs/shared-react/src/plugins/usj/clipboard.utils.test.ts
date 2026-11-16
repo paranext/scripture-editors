@@ -134,6 +134,23 @@ describe("withoutMarkerTokens", () => {
     expect(withoutMarkerTokens(data)).toBeUndefined();
   });
 
+  it("leaves out a book line, a chapter token and a line a bare paragraph marker leaves empty", () => {
+    const stripped = withoutMarkerTokens(
+      transfer({
+        [LEXICAL_CLIPBOARD_TYPE]: nodeCopy(MARKER_VIEW_CLIPBOARD_NAMESPACE),
+        "text/html":
+          "<p><span>\\id GEN Genesis</span></p><p><span>\\c 2 </span></p><p><span>\\p</span></p>" +
+          "<p></p><p><span>\\v 1 In</span></p>",
+        "text/plain": "\\id GEN Genesis\n\\c 2 \n\\p\n\n\\v 1 In",
+      }),
+    );
+
+    expect(stripped?.getData("text/plain")).toBe("\n1 In");
+    expect(stripped?.getData("text/html")).toContain(
+      "<body><p></p><p><span>1 In</span></p></body>",
+    );
+  });
+
   it("does not take the space after a bare backslash for nothing left", () => {
     const stripped = withoutMarkerTokens(
       transfer({

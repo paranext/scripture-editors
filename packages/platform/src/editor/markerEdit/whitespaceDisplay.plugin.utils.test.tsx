@@ -20,7 +20,6 @@ import {
   getPastePayload,
   htmlPasteText,
   normalizePastedNbsp,
-  stripPastedChapterAndBookId,
   usfmToClipboardHtml,
 } from "./whitespaceDisplay.plugin.utils";
 import { displayTextToUsj } from "./whitespaceDisplay.utils";
@@ -74,7 +73,11 @@ import {
   ParaNode,
   textTypeState,
 } from "shared";
-import { MARKER_TEXT_HTML_ATTRIBUTE, StructureKeyboardPlugin } from "shared-react";
+import {
+  MARKER_TEXT_HTML_ATTRIBUTE,
+  StructureKeyboardPlugin,
+  stripPastedChapterAndBookId,
+} from "shared-react";
 
 /**
  * Null-event leg: ClipboardPlugin/ContextMenuPlugin/EditorRef dispatch COPY_COMMAND/
