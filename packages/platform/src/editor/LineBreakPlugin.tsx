@@ -28,7 +28,7 @@ import {
 } from "lexical";
 import { useEffect, useRef } from "react";
 import { $isNoteNode, $isSomeParaNode } from "shared";
-import { StructureProtectionMode, ViewOptions } from "shared-react";
+import { insertClaimedBeforeInputText, StructureProtectionMode, ViewOptions } from "shared-react";
 import { LINE_BREAK_IN_TEXT } from "./lineBreakText.utils";
 
 /**
@@ -307,7 +307,7 @@ export function LineBreakPlugin({
       if (!text || !LINE_BREAK_IN_TEXT.test(text)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+      insertClaimedBeforeInputText(editor, event, text);
     };
 
     return mergeRegister(
@@ -363,14 +363,18 @@ export function LineBreakPlugin({
         root?.addEventListener("beforeinput", onBeforeInput, true);
       }),
       () => editor.getRootElement()?.removeEventListener("beforeinput", onBeforeInput, true),
-      hasSpacing
-        ? mergeRegister(
-            editor.registerNodeTransform(TextNode, $breakTextAtLineBreak),
-            editor.registerNodeTransform(LineBreakNode, (lineBreak) =>
-              $replaceLineBreak(lineBreak, isProtectedRef.current),
-            ),
-          )
-        : () => undefined,
+    );
+  }, [editor]);
+
+  // Apart from the commands above, so a view switch that changes `hasSpacing` leaves those
+  // CRITICAL handlers where they are among the other plugins' handlers of that priority.
+  useEffect(() => {
+    if (!hasSpacing) return undefined;
+    return mergeRegister(
+      editor.registerNodeTransform(TextNode, $breakTextAtLineBreak),
+      editor.registerNodeTransform(LineBreakNode, (lineBreak) =>
+        $replaceLineBreak(lineBreak, isProtectedRef.current),
+      ),
     );
   }, [editor, hasSpacing]);
 
