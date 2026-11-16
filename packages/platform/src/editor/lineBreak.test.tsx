@@ -14,6 +14,7 @@ import {
   isPopoverHostEnabled,
   mountInPaneRow,
   mountInView,
+  paneRowScaffold,
 } from "./editorViews.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -1291,6 +1292,44 @@ describe.each(POPOVER_HOSTS)("in the footnote popover over %s view", (host) => {
 
       expect(lineBreaksIn(mounted)).toBe(0);
       expect(savedNote(mounted)).toEqual([["ft", "first x yverse text"]]);
+    } finally {
+      mounted.unmount();
+    }
+  });
+});
+
+// A note's text is reachable in paragraph-structure view, which the app offers, and a note holds no
+// paragraph break there: a line break a paste brings in, or typed text holds, is a space.
+describe.each(enabledViews(["paragraph-structure"]))("in %s view, inside a note", (view) => {
+  const NOTE_JOINED = [["ft", "first x yverse text"]];
+
+  async function mountInNote(): Promise<MountedEditor> {
+    const mounted = await mountInView(paneRowScaffold(NOTE), editorView(view));
+    await caretAt(mounted, VERSE_TEXT, "first ");
+    return mounted;
+  }
+
+  it.each<[string, (mounted: MountedEditor) => Promise<void>]>([
+    [
+      "pasted html's <br>",
+      (m) => paste(m, { "text/html": "<span>x<br>y</span>", "text/plain": "x\ny" }),
+    ],
+    [
+      "a line break in a pasted node copy",
+      (m) =>
+        paste(m, {
+          "application/x-lexical-editor": NODE_COPY_WITH_LINE_BREAK,
+          "text/plain": "x\ny",
+        }),
+    ],
+    ["a line break inside typed text", (m) => type(m, "x\ny")],
+  ])("%s is a space, not a paragraph break", async (_name, request) => {
+    const mounted = await mountInNote();
+    try {
+      await request(mounted);
+
+      expect(lineBreaksIn(mounted)).toBe(0);
+      expect(savedNote(mounted)).toEqual(NOTE_JOINED);
     } finally {
       mounted.unmount();
     }
