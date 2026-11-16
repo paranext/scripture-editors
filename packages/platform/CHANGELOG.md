@@ -139,8 +139,11 @@ refused. The public surface grew substantially; nothing was removed.
   and optional empty verses after the book's front matter, the same place the `\` menu's `\c` puts
   it. The verses are left out when the chapter content already holds anything (text, a verse, a
   note, a milestone or a figure), which they would otherwise go above. A no-break space counts as
-  whitespace in every view. Returns `false`, changing nothing, outside chapter 1 or once the
-  document has a chapter.
+  whitespace in every view. An empty paragraph of verse text, such as `\p` or `\q1`, takes the
+  verses inside it (`\c 1 \p \v 1 …`); an empty section heading, `\b` or `\d` keeps them above it.
+  A book that is all front matter, as a new book is, gets them in a new `\p`, as does one whose
+  content starts with blank text in no paragraph, such as an empty document. Returns `false`,
+  changing nothing, outside chapter 1 or once the document has a chapter.
 - `MarkerMenuContext.canInsertChapter` — set in chapter 1 of a document with no chapter yet, where
   `getMarkerMenuItems` offers `\c`.
 - `EditorOptions.onUnstorableTextRemoved`, with the types `UnstorableTextRemovedHandler`,
@@ -498,6 +501,12 @@ refused. The public surface grew substantially; nothing was removed.
   pasted into an editor that became read-only while the clipboard was read. The `alert` for a
   denied clipboard permission is gone: it ran only after a read had succeeded, so it never showed.
   Paste as Plain Text reads the clipboard once (`readText`), not twice.
+- `onStateChange` now fires when the caret moves into text outside any paragraph marker (an
+  implied paragraph), with `blockMarker` set to `p`. It used to stay silent there, so a host kept
+  the previous block's marker, often `id`, and scoped its character-marker menu to `\id`.
+- `EditorRef.formatPara` with a selection from the `\id` line into verses outside any paragraph
+  marker now retags those verses too. It used to split the `\id` line and leave the verses with no
+  paragraph marker.
 - Undoing an edit that restores a char span's separator (its no-break space after the glyph) sends
   the separator to the host as U+00A0, not a space, so the span gains no leading content space.
 - A delta applied in Standard view places the ops after an inserted char span correctly. An insert

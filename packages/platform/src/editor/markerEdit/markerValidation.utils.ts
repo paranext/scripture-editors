@@ -59,6 +59,18 @@ export function getMarkerStyleInfo(
 }
 
 /**
+ * Whether the inline marker `entry` declares, a character style or `\v`, may occur under
+ * `contextMarker`, the enclosing paragraph's or note's marker: an empty `occursUnder` allows it
+ * anywhere (PT9 semantics). The validator, the marker menu and chapter insertion share it, so they
+ * agree on where a marker may go. Paragraph tags are placed by the validity stack instead (see
+ * {@link isParagraphTagValid}).
+ */
+export function occursUnderAllows(entry: MarkerStyleInfo, contextMarker: string): boolean {
+  const occursUnder = entry.occursUnder ?? [];
+  return occursUnder.length === 0 || occursUnder.includes(contextMarker);
+}
+
+/**
  * `marker` as a validity-stack entry, read from the stylesheet; `undefined` when the stylesheet
  * does not declare it.
  */
@@ -222,9 +234,7 @@ function checkChar(
     return;
   }
   if (contextMarker === undefined) return;
-  const occursUnder = entry.occursUnder ?? [];
-  if (occursUnder.length > 0 && !occursUnder.includes(contextMarker))
-    flagGlyphs(node, "invalid", out);
+  if (!occursUnderAllows(entry, contextMarker)) flagGlyphs(node, "invalid", out);
 }
 
 function $validateInline(
@@ -244,11 +254,7 @@ function $validateInline(
       if (insideXq) continue;
       const entry = getMarkerStyleInfo(styleInfo, "v");
       if (!entry) out.set(child.getKey(), "unknown");
-      else if (
-        contextMarker !== undefined &&
-        (entry.occursUnder ?? []).length > 0 &&
-        !(entry.occursUnder ?? []).includes(contextMarker)
-      )
+      else if (contextMarker !== undefined && !occursUnderAllows(entry, contextMarker))
         out.set(child.getKey(), "invalid");
     } else if ($isNoteNode(child)) {
       // The note element itself is not context-validated (PT9 excludes //note);
