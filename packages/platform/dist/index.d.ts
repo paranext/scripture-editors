@@ -685,7 +685,9 @@ export declare interface EditorRef {
    * {@link EditorRef.removeAnnotation} keep their order with each other; other ref calls are not
    * deferred, so during a load they apply before annotation calls made alongside them. While
    * deferred, a later set or removal of the same annotation replaces this call, since the load
-   * would drop its effect anyway; the replaced call never runs, so its `onRemove` is not called.
+   * would drop its effect anyway. The replaced call never runs: a later set replaces it silently,
+   * and a removal reports it through `onRemove` (cause `"removed"`, empty text, since nothing was
+   * painted), as it would for a set that had run.
    * An error from a deferred call is logged rather than thrown, since its caller has already
    * returned.
    *
@@ -804,7 +806,8 @@ export declare interface EditorRef {
    * Remove an ephemeral annotation. Removes it from text and display bytes alike. Deferred
    * alongside {@link EditorRef.setAnnotation} while a load is pending, and through the same
    * queue, so the two keep the order they were issued in; a removal replaces a set of the same
-   * annotation still waiting there. That set never runs, so its `onRemove` is not called.
+   * annotation still waiting there. That set never runs, so its `onRemove` is called at once with
+   * cause `"removed"` and empty text.
    * @param type - Type of the annotation.
    * @param id - ID of the annotation.
    */

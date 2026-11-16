@@ -114,8 +114,9 @@ describe("annotating before the first content commit", () => {
     // Both calls queue behind the load, so they would drain back to back — and `AnnotationPlugin`
     // resolves a removal through a map its node-mutation listener fills only at commit, so a
     // removal run in the same tick as its set finds nothing. The queue keeps only the last call
-    // per annotation, so the set is dropped and nothing is left marked. `onRemove` does not fire:
-    // the set never ran, so the host never saw a mark to lose.
+    // per annotation, so the set is dropped and nothing is left marked. The dropped set's
+    // `onRemove` still reports the removal, as a removal of a set that had run would: a host
+    // relies on it to forget the annotation. Its text is empty, since nothing was painted.
     const logError = createLogMock();
     const onRemove = vi.fn();
     const ref = createRef<EditorRef>();
@@ -136,12 +137,15 @@ describe("annotating before the first content commit", () => {
     expect(logError).not.toHaveBeenCalled();
     expect(chapterNumbers()).toEqual(["3"]);
     expect(markTexts()).toEqual([]);
-    expect(onRemove).not.toHaveBeenCalled();
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(onRemove).toHaveBeenCalledWith("external-spelling", "a", "removed", "");
   });
 
   it("leaves one mark when the same annotation is re-set before the load lands", async () => {
-    // The Find shape: one fixed id re-set as the user steps through results.
+    // The Find shape: one fixed id re-set as the user steps through results. A re-set is not a
+    // removal, so the replaced set's `onRemove` stays silent.
     const logError = createLogMock();
+    const firstOnRemove = vi.fn();
     const ref = createRef<EditorRef>();
 
     await act(async () => {
@@ -150,7 +154,7 @@ describe("annotating before the first content commit", () => {
 
     await act(async () => {
       ref.current?.setUsj(usjGen3);
-      ref.current?.setAnnotation(earthRange, "find", "current");
+      ref.current?.setAnnotation(earthRange, "find", "current", { onRemove: firstOnRemove });
       await Promise.resolve();
       await Promise.resolve();
       ref.current?.setAnnotation(allRange, "find", "current");
@@ -159,6 +163,7 @@ describe("annotating before the first content commit", () => {
     expect(logError).not.toHaveBeenCalled();
     expect(chapterNumbers()).toEqual(["3"]);
     expect(markTexts()).toEqual(["all"]);
+    expect(firstOnRemove).not.toHaveBeenCalled();
   });
 
   it("applies an annotation a host re-requests in its layout effect when it changes the view", async () => {
@@ -296,6 +301,61 @@ describe("annotating before the first content commit", () => {
 
     expect(logError).not.toHaveBeenCalled();
     expect(chapterNumbers()).toEqual(["3"]);
+    expect(markTexts()).toEqual(["earth"]);
+  });
+
+  it("loads when a host re-sends the committed document after another in the same tick", async () => {
+    // A, then B, then the same A object: React's state ends where it began, so the second A call
+    // must remount the loader itself. Whether it needs to rests on the committed document, not on
+    // whatever was requested last.
+    const logError = createLogMock();
+    const ref = createRef<EditorRef>();
+
+    await act(async () => {
+      render(<Editor ref={ref} defaultUsj={usjGen2} logger={createLoggerMock(logError)} />);
+    });
+
+    await act(async () => {
+      ref.current?.setUsj(usjGen3);
+      ref.current?.setUsj(usjGen2);
+    });
+    // Nothing is loading now, so this has to land rather than wait for a load that never comes.
+    await act(async () => {
+      ref.current?.setAnnotation(earthRange, "spelling", "after-a-b-a");
+    });
+
+    expect(logError).not.toHaveBeenCalled();
+    expect(chapterNumbers()).toEqual(["2"]);
+    expect(markTexts()).toEqual(["earth"]);
+  });
+
+  it("discards an edit when a host re-sends the committed document after another in the same tick", async () => {
+    const logError = createLogMock();
+    const ref = createRef<EditorRef>();
+
+    await act(async () => {
+      render(<Editor ref={ref} defaultUsj={usjGen2} logger={createLoggerMock(logError)} />);
+    });
+    // The fixture text has no capital Z, so it marks the edit on screen.
+    await act(async () => {
+      ref.current?.applyUpdate([{ retain: 3 }, { insert: "Z" }], "local");
+    });
+    expect(document.body.textContent).toContain("Z");
+
+    await act(async () => {
+      ref.current?.setUsj(usjGen3);
+      ref.current?.setUsj(usjGen2);
+    });
+
+    // The screen and `getUsj()` must agree: the re-sent document really loaded.
+    expect(document.body.textContent).not.toContain("Z");
+    expect(JSON.stringify(ref.current?.getUsj())).not.toContain("Z");
+    expect(chapterNumbers()).toEqual(["2"]);
+
+    await act(async () => {
+      ref.current?.setAnnotation(earthRange, "spelling", "after-edit-a-b-a");
+    });
+    expect(logError).not.toHaveBeenCalled();
     expect(markTexts()).toEqual(["earth"]);
   });
 

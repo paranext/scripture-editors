@@ -231,6 +231,9 @@ const defaultOptions: EditorOptions = {};
  */
 const commitIgnoredTags = blackListedChangeTags.filter((tag) => tag !== DELTA_CHANGE_TAG);
 
+/** Reports, through a host's `onRemove`, the removal of an annotation whose queued set was dropped. */
+type ReportAnnotationRemoved = () => void;
+
 /** The load gate's key for one annotation, shared by its set and its removal. */
 function annotationQueueKey(type: string, id: string): string {
   // JSON, not a separator character: a type or id may contain any character.
@@ -484,10 +487,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // equal to that earlier state and suppress the one notification that matters.
   const lastNotifiedUsjRef = useRef<Usj | undefined>(undefined);
   const [usj, setUsj] = useState(defaultUsj);
-  // The document `usj` holds, or is about to hold, read when an API call decides whether a state
-  // update alone will load. The `usj` an API object captured is the one its own render saw, and an
-  // object kept from an earlier render would compare against an outdated document.
-  const requestedUsjRef = useRef(usj);
+  // The document React last committed, read when an API call decides whether a state update alone
+  // will load. That depends on the committed state: the `usj` an API object captured is the one its
+  // own render saw, which an object kept from an earlier render has outdated, and the last document
+  // requested can differ too — A, then B, then the same A in one tick leaves the state where it
+  // began.
+  const committedUsjRef = useRef(usj);
+  useLayoutEffect(() => {
+    committedUsjRef.current = usj;
+  }, [usj]);
   const [loadTrigger, setLoadTrigger] = useState(0);
   const [contextMarker, setContextMarker] = useState<string>();
 
@@ -618,7 +626,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // Annotations address the loaded document, so they wait for the load in flight.
   // `LoadStatePlugin` reports each load's start in the layout phase of the commit that renders it,
   // before a host's own layout effects; `setUsj` closes the gate earlier still, at the call.
-  const { handleLoadingChange, noteLoadRequested, runWhenLoaded } = useLoadGate(stableLogger);
+  // A queued set is tagged with how to report its removal, for a removal that replaces it.
+  const { handleLoadingChange, noteLoadRequested, runWhenLoaded } =
+    useLoadGate<ReportAnnotationRemoved>(stableLogger);
 
   // The block verse layout regroups each verse into its own element, splitting paragraphs that span
   // verses. That shape cannot be exported back to USJ, so the layout is read-only by construction
@@ -1215,8 +1225,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         // When the state already holds this document — after `applyUpdate` or a user edit has
         // moved the content on, or on a forced reload — setting it again renders nothing, so the
         // loader is remounted instead.
-        const shouldForceReload = deepEqual(requestedUsjRef.current, incomingUsj);
-        requestedUsjRef.current = incomingUsj;
+        const shouldForceReload = deepEqual(committedUsjRef.current, incomingUsj);
         // A load is now certain, but React hasn't re-rendered yet, so LoadStatePlugin hasn't
         // reported it. Without this, an annotation set in this same tick would address the
         // outgoing document and be discarded by the load.
@@ -1376,16 +1385,21 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           );
         },
         annotationQueueKey(type, id),
+        // Nothing was painted, so there is no text to report.
+        onRemove && (() => onRemove(externalTypedMarkType(type), id, "removed", "")),
       );
     },
     removeAnnotation(type, id) {
       // Gated for the same reason `setAnnotation` is, and so the pair keeps its issue order: an
       // un-gated removal alongside a queued set would run against the outgoing document while its
       // set ran against the loaded one. Shares the set's key, so a removal replaces a queued set.
-      runWhenLoaded(
+      const reportReplacedSetRemoved = runWhenLoaded(
         () => annotationRef.current?.removeAnnotation(externalTypedMarkType(type), id),
         annotationQueueKey(type, id),
       );
+      // The replaced set never runs, but its host is still owed the removal a set that had run would
+      // report: a host forgets an annotation, and tells whoever asked for it, from `onRemove`.
+      reportReplacedSetRemoved?.();
     },
     getAnnotationRanges(type, id) {
       return annotationRef.current?.getAnnotationRanges(externalTypedMarkType(type), id) ?? [];

@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef } from "react";
 import { LoggerBasic } from "shared";
 
-/** An operation waiting on a load, and what it addresses (see `runWhenLoaded`'s `key`). */
-interface QueuedAction {
+/**
+ * An operation waiting on a load, what it addresses, and what its caller attached to it (see
+ * `runWhenLoaded`'s `key` and `tag`).
+ */
+interface QueuedAction<TTag> {
   action: () => void;
   key?: string;
+  tag?: TTag;
 }
 
 /**
@@ -23,11 +27,11 @@ interface QueuedAction {
  * @param logger - Reports work that no longer has a caller to fail to: a deferred operation that
  *   throws, and operations still queued when the editor unmounts.
  */
-export function useLoadGate(logger?: LoggerBasic) {
+export function useLoadGate<TTag = never>(logger?: LoggerBasic) {
   // A load always follows mount, and this hook runs before LoadStatePlugin's effect reports it.
   const isLoadRequestedRef = useRef(true);
   const activeLoadCountRef = useRef(0);
-  const queuedActionsRef = useRef<QueuedAction[]>([]);
+  const queuedActionsRef = useRef<QueuedAction<TTag>[]>([]);
   const isTornDownRef = useRef(false);
   // Read at call time so the gate's callbacks stay referentially stable while a logger swap is
   // still picked up (and so teardown can report against the logger the editor last had).
@@ -96,22 +100,26 @@ export function useLoadGate(logger?: LoggerBasic) {
    * @param key - Identifies what the operation addresses. A queued operation with the same key is
    *   replaced: the queue drains in one tick, so two calls for one target would run as a same-tick
    *   pair, and the load drops whatever the earlier one would have done anyway.
+   * @param tag - Anything the caller wants handed back if a later call replaces this one.
+   * @returns The tag of the queued operation this one replaced, if any.
    */
   const runWhenLoaded = useCallback(
-    (action: () => void, key?: string) => {
+    (action: () => void, key?: string, tag?: TTag): TTag | undefined => {
       // Waiting work runs first even once the gate reads open: between a load finishing and its
       // drain, running this now would overtake operations issued before it.
       // Deliberately not wrapped: with the gate open this is still the caller's own call stack, so
       // a throw reaches the caller directly.
       if (isDocumentLoaded() && queuedActionsRef.current.length === 0) {
         action();
-        return;
+        return undefined;
       }
       const queue = queuedActionsRef.current;
+      const replaced = key === undefined ? undefined : queue.find((queued) => queued.key === key);
       queuedActionsRef.current = [
-        ...(key === undefined ? queue : queue.filter((queued) => queued.key !== key)),
-        { action, key },
+        ...(replaced ? queue.filter((queued) => queued !== replaced) : queue),
+        { action, key, tag },
       ];
+      return replaced?.tag;
     },
     [isDocumentLoaded],
   );

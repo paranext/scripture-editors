@@ -28,8 +28,8 @@ function createLogger() {
 }
 
 /** The gate starts closed (a load always follows mount), so open it the way a load does. */
-function renderOpenGate(logger: LoggerBasic = createLogger()) {
-  const rendered = renderHook(() => useLoadGate(logger));
+function renderOpenGate<TTag = never>(logger: LoggerBasic = createLogger()) {
+  const rendered = renderHook(() => useLoadGate<TTag>(logger));
   act(() => {
     rendered.result.current.handleLoadingChange(true);
     rendered.result.current.handleLoadingChange(false);
@@ -180,6 +180,23 @@ describe("useLoadGate", () => {
     await flushMicrotasks();
 
     expect(calls).toEqual(["b", "second a", "unkeyed", "unkeyed again"]);
+  });
+
+  it("hands back the tag of the queued call it replaces", () => {
+    const { result } = renderOpenGate<string>();
+
+    let replacedTags: (string | undefined)[] = [];
+    act(() => {
+      result.current.handleLoadingChange(true);
+      replacedTags = [
+        result.current.runWhenLoaded(vi.fn(), "a", "first a"),
+        result.current.runWhenLoaded(vi.fn(), "b", "b"),
+        result.current.runWhenLoaded(vi.fn(), "a", "second a"),
+        result.current.runWhenLoaded(vi.fn(), "a"),
+      ];
+    });
+
+    expect(replacedTags).toEqual([undefined, undefined, "first a", "second a"]);
   });
 
   it("queues a call made after a load finishes but before its drain, behind the waiting work", async () => {
