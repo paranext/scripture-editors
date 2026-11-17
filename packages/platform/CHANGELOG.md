@@ -315,6 +315,9 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- Under `"guarded"` structure protection, Delete at the end of a paragraph right before a sidebar
+  (`\esb`) is refused, as it is before a chapter. It used to merge the sidebar's first paragraph
+  into the paragraph before it, out of the sidebar.
 - `onStateChange` now fires when the caret moves into text outside any paragraph marker (an
   implied paragraph), with `blockMarker` set to `p`. It used to stay silent there, so a host kept
   the previous block's marker, often `id`, and scoped its character-marker menu to `\id`.

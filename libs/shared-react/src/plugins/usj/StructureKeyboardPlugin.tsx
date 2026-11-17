@@ -3,6 +3,7 @@ import {
   $getParaAncestor,
   $isArmedSelection,
   $isCaretBesideChapterGlyph,
+  $isUnmergeableParaEnd,
   $isUnmergeableParaStart,
   $moveCaretPastGutterGlyph,
   $narrowSelectionPastGutterGlyph,
@@ -281,6 +282,12 @@ export function StructureKeyboardPlugin({
       // The same at a block's end with a chapter glyph after it: nothing here may be deleted, and
       // the native delete would remove the chapter.
       if (intent === "deleteForward" && $isCaretBesideChapterGlyph(selection, intent)) {
+        event?.preventDefault();
+        return true;
+      }
+      // And at a block's end with a sidebar or other non-paragraph block after it, whose first
+      // paragraph the native delete would pull out of it.
+      if (intent === "deleteForward" && $isUnmergeableParaEnd(selection)) {
         event?.preventDefault();
         return true;
       }

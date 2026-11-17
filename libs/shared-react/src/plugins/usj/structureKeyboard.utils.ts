@@ -530,6 +530,25 @@ export function $isUnmergeableParaStart(selection: BaseSelection): boolean {
 }
 
 /**
+ * True when a collapsed caret sits at the end of a block whose next block is neither a paragraph
+ * nor a chapter: a sidebar, say. A Delete there has no paragraph to merge up ({@link
+ * $structuralDeleteTarget}), and left to the native delete it would pull that block's first
+ * paragraph out of it, so it must be refused. A chapter is {@link $isCaretBesideChapterGlyph}'s to
+ * judge. A caret in front of a line's gutter glyph is judged from just past it, where a forward
+ * delete would run from.
+ *
+ * Read-only: safe in any read or update.
+ */
+export function $isUnmergeableParaEnd(selection: BaseSelection): boolean {
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const from = selection.clone();
+  $moveCaretPastGutterGlyph(from);
+  if (!$caretAtParaEnd(from)) return false;
+  const next = $getParaAncestor(from.anchor.getNode())?.getNextSibling();
+  return !!next && !$isSomeParaNode(next) && !$isSomeChapterNode(next);
+}
+
+/**
  * True when a collapsed caret sits at a block's edge with an atomic chapter glyph right past it, in
  * the views that hide markers: at the block's content start for a Backspace, at its end for a
  * Delete. A guarded delete from there may act on a paragraph ({@link $structuralDeleteTarget}), but
