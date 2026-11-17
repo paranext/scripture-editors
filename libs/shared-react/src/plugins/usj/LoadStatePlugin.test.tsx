@@ -1,13 +1,6 @@
 /**
- * An external USJ mutation (PDP echo / chapter reload) is a whole-state `setEditorState` replace
- * whose parsed state carries a null selection. When the editor being replaced does NOT have DOM
- * focus (e.g. the user is typing in the footnote-editor POPOVER while the parent editor's PDP echo
- * lands ~150-250ms after an edit), reconciling that null selection writes to the SHARED document
- * selection anyway — clearing the popover's caret and dragging focus back into the parent editor
- * (observed live: popover focus stolen, Enter landing nowhere; a focusin trace shows the main
- * editor stealing focus at ~t+250ms). An editor without focus has no claim on the DOM selection, so
- * the external apply must skip DOM-selection reconciliation entirely (Lexical's
- * SKIP_DOM_SELECTION_TAG). An editor WITH focus keeps the current behavior.
+ * `LoadStatePlugin`'s loading behavior: DOM-selection containment when an external load replaces
+ * the document, the `onLoadingChange` contract, and when a load's start is reported.
  */
 
 import { LoadStatePlugin } from "./LoadStatePlugin";
@@ -17,9 +10,10 @@ import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { act, render } from "@testing-library/react";
-import { LexicalEditor, SerializedEditorState, SKIP_DOM_SELECTION_TAG } from "lexical";
-import { useEffect } from "react";
+import { $getRoot, LexicalEditor, SerializedEditorState, SKIP_DOM_SELECTION_TAG } from "lexical";
+import { ReactElement, StrictMode, Suspense, useEffect, useLayoutEffect } from "react";
 import { EditorAdaptor, EXTERNAL_USJ_MUTATION_TAG } from "shared";
+import { vi } from "vitest";
 
 /** Minimal core-nodes serialized state whose text carries the scripture "content". */
 function serializedState(text: string): SerializedEditorState {
@@ -110,6 +104,16 @@ function recordExternalCommitTags(editor: LexicalEditor): { commits: string[][] 
 }
 
 describe("LoadStatePlugin external-mutation DOM-selection containment", () => {
+  // An external USJ mutation (PDP echo / chapter reload) is a whole-state `setEditorState` replace
+  // whose parsed state carries a null selection. When the editor being replaced does NOT have DOM
+  // focus (e.g. the user is typing in the footnote-editor POPOVER while the parent editor's PDP
+  // echo lands ~150-250ms after an edit), reconciling that null selection writes to the SHARED
+  // document selection anyway — clearing the popover's caret and dragging focus back into the
+  // parent editor (observed live: popover focus stolen, Enter landing nowhere; a focusin trace
+  // shows the main editor stealing focus at ~t+250ms). An editor without focus has no claim on the
+  // DOM selection, so the external apply must skip DOM-selection reconciliation entirely (Lexical's
+  // SKIP_DOM_SELECTION_TAG). An editor WITH focus keeps the current behavior.
+
   it("skips DOM-selection reconciliation when the editor does not have focus", async () => {
     const { editor, setScripture } = await testEnvironment();
     const record = recordExternalCommitTags(editor);
@@ -135,5 +139,355 @@ describe("LoadStatePlugin external-mutation DOM-selection containment", () => {
 
     expect(record.commits.length).toBeGreaterThan(0);
     record.commits.forEach((tags) => expect(tags).not.toContain(SKIP_DOM_SELECTION_TAG));
+  });
+});
+
+/** `mockAdaptor` with a spy, for suites that count how many times the document was loaded. */
+function createCountingAdaptor(): EditorAdaptor & {
+  serializeEditorState: ReturnType<typeof vi.fn>;
+} {
+  return {
+    serializeEditorState: vi.fn((scripture: unknown) => serializedState(String(scripture))),
+  };
+}
+
+function createLogger() {
+  return {
+    error: vi.fn<(...params: unknown[]) => void>(),
+    warn: vi.fn<(...params: unknown[]) => void>(),
+    info: vi.fn<(...params: unknown[]) => void>(),
+    debug: vi.fn<(...params: unknown[]) => void>(),
+  };
+}
+
+/**
+ * The editor the reporting environment below is driving. Module scope, not a return value: the
+ * first finish is reported from inside `loadReportingEnvironment`, before it has returned
+ * anything a test could read.
+ */
+let reportingEditor: LexicalEditor | undefined;
+
+/** What the document says right now, i.e. which load is live. */
+function liveText(): string {
+  if (!reportingEditor) throw new Error("editor was not grabbed");
+  return reportingEditor.getEditorState().read(() => $getRoot().getTextContent());
+}
+
+/**
+ * Like `testEnvironment` above, but with the adaptor, logger and `onLoadingChange` callback under
+ * the test's control, and a reader for whatever document is live at any moment.
+ */
+async function loadReportingEnvironment(props: {
+  scripture: string;
+  editorAdaptor: EditorAdaptor;
+  onLoadingChange?: (isLoading: boolean) => void;
+  logger?: ReturnType<typeof createLogger>;
+  /** Run from the composer's parent's layout effect, keyed on `scripture`. */
+  onParentLayoutEffect?: () => void;
+  /** Render under `StrictMode`. */
+  isStrict?: boolean;
+  /** While set, a sibling of the plugin suspends on it, hiding the plugin under a Suspense boundary. */
+  suspendOn?: Promise<void>;
+}) {
+  reportingEditor = undefined;
+
+  function GrabEditor() {
+    const [composerEditor] = useLexicalComposerContext();
+    useEffect(() => {
+      reportingEditor = composerEditor;
+    }, [composerEditor]);
+    return null;
+  }
+
+  function Suspender({ on }: { on?: Promise<void> }): null {
+    if (on) throw on;
+    return null;
+  }
+
+  function App(appProps: typeof props): ReactElement {
+    const { onParentLayoutEffect, scripture } = appProps;
+    useLayoutEffect(() => {
+      onParentLayoutEffect?.();
+    }, [onParentLayoutEffect, scripture]);
+    return (
+      <Suspense fallback={null}>
+        <LexicalComposer
+          initialConfig={{
+            namespace: "TestEditor",
+            nodes: [],
+            onError: (error) => {
+              throw error;
+            },
+            theme: {},
+          }}
+        >
+          <GrabEditor />
+          <RichTextPlugin
+            contentEditable={<ContentEditable />}
+            placeholder={null}
+            ErrorBoundary={LexicalErrorBoundary}
+          />
+          <LoadStatePlugin
+            scripture={scripture}
+            editorAdaptor={appProps.editorAdaptor}
+            onLoadingChange={appProps.onLoadingChange}
+            logger={appProps.logger}
+          />
+          <Suspender on={appProps.suspendOn} />
+        </LexicalComposer>
+      </Suspense>
+    );
+  }
+
+  const wrap = (ui: ReactElement) => (props.isStrict ? <StrictMode>{ui}</StrictMode> : ui);
+  let rerender: (ui: ReactElement) => void = () => undefined;
+  await act(async () => {
+    ({ rerender } = render(wrap(<App {...props} />)));
+  });
+
+  return {
+    reload: async (nextProps: Partial<typeof props>) =>
+      act(async () => {
+        rerender(wrap(<App {...props} {...nextProps} />));
+      }),
+  };
+}
+
+describe("LoadStatePlugin onLoadingChange", () => {
+  // The contract callers gate document-addressing work on (see the platform editor's load gate):
+  // calls are balanced, and when `false` is reported the document this load leaves behind is
+  // already live — the loaded one, or the previous one when the load was skipped or failed. A
+  // finish reported before the commit is a silent regression for every such caller, so it is pinned
+  // here rather than left to Lexical's internal scheduling.
+
+  it("reports the load balanced, and the loaded document is live at the finish", async () => {
+    const calls: boolean[] = [];
+    const finishedWith: string[] = [];
+    await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor: createCountingAdaptor(),
+      onLoadingChange: (isLoading) => {
+        calls.push(isLoading);
+        if (!isLoading) finishedWith.push(liveText());
+      },
+    });
+
+    expect(calls).toEqual([true, false]);
+    expect(finishedWith).toEqual(["first"]);
+  });
+
+  it("reports each reload the same way, with the new document live", async () => {
+    const finishedWith: string[] = [];
+    const onLoadingChange = (isLoading: boolean) => {
+      if (!isLoading) finishedWith.push(liveText());
+    };
+
+    const environment = await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor: createCountingAdaptor(),
+      onLoadingChange,
+    });
+    await environment.reload({ scripture: "second" });
+
+    expect(finishedWith).toEqual(["first", "second"]);
+    expect(liveText()).toBe("second");
+  });
+
+  it("finishes with the previous document live when there is nothing to serialize", async () => {
+    const calls: boolean[] = [];
+    const finishedWith: string[] = [];
+    const logger = createLogger();
+    const editorAdaptor = createCountingAdaptor();
+    const onLoadingChange = (isLoading: boolean) => {
+      calls.push(isLoading);
+      if (!isLoading) finishedWith.push(liveText());
+    };
+
+    const environment = await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor,
+      onLoadingChange,
+      logger,
+    });
+    editorAdaptor.serializeEditorState.mockReturnValueOnce(
+      undefined as unknown as SerializedEditorState,
+    );
+    await environment.reload({ scripture: "skipped" });
+
+    expect(calls).toEqual([true, false, true, false]);
+    // The invariant the prop documents: a finish means the document is stable, and a skipped load
+    // leaves the previous one in place.
+    expect(finishedWith).toEqual(["first", "first"]);
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("finishes when the adaptor throws", async () => {
+    const calls: boolean[] = [];
+    const logger = createLogger();
+
+    await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor: {
+        serializeEditorState: () => {
+          throw new Error("adaptor exploded");
+        },
+      },
+      onLoadingChange: (isLoading) => calls.push(isLoading),
+      logger,
+    });
+
+    expect(calls).toEqual([true, false]);
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("adaptor exploded"));
+  });
+
+  it("still loads, and logs the error, when a consumer's own callback throws on the way in", async () => {
+    const calls: boolean[] = [];
+    const logger = createLogger();
+
+    await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor: createCountingAdaptor(),
+      onLoadingChange: (isLoading) => {
+        calls.push(isLoading);
+        if (isLoading) throw new Error("consumer exploded");
+      },
+      logger,
+    });
+
+    // Balanced even so: a caller counting these must not be left waiting forever.
+    expect(calls).toEqual([true, false]);
+    // A broken callback is the consumer's bug, not a reason to keep the document from loading.
+    expect(liveText()).toBe("first");
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("consumer exploded"));
+  });
+
+  it("contains, and logs, a consumer's callback that throws on the way out", async () => {
+    const logger = createLogger();
+
+    await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor: createCountingAdaptor(),
+      onLoadingChange: (isLoading) => {
+        if (!isLoading) throw new Error("consumer exploded on finish");
+      },
+      logger,
+    });
+
+    // The finish is reported from a microtask, so an escaping error would be an unhandled one.
+    expect(liveText()).toBe("first");
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("consumer exploded on finish"),
+    );
+  });
+
+  it("does not reload when only the callback's identity changes", async () => {
+    // The callback is a dependency of nothing: an inline lambda would otherwise reload the
+    // document — clearing undo/redo with it — on every render of the consumer.
+    const editorAdaptor = createCountingAdaptor();
+    const environment = await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor,
+      onLoadingChange: () => undefined,
+    });
+    expect(editorAdaptor.serializeEditorState).toHaveBeenCalledTimes(1);
+
+    const laterCalls: boolean[] = [];
+    await environment.reload({ onLoadingChange: (isLoading) => laterCalls.push(isLoading) });
+
+    expect(editorAdaptor.serializeEditorState).toHaveBeenCalledTimes(1);
+    expect(laterCalls).toEqual([]);
+
+    // ...and the latest callback is the one a real reload reports to.
+    await environment.reload({
+      scripture: "second",
+      onLoadingChange: (isLoading) => laterCalls.push(isLoading),
+    });
+
+    expect(editorAdaptor.serializeEditorState).toHaveBeenCalledTimes(2);
+    expect(laterCalls).toEqual([true, false]);
+  });
+});
+
+describe("LoadStatePlugin start report timing", () => {
+  it("reports a load starting before any ancestor's layout effect in the same commit", async () => {
+    // A host can touch the editor from its own layout effect, which runs after the plugin's layout
+    // effects but before every passive effect. Reporting the start any later leaves a window in
+    // which work aimed at the incoming document runs against the outgoing one.
+    const calls: boolean[] = [];
+    const seenByParentLayoutEffect: boolean[][] = [];
+    const environment = await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor: createCountingAdaptor(),
+      onLoadingChange: (isLoading) => calls.push(isLoading),
+      onParentLayoutEffect: () => seenByParentLayoutEffect.push([...calls]),
+    });
+    await environment.reload({ scripture: "second" });
+
+    expect(seenByParentLayoutEffect).toEqual([[true], [true, false, true]]);
+    expect(calls).toEqual([true, false, true, false]);
+  });
+
+  it("stays balanced under StrictMode's double-invoked effects", async () => {
+    const calls: boolean[] = [];
+    await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor: createCountingAdaptor(),
+      onLoadingChange: (isLoading) => calls.push(isLoading),
+      isStrict: true,
+    });
+
+    expect(calls.filter(Boolean)).toHaveLength(calls.filter((isLoading) => !isLoading).length);
+    expect(calls.at(-1)).toBe(false);
+    expect(liveText()).toBe("first");
+  });
+
+  it("does not report a load when Suspense hides and re-shows the plugin", async () => {
+    // Re-showing re-runs layout effects but not passive ones, so a start reported from a layout
+    // effect would have no load, and no finish, to balance it.
+    const calls: boolean[] = [];
+    const onLoadingChange = (isLoading: boolean) => calls.push(isLoading);
+    const editorAdaptor = createCountingAdaptor();
+    const environment = await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor,
+      onLoadingChange,
+    });
+
+    let resume: () => void = () => undefined;
+    const suspended = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    await environment.reload({ suspendOn: suspended });
+    resume();
+    await environment.reload({ suspendOn: undefined });
+
+    expect(calls).toEqual([true, false]);
+    expect(editorAdaptor.serializeEditorState).toHaveBeenCalledTimes(1);
+    expect(liveText()).toBe("first");
+  });
+
+  it("reports the start in the layout phase when Suspense re-shows the plugin with new inputs", async () => {
+    // The Suspense guard skips only an unchanged re-show. New inputs mean a real load, whose start
+    // must still come in the layout phase rather than fall through to the load effect's own report.
+    const calls: boolean[] = [];
+    const seenByParentLayoutEffect: boolean[][] = [];
+    const environment = await loadReportingEnvironment({
+      scripture: "first",
+      editorAdaptor: createCountingAdaptor(),
+      onLoadingChange: (isLoading) => calls.push(isLoading),
+      onParentLayoutEffect: () => seenByParentLayoutEffect.push([...calls]),
+    });
+
+    let resume: () => void = () => undefined;
+    const suspended = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    await environment.reload({ suspendOn: suspended });
+    resume();
+    await environment.reload({ suspendOn: undefined, scripture: "second" });
+
+    expect(seenByParentLayoutEffect.at(-1)).toEqual([true, false, true]);
+    expect(calls).toEqual([true, false, true, false]);
+    expect(liveText()).toBe("second");
   });
 });
