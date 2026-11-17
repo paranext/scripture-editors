@@ -1,10 +1,7 @@
 // Should only be used on nodes that are initialized in the test environment.
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
-import {
-  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
-  MARKER_VIEW_CLIPBOARD_NAMESPACE,
-} from "./clipboard.utils";
+import { HIDDEN_VIEW_CLIPBOARD_NAMESPACE, MARKER_VIEW_CLIPBOARD_NAMESPACE } from "./nodeCopy.utils";
 import { baseTestEnvironment, updateSelection } from "./react-test.utils";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";

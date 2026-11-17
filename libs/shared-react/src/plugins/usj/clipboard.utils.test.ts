@@ -1,17 +1,19 @@
 import {
-  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
-  htmlWithNodeCopy,
-  LEXICAL_CLIPBOARD_TYPE,
   MARKER_TEXT_HTML_ATTRIBUTE,
-  MARKER_VIEW_CLIPBOARD_NAMESPACE,
-  NODE_COPY_HTML_ATTRIBUTE,
-  nodeCopyIn,
   pasteSelection,
   pasteSelectionAsPlainText,
   removeMarkerTokens,
   withoutMarkerTokens,
-  withoutNodeCopy,
 } from "./clipboard.utils";
+import {
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+  htmlWithNodeCopy,
+  LEXICAL_CLIPBOARD_TYPE,
+  MARKER_VIEW_CLIPBOARD_NAMESPACE,
+  NODE_COPY_HTML_ATTRIBUTE,
+  nodeCopyIn,
+  withoutNodeCopy,
+} from "./nodeCopy.utils";
 import { createEditor, PASTE_COMMAND, SerializedLexicalNode } from "lexical";
 
 describe("removeMarkerTokens", () => {

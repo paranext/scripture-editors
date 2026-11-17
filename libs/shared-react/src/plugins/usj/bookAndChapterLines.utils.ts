@@ -32,7 +32,7 @@ import {
  * as any paste joins a copy's first paragraph to the line at the caret; a copy of whole lines goes in
  * as lines of their own. A copy without it is pasted as a copy of whole lines.
  *
- * The copy (`$hiddenViewLexicalFlavor`, platform) writes it, and the paste takes it off again
+ * The copy (`$hiddenViewLexicalFlavor`, `nodeCopy.utils.ts`) writes it, and the paste takes it off again
  * ({@link $takeStartsMidParagraph}), so no node in the document keeps it.
  */
 export const startsMidParagraphState = createState("startsMidParagraph", {
