@@ -7,10 +7,8 @@ name: Full test suite
 #   oracle (by default: the core keystrokes where the annotations change the tree, plus a sample).
 # - ANNOTATION_TRANSPARENCY_CLIPBOARD: that oracle's clipboard and range gestures.
 # - ANNOTATION_ORACLE_2SA: the annotation-location oracle over the 2 Samuel corpus.
-# - TYPING_FIDELITY_ORACLE_CARETS=256: 256 carets of each typing-fidelity document, not the
-#   default spread of 32. Every caret ("all") takes over an hour for one whole chapter, and 1024
-#   still finds a failure on `main` that is not fixed yet: in the paragraph-structure view, Delete
-#   at the end of a paragraph before a sidebar merges the sidebar's first paragraph into it.
+# - TYPING_FIDELITY_ORACLE_CARETS=1024: 1024 carets of each typing-fidelity document, not the
+#   default spread of 32. Every caret ("all") takes over an hour for one whole chapter.
 # A scheduled run tests `main`; run it by hand on a branch before merging a risky editor change.
 on:
   schedule:
@@ -37,7 +35,7 @@ jobs:
       ANNOTATION_TRANSPARENCY_FULL: "1"
       ANNOTATION_TRANSPARENCY_CLIPBOARD: "1"
       ANNOTATION_ORACLE_2SA: "1"
-      TYPING_FIDELITY_ORACLE_CARETS: "256"
+      TYPING_FIDELITY_ORACLE_CARETS: "1024"
 
     steps:
       - name: Check out Git repository
