@@ -1323,6 +1323,7 @@ describe.each(enabledViews(["paragraph-structure"]))("in %s view, inside a note"
         }),
     ],
     ["a line break inside typed text", (m) => type(m, "x\ny")],
+    ["a line break in pasted plain text", (m) => paste(m, { "text/plain": "x\ny" })],
   ])("%s is a space, not a paragraph break", async (_name, request) => {
     const mounted = await mountInNote();
     try {
