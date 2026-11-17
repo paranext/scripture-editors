@@ -60,13 +60,8 @@ import {
   $selectParaMarker,
   LoggerBasic,
 } from "shared";
-import {
-  $nodesFromNodeCopy,
-  nodeCopyIn,
-  removeMarkerGlyphElements,
-  withoutMarkerTokens,
-  withoutNodeCopy,
-} from "./clipboard.utils";
+import { removeMarkerGlyphElements, withoutMarkerTokens } from "./clipboard.utils";
+import { $nodesFromNodeCopy, nodeCopyIn, withoutNodeCopy } from "./nodeCopy.utils";
 import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";

@@ -7,10 +7,7 @@ import {
   HiddenContentDeleteHandler,
   HiddenContentDeleteRequest,
 } from "./hidden-content-delete.model";
-import {
-  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
-  MARKER_VIEW_CLIPBOARD_NAMESPACE,
-} from "./clipboard.utils";
+import { HIDDEN_VIEW_CLIPBOARD_NAMESPACE, MARKER_VIEW_CLIPBOARD_NAMESPACE } from "./nodeCopy.utils";
 import { CommandMenuPlugin } from "./CommandMenuPlugin";
 import { HiddenContentDeleteGuardPlugin } from "./HiddenContentDeleteGuardPlugin";
 import { baseTestEnvironment, pressKey, sutUpdate, updateSelection } from "./react-test.utils";

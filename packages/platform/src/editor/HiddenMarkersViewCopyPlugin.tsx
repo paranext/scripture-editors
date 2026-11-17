@@ -1,5 +1,5 @@
 import { $selectionPlainText, isCopyFromOutsideEditor } from "./copyLimit/copyLimit.utils";
-import { $hiddenViewLexicalFlavor, $isLeftOutOfHiddenViewCopy } from "./hiddenViewCopy.utils";
+import { $isLeftOutOfHiddenViewCopy } from "./hiddenViewCopy.utils";
 import {
   hiddenViewCopySpelling,
   registerViewCopyWriter,
@@ -8,7 +8,11 @@ import { $getHtmlContent, LexicalClipboardData } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { COMMAND_PRIORITY_LOW } from "lexical";
 import { useEffect } from "react";
-import { $removeTextKeepingBookAndChapterLines, htmlWithNodeCopy } from "shared-react";
+import {
+  $hiddenViewLexicalFlavor,
+  $removeTextKeepingBookAndChapterLines,
+  htmlWithNodeCopy,
+} from "shared-react";
 
 /**
  * Copies a hidden-marker view's selection as the text it shows. Lexical's own copy would write

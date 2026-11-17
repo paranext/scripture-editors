@@ -2,14 +2,13 @@ import {
   $selectionSpansBookOrChapterLine,
   $removeBookAndChapterLines,
 } from "./bookAndChapterLines.utils";
+import { removeMarkerGlyphElements, withoutMarkerTokens } from "./clipboard.utils";
 import {
   $nodesFromNodeCopy,
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   nodeCopyIn,
-  removeMarkerGlyphElements,
-  withoutMarkerTokens,
   withoutNodeCopy,
-} from "./clipboard.utils";
+} from "./nodeCopy.utils";
 import { UnstorableCharacter } from "./unstorable-text.model";
 import {
   $insertsNothing,

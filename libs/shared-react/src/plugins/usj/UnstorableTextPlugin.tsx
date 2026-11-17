@@ -10,15 +10,17 @@ import {
   $takeStartsMidParagraph,
 } from "./bookAndChapterLines.utils";
 import {
+  plainTextTransfer,
+  removeMarkerGlyphElements,
+  withoutMarkerTokens,
+} from "./clipboard.utils";
+import {
   $nodesFromNodeCopy,
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   nodeCopyIn,
-  plainTextTransfer,
-  removeMarkerGlyphElements,
   transferWith,
-  withoutMarkerTokens,
   withoutNodeCopy,
-} from "./clipboard.utils";
+} from "./nodeCopy.utils";
 import { insertClaimedBeforeInputText } from "./claimedBeforeInput.utils";
 import { $selectionAtDropPoint } from "./dropPoint.utils";
 import { $plainInsertion, $predictInsertion, insertionRoute } from "./hiddenViewInsertion.utils";
