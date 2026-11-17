@@ -7,7 +7,10 @@ import {
   HiddenContentDeleteHandler,
   HiddenContentDeleteRequest,
 } from "./hidden-content-delete.model";
-import { MARKER_VIEW_CLIPBOARD_NAMESPACE } from "./clipboard.utils";
+import {
+  HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+  MARKER_VIEW_CLIPBOARD_NAMESPACE,
+} from "./clipboard.utils";
 import { CommandMenuPlugin } from "./CommandMenuPlugin";
 import { HiddenContentDeleteGuardPlugin } from "./HiddenContentDeleteGuardPlugin";
 import { baseTestEnvironment, pressKey, sutUpdate, updateSelection } from "./react-test.utils";
@@ -1994,6 +1997,81 @@ describe("HiddenContentDeleteGuardPlugin beside UnstorableTextPlugin", () => {
 
     expect(handler).not.toHaveBeenCalled();
     expect(readTree(editor)).toEqual(["a/x[figure: caption]y/b"]);
+  });
+
+  it.each([
+    ["html", { "text/html": "<span>/</span>", "text/plain": "/" }],
+    [
+      "a node copy",
+      {
+        "application/x-lexical-editor": JSON.stringify({
+          namespace: HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
+          nodes: [
+            {
+              type: "text",
+              version: 1,
+              text: "/",
+              format: 0,
+              detail: 0,
+              mode: "normal",
+              style: "",
+            },
+          ],
+        }),
+        "text/plain": "/",
+      },
+    ],
+  ])(
+    "does not ask about a `/` pasted as %s where it would touch a `/` outside the selection",
+    async (_, flavors: { [type: string]: string }) => {
+      const handler = answering("delete");
+      const { editor, onRemoved } = await environment(handler);
+      updateSelection(editor, first!, 2, last!, 1);
+      const event = new ClipboardEvent("paste", { cancelable: true });
+      Object.defineProperty(event, "clipboardData", {
+        value: {
+          types: Object.keys(flavors),
+          files: [],
+          getData: (format: string) => flavors[format] ?? "",
+          setData: vi.fn(),
+        },
+      });
+
+      await act(async () => {
+        editor.dispatchCommand(PASTE_COMMAND, event);
+      });
+      await settle();
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(readTree(editor)).toEqual(["a/x[figure: caption]y/b"]);
+      expect(onRemoved).toHaveBeenCalledWith({ source: "paste", removed: ["//"] });
+    },
+  );
+
+  it("asks about an html paste that keeps a character between the two `/`", async () => {
+    const handler = answering("keep");
+    const { editor } = await environment(handler);
+    updateSelection(editor, first!, 2, last!, 1);
+    const event = new ClipboardEvent("paste", { cancelable: true });
+    const flavors: { [type: string]: string } = {
+      "text/html": "<span>/q/</span>",
+      "text/plain": "/q/",
+    };
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        types: Object.keys(flavors),
+        files: [],
+        getData: (format: string) => flavors[format] ?? "",
+        setData: vi.fn(),
+      },
+    });
+
+    await act(async () => {
+      editor.dispatchCommand(PASTE_COMMAND, event);
+    });
+    await settle();
+
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it("asks about a paste that keeps a character between the two `/`", async () => {
