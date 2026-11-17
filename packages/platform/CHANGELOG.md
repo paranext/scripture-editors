@@ -685,8 +685,9 @@ refused. The public surface grew substantially; nothing was removed.
   markers stays in the paragraph at the caret, as an html paste's paragraphs do, instead of making a
   paragraph per line. Its lines join with one space: each run of line breaks becomes one space, or
   nothing next to whitespace, so `x` and a line break pasted before `verse` no longer saves
-  `xverse` or a doubled space. On the `\id` line its lines join the same way under every structure
-  protection. Each tab in it becomes a space.
+  `xverse` or a doubled space. Wherever the paragraph cannot be split (the `\id` line, inside a
+  note) its lines join the same way under every structure protection, as a pasted html line break
+  does there. Each tab in it becomes a space.
 - A copy and paste within the views that hide markers reproduces the copied Scripture exactly:
   character and note attributes, note details, milestones, alternate and published verse numbers,
   optional breaks and figures all survive, under every structure protection (`"protected"` still

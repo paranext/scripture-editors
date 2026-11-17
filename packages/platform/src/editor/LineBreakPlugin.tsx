@@ -1,5 +1,5 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $findMatchingParent, mergeRegister } from "@lexical/utils";
+import { mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createLineBreakNode,
@@ -27,8 +27,13 @@ import {
   TextNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $isNoteNode, $isSomeParaNode } from "shared";
-import { insertClaimedBeforeInputText, StructureProtectionMode, ViewOptions } from "shared-react";
+import {
+  $canSplitAt,
+  insertClaimedBeforeInputText,
+  joiningText,
+  StructureProtectionMode,
+  ViewOptions,
+} from "shared-react";
 import { LINE_BREAK_IN_TEXT } from "./lineBreakText.utils";
 
 /**
@@ -61,15 +66,6 @@ function $edgeCharacter(nodes: LexicalNode[], atStart: boolean): string | undefi
     if (text) return atStart ? text.at(0) : text.at(-1);
   }
   return undefined;
-}
-
-/**
- * What a line break between the characters `previous` and `next` becomes where the paragraph cannot
- * be split: a space, or nothing beside whitespace, which already separates them. With no text on a
- * side (`undefined`) it is still a space: the text it lands beside may be a word.
- */
-function joiningText(previous: string | undefined, next: string | undefined): string {
-  return /\s/.test(previous ?? "") || /\s/.test(next ?? "") ? "" : " ";
 }
 
 type PointSnapshot = Pick<PointType, "key" | "offset" | "type">;
@@ -110,19 +106,6 @@ function $restorePoints(points: [PointSnapshot, PointSnapshot] | undefined): voi
   selection.anchor.set(anchor.key, anchor.offset, anchor.type);
   selection.focus.set(focus.key, focus.offset, focus.type);
   $setSelection(selection);
-}
-
-/**
- * Whether a paragraph break may go at `node`: not under protected structure, and only in a
- * paragraph (`\p`, `\q1`, a line with no marker), outside any note.
- */
-function $canSplitAt(node: LexicalNode, isProtected: boolean): boolean {
-  return (
-    !isProtected &&
-    ($isSomeParaNode(node) || !!$findMatchingParent(node, $isSomeParaNode)) &&
-    !$isNoteNode(node) &&
-    !$findMatchingParent(node, $isNoteNode)
-  );
 }
 
 /**

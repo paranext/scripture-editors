@@ -21,6 +21,7 @@ import {
 } from "./clipboard.utils";
 import { insertClaimedBeforeInputText } from "./claimedBeforeInput.utils";
 import { $selectionAtDropPoint } from "./dropPoint.utils";
+import { $plainInsertion, $predictInsertion, insertionRoute } from "./hiddenViewInsertion.utils";
 import { DeleteGranularity, deleteChordOf } from "./HiddenContentDeleteGuardPlugin";
 import { $probeDeleteExtent } from "./hiddenContentDelete.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
@@ -40,9 +41,8 @@ import {
   removeUnstorableText,
 } from "./unstorableText.utils";
 import { $insertDataTransferForRichText, $insertGeneratedNodes } from "@lexical/clipboard";
-import { $generateNodesFromDOM } from "@lexical/html";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $findMatchingParent, IS_APPLE, mergeRegister } from "@lexical/utils";
+import { IS_APPLE, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createRangeSelection,
@@ -82,7 +82,7 @@ import {
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $getSelectedParaMarkerPara, $isBookNode, $isParaLikeNode, LoggerBasic } from "shared";
+import { $getSelectedParaMarkerPara, $isParaLikeNode, LoggerBasic } from "shared";
 
 /** Logs and reports one removal. */
 function reportRemoved(
@@ -189,19 +189,6 @@ function isShortcutChord(event: KeyboardEvent): boolean {
 export const BEFORE_PLAIN_TEXT_INSERTION_COMMAND: LexicalCommand<void> = createCommand(
   "BEFORE_PLAIN_TEXT_INSERTION_COMMAND",
 );
-
-/**
- * The flavor `data` is inserted from in a hidden-marker view: a node copy from a hidden-marker view
- * ({@link HIDDEN_VIEW_CLIPBOARD_NAMESPACE}) first, then html, then plain text, as Lexical's
- * `$insertDataTransferForRichText` picks once any other node copy is hidden from it
- * ({@link withoutNodeCopy}).
- */
-function insertionRoute(data: DataTransfer): "lexical" | "html" | "plain" {
-  if (nodeCopyIn(data, HIDDEN_VIEW_CLIPBOARD_NAMESPACE)) return "lexical";
-  const html = data.getData("text/html");
-  // Lexical skips html identical to the plain text.
-  return html && html !== data.getData("text/plain") ? "html" : "plain";
-}
 
 /**
  * `html` without its marker glyphs (see {@link removeMarkerGlyphElements}), or `undefined` when it
@@ -325,22 +312,6 @@ function dragInputEvent(inputType: "deleteByDrag" | "insertFromDrop", data?: Dat
 }
 
 /**
- * Plain text as it goes into one paragraph, where its lines cannot split it (protected structure,
- * the `\id` line): each tab becomes a space, and each run of line breaks one space, or nothing
- * where whitespace is already beside it — in the text, or in the document at the caret (`before`,
- * `after`). A run at the text's start or end is judged the same way, so it neither joins the
- * pasted text to a word at the caret nor doubles a space there. With nothing stored beside it (a
- * paragraph's edge, a span's edge), a run is still a space: the text there may be a word.
- */
-function joinLines(text: string, before: string, after: string): string {
-  return text.replace(/\t/g, " ").replace(/[\r\n]+/g, (run, offset: number, whole: string) => {
-    const previous = offset > 0 ? whole[offset - 1] : before;
-    const next = offset + run.length < whole.length ? whole[offset + run.length] : after;
-    return /\s/.test(previous) || /\s/.test(next) ? "" : " ";
-  });
-}
-
-/**
  * Keeps text a hidden-marker view cannot store out of every paste, drop and keystroke: each `\` and
  * each `//` goes and the rest goes in (see {@link removeUnstorableText}), and the host is told once
  * per paste, drop or refused keystroke through `onRemoved`. A paste or drop left with nothing to
@@ -398,7 +369,7 @@ function joinLines(text: string, before: string, after: string): string {
  * the paragraph at the caret, its lines joined by a space, as protected structure's html route joins
  * paragraphs: Lexical would otherwise make each line a paragraph of its own, and on the `\id` line
  * run them together. A line break at either end, or beside a space, adds no second space and joins
- * no two words ({@link joinLines}).
+ * no two words (`joinLines`).
  *
  * A delete is refused, and reported with `source: "deletion"`, when what it leaves would put a `/`
  * against a `/` it was not already touching (see {@link $deletionJoinsSlashes}): Backspace, Delete
@@ -546,42 +517,6 @@ export function UnstorableTextPlugin({
     };
 
     /**
-     * How `data` goes in at `selection` when a paste or drop inserts it by its plain text: the text
-     * as it is inserted and what that left out (`filtered`), and whether its lines are joined into
-     * one paragraph (under protected structure, or on the `\id` line), the selection keeps a book
-     * or chapter line it covers, and the text holds a lone carriage return (an old Mac line ending).
-     * `undefined` when `data` goes in by another flavor, or holds no text.
-     *
-     * Read-only: call inside `editor.update()`, `editor.getEditorState().read()` or a command
-     * handler.
-     */
-    const $plainInsertion = (data: DataTransfer, selection: RangeSelection) => {
-      if (insertionRoute(data) !== "plain") return undefined;
-      const text = data.getData("text/plain") || data.getData("text/uri-list");
-      if (!text) return undefined;
-      const keepsLines = $selectionSpansBookOrChapterLine(selection);
-      // A selection that keeps the book line puts the text after the chapter line instead; any
-      // other selection touching the book line lies wholly inside it.
-      const joinsLines =
-        /[\r\n]/.test(text) &&
-        (structureProtectionModeRef.current === "protected" ||
-          (!keepsLines &&
-            !!$findMatchingParent(
-              (selection.isBackward() ? selection.focus : selection.anchor).getNode(),
-              $isBookNode,
-            )));
-      const hasLoneReturn = /\r(?!\n)/.test(text);
-      const { before, after } = $textAroundSelection(selection);
-      const lines = hasLoneReturn ? text.replace(/\r(?!\n)/g, "\n") : text;
-      const filtered = removeUnstorableText(
-        joinsLines ? joinLines(lines, before, after) : lines,
-        before,
-        after,
-      );
-      return { filtered, joinsLines, keepsLines, hasLoneReturn };
-    };
-
-    /**
      * Inserts `data` at the selection as Lexical's own paste does, first dispatching
      * {@link BEFORE_PLAIN_TEXT_INSERTION_COMMAND} when it goes in as plain text.
      *
@@ -606,7 +541,11 @@ export function UnstorableTextPlugin({
     ): boolean => {
       const selection = $getSelection();
       if (!$isRangeSelection(selection)) return false;
-      const insertion = $plainInsertion(data, selection);
+      const insertion = $plainInsertion(
+        data,
+        selection,
+        structureProtectionModeRef.current === "protected",
+      );
       if (!insertion) return false;
       const { filtered, joinsLines, keepsLines, hasLoneReturn } = insertion;
       if (filtered.removed.length === 0 && !joinsLines && !keepsLines && !hasLoneReturn)
@@ -802,38 +741,6 @@ export function UnstorableTextPlugin({
     };
 
     /**
-     * What dropping `transfer` at the caret `at` would leave out (see {@link removeUnstorableText}),
-     * read as {@link $insertTransfer} and the filter it inserts through read it: by the flavor it
-     * goes in by, without the transfer's own book and chapter lines, judged by the document
-     * characters at `at`. Empty when nothing would be.
-     *
-     * Mutating only in that it creates the nodes a node copy or html would insert, which are never
-     * attached, so the update discards them: call inside `editor.update()` (a command handler runs
-     * inside one).
-     */
-    const $unstorableInDrop = (
-      transfer: DataTransfer,
-      at: RangeSelection,
-    ): UnstorableCharacter[] => {
-      const nodeCopy = nodeCopyIn(transfer, HIDDEN_VIEW_CLIPBOARD_NAMESPACE);
-      let nodes = nodeCopy && $nodesFromNodeCopy(nodeCopy);
-      if (!nodes) {
-        const stripped = withoutMarkerTokens(transfer);
-        if (!stripped) return [];
-        const data = withoutNodeCopy(stripped);
-        const plain = $plainInsertion(data, at);
-        if (plain) return plain.filtered.removed;
-        if (insertionRoute(data) !== "html") return [];
-        const dom = new DOMParser().parseFromString(data.getData("text/html"), "text/html");
-        removeMarkerGlyphElements(dom);
-        nodes = $generateNodesFromDOM(editor, dom);
-      }
-      $removeBookAndChapterLines(nodes);
-      const { before, after } = $textAroundSelection(at);
-      return $removeUnstorableTextFromNodes(nodes, before, after);
-    };
-
-    /**
      * Where the browser removes what a drop moves, before it inserts it: `"here"`, from this
      * editor; `"elsewhere"`, from other editable content of its document; `undefined` when the drop
      * removes nothing — a copy, a drag from another document or program, or from content no one can
@@ -890,7 +797,7 @@ export function UnstorableTextPlugin({
     /**
      * Takes a drag-move's drop (see {@link dragMoveSource}) before the browser acts on it:
      * - a move whose text would lose a character where it is dropped (see
-     *   {@link $unstorableInDrop}) is refused, and reported once: the browser removes the dragged
+     *   {@link $predictInsertion}) is refused, and reported once: the browser removes the dragged
      *   text before it inserts it, and the insertion's filter would then leave that character out,
      *   so it would be gone from both places. Refused here, nothing is removed;
      * - a move within this editor is made here ({@link $moveDragged}), so that it lands where it was
@@ -912,7 +819,12 @@ export function UnstorableTextPlugin({
         event.preventDefault();
         return true;
       }
-      const removed = $unstorableInDrop(data, at);
+      const { removed } = $predictInsertion(
+        editor,
+        data,
+        at,
+        structureProtectionModeRef.current === "protected",
+      );
       if (removed.length > 0) {
         event.preventDefault();
         reportRemoved({ source: "move", removed }, onRemovedRef.current, loggerRef.current);
