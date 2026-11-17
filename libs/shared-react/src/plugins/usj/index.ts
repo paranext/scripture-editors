@@ -23,6 +23,7 @@ export * from "./LoadStatePlugin";
 export * from "./NoteCallerHighlightPlugin";
 export * from "./NoteEnterGuardPlugin";
 export * from "./NoteNodePlugin";
+export * from "./nodeCopy.utils";
 export * from "./NoteShellCaretGuardPlugin";
 export * from "./OnSelectionChangePlugin";
 export * from "./OpaqueBlockGuardPlugin";

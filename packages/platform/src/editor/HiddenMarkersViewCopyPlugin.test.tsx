@@ -5,7 +5,6 @@ import usjEditorAdaptor, {
 import { $isInCollapsedNote, $selectionPlainText } from "./copyLimit/copyLimit.utils";
 import { CopyLimitPlugin } from "./copyLimit/CopyLimitPlugin";
 import { HiddenMarkersViewCopyPlugin } from "./HiddenMarkersViewCopyPlugin";
-import { $hiddenViewLexicalFlavor } from "./hiddenViewCopy.utils";
 import { copyEvent } from "./markerEdit/markerEdit.test-helpers";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
@@ -29,6 +28,7 @@ import {
 } from "lexical";
 import { $isMarkerTrailingSeparator, NBSP } from "shared";
 import {
+  $hiddenViewLexicalFlavor,
   $isSomeVerseNode,
   FORMATTED_VIEW_MODE,
   getViewOptions,

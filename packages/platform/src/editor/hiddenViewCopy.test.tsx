@@ -5,7 +5,6 @@
  * own node copy, tagged so only a hidden-marker view reads it back.
  */
 import { editorView, enabledViews, mountInView } from "./editorViews.test-helpers";
-import { $hiddenViewLexicalFlavor } from "./hiddenViewCopy.utils";
 import { $generateJSONFromSelectedNodes } from "@lexical/clipboard";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -25,6 +24,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { $isParaNode, $isUnknownNode } from "shared";
 import {
+  $hiddenViewLexicalFlavor,
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   NODE_COPY_HTML_ATTRIBUTE,
   StructureProtectionMode,
