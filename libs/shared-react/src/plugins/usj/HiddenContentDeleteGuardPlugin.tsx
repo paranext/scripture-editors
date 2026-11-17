@@ -16,17 +16,13 @@ import {
   DeleteDirection,
   HiddenRun,
 } from "./hiddenContentDelete.utils";
-import { LEXICAL_CLIPBOARD_TYPE, withoutMarkerTokens } from "./clipboard.utils";
 import { hasCommandCharacter } from "./CommandMenuPlugin";
 import { $confineRangeToProtectedNote } from "./NoteShellCaretGuardPlugin";
 import { $selectionReachesIntoOpaqueBlock, isEditingKey } from "./OpaqueBlockGuardPlugin";
+import { $predictInsertion } from "./hiddenViewInsertion.utils";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
-import {
-  $deletionJoinsSlashes,
-  $textAroundSelection,
-  removeUnstorableText,
-} from "./unstorableText.utils";
+import { $deletionJoinsSlashes } from "./unstorableText.utils";
 import {
   $moveCaretPastGutterGlyph,
   $narrowSelectionPastGutterGlyph,
@@ -546,12 +542,19 @@ export function HiddenContentDeleteGuardPlugin({
     const $onPaste = (event: PasteCommandType): boolean => {
       const selection = $judgedSelection();
       if (!selection || selection.isCollapsed()) return false;
-      const insertsNothing = refusesCommandCharactersRef.current
-        ? pasteIsRefusedForCommandCharacter(event, structureProtectionModeRef.current)
-        : pasteInsertsNothing(event, $textAroundSelection(selection));
-      if ($isProtectedFromReplacement(selection) || insertsNothing) return false;
+      if ($isProtectedFromReplacement(selection)) return false;
       const hidden = $hiddenNodesInSelection(selection);
       if (hidden.length === 0) return false;
+      // Asked only once there is hidden content to ask about: predicting a paste builds its nodes.
+      const insertsNothing = refusesCommandCharactersRef.current
+        ? pasteIsRefusedForCommandCharacter(event, structureProtectionModeRef.current)
+        : $pasteInsertsNothing(
+            editor,
+            event,
+            selection,
+            structureProtectionModeRef.current === "protected",
+          );
+      if (insertsNothing) return false;
       // The clipboard is only readable while the paste event is being dispatched, so what it holds
       // is copied out now for the replay.
       const replayEvent = replayablePaste(event);
@@ -670,28 +673,27 @@ function preventAndClaim(event: Event | null): true {
 }
 
 /**
- * Whether a paste would insert nothing, leaving nothing to ask about: a clipboard of files alone, or
- * plain text alone that is nothing but text the view cannot store (`\` and `//`), which
- * `UnstorableTextPlugin` removes, inserting nothing, after this plugin has run: judged, as it judges
- * it, against the document characters `around` the selection, so a lone `/` that would touch a `/`
- * there counts; or a marker-showing view's copy of nothing but marker tokens
- * ({@link withoutMarkerTokens}), which that plugin and protected structure's sanitizer claim,
- * changing nothing. Any other node copy or html is asked about, even when that plugin's filter then
- * leaves nothing of it to insert (a paste of `<span>/</span>` beside a `/`): its nodes are not
- * built until after the answer.
+ * Whether a paste would change nothing, leaving nothing to ask about: a clipboard of files alone, or
+ * one `UnstorableTextPlugin` claims with nothing left to insert, after this plugin has run
+ * ({@link $predictInsertion}): text that is nothing but what the view cannot store (`\` and `//`),
+ * judged against the document characters at the selection, so a lone `/` that would touch a `/`
+ * there counts, on every route (plain text, html and node copy); or a marker-showing view's copy of
+ * nothing but marker tokens.
+ *
+ * Mutating only in that it creates the nodes a node copy or html would insert, which are never
+ * attached: call inside a command handler.
  */
-function pasteInsertsNothing(
+function $pasteInsertsNothing(
+  editor: LexicalEditor,
   event: PasteCommandType,
-  around: { before: string; after: string },
+  selection: RangeSelection,
+  isProtected: boolean,
 ): boolean {
   if (typeof ClipboardEvent === "undefined" || !(event instanceof ClipboardEvent)) return false;
   const data = event.clipboardData;
   if (!data) return false;
   if (Array.from(data.types).every((type) => type === "Files")) return true;
-  if (!withoutMarkerTokens(data)) return true;
-  if (data.getData("text/html") || data.getData(LEXICAL_CLIPBOARD_TYPE)) return false;
-  const text = data.getData("text/plain");
-  return text !== "" && removeUnstorableText(text, around.before, around.after).text === "";
+  return $predictInsertion(editor, data, selection, isProtected).insertsNothing;
 }
 
 /**
