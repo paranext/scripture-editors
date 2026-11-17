@@ -19,6 +19,7 @@ import {
   buildParaStack,
   getMarkerStyleInfo,
   isParagraphTagValid,
+  occursUnderAllows,
   toStackEntry,
 } from "../markerEdit/markerValidation.utils";
 import { MarkerStyleInfo, StyleInfo } from "shared";
@@ -205,11 +206,9 @@ function characterItemsRaw(
 
   if (!paraMarker) return []; // :123-124
 
-  const charItems = entries.filter((entry) => {
-    if (entry.styleType !== "character") return false;
-    const occursUnder = entry.occursUnder ?? [];
-    return occursUnder.length === 0 || occursUnder.includes(paraMarker); // :142-144
-  });
+  const charItems = entries.filter(
+    (entry) => entry.styleType === "character" && occursUnderAllows(entry, paraMarker), // :142-144
+  );
   // Note styles are offered alongside character styles, but only outside of a note (:130-135).
   const noteItems = entries.filter((entry) => entry.styleType === "note");
 

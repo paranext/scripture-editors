@@ -372,6 +372,19 @@ export interface EditorRef {
   /**
    * Set an ephemeral annotation with optional event callbacks.
    *
+   * Deferred while a load is pending — the load at mount, a `setUsj`, or a re-render with a new
+   * `options.view` or `logger` — because the load replaces the whole document and would discard
+   * the mark. A call made after a host changes `options.view` but before the editor re-renders is
+   * not deferred, and that reload discards it. `setAnnotation` and
+   * {@link EditorRef.removeAnnotation} keep their order with each other; other ref calls are not
+   * deferred, so during a load they apply before annotation calls made alongside them. While
+   * deferred, a later set or removal of the same annotation replaces this call, since the load
+   * would drop its effect anyway. The replaced call never runs: a later set replaces it silently,
+   * and a removal reports it through `onRemove` (cause `"removed"`, empty text, since nothing was
+   * painted), as it would for a set that had run.
+   * An error from a deferred call is logged rather than thrown, since its caller has already
+   * returned.
+   *
    * @remarks
    * **Settled**: positions and indexes refer to the document `getUsj()` returns at that moment —
    * pending marker edits count as already settled. See {@link EditorRef.getSelection} for the
@@ -500,7 +513,11 @@ export interface EditorRef {
     onRemove?: TypedMarkOnRemove,
   ): void;
   /**
-   * Remove an ephemeral annotation. Removes it from text and display bytes alike.
+   * Remove an ephemeral annotation. Removes it from text and display bytes alike. Deferred
+   * alongside {@link EditorRef.setAnnotation} while a load is pending, and through the same
+   * queue, so the two keep the order they were issued in; a removal replaces a set of the same
+   * annotation still waiting there. That set never runs, so its `onRemove` is called at once with
+   * cause `"removed"` and empty text.
    * @param type - Type of the annotation.
    * @param id - ID of the annotation.
    */
@@ -703,6 +720,13 @@ export interface EditorRef {
    * note, a milestone or a figure), as a book typed or imported without chapter markers does, no
    * verses are added: they would go above that content, leaving all of it in the last verse. A
    * section heading counts, so a book holding only one gets `\c 1` without verses.
+   *
+   * When that content starts with an empty paragraph of verse text, such as `\p`, `\q1` or `\li1`,
+   * the verses go inside it rather than above it. Spaces in it are dropped; anything else it holds,
+   * such as no-break spaces, stays ahead of verse 1. Verse text means the stylesheet makes it verse
+   * text and lets `\v` occur in it. An empty section heading, `\b` or `\d` keeps the verses above
+   * it. A book that is all front matter, as a new book is, gets them in a new `\p`, as does one
+   * whose content starts with blank text in no paragraph, such as an empty document.
    *
    * Where the markers show (Standard view), the caret goes at the end of the chapter line. Where
    * they are hidden there is no chapter line, so the caret goes after verse 1, or with no verses to
