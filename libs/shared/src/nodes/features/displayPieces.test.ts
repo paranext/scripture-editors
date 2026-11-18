@@ -1058,7 +1058,7 @@ describe("carrier offsets and per-node passes", () => {
     const visited: string[] = [];
     const unregister = editor.registerNodeTransform(VerseNode, (node) => {
       if ($deferToPieceHead(node)) return;
-      visited.push($logicalText(node));
+      visited.push(node.getKey());
     });
     editor.update(
       () => {
@@ -1067,12 +1067,25 @@ describe("carrier offsets and per-node passes", () => {
       { discrete: true },
     );
     unregister();
-    expect(visited.at(-1)).toBe(`\\v${NBSP}12 `);
-    expect(visited.every((text) => text === `\\v${NBSP}12 `)).toBe(true);
-    editor.read(() => {
-      // A continuation whose head is gone is a carrier of its own: nothing to hand on.
-      expect($deferToPieceHead($getRoot())).toBe(false);
-    });
+    // Only the head is visited, though the dirty node was the last continuation.
+    expect(visited.length).toBeGreaterThan(0);
+    expect(visited.every((key) => key === verse.getKey())).toBe(true);
+  });
+
+  it("leaves a continuation whose head is gone to its own pass", () => {
+    const editor = mount();
+    let verse!: LexicalNode;
+    editor.update(() => void (verse = $cutVerse()), { discrete: true });
+    editor.update(
+      () => {
+        const [head, ...continuations] = $pieces(verse);
+        head.remove();
+        // Before the piece transform makes the orphan a carrier of its own.
+        expect($isPieceContinuation(continuations[0])).toBe(true);
+        expect($deferToPieceHead(continuations[0])).toBe(false);
+      },
+      { discrete: true },
+    );
   });
 });
 
