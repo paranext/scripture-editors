@@ -368,9 +368,9 @@ refused. The public surface grew substantially; nothing was removed.
   Standard view, the Markers view and the Footnotes pane's row editor write USFM as html and plain
   text, so a copy of `1 \ft TR and ` saved as `1 ft TR and `, a marker's name as a word of
   Scripture. Such a paste now loses its marker tokens (`1 TR and `), with no
-  `onUnstorableTextRemoved` report for them, and its book line and chapter tokens go whole, with a
-  chapter's `\ca …\ca*` and `\cp …`, so a whole-chapter copy adds no book code, chapter number or
-  empty paragraph. Another program's paste is unchanged.
+  `onUnstorableTextRemoved` report for them, and its book line and chapter tokens go whole, so a
+  whole-chapter copy adds no book code, chapter number or empty paragraph. Another program's paste
+  is unchanged.
 - **A copy of only a paragraph's gutter marker glyph writes nothing** in the views that hide
   markers. Double-clicking the glyph and copying wrote its text, such as `\q1 `.
 - **Under protected structure, a paste whose paragraphs are all filtered out inserts nothing**, as
