@@ -589,16 +589,19 @@ function createIndex(editor: LexicalEditor): Entry {
    * carrier inside a mark of the same annotation is painted by the mark), one a collapsed note
    * hides ({@link $isInCollapsedNoteContent}), whose element shows nothing to draw a side on, and a
    * paragraph's gutter glyph, which the view draws in the gutter beside the text, away from the
-   * box the annotation's other elements draw. Read after the commit, from the DOM, as
+   * box the annotation's other elements draw (unless nothing else is painted, when the glyphs
+   * are the edges). Read after the commit, from the DOM, as
    * {@link rangesFor} orders what it paints. Call inside a read.
    */
   function $edgesOf(annotationKey: string): { start: NodeKey; end: NodeKey } | undefined {
     const painting: { key: NodeKey; element: HTMLElement }[] = [];
+    const gutter: { key: NodeKey; element: HTMLElement }[] = [];
     const add = (key: NodeKey) => {
       const node = $getNodeByKey(key);
-      if (!node || $isInCollapsedNoteContent(node) || $isGutterMarkerNode(node)) return;
+      if (!node || $isInCollapsedNoteContent(node)) return;
       const element = editor.getElementByKey(key);
-      if (element?.isConnected) painting.push({ key, element });
+      if (element?.isConnected)
+        ($isGutterMarkerNode(node) ? gutter : painting).push({ key, element });
     };
     for (const key of marksByAnnotation.get(annotationKey) ?? []) add(key);
     // A leaf rendering nothing is painted on its element alone.
@@ -607,6 +610,8 @@ function createIndex(editor: LexicalEditor): Entry {
       if (leaf && (intervals.some(([start, end]) => end > start) || $paintSize(leaf) === 0))
         add(key);
     }
+    // An annotation that paints nothing but gutter glyphs puts its edges on them.
+    if (painting.length === 0) painting.push(...gutter);
     const elements = new Set(painting.map(({ element }) => element));
     const isInsideAnother = (element: HTMLElement) => {
       for (let parent = element.parentElement; parent; parent = parent.parentElement)

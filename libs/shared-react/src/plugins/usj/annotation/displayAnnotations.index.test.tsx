@@ -1818,6 +1818,20 @@ describe("the first and last element an annotation paints", () => {
     expect(edges(editor)).toEqual({ starts: ["was"], ends: ["was"] });
   });
 
+  it("gives a paragraph's gutter glyph both edges when it is all the annotation paints", () => {
+    const editor = setupEdges();
+    editor.update(
+      () => {
+        const gutter = $createGutterMarkerNode(`\\q3${NBSP}`);
+        $getRoot().append($createParaNode().append(gutter, $createTextNode("In the beginning")));
+        $addDisplayAnnotation(gutter, TYPE, "a", 0, 3);
+      },
+      { discrete: true },
+    );
+    // The hold covers `\q3`, the piece of the glyph the edges go on.
+    expect(edges(editor)).toEqual({ starts: ["\\q3"], ends: ["\\q3"] });
+  });
+
   it("gives each of two overlapping annotations of one type its own edges", () => {
     const editor = setupEdges();
     let text!: TextNode;
