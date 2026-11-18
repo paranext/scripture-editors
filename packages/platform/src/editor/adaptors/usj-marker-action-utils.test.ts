@@ -47,8 +47,10 @@ import {
   $createMarkerNode,
   $createNoteNode,
   $createParaNode,
+  $createTypedMarkNode,
   $createVerseNode,
   $isCharNode,
+  $isTypedMarkNode,
   $isImmutableChapterNode,
   $isMarkerNode,
   $isNoteNode,
@@ -60,11 +62,13 @@ import {
   CharNode,
   charIdState,
   closingMarkerText,
+  COMMENT_MARK_TYPE,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   getEditableCallerText,
   NBSP,
   openingMarkerText,
   registerDisplayAnnotationBasis,
+  TypedMarkNode,
 } from "shared";
 
 const nodes = usjReactNodes;
@@ -2849,6 +2853,62 @@ describe("USJ Marker Action Utils", () => {
         const tail = wrapper.getNextSibling();
         if (!$isTextNode(tail)) throw new Error("Tail node is not text");
         expect(tail.getTextContent()).toBe(" God");
+      });
+    });
+  });
+
+  describe("applying a char marker across the edge of an annotation mark", () => {
+    it("gives the part of the mark split off the mark's click and hover callbacks", () => {
+      const onClick = vi.fn();
+      const onMouseEnter = vi.fn();
+      const onMouseLeave = vi.fn();
+      let before: TextNode | undefined;
+      let markedText: TextNode | undefined;
+      const { editor } = createBasicTestEnvironment([TypedMarkNode, ...nodes], () => {
+        before = $createTextNode("the ");
+        markedText = $createTextNode("Lord God");
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          $createParaNode().append(
+            $createImmutableVerseNode("1"),
+            before,
+            $createTypedMarkNode(
+              { [COMMENT_MARK_TYPE]: ["c1"] },
+              { [COMMENT_MARK_TYPE]: { c1: onClick } },
+              undefined,
+              { [COMMENT_MARK_TYPE]: { c1: onMouseEnter } },
+              { [COMMENT_MARK_TYPE]: { c1: onMouseLeave } },
+            ).append(markedText),
+          ),
+        );
+      });
+      if (!before || !markedText) throw new Error("Expected the text nodes to exist");
+      // "|the Lord| God", the selection ending inside the mark
+      updateSelection(editor, before, 0, markedText, 4);
+
+      getUsjMarkerAction(
+        "nd",
+        expandedNoteKeyRef,
+        getViewOptions(STANDARD_VIEW_MODE),
+        undefined,
+        undefined,
+        {
+          discrete: true,
+        },
+      ).action({ editor, reference });
+
+      editor.getEditorState().read(() => {
+        const marks: TypedMarkNode[] = [];
+        const walk = (node: LexicalNode) => {
+          if ($isTypedMarkNode(node)) marks.push(node);
+          if ($isElementNode(node)) node.getChildren().forEach(walk);
+        };
+        walk($getRoot());
+        const rest = marks.find((mark) => mark.getTextContent() === " God");
+        if (!rest) throw new Error("Expected the split-off part of the mark");
+        expect(rest.getTypedOnClicks()[COMMENT_MARK_TYPE]?.c1).toBe(onClick);
+        expect(rest.getTypedOnMouseEnters()[COMMENT_MARK_TYPE]?.c1).toBe(onMouseEnter);
+        expect(rest.getTypedOnMouseLeaves()[COMMENT_MARK_TYPE]?.c1).toBe(onMouseLeave);
       });
     });
   });

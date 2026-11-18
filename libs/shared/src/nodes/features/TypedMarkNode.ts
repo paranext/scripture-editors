@@ -570,7 +570,13 @@ export class TypedMarkNode extends ElementNode {
   }
 
   override insertNewAfter(_selection: RangeSelection, restoreSelection = true): null | ElementNode {
-    const node = $createTypedMarkNode(this.__typedIDs, this.getTypedOnClicks());
+    const node = $createTypedMarkNode(
+      this.__typedIDs,
+      this.getTypedOnClicks(),
+      this.getTypedOnRemoves(),
+      this.getTypedOnMouseEnters(),
+      this.getTypedOnMouseLeaves(),
+    );
     this.insertAfter(node, restoreSelection);
     return node;
   }
