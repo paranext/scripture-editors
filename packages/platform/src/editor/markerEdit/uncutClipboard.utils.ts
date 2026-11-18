@@ -38,6 +38,7 @@ import {
   RangeSelection,
   SerializedLexicalNode,
 } from "lexical";
+import { usjBlockVerseNodes, usjReactNodes } from "shared-react";
 import {
   $carriesPieceState,
   $isPieceContinuation,
@@ -45,6 +46,8 @@ import {
   $pieceHead,
   LoggerBasic,
   PIECE_STATE_KEYS,
+  TypedMarkNode,
+  VerseBlockNode,
 } from "shared";
 
 /** Lexical's `unmergeable` text detail flag. */
@@ -269,8 +272,11 @@ function scratchEditorOf(editor: LexicalEditor): LexicalEditor {
   if (!scratch) {
     scratch = createEditor({
       namespace: editor._config.namespace,
-      theme: editor._config.theme,
-      nodes: [...editor._nodes.values()].map(({ klass }) => klass),
+      // The same list `Editor.tsx` registers for the layout the live editor is in.
+      nodes: [
+        TypedMarkNode,
+        ...(editor.hasNode(VerseBlockNode) ? usjBlockVerseNodes : usjReactNodes),
+      ],
       onError: (error) => {
         throw error;
       },
