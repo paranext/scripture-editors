@@ -12,7 +12,10 @@
       "!{projectRoot}/.eslintrc.json",
       "!{projectRoot}/eslint.config.mjs"
     ],
-    "sharedGlobals": ["{workspaceRoot}/.github/workflows/test.yml"]
+    "sharedGlobals": [
+      "{workspaceRoot}/.github/workflows/test.yml",
+      "{workspaceRoot}/tools/lint-rules/**/*"
+    ]
   },
   "plugins": [
     {

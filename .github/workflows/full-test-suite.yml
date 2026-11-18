@@ -9,6 +9,8 @@ name: Full test suite
 # - ANNOTATION_ORACLE_2SA: the annotation-location oracle over the 2 Samuel corpus.
 # - TYPING_FIDELITY_ORACLE_CARETS=1024: 1024 carets of each typing-fidelity document, not the
 #   default spread of 32. Every caret ("all") takes over an hour for one whole chapter.
+# - SE_TEST_LIBRARY_VIEWS: the library-only views Platform.Bible does not offer.
+# A failed scheduled run opens an issue, or comments on the one still open.
 # A scheduled run tests `main`; run it by hand on a branch before merging a risky editor change.
 on:
   schedule:
@@ -36,6 +38,7 @@ jobs:
       ANNOTATION_TRANSPARENCY_CLIPBOARD: "1"
       ANNOTATION_ORACLE_2SA: "1"
       TYPING_FIDELITY_ORACLE_CARETS: "1024"
+      SE_TEST_LIBRARY_VIEWS: "1"
 
     steps:
       - name: Check out Git repository
@@ -58,3 +61,26 @@ jobs:
       # Every suite these flags reach is in the platform editor package.
       - name: Run the platform editor's tests in full
         run: pnpm nx run @eten-tech-foundation/platform-editor:test --skip-nx-cache -- --shard=${{ matrix.shard }}/4
+
+  report-failure:
+    name: Report a failed scheduled run
+    needs: test
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue, or comment on the open one
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Full test suite failing on main"
+          body="The scheduled full test suite failed on \`${GITHUB_SHA}\`: ${RUN_URL}"
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
