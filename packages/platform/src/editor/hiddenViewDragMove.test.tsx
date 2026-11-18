@@ -418,19 +418,78 @@ describe.each(["paragraph-structure", "formatted"])("a drag-move in %s view", (v
     });
   });
 
-  it("with structure protected, leaves a drop to protected structure, which removes nothing", async () => {
-    const { mounted, onRemoved } = await mount(viewName, "protected", "a/b c/ d");
+  describe("with structure protected", () => {
+    it("moves text to where it was dropped after it", async () => {
+      const { mounted, onRemoved } = await mount(viewName, "protected", "a/b c d");
 
-    await dragAndDrop(mounted, {
-      from: { text: "a/b c/ d", offset: 1 },
-      to: { text: "a/b c/ d", offset: 2 },
-      dropAt: { text: "a/b c/ d", offset: 6 },
-      landAt: { text: "ab c/ d", offset: 5 },
-      flavors: dragged("/"),
+      const isTaken = await dragAndDrop(mounted, {
+        from: { text: "a/b c d", offset: 1 },
+        to: { text: "a/b c d", offset: 2 },
+        dropAt: { text: "a/b c d", offset: 5 },
+        flavors: dragged("/"),
+      });
+
+      expect(savedParas(mounted)).toEqual(["ab c/ d"]);
+      expect(isTaken).toBe(true);
+      expect(onRemoved).not.toHaveBeenCalled();
     });
 
-    expect(savedParas(mounted)).toEqual(["a/b c/ d"]);
-    expect(onRemoved).not.toHaveBeenCalledWith(REFUSED_MOVE);
+    it("moves text to where it was dropped before it", async () => {
+      const { mounted } = await mount(viewName, "protected", "a b/c d");
+
+      await dragAndDrop(mounted, {
+        from: { text: "a b/c d", offset: 3 },
+        to: { text: "a b/c d", offset: 5 },
+        dropAt: { text: "a b/c d", offset: 1 },
+        flavors: dragged("/c"),
+      });
+
+      expect(savedParas(mounted)).toEqual(["a/c b d"]);
+    });
+
+    it("refuses a lone `/` dropped against a `/`, keeping it where it was", async () => {
+      const { mounted, onRemoved } = await mount(viewName, "protected", "a/b c/ d");
+
+      await dragAndDrop(mounted, {
+        from: { text: "a/b c/ d", offset: 1 },
+        to: { text: "a/b c/ d", offset: 2 },
+        dropAt: { text: "a/b c/ d", offset: 6 },
+        flavors: dragged("/"),
+      });
+
+      expect(savedParas(mounted)).toEqual(["a/b c/ d"]);
+      expect(onRemoved).toHaveBeenCalledWith(REFUSED_MOVE);
+    });
+
+    it("puts a copy-drop where it was dropped, removing nothing", async () => {
+      const { mounted } = await mount(viewName, "protected", "a b c d");
+
+      const isTaken = await dragAndDrop(mounted, {
+        from: { text: "a b c d", offset: 2 },
+        to: { text: "a b c d", offset: 3 },
+        dropAt: { text: "a b c d", offset: 7 },
+        flavors: dragged("b"),
+        isCopy: true,
+      });
+
+      expect(savedParas(mounted)).toEqual(["a b c db"]);
+      expect(isTaken).toBe(true);
+    });
+
+    it("puts a drop from another program where it was dropped", async () => {
+      const { mounted } = await mount(viewName, "protected", "a c d");
+
+      const isTaken = await dragAndDrop(mounted, {
+        from: { text: "a c d", offset: 0 },
+        to: { text: "a c d", offset: 0 },
+        dropAt: { text: "a c d", offset: 2 },
+        flavors: dragged("x"),
+        dragSource: null,
+      });
+
+      expect(savedParas(mounted)).toEqual(["a xc d"]);
+      expect(isTaken).toBe(true);
+    });
   });
 });
 

@@ -22,6 +22,7 @@ import {
   keyDownToIntent,
   snapshotPoint,
 } from "./structureKeyboard.utils";
+import { $selectionAtDropPoint, isCopyDrop } from "./dropPoint.utils";
 import { $generateNodesFromDOM } from "@lexical/html";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import DOMPurify from "dompurify";
@@ -42,6 +43,7 @@ import {
   DELETE_CHARACTER_COMMAND,
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
+  DRAGEND_COMMAND,
   DRAGSTART_COMMAND,
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
@@ -365,7 +367,7 @@ export function StructureKeyboardPlugin({
       source: "paste" | "drop",
     ): boolean => {
       const sanitized = $sanitizeNodesForProtectedStructure(nodes);
-      // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
+      // A drop's handler has already put the selection at its drop point.
       const selection = $getSelection();
       if ($isRangeSelection(selection)) {
         const hadContent = !$insertsNothing(sanitized);
@@ -424,16 +426,31 @@ export function StructureKeyboardPlugin({
       return $sanitizeAndInsertTransfer(event.clipboardData, event, "paste");
     };
 
+    // Whether the drag under way started in this editor, with a selection its dragstart let go.
+    let isDraggingFromHere = false;
+    const $handleDragStart = (event: DragEvent): boolean => {
+      const isRefused = $blockUnsafeSelection(event);
+      isDraggingFromHere = !isRefused;
+      return isRefused;
+    };
+
+    // A drop lands at its drop point, which is not the selection: at the drop, that is still what
+    // the drag started from. A drop that would replace structure there is refused whole, before a
+    // move removes anything.
     const $handleDrop = (event: DragEvent): boolean => {
+      const isMoveFromHere = isDraggingFromHere && !isCopyDrop(event);
+      isDraggingFromHere = false;
       if (structureProtectionMode !== "protected") return false;
-      const selection = $getSelection();
-      if (selection && $shouldBlockSelectionReplacement(selection)) {
+      const at = $selectionAtDropPoint(editor, event);
+      if (!at || $shouldBlockSelectionReplacement(at)) {
         event.preventDefault();
         return true;
       }
-      // With no range to land at, `$sanitizeAndInsert` inserts nothing but still claims the drop:
-      // the default handler would let the browser insert the payload itself, structure and all.
-      // (A selected paragraph marker has already moved the selection to the drop point.)
+      // A move within the editor is left to the handlers below, which remove the dragged text and
+      // insert it at the drop point in one edit. It carries no structure: its dragstart refused any
+      // selection that held some.
+      if (isMoveFromHere) return false;
+      $setSelection(at);
       return $sanitizeAndInsertTransfer(event.dataTransfer, event, "drop");
     };
 
@@ -563,7 +580,15 @@ export function StructureKeyboardPlugin({
       // `MarkerEditPlugin`'s KEY_DOWN handler must keep running ahead of it on every keystroke.
       editor.registerCommand(CUT_COMMAND, $blockUnsafeSelection, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(PASTE_COMMAND, $handlePaste, COMMAND_PRIORITY_HIGH),
-      editor.registerCommand(DRAGSTART_COMMAND, $blockUnsafeSelection, COMMAND_PRIORITY_HIGH),
+      editor.registerCommand(DRAGSTART_COMMAND, $handleDragStart, COMMAND_PRIORITY_HIGH),
+      editor.registerCommand(
+        DRAGEND_COMMAND,
+        () => {
+          isDraggingFromHere = false;
+          return false;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
       editor.registerCommand(DROP_COMMAND, $handleDrop, COMMAND_PRIORITY_HIGH),
       editor.registerCommand(
         CONTROLLED_TEXT_INSERTION_COMMAND,

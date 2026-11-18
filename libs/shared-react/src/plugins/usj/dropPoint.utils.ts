@@ -1,3 +1,4 @@
+import { IS_APPLE } from "@lexical/utils";
 import { $createRangeSelection, LexicalEditor, RangeSelection } from "lexical";
 
 /**
@@ -45,4 +46,12 @@ export function $selectionAtDropPoint(
   const { anchor } = selection;
   if (anchor.key === "root" && anchor.offset === 0 && anchor.type === "element") return undefined;
   return selection;
+}
+
+/**
+ * Whether `event`, a drop, is a copy rather than a move: the key the browser copies on is held
+ * (Option on macOS, Ctrl elsewhere), so it removes nothing from where the drag started.
+ */
+export function isCopyDrop(event: Pick<DragEvent, "altKey" | "ctrlKey">): boolean {
+  return IS_APPLE ? event.altKey : event.ctrlKey;
 }

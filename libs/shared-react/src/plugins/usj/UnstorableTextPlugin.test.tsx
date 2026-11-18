@@ -315,11 +315,11 @@ describe("UnstorableTextPlugin — paste", () => {
         const { editor, onRemoved } = await environment("x", options);
         const flavors = markerViewCopy("<span>1 \\ft TR\\ft*</span>", "1 \\ft TR\\ft*");
 
-        await dispatch(editor, () =>
-          structureProtectionMode === "protected"
-            ? editor.dispatchCommand(DROP_COMMAND, dropEvent(flavors))
-            : editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, dropInputEvent(flavors)),
-        );
+        if (structureProtectionMode === "protected") await dropAt(editor, 1, flavors);
+        else
+          await dispatch(editor, () =>
+            editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, dropInputEvent(flavors)),
+          );
 
         expect(readParas(editor)).toEqual(["x1 TR"]);
         expect(onRemoved).not.toHaveBeenCalled();
@@ -738,12 +738,7 @@ describe("UnstorableTextPlugin — drop", () => {
       withStructureKeyboard: "filtered",
     });
 
-    await dispatch(editor, () =>
-      editor.dispatchCommand(
-        DROP_COMMAND,
-        dropEvent({ "text/html": "<span>a\\b</span>", "text/plain": "a\\b" }),
-      ),
-    );
+    await dropAt(editor, 1, { "text/html": "<span>a\\b</span>", "text/plain": "a\\b" });
 
     expect(readParas(editor)).toEqual(["xab"]);
     expect(onRemoved).toHaveBeenCalledWith({ source: "drop", removed: ["\\"] });
