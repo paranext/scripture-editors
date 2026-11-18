@@ -203,7 +203,8 @@ element of its own; every piece after the first carries `data-piece-continuation
 boxes a carrier (padding, a border, a margin) can apply to its first piece alone with
 `:not([data-piece-continuation])`. A read-only glyph covered in part paints a sub-span of its text.
 So style annotations by class (never by the `mark` element name): every class rule — background,
-border, padding, font, `:hover`, `::selection` — applies to everything an annotation paints. The
+border, padding, font, `::selection` — applies to everything an annotation paints. `:hover` applies
+per element, so hovering one piece lights only that piece. The
 overlap class marks only the text two annotations of one type share. To measure or scroll to an
 annotation, use `getAnnotationRanges(type, id)`, which lists every element it paints. An
 annotation on display bytes follows the bytes it holds through an edit (a

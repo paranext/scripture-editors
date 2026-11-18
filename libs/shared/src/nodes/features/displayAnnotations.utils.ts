@@ -414,9 +414,6 @@ export type DisplayAnnotationRegistration = DisplayAnnotationCallbacks;
 
 const registrations = new WeakMap<LexicalEditor, Map<string, DisplayAnnotationRegistration>>();
 
-/** A type or id may itself contain the NUL character a delimiter join would use, so the key is
- * JSON, not a joined string. */
-
 /**
  * Record `type`/`id` for the active editor: callbacks given here replace the ones held. Call
  * inside an update or read of the editor.

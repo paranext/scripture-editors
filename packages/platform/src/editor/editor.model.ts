@@ -465,7 +465,9 @@ export interface EditorRef {
    * Setting or removing an annotation through this method or {@link EditorRef.removeAnnotation}
    * adds no undo step: an undo that reverts the edit before it reverts the set or the removal too,
    * silently — an annotation set then is gone, and one removed then is back, with no report either
-   * way. A host re-applies its own annotations on the next change, as it does after a reload:
+   * way. A redo replays it the same way: after an undo, a set or removal the host makes is undone
+   * again by a redo, silently. A host re-applies its own annotations on the next change, after an
+   * undo or a redo as after a reload:
    * setting the ones it holds and removing any it no longer holds. A
    * comment the user adds or deletes in `Marginal`'s comment panel is not set through this method:
    * it is the user's own edit, an undo step of its own.
@@ -525,13 +527,12 @@ export interface EditorRef {
   /**
    * DOM ranges over everything an annotation paints: each `<mark>` that holds its text, each
    * display byte it holds (only the part it holds), and the whitespace painted between them — in
-   * document order, empty when nothing paints it. Measure, scroll to or hit-test an annotation with
-   * these rather than by its `annotationId-<id>` class alone: a read-only glyph held in part paints
-   * a sub-span of its own, and the whitespace painted between two held bytes is an element of its
-   * own.
+   * document order, empty when nothing paints it.
    *
    * @remarks **Live**: the ranges are over the editor's current DOM, including marker text the
-   *   user is still typing; take them again after the next edit.
+   *   user is still typing; take them again after the next edit. A verse number or note caller
+   *   held in part paints its sub-span when React next renders it, a microtask after the edit that
+   *   set the annotation; ranges taken before then leave that part out.
    * @param type - Type of the annotation.
    * @param id - ID of the annotation.
    * @experimental This member is unstable and may change shape or disappear without notice.

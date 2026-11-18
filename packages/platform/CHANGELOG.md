@@ -17,7 +17,7 @@ refused. The public surface grew substantially; nothing was removed.
 ### Added
 
 - **Annotation edge classes.** The first element an annotation paints, by document order, also
-  gets `editor-typed-markStart-<type>` and its last `editor-typed-markEnd-<type>` (theme keys
+  gets `editor-typed-markStart-external-<type>` and its last `editor-typed-markEnd-external-<type>` (theme keys
   `typedMarkStart` / `typedMarkEnd`), so a host can draw one box over an annotation that spans
   several elements: block sides on the base class, inline sides and corners on the edge classes.
 - **`data-piece-continuation`** on every piece of a display byte an annotation cuts after the
@@ -160,10 +160,13 @@ refused. The public surface grew substantially; nothing was removed.
   in part (a marker glyph, a verse number, a note caller, an attribute run) are cut into sibling
   pieces of their own class and painted with the class names a `<mark>` gets, and a read-only glyph
   paints sub-spans of its rendered text. The CSS Custom Highlight painter and its translation of a
-  host's class rules are gone, so `::selection`, `:hover`, borders and padding now apply to
-  everything an annotation paints.
-- **Setting or removing an annotation adds no undo step**, so an undo no longer brings back an
-  annotation the host removed.
+  host's class rules are gone, so `::selection`, borders and padding now apply to everything an
+  annotation paints. `:hover` applies per element: hovering one piece lights only that piece.
+- **Setting or removing an annotation adds no undo step**: it joins the current one. An undo
+  or redo of that step reverts or replays the annotation change with it, silently: an annotation
+  set or removed before the edit an undo reverts comes back or goes again, and a redo after a host
+  changed an annotation puts back the annotations as they were when the step was recorded. A host
+  re-applies its annotations on the next change.
 - **A copy of annotated text carries no annotations** in `text/html` or
   `application/x-lexical-editor`, wherever those flavors are Lexical's own (Standard view's
   fallback and the hidden-marker views): they are written from the document with its marks and

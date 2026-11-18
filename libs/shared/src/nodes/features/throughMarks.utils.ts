@@ -8,7 +8,8 @@
  * any other parent, and they read a display-byte carrier cut into pieces as one node
  * (`displayPieces.state.ts`).
  *
- * Read-only: safe inside `editor.update()` or either read form.
+ * Read-only helpers here are safe inside `editor.update()` or either read form unless their doc
+ * says Mutating.
  */
 
 import { $lastPiece, $pieceHead } from "./displayPieces.state.js";
