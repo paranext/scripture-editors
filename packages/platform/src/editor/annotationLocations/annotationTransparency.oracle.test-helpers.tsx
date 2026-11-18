@@ -1431,7 +1431,11 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
           siteIndex,
           { index, offset, global: site, label: siteLabel, text, isCrossed, isInsideCarrier },
         ] of sites.entries()) {
-          const isSampled = FULL || (siteIndex + rowIndex) % SAMPLE_STRIDE === 0;
+          // Every row runs at least one site in full, whatever its number of sites.
+          const isSampled =
+            FULL ||
+            (siteIndex + rowIndex) % SAMPLE_STRIDE === 0 ||
+            siteIndex === rowIndex % sites.length;
           if (!isSampled && !touched[siteIndex]) continue;
           const added =
             CLIPBOARD && touched[siteIndex]
