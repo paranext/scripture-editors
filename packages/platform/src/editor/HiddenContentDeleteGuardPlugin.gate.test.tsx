@@ -131,6 +131,8 @@ async function pasteHtmlOverFigure(editor: LexicalEditor, html: string) {
   });
 }
 
+const PROTECTIONS: StructureProtectionMode[] = ["off", "guarded", "protected"];
+
 describe("HiddenContentDeleteGuardPlugin view gate", () => {
   it("asks before Backspace reaches a hidden figure in Formatted view", async () => {
     const handler = neverAnswering();
@@ -152,25 +154,30 @@ describe("HiddenContentDeleteGuardPlugin view gate", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  // Protected structure's sanitizer puts a space between the pasted paragraphs, which is left once
-  // their `\` are filtered out, so the paste still replaces the figure.
-  it("asks before a paste of paragraphs holding only `\\` replaces a figure under protected structure", async () => {
+  // Protected structure's sanitizer puts a space between the pasted paragraphs; once their `\`
+  // are filtered out it separates nothing, so the paste inserts nothing, as it does unprotected.
+  it.each(PROTECTIONS)(
+    "keeps the figure and does not ask when pasted paragraphs hold only `\\`, structure %s",
+    async (mode) => {
+      const handler = neverAnswering();
+      const editor = await renderEditor(FORMATTED_VIEW_MODE, handler, mode);
+      const before = editor.getEditorState().read(() => $getRoot().getTextContent());
+
+      await pasteHtmlOverFigure(editor, "<p>\\</p><p>\\</p>");
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(before);
+    },
+  );
+
+  it("asks before a paste of paragraphs that keep text replaces a figure under protected structure", async () => {
     const handler = neverAnswering();
     const editor = await renderEditor(FORMATTED_VIEW_MODE, handler, "protected");
 
-    await pasteHtmlOverFigure(editor, "<p>\\</p><p>\\</p>");
+    await pasteHtmlOverFigure(editor, "<p>\\</p><p>x</p>");
 
     expect(handler).toHaveBeenCalledWith(
       expect.objectContaining({ items: [expect.objectContaining({ marker: "fig" })] }),
     );
-  });
-
-  it("does not ask about a paste of one paragraph holding only `\\` under protected structure, which inserts nothing", async () => {
-    const handler = neverAnswering();
-    const editor = await renderEditor(FORMATTED_VIEW_MODE, handler, "protected");
-
-    await pasteHtmlOverFigure(editor, "<p>\\</p>");
-
-    expect(handler).not.toHaveBeenCalled();
   });
 });

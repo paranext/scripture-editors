@@ -10,6 +10,7 @@ import {
   $paraDeleteIntent,
   $placeCaretAtEnd,
   $rangeSnapshot,
+  $insertsOnlyParagraphSeparators,
   $sanitizeNodesForProtectedStructure,
   $selectionContainsVerseMarker,
   $shouldBlockSelectionReplacement,
@@ -67,7 +68,6 @@ import { $nodesFromNodeCopy, nodeCopyIn, withoutNodeCopy } from "./nodeCopy.util
 import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
-import { $insertsNothing } from "./unstorableText.utils";
 
 /**
  * Class on an armed paragraph's gutter marker (or, when it shows none, on the paragraph) while a
@@ -370,10 +370,11 @@ export function StructureKeyboardPlugin({
       // A drop's handler has already put the selection at its drop point.
       const selection = $getSelection();
       if ($isRangeSelection(selection)) {
-        const hadContent = !$insertsNothing(sanitized);
+        const hadContent = !$insertsOnlyParagraphSeparators(sanitized);
         filterPastedNodesRef.current?.(sanitized, selection, source);
-        // Filtered down to nothing: inserting nothing over a selection would still delete it.
-        if (hadContent && $insertsNothing(sanitized)) {
+        // Filtered down to nothing, or to the spaces between paragraphs it emptied: inserting that
+        // over a selection would still delete it.
+        if (hadContent && $insertsOnlyParagraphSeparators(sanitized)) {
           event.preventDefault();
           return true;
         }
