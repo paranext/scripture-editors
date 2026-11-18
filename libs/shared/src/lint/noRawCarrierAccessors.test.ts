@@ -7,7 +7,8 @@
  * as the real classes do, so a type guard narrows to it.
  */
 // The rule lives with the repo's lint config, outside every project, and runs in this project's
-// tests so `nx affected -t test` covers it.
+// tests; `nx.json` lists `tools/lint-rules` among the shared global inputs, so a change to the rule
+// alone still makes `nx affected` run lint and these tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import noRawCarrierAccessors from "../../../../tools/lint-rules/no-raw-carrier-accessors.mjs";
 import { RuleTester } from "eslint";
