@@ -9,6 +9,7 @@ import {
   nodeCopyIn,
   withoutNodeCopy,
 } from "./nodeCopy.utils";
+import { $sanitizeNodesForProtectedStructure } from "./structureKeyboard.utils";
 import { UnstorableCharacter } from "./unstorable-text.model";
 import {
   $insertsNothing,
@@ -117,8 +118,10 @@ export function $plainInsertion(
 
 /**
  * What a hidden-marker view's paste or drop of `transfer` at `at` would do, read as
- * `UnstorableTextPlugin` inserts it: by the flavor it goes in by, without its marker tokens and its
- * own book and chapter lines, judged by the document characters at `at`. `removed` is what its
+ * `UnstorableTextPlugin` inserts it, or `StructureKeyboardPlugin` under protected structure: by the
+ * flavor it goes in by, without its marker tokens and its own book and chapter lines (and, under
+ * protected structure, its paragraphs and verses, as {@link $sanitizeNodesForProtectedStructure}
+ * flattens them), judged by the document characters at `at`. `removed` is what its
  * filter would leave out ({@link removeUnstorableText}), empty when nothing; `insertsNothing`
  * whether the paste or drop would change nothing: it is claimed with nothing left to insert, so a
  * selection it was to replace stays.
@@ -152,6 +155,9 @@ export function $predictInsertion(
     removeMarkerGlyphElements(dom);
     nodes = $generateNodesFromDOM(editor, dom);
   }
+  // Under protected structure `StructureKeyboardPlugin` inserts these nodes sanitized, which puts a
+  // space between top-level paragraphs that outlasts their filtered text.
+  if (isProtected) nodes = $sanitizeNodesForProtectedStructure(nodes);
   const { isRemoved } = $removeBookAndChapterLines(nodes);
   const { before, after } = $textAroundSelection(at);
   const removed = $removeUnstorableTextFromNodes(nodes, before, after);

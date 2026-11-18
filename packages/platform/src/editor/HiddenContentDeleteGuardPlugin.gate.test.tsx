@@ -2,13 +2,20 @@ import Editor from "./Editor";
 import { act, render } from "@testing-library/react";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { createRef } from "react";
-import { $getRoot, COMMAND_PRIORITY_CRITICAL, KEY_DOWN_COMMAND, LexicalEditor } from "lexical";
+import {
+  $getRoot,
+  COMMAND_PRIORITY_CRITICAL,
+  KEY_DOWN_COMMAND,
+  LexicalEditor,
+  PASTE_COMMAND,
+} from "lexical";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
 import {
   FORMATTED_VIEW_MODE,
   getViewOptions,
   HiddenContentDeleteHandler,
   STANDARD_VIEW_MODE,
+  StructureProtectionMode,
 } from "shared-react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -46,13 +53,14 @@ function neverAnswering() {
 async function renderEditor(
   viewMode: string,
   onHiddenContentDelete: HiddenContentDeleteHandler,
+  structureProtectionMode?: StructureProtectionMode,
 ): Promise<LexicalEditor> {
   const lexicalRef = createRef<LexicalEditor>();
   await act(async () => {
     render(
       <Editor
         defaultUsj={usjWithFigure}
-        options={{ view: getViewOptions(viewMode), onHiddenContentDelete }}
+        options={{ view: getViewOptions(viewMode), structureProtectionMode, onHiddenContentDelete }}
       >
         <EditorRefPlugin editorRef={lexicalRef} />
       </Editor>,
@@ -92,6 +100,37 @@ async function backspaceAfterFigure(editor: LexicalEditor) {
   });
 }
 
+/** Selects from inside the text before the figure to inside the text after it, pastes `html`, and
+ * waits the task after which the guard asks. */
+async function pasteHtmlOverFigure(editor: LexicalEditor, html: string) {
+  await act(async () => {
+    editor.update(
+      () => {
+        const texts = $getRoot().getAllTextNodes();
+        const before = texts.find((node) => node.getTextContent().startsWith("before"));
+        const after = texts.find((node) => node.getTextContent().startsWith("after"));
+        if (!before || !after) throw new Error("no text either side of the figure");
+        before.select(3, 3).focus.set(after.getKey(), 2, "text");
+      },
+      { discrete: true },
+    );
+  });
+  // jsdom's `ClipboardEvent` drops `clipboardData` from its init.
+  const event = new ClipboardEvent("paste", { cancelable: true });
+  const flavors: { [type: string]: string } = { "text/html": html, "text/plain": "" };
+  Object.defineProperty(event, "clipboardData", {
+    value: {
+      types: Object.keys(flavors),
+      files: [],
+      getData: (type: string) => flavors[type] ?? "",
+    },
+  });
+  await act(async () => {
+    editor.dispatchCommand(PASTE_COMMAND, event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 describe("HiddenContentDeleteGuardPlugin view gate", () => {
   it("asks before Backspace reaches a hidden figure in Formatted view", async () => {
     const handler = neverAnswering();
@@ -109,6 +148,28 @@ describe("HiddenContentDeleteGuardPlugin view gate", () => {
     const editor = await renderEditor(STANDARD_VIEW_MODE, handler);
 
     await backspaceAfterFigure(editor);
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  // Protected structure's sanitizer puts a space between the pasted paragraphs, which is left once
+  // their `\` are filtered out, so the paste still replaces the figure.
+  it("asks before a paste of paragraphs holding only `\\` replaces a figure under protected structure", async () => {
+    const handler = neverAnswering();
+    const editor = await renderEditor(FORMATTED_VIEW_MODE, handler, "protected");
+
+    await pasteHtmlOverFigure(editor, "<p>\\</p><p>\\</p>");
+
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ items: [expect.objectContaining({ marker: "fig" })] }),
+    );
+  });
+
+  it("does not ask about a paste of one paragraph holding only `\\` under protected structure, which inserts nothing", async () => {
+    const handler = neverAnswering();
+    const editor = await renderEditor(FORMATTED_VIEW_MODE, handler, "protected");
+
+    await pasteHtmlOverFigure(editor, "<p>\\</p>");
 
     expect(handler).not.toHaveBeenCalled();
   });
