@@ -196,9 +196,9 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
       // node after the mark (a glyph, an attribute run); it is put back where it is, first, so
       // every selection listener reads the content's end, as with no mark there. An update that
       // inserts re-reads the caret from the screen as it starts, onto that node's start again, so
-      // each insertion puts it back too before anything inserts, and a range's start Lexical read
-      // the same way with it: the bytes go where they go with no mark there, not into the display
-      // bytes after it.
+      // each insertion puts it back too before anything inserts. It also puts back a range's start
+      // that Lexical read onto that node the same way. Either way, the bytes go where they go with
+      // no mark there, not into the display bytes after it.
       // Every command that acts at the caret Lexical has just read back from the screen: a
       // selection change, an input's insertion (typed, pasted, or a paragraph or line break), and
       // the Enter key, whose handlers act at the caret before any insertion command runs.

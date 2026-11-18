@@ -187,7 +187,7 @@ host's session, since the apply still replaces the note node.
 Consequence for tests: asserting that the mode is `token` proves nothing about whether the shell is
 protected. Assert what the DOCUMENT does under a keystroke.
 
-### Annotations never restructure display bytes — they cut them into pieces
+### Annotations restructure display bytes only by cutting them into pieces
 
 An annotation covers content text with a `TypedMarkNode` and covers display bytes — marker glyphs,
 attribute-run text, a verse, a note caller, a chapter glyph, read-only glyph decorators — by state
