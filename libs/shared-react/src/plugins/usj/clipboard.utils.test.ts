@@ -153,21 +153,6 @@ describe("withoutMarkerTokens", () => {
     );
   });
 
-  it("leaves out a chapter's alternate number and published label with its chapter", () => {
-    const stripped = withoutMarkerTokens(
-      transfer({
-        [LEXICAL_CLIPBOARD_TYPE]: nodeCopy(MARKER_VIEW_CLIPBOARD_NAMESPACE),
-        "text/html":
-          "<p><span>\\c 3 \\ca 4\\ca*</span></p><p><span>\\cp B</span></p>" +
-          "<p><span>\\v 1 In</span></p>",
-        "text/plain": "\\c 3 \\ca 4\\ca*\n\\cp B\n\\v 1 In",
-      }),
-    );
-
-    expect(stripped?.getData("text/plain")).toBe("1 In");
-    expect(stripped?.getData("text/html")).toContain("<body><p><span>1 In</span></p></body>");
-  });
-
   it("does not take the space after a bare backslash for nothing left", () => {
     const stripped = withoutMarkerTokens(
       transfer({

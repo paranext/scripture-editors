@@ -288,14 +288,6 @@ const CHAPTER_TOKEN = new RegExp(
  * no trailing content to preserve the way there is after a chapter number. */
 const BOOK_ID_TOKEN = new RegExp(String.raw`\\id(?![${ENGINE_MARKER_NAME_BYTES}])[^\n\\]*`, "g");
 
-/** A chapter's own attribute markers ANYWHERE in a line, which a hidden-marker view's paste leaves
- * out with the chapter token: `\ca 3\ca*`, an alternate chapter number, and `\cp B`, the label a
- * chapter is published with, up to the next marker or the line's end. */
-const CHAPTER_ATTRIBUTE_TOKEN = new RegExp(
-  String.raw`\\ca(?![${ENGINE_MARKER_NAME_BYTES}])[^\\\n]*(?:\\ca\*)?|\\cp(?![${ENGINE_MARKER_NAME_BYTES}])[^\\\n]*`,
-  "g",
-);
-
 /**
  * Either stripped token at the very START of a line — the one placement whose whole line may be
  * dropped. Non-global on purpose: `.test` on a global regex carries `lastIndex` between calls.
@@ -373,10 +365,10 @@ function bodyWithoutMarkerTokens(html: string): HTMLElement {
   return body;
 }
 
-/** `usfm` without its marker tokens, its book line, and its chapter tokens and their attributes
+/** `usfm` without its marker tokens, its book line and its chapter tokens
  * ({@link removeMarkerTokens}, {@link stripPastedChapterAndBookId}). */
 function lineWithoutMarkers(usfm: string): string {
-  return removeMarkerTokens(stripPastedChapterAndBookId(usfm.replace(CHAPTER_ATTRIBUTE_TOKEN, "")));
+  return removeMarkerTokens(stripPastedChapterAndBookId(usfm));
 }
 
 /** {@link lineWithoutMarkers} line by line, without a line it empties (a book or chapter line, a
