@@ -22,7 +22,7 @@ import {
   withoutNodeCopy,
 } from "./nodeCopy.utils";
 import { insertClaimedBeforeInputText } from "./claimedBeforeInput.utils";
-import { $selectionAtDropPoint } from "./dropPoint.utils";
+import { $selectionAtDropPoint, isCopyDrop } from "./dropPoint.utils";
 import { $plainInsertion, $predictInsertion, insertionRoute } from "./hiddenViewInsertion.utils";
 import { DeleteGranularity, deleteChordOf } from "./HiddenContentDeleteGuardPlugin";
 import { $probeDeleteExtent } from "./hiddenContentDelete.utils";
@@ -44,7 +44,7 @@ import {
 } from "./unstorableText.utils";
 import { $insertDataTransferForRichText, $insertGeneratedNodes } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { IS_APPLE, mergeRegister } from "@lexical/utils";
+import { mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createRangeSelection,
@@ -199,14 +199,6 @@ export const BEFORE_PLAIN_TEXT_INSERTION_COMMAND: LexicalCommand<void> = createC
 function htmlWithoutMarkerGlyphs(html: string): string | undefined {
   const dom = new DOMParser().parseFromString(html, "text/html");
   return removeMarkerGlyphElements(dom) ? dom.documentElement.outerHTML : undefined;
-}
-
-/**
- * Whether `event`, a drop, is a copy rather than a move: the key the browser copies on is held
- * (Option on macOS, Ctrl elsewhere), so it removes nothing from where the drag started.
- */
-function isCopyDrop(event: DragEvent): boolean {
-  return IS_APPLE ? event.altKey : event.ctrlKey;
 }
 
 /**
@@ -920,7 +912,7 @@ export function UnstorableTextPlugin({
         COMMAND_PRIORITY_NORMAL,
       ),
       // Below the guards that refuse a drop outright, and below protected structure's sanitizer,
-      // which inserts a drop itself, removing nothing; above Lexical's own.
+      // which inserts every drop but a move within the editor itself; above Lexical's own.
       register(DROP_COMMAND, $onDrop, COMMAND_PRIORITY_NORMAL),
       register(
         CONTROLLED_TEXT_INSERTION_COMMAND,
