@@ -6,8 +6,9 @@ import {
 } from "./markerEdit/whitespaceDisplay.plugin.utils";
 import { $getHtmlContent, LexicalClipboardData } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { COMMAND_PRIORITY_LOW } from "lexical";
+import { $isElementNode, COMMAND_PRIORITY_LOW, RangeSelection } from "lexical";
 import { useEffect } from "react";
+import { $isGutterMarkerNode, $isUnknownNode } from "shared";
 import {
   $hiddenViewLexicalFlavor,
   $removeTextKeepingBookAndChapterLines,
@@ -37,7 +38,10 @@ import {
  *   itself, such as the macOS app menu's Paste.
  *
  * Declines, leaving the command to Lexical's own handler, when the selection has no text to write
- * (only a verse number, say, which Lexical's flavors carry), and declines a copy, not a cut, when a
+ * (only a verse number, say, which Lexical's flavors carry), except that it claims a copy, not a
+ * cut, of nothing but gutter marker glyphs and writes nothing, as a copy of nothing does: Lexical's
+ * copy would write the glyph's text (`\q1 `). A cut still declines: what a cut of a glyph removes
+ * is for the paragraph-marker rules to decide, not this writer. It declines a copy, not a cut, when a
  * browser copy's page selection runs outside the editor, which Lexical's copy leaves to the
  * browser. Lexical's cut still removes its own range then, so this writes that range rather than
  * let it go uncopied, unless a copy limit is set: the fit does not shorten a range the page
@@ -57,6 +61,20 @@ import {
  * copy, which would carry that text. The limit is passed on as `$writeCopyPayload`'s backstop,
  * which also declines the outside-the-editor cut above. Mount it only for `markerMode: "hidden"`.
  */
+/** A payload with no plain text, which claims a copy and writes nothing. */
+const EMPTY_COPY: LexicalClipboardData = { "text/plain": "" };
+
+/** Whether `selection` holds a gutter marker glyph and nothing else but the lines holding one. */
+function $selectsOnlyGutterMarkers(selection: RangeSelection): boolean {
+  const nodes = selection.getNodes();
+  return (
+    nodes.some($isGutterMarkerNode) &&
+    nodes.every(
+      (node) => $isGutterMarkerNode(node) || ($isElementNode(node) && !$isUnknownNode(node)),
+    )
+  );
+}
+
 export function HiddenMarkersViewCopyPlugin({
   allowInvisibleCharacters,
   copyLimit,
@@ -78,7 +96,8 @@ export function HiddenMarkersViewCopyPlugin({
             $isLeftOutOfHiddenViewCopy,
             hiddenViewCopySpelling(allowInvisibleCharacters),
           );
-          if (plain === "") return undefined;
+          if (plain === "")
+            return !isCut && $selectsOnlyGutterMarkers(selection) ? EMPTY_COPY : undefined;
           const html = $getHtmlContent(editor, selection);
           const nodeCopy = $hiddenViewLexicalFlavor(selection);
           const data: LexicalClipboardData = {

@@ -26,7 +26,7 @@ import {
   LexicalEditor,
   TextNode,
 } from "lexical";
-import { $isMarkerTrailingSeparator, NBSP } from "shared";
+import { $isGutterMarkerNode, $isMarkerTrailingSeparator, NBSP } from "shared";
 import {
   $hiddenViewLexicalFlavor,
   $isSomeVerseNode,
@@ -394,6 +394,33 @@ describe("HiddenMarkersViewCopyPlugin", () => {
     // Lexical's copy wrote the verse in its own flavors.
     expect(event.defaultPrevented).toBe(true);
     expect(getData("application/x-lexical-editor")).toContain('"number":"2"');
+  });
+
+  it("writes nothing on a copy of only a paragraph's gutter marker glyph", async () => {
+    const { editor } = await renderEditor();
+    // As a double-click on the glyph selects it.
+    await act(async () =>
+      editor.update(() => {
+        // The `\\q1` paragraph's, after the book line's.
+        const glyph = $dfs()
+          .map(({ node }) => node)
+          .filter($isGutterMarkerNode)
+          .at(-1);
+        if (!glyph) throw new Error("fixture has no gutter marker glyph");
+        const para = glyph.getParentOrThrow();
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(para.getKey(), glyph.getIndexWithinParent(), "element");
+        selection.focus = $createPoint(para.getKey(), glyph.getIndexWithinParent() + 1, "element");
+        $setSelection(selection);
+      }),
+    );
+    const before = editor.getEditorState().read(() => $getRoot().getTextContent());
+    const { event, getData } = await copyWithLexicalFallback(editor);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(getData("text/plain")).toBe("");
+    expect(getData("text/html")).toBe("");
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(before);
   });
 
   it("leaves a copy whose page selection runs outside the editor to Lexical's own copy", async () => {
