@@ -330,7 +330,11 @@ refused. The public surface grew substantially; nothing was removed.
   text. It is not written for a selection with an end inside a construct the view hides (a figure,
   an optional break, a table). Where written, `text/html` also carries it, in the attribute
   `data-platform-editor-node-copy` of a `<span>` around the html's own content; what the html shows
-  is unchanged. See `docs/clipboard-semantics.md`.
+  is unchanged. A node copy a view that hides markers would not write — a node it never holds, or
+  holds elsewhere (a note caller outside its note), a field it never holds (a marker with a space, a
+  verse number holding `\v`, a styled text), or nesting deeper than 32 levels — goes in by its html
+  or plain text instead, since any web page can put one in its html. See
+  `docs/clipboard-semantics.md`.
 - **Standard view's and the Markers view's `text/html` carries one new attribute**, the empty
   `data-platform-editor-marker-text` on its first `<p>`, which tells a view that hides markers that
   the text is USFM. The text a consumer reads is unchanged.
@@ -366,9 +370,14 @@ refused. The public surface grew substantially; nothing was removed.
   Standard view, the Markers view and the Footnotes pane's row editor write USFM as html and plain
   text, so a copy of `1 \ft TR and ` saved as `1 ft TR and `, a marker's name as a word of
   Scripture. Such a paste now loses its marker tokens (`1 TR and `), with no
-  `onUnstorableTextRemoved` report for them, and its book line and chapter tokens go whole, so a
-  whole-chapter copy adds no book code, chapter number or empty paragraph. Another program's paste
-  is unchanged.
+  `onUnstorableTextRemoved` report for them, and its book line and chapter tokens go whole, with a
+  chapter's `\ca …\ca*` and `\cp …`, so a whole-chapter copy adds no book code, chapter number or
+  empty paragraph. Another program's paste is unchanged.
+- **A copy of only a paragraph's gutter marker glyph writes nothing** in the views that hide
+  markers. Double-clicking the glyph and copying wrote its text, such as `\q1 `.
+- **Under protected structure, a paste over hidden content that leaves only the space between its
+  paragraphs asks first.** A paste of paragraphs each holding only `\` over a figure replaced the
+  figure with a space without calling `onHiddenContentDelete`.
 - **A line with no paragraph marker keeps the breaks Enter and a paste put in it.** In the blank
   line after a chapter line, or in text USFM holds with no marker, typing `one`, Enter, `two`, or
   pasting those two lines, showed two lines but saved `onetwo`. A split there now starts a `\p`
