@@ -43,6 +43,7 @@ import {
   $removeBrokenTokenPieces,
   $textHolds,
   DISPLAY_PIECES_CUT_TAG,
+  displayPieceChainState,
   displayPieceContinuationState,
   joinSerializedPieces,
   pieceHoldKeys,
@@ -538,8 +539,16 @@ export function $normalizeCarrierPieces(node: LexicalNode): void {
   // Pieces an element split moved off their head are bytes split off the carrier: a text.
   if ($replaceSplitOffPieces(node)) return;
   // A continuation whose head is gone (deleted, or the piece was moved) is a carrier of its own.
-  if ($isPieceContinuation(node) && $pieceHead(node).is(node))
+  if ($isPieceContinuation(node) && $pieceHead(node).is(node)) {
     $setState(node, displayPieceContinuationState, undefined);
+    // A chain is named by its head's key; the promoted piece's chain is named by a key no node has
+    // now, and `$isSplitOffPiece` finds a chain's head by that key.
+    const pieces = $pieces(node);
+    const id = pieces.length > 1 ? node.getKey() : undefined;
+    for (const piece of pieces)
+      if ($getState(piece, displayPieceChainState) !== id)
+        $setState(piece, displayPieceChainState, id);
+  }
   // Plain content never holds and never splits, and beside text no annotation holds it has nothing
   // to join; the check is what keeps this cheap for every typed character.
   const first = $pieceHead(node);

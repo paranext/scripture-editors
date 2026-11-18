@@ -1051,6 +1051,59 @@ describe("carrier offsets and per-node passes", () => {
     },
   );
 
+  it.each([
+    ["is kept", false],
+    ["is removed first", true],
+  ])(
+    "makes the last piece of a carrier a text when an element split moves it off its head, which %s",
+    (_name, removeHeadFirst) => {
+      const editor = mount();
+      let verse!: LexicalNode;
+      let para!: ParaNode;
+      editor.update(
+        () => {
+          verse = $cutVerse();
+          para = $getRoot().getFirstChildOrThrow<ParaNode>();
+        },
+        { discrete: true },
+      );
+      let moved!: LexicalNode;
+      let kept!: LexicalNode;
+      if (removeHeadFirst) {
+        editor.update(
+          () => {
+            const [head, second, third] = $pieces(verse);
+            [kept, moved] = [second, third];
+            head.remove();
+          },
+          { discrete: true },
+        );
+      } else {
+        editor.read(() => {
+          const [head, , third] = $pieces(verse);
+          [kept, moved] = [head, third];
+        });
+      }
+      editor.update(
+        () => {
+          const next = $createParaNode();
+          para.insertAfter(next);
+          next.append(moved);
+        },
+        { discrete: true },
+      );
+      editor.read(() => {
+        const text = $getNodeByKey(moved.getKey()) ?? undefined;
+        // The pieces split off are a plain text, not a carrier of the verse's class.
+        const [replaced] = $getRoot().getChildren()[1].getChildren();
+        expect(replaced.getType()).toBe("text");
+        expect(replaced.getTextContent()).toBe(" ");
+        expect(text === undefined || text.getType() === "text").toBe(true);
+        expect(kept.isAttached()).toBe(true);
+      });
+    },
+  );
+
   it("hands a continuation's per-node pass to its head", () => {
     const editor = mount();
     let verse!: LexicalNode;
