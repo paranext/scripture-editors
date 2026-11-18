@@ -5,6 +5,7 @@
  */
 
 import {
+  $hasClosingGlyph,
   $isTornSecondHalf,
   $requestTier2ForNode,
   $settleScopeForNode,
@@ -753,13 +754,6 @@ export function $charNodeDeletionTransform(char: CharNode, context: MarkerEditCo
   }
 }
 
-/** Whether `char` holds a closing glyph among its children. */
-function $hasCloserGlyph(char: CharNode): boolean {
-  return char
-    .getChildren()
-    .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing");
-}
-
 /**
  * Whether `char` lacks the closing glyph it needs. A span "needs" a closer iff it is not marked
  * closed="false": that flag (which ParatextData emits on every genuinely-unclosed span,
@@ -768,7 +762,7 @@ function $hasCloserGlyph(char: CharNode): boolean {
  * explicitly-closed \xt DOES need its closer, so deleting it must still re-route through Tier 2.
  */
 function $needsMissingCloser(char: CharNode): boolean {
-  return char.getUnknownAttributes()?.closed !== "false" && !$hasCloserGlyph(char);
+  return char.getUnknownAttributes()?.closed !== "false" && !$hasClosingGlyph(char);
 }
 
 /**
@@ -794,7 +788,7 @@ function $firstHalfOfSplitSpan(char: CharNode): CharNode | undefined {
     const opener = node.getFirstChild();
     const hasOpener = $isMarkerNode(opener) && opener.getMarkerSyntax() === "opening";
     // A whole span between the two halves is one the insertion put there.
-    if (hasOpener && $hasCloserGlyph(node)) continue;
+    if (hasOpener && $hasClosingGlyph(node)) continue;
     return hasOpener && $needsMissingCloser(node) ? node : undefined;
   }
   return undefined;

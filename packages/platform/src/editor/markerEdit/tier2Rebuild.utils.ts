@@ -4460,8 +4460,8 @@ function $tornSecondHalfOf(char: CharNode): CharNode | undefined {
   return undefined;
 }
 
-/** Whether `char` holds a closing glyph among its children. */
-function $hasClosingGlyph(char: CharNode): boolean {
+/** Whether `char` holds a closing glyph among its children. Read-only: safe in any read or update. */
+export function $hasClosingGlyph(char: CharNode): boolean {
   return char
     .getChildren()
     .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing");
