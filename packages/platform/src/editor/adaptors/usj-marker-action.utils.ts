@@ -27,6 +27,7 @@ import {
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createNodeFromSerializedNode,
+  $createTypedMarkNode,
   $findChapter,
   $innermostCharAncestor,
   $isCharNode,
@@ -1112,7 +1113,15 @@ function $splitMarksAtSelectionEdges(selection: RangeSelection): void {
     if (point.offset >= text.getTextContentSize()) after = text.getNextSibling();
     else if (point.offset > 0) after = text.splitText(point.offset)[1];
     if (!after || after.getIndexWithinParent() === 0) continue;
-    const rest = $copyNode(mark);
+    // A fresh mark, not `$copyNode`: the DOM handlers find a mark's callbacks by key, and a copy
+    // is registered under no callbacks.
+    const rest = $createTypedMarkNode(
+      mark.getTypedIDs(),
+      mark.getTypedOnClicks(),
+      mark.getTypedOnRemoves(),
+      mark.getTypedOnMouseEnters(),
+      mark.getTypedOnMouseLeaves(),
+    );
     mark.insertAfter(rest);
     rest.append(...mark.getChildren().slice(after.getIndexWithinParent()));
   }
