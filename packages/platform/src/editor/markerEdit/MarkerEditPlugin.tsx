@@ -1589,10 +1589,10 @@ export function MarkerEditPlugin({
         INSERT_LINE_BREAK_COMMAND,
         () => {
           const selection = $getSelection();
-          return (
-            $isRangeSelection(selection) &&
-            !$isElementNode($findMatchingParent(selection.anchor.getNode(), INTERNAL_$isBlock))
-          );
+          if (!$isRangeSelection(selection)) return false;
+          // Lexical deletes a range and then breaks the line where the range started.
+          const start = selection.isBackward() ? selection.focus : selection.anchor;
+          return !$isElementNode($findMatchingParent(start.getNode(), INTERNAL_$isBlock));
         },
         COMMAND_PRIORITY_HIGH,
       ),
