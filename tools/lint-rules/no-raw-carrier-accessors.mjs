@@ -45,11 +45,16 @@ const ACCESSORS = new Map([
   ["replace", "replacing the whole chain ($pieces)"],
 ]);
 
-/** Whether `type`, or a member of it if it is a union or an intersection, is a carrier class or
- * extends one. */
+/** Whether `type`, or a member of it if it is a union or an intersection, or the constraint of it
+ * if it is a type parameter, is a carrier class or extends one. */
 function isCarrierType(checker, type, seen = new Set()) {
   if (seen.has(type)) return false;
   seen.add(type);
+  // A type parameter is a carrier when its constraint is.
+  if (type.isTypeParameter()) {
+    const constraint = checker.getBaseConstraintOfType(type);
+    return !!constraint && constraint !== type && isCarrierType(checker, constraint, seen);
+  }
   if (type.isUnion() || type.isIntersection())
     return type.types.some((member) => isCarrierType(checker, member, seen));
   const symbol = type.getSymbol();
