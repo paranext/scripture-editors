@@ -168,6 +168,9 @@ export class ImmutableTypedTextNode extends DecoratorNode<null> {
     if ($getState(this, gutterMarkerState)) return { element: null };
     const { element } = super.exportDOM(editor);
     if (element && isHTMLElement(element)) {
+      // The element is built by `createDOM`, which paints the live annotations; the markup
+      // carries the plain glyph.
+      renderDecoratorPaint(element, this.getRenderedText(), []);
       element.setAttribute("data-text-type", this.getTextType());
     }
 
