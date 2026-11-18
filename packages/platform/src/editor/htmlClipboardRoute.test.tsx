@@ -173,6 +173,58 @@ async function mount(
 
 const PROTECTIONS: StructureProtectionMode[] = ["off", "guarded", "protected"];
 
+/** The serialized fields every element node in a node copy carries. */
+function element(type: string, children: object[] = []): object {
+  return { type, version: 1, children, direction: null, format: "", indent: 0 };
+}
+
+function text(content: string): object {
+  return {
+    type: "text",
+    version: 1,
+    text: content,
+    detail: 0,
+    format: 0,
+    mode: "normal",
+    style: "",
+  };
+}
+
+function para(children: object[]): object {
+  return { ...element("para", children), marker: "p", textFormat: 0, textStyle: "" };
+}
+
+function char(marker: string, children: object[]): object {
+  return { ...element("char", children), marker };
+}
+
+function note(caller: string, children: object[]): object {
+  return { ...element("note", children), marker: "f", caller, isCollapsed: false };
+}
+
+function noteCaller(caller: string): object {
+  return { type: "immutable-note-caller", version: 1, caller, previewText: "" };
+}
+
+function verse(number: string): object {
+  return { type: "immutable-verse", version: 1, marker: "v", number };
+}
+
+function unknown(tag: string, marker: string): object {
+  return { ...element("unknown"), tag, marker };
+}
+
+function markerGlyph(): object {
+  return { type: "marker", version: 1, marker: "w", markerSyntax: "opening", text: "\\w " };
+}
+
+/** `inner` inside `depth` char spans. */
+function nested(depth: number, inner: object): object {
+  let node = inner;
+  for (let level = 0; level < depth; level += 1) node = char("w", [node]);
+  return node;
+}
+
 describe.each(PROTECTIONS)("a hidden-marker view's copy and Ctrl+V, structure %s", (mode) => {
   it("reproduces what was copied, with no node copy flavor on the paste", async () => {
     const { mounted } = await mount("paragraph-structure", mode);
@@ -275,26 +327,44 @@ describe.each(PROTECTIONS)("a hidden-marker view's copy and Ctrl+V, structure %s
   });
 
   // Any web page can put a node copy in its html, so one must hold only what a hidden-marker
-  // view's document does: a root entry crashed the editor, and a marker showed text never saved.
+  // view's document does, where its document holds it: anything else could replace the live root,
+  // leave the editor throwing on every update, save USFM that no longer parses as it was pasted,
+  // or show text that is never saved.
   it.each([
     [
       "a root",
       [{ type: "root", version: 1, children: [], direction: null, format: "", indent: 0 }],
     ],
+    ["a marker inside a paragraph", [para([markerGlyph(), text("INJECTED")])]],
+    ["a note caller outside a note", [para([noteCaller("+"), text("INJECTED")])]],
+    ["a note caller that is not its note's", [para([note("+", [noteCaller("INJECTED")])])]],
+    ["a table row outside a table", [{ ...element("immutable-table-row"), marker: "tr" }]],
+    ["a paragraph inside a paragraph", [para([para([text("INJECTED")])])]],
+    ["a char marker that is not a marker", [para([char("a b", [text("INJECTED")])])]],
+    ["a paragraph marker that is not one", [{ ...para([text("INJECTED")]), marker: "v" }]],
+    ["a verse number holding a verse", [para([verse("2\\v 3"), text("INJECTED")])]],
+    ["a verse number holding a space", [para([verse("2 3"), text("INJECTED")])]],
+    ["a chapter inside a paragraph", [para([unknown("chapter", "c"), text("INJECTED")])]],
+    ["a book inside a paragraph", [para([unknown("book", "id"), text("INJECTED")])]],
+    ["an unknown construct no USJ holds", [para([unknown("script", "x"), text("INJECTED")])]],
+    ["a text with a style", [para([{ ...text("INJECTED"), style: "display:none" }])]],
+    ["a text with a format", [para([{ ...text("INJECTED"), format: 1 }])]],
+    ["a paragraph with a text style", [{ ...para([text("INJECTED")]), textStyle: "color:red" }]],
+    ["a text the save leaves out", [para([{ ...text("INJECTED"), $: { textType: "attribute" } }])]],
     [
-      "a marker inside a paragraph",
-      [
-        {
-          type: "para",
-          version: 1,
-          marker: "p",
-          children: [
-            { type: "marker", version: 1, marker: "w", markerSyntax: "opening", text: "\\w " },
-            { type: "text", version: 1, text: "INJECTED" },
-          ],
-        },
-      ],
+      "a marker glyph",
+      [para([{ type: "immutable-typed-text", version: 1, textType: "marker", text: "\\v 5" }])],
     ],
+    [
+      "an unmatched marker showing other text",
+      [para([{ ...text("\\v 5"), type: "unmatched", marker: "nd*" }])],
+    ],
+    [
+      "an attribute name that is not one",
+      [para([{ ...char("w", [text("INJECTED")]), unknownAttributes: { "a b": "c" } }])],
+    ],
+    ["nesting deeper than any document's", [para([nested(40, text("INJECTED"))])]],
+    ["nesting deep enough to overflow a save", [para([nested(1000, text("INJECTED"))])]],
   ])("falls back to the html when the node copy holds %s", async (_, nodes) => {
     const { mounted } = await mount("paragraph-structure", mode);
     try {
@@ -313,6 +383,44 @@ describe.each(PROTECTIONS)("a hidden-marker view's copy and Ctrl+V, structure %s
       expect(content?.slice(0, 2)).toEqual(bookAndChapter);
       expect(paragraph(mounted).content?.at(-1)).toBe(" lastharmless");
       expect(JSON.stringify(content)).not.toContain("INJECTED");
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it("takes a node copy holding what a document can: a project's own marker, a verse range, a figure", async () => {
+    const { mounted } = await mount("paragraph-structure", mode);
+    try {
+      await select(mounted, " last", 5, " last", 5);
+      const nodes = [
+        verse("2-3a"),
+        char("zcustom", [text("custom")]),
+        note("+", [noteCaller("+"), char("ft", [text("footnote")])]),
+        { ...unknown("figure", "fig"), unknownAttributes: { src: "a.png" } },
+      ];
+      const nodeCopy = JSON.stringify({ namespace: HIDDEN_VIEW_CLIPBOARD_NAMESPACE, nodes })
+        .replaceAll("&", "&amp;")
+        .replaceAll('"', "&quot;");
+
+      await paste(mounted, {
+        "text/html": `<span ${NODE_COPY_HTML_ATTRIBUTE}="${nodeCopy}"><span>harmless</span></span>`,
+        "text/plain": "plain",
+      });
+
+      // Protected structure keeps a pasted verse out.
+      const pastedVerse =
+        mode === "protected" ? [] : [{ type: "verse", marker: "v", number: "2-3a" }];
+      expect(paragraph(mounted).content?.slice(-3 - pastedVerse.length)).toEqual([
+        ...pastedVerse,
+        { type: "char", marker: "zcustom", content: ["custom"] },
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ type: "char", marker: "ft", content: ["footnote"] }],
+        },
+        { type: "figure", marker: "fig", src: "a.png" },
+      ]);
     } finally {
       mounted.unmount();
     }
