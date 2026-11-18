@@ -61,6 +61,9 @@ tester.run("no-raw-carrier-accessors", noRawCarrierAccessors, {
   valid: [
     { code: `${CLASSES} export const read = (text: Caller) => text.getTextContent();` },
     {
+      code: `${CLASSES} export const read = <T extends TextNode>(text: T) => text.getTextContent();`,
+    },
+    {
       code: `${CLASSES} export class Own extends MarkerNode { read() { return this.getTextContent(); } }`,
     },
   ],
@@ -107,6 +110,10 @@ tester.run("no-raw-carrier-accessors", noRawCarrierAccessors, {
     },
     {
       code: `${CLASSES} export const drop = (marker: MarkerNode) => marker.remove();`,
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: `${CLASSES} export const read = <T extends MarkerNode>(marker: T) => marker.getTextContent();`,
       errors: [{ messageId: "raw" }],
     },
   ],
