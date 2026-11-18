@@ -374,6 +374,11 @@ export function $joinPieces<T extends LexicalNode>(pieces: readonly T[]): T {
       annotations.push({ ...held, start: held.start + offset, end: held.end + offset });
     text += piece.getTextContent();
   }
+  // A boundary between pieces is a place in the joined text: the end of the piece before it. Read
+  // before the head takes the joined text, while each piece still has its own size.
+  const ends: number[] = [];
+  let end = 0;
+  for (const piece of pieces.slice(0, -1)) ends.push((end += piece.getTextContentSize()));
   let offset = head.getTextContentSize();
   for (const piece of rest) {
     $movePoints(piece, head, offset);
@@ -389,10 +394,6 @@ export function $joinPieces<T extends LexicalNode>(pieces: readonly T[]): T {
   // The joined node is not the chain it recorded; the piece transform records the chain anew.
   $setState(writable, displayPieceTokenTextState, undefined);
   $addUpdateTag(DISPLAY_PIECES_CUT_TAG);
-  // A boundary between pieces is a place in the joined text: the end of the piece before it.
-  const ends: number[] = [];
-  let end = 0;
-  for (const piece of pieces.slice(0, -1)) ends.push((end += piece.getTextContentSize()));
   // As Lexical's own text merge does: an IME composition in a removed piece stays on its bytes.
   // Lexical exports no getter for the composition key, so it is read off the active editor.
   const compositionKey = $getEditor()._compositionKey;

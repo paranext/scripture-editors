@@ -1019,6 +1019,38 @@ describe("carrier offsets and per-node passes", () => {
     });
   });
 
+  it.each([
+    [1, 3],
+    [2, 5],
+  ])(
+    "maps a caret between the pieces of the parent, at child %i, to byte %i of the joined text",
+    (child, byte) => {
+      const editor = mount();
+      let para!: ParaNode;
+      editor.update(
+        () => {
+          $cutVerse();
+          para = $getRoot().getFirstChildOrThrow<ParaNode>();
+        },
+        { discrete: true },
+      );
+      editor.update(
+        () => {
+          const [first] = para.getChildren();
+          para.select(child, child);
+          const head = $mergePieces(first);
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("no range selection");
+          expect(head.getTextContent()).toBe(`\\v${NBSP}12 `);
+          expect(selection.anchor.type).toBe("text");
+          expect(selection.anchor.key).toBe(head.getKey());
+          expect(selection.anchor.offset).toBe(byte);
+        },
+        { discrete: true },
+      );
+    },
+  );
+
   it("hands a continuation's per-node pass to its head", () => {
     const editor = mount();
     let verse!: LexicalNode;
