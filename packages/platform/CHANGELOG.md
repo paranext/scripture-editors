@@ -373,9 +373,10 @@ refused. The public surface grew substantially; nothing was removed.
   empty paragraph. Another program's paste is unchanged.
 - **A copy of only a paragraph's gutter marker glyph writes nothing** in the views that hide
   markers. Double-clicking the glyph and copying wrote its text, such as `\q1 `.
-- **Under protected structure, a paste over hidden content that leaves only the space between its
-  paragraphs asks first.** A paste of paragraphs each holding only `\` over a figure replaced the
-  figure with a space without calling `onHiddenContentDelete`.
+- **Under protected structure, a paste whose paragraphs are all filtered out inserts nothing**, as
+  it does where structure is not protected. A paste of paragraphs each holding only `\` over a
+  figure replaced the figure with the space put between the paragraphs, without calling
+  `onHiddenContentDelete`.
 - **A line with no paragraph marker keeps the breaks Enter and a paste put in it.** In the blank
   line after a chapter line, or in text USFM holds with no marker, typing `one`, Enter, `two`, or
   pasting those two lines, showed two lines but saved `onetwo`. A split there now starts a `\p`

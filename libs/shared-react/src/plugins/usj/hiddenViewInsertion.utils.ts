@@ -9,7 +9,10 @@ import {
   nodeCopyIn,
   withoutNodeCopy,
 } from "./nodeCopy.utils";
-import { $sanitizeNodesForProtectedStructure } from "./structureKeyboard.utils";
+import {
+  $insertsOnlyParagraphSeparators,
+  $sanitizeNodesForProtectedStructure,
+} from "./structureKeyboard.utils";
 import { UnstorableCharacter } from "./unstorable-text.model";
 import {
   $insertsNothing,
@@ -155,13 +158,16 @@ export function $predictInsertion(
     removeMarkerGlyphElements(dom);
     nodes = $generateNodesFromDOM(editor, dom);
   }
-  // Under protected structure `StructureKeyboardPlugin` inserts these nodes sanitized, which puts a
-  // space between top-level paragraphs that outlasts their filtered text.
+  // Under protected structure `StructureKeyboardPlugin` inserts these nodes sanitized, with a space
+  // between top-level paragraphs that it leaves out once their text is all filtered out.
   if (isProtected) nodes = $sanitizeNodesForProtectedStructure(nodes);
   const { isRemoved } = $removeBookAndChapterLines(nodes);
   const { before, after } = $textAroundSelection(at);
   const removed = $removeUnstorableTextFromNodes(nodes, before, after);
   // As `UnstorableTextPlugin` decides it: only nodes it took something out of go in as nothing;
   // otherwise Lexical inserts them, replacing a selection.
-  return { removed, insertsNothing: (removed.length > 0 || isRemoved) && $insertsNothing(nodes) };
+  const leavesNothing = isProtected
+    ? $insertsOnlyParagraphSeparators(nodes)
+    : $insertsNothing(nodes);
+  return { removed, insertsNothing: (removed.length > 0 || isRemoved) && leavesNothing };
 }
