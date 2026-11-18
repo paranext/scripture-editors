@@ -119,4 +119,58 @@ describe("an annotation and the undo stack", () => {
     expect(paraText(mounted)).not.toContain("x");
     mounted.unmount();
   });
+
+  it("drops an annotation set while an edit is undone when the edit is redone", async () => {
+    const mounted = await mountInView(usj, oracleView("standard"));
+    await typeAtStart(mounted, "x");
+    await history(mounted, "undo");
+    const onRemove = vi.fn();
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+          end: { jsonPath: "$.content[2].content[0]", offset: 3 },
+        },
+        "test",
+        "b",
+        { onRemove },
+      );
+      await Promise.resolve();
+    });
+    expect(markCount(mounted)).toBe(1);
+
+    await history(mounted, "redo");
+    expect(paraText(mounted)).toContain("x");
+    expect(markCount(mounted)).toBe(0);
+    // The redo drops the mark without calling its onRemove: the host set it, and the redo is not a removal it asked for.
+    expect(onRemove).not.toHaveBeenCalled();
+    mounted.unmount();
+  });
+
+  it("brings back an annotation a host removed while its edit was undone, when the edit is redone", async () => {
+    const mounted = await mountInView(usj, oracleView("standard"));
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[2].content[0]", offset: 8 },
+          end: { jsonPath: "$.content[2].content[0]", offset: 12 },
+        },
+        "test",
+        "a",
+      );
+      await Promise.resolve();
+    });
+    await typeAtStart(mounted, "x");
+    await history(mounted, "undo");
+    await act(async () => {
+      mounted.ref.current?.removeAnnotation("test", "a");
+      await Promise.resolve();
+    });
+    expect(markCount(mounted)).toBe(0);
+
+    await history(mounted, "redo");
+    expect(paraText(mounted)).toContain("x");
+    expect(markCount(mounted)).toBe(1);
+    mounted.unmount();
+  });
 });
