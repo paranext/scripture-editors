@@ -617,11 +617,7 @@ function $isMergeableButForPieces(before: LexicalNode | null, after: LexicalNode
 
 /** Whether `node` is a text a cut or a hold has put state on ({@link PIECE_STATE_KEYS}). */
 export function $hasPieceState(node: LexicalNode | null): boolean {
-  return (
-    $isTextNode(node) &&
-    ($getState(node, displayAnnotationsState) !== undefined ||
-      $getState(node, displayPieceChainState) !== undefined)
-  );
+  return $isTextNode(node) && $carriesPieceState(node);
 }
 
 /**

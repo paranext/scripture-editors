@@ -7,7 +7,9 @@
  * into and out of the content beside it) — and every observable must be identical: the pending
  * and settled `getUsj()`, the screen and document text, every caret position's report and its
  * round trip, and the collab delta. A site inside a carrier an annotation has cut into pieces is
- * reached at every spelling the cut gives it, and each spelling must agree with the unsplit run.
+ * reached at every spelling the cut gives it — each way of naming that one document position, such
+ * as the end of one piece and the start of the next — and each spelling must agree with the
+ * unsplit run.
  * At a site strictly inside a carrier a paste runs too: a byte of the carrier copied out of its
  * piece and pasted at the caret (`PASTE_KEYSTROKES`), with the carriers cut by the ranges over them
  * alone, so a paste between two pieces must join the carrier as a paste into the unsplit one does.
@@ -49,7 +51,13 @@
  * every row's, with every skip by label.
  *
  * The cases known to fail are listed per view in `annotationTransparency.<view>.expected-failures.json`,
- * in the pending/settled oracle's list format; `ANNOTATION_TRANSPARENCY_WRITE=1` rewrites a list.
+ * in the pending/settled oracle's list format; `ANNOTATION_TRANSPARENCY_WRITE=1` rewrites a list,
+ * and needs `ANNOTATION_TRANSPARENCY_FULL=1`, since a sampled run leaves cases out.
+ *
+ * By default a row does not run every case: it runs the core keystrokes at every site the
+ * annotations change the tree at, and every keystroke at a sample of its sites, at least one per
+ * row ({@link FULL}). `ANNOTATION_TRANSPARENCY_FULL=1` runs every case, as the scheduled full-suite
+ * workflow does.
  */
 
 import {
@@ -151,8 +159,9 @@ const CLIPBOARD = process.env.ANNOTATION_TRANSPARENCY_CLIPBOARD === "1";
  * workflow does. By default a row runs the {@link isCoreKeystroke | core keystrokes} at every site
  * the annotations change the tree at ({@link $isTouched}), and every keystroke at a sample of all
  * its sites, every {@link SAMPLE_STRIDE}th, shifted by the row's index so each row samples
- * different positions: every view, row and keystroke still runs on every pull request, at fewer
- * places, for about a third of the full run's time.
+ * different positions, plus one more site chosen by the row's index so that a row with fewer sites
+ * than the stride still runs one in full: every view, row and keystroke still runs on every pull
+ * request, at fewer places, for about a third of the full run's time.
  */
 const FULL = process.env.ANNOTATION_TRANSPARENCY_FULL === "1";
 const SAMPLE_STRIDE = 8;
