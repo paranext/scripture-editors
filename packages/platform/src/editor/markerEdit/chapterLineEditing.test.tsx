@@ -485,10 +485,8 @@ describe("a caret on the chapter line", () => {
             "no root-level \\ca span",
           );
           expect($isElementNode(span) && span.getParent()?.getType()).toBe("root");
-          const inRun = requireDefined(
-            $isElementNode(span) ? span.getFirstDescendant() : null,
-            "no text",
-          );
+          const inRun = $isElementNode(span) ? span.getFirstDescendant() : null;
+          if (!inRun) throw new Error("no text");
           const inText = $verseText();
           const selection = $createRangeSelection();
           const [anchor, focus] = backward
