@@ -1,11 +1,13 @@
 import { LexicalNode } from "lexical";
-import { $isMarkerNode, $isNoteNode, leadingAttributeNames } from "shared";
+import { $isMarkerNode, $isNoteNode, $pieceHead, leadingAttributeNames } from "shared";
 
 /**
  * Whether `node` sits in an expanded note's caller slot: the first child after the note's
  * opening glyph(s), where an editable note spells its caller out as text between two separators
  * (`getEditableCallerText`). Positional, so it holds while the caller is mid-edit or deleted
  * outright, when the text no longer matches the stored caller.
+ *
+ * A caller text an annotation cuts into pieces is one caller: every piece of it sits in the slot.
  *
  * Only a note whose marker declares a leading caller has the slot (the markers map, never a local
  * list: `f`/`fe`/`ef`/`efe`/`x`/`ex`), and a collapsed note never does - its caller is an atomic
@@ -24,5 +26,5 @@ export function $isNoteCallerSlot(node: LexicalNode): boolean {
     if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
     slot++;
   }
-  return node.is(children[slot]);
+  return $pieceHead(node).is(children[slot]);
 }

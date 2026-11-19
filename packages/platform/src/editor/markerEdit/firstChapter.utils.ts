@@ -46,6 +46,7 @@ import {
   $isParaNode,
   $isSomeChapterNode,
   $isUnknownNode,
+  $lastPiece,
   defaultStyleInfo,
   ImpliedParaNode,
   PARA_MARKER_DEFAULT,
@@ -313,7 +314,9 @@ export function $insertFirstChapter({
   // by kind, since a view without spacing puts a line break before each verse.
   const firstVerse = verseNodes.find($isSomeVerseNode);
   if ($isElementNode(chapter)) chapter.selectEnd();
-  else if (firstVerse) firstVerse.selectNext();
+  else if (firstVerse)
+    // eslint-disable-next-line scripture-editors/no-raw-carrier-accessors -- the verse's last piece: the caret goes past all of it
+    $lastPiece(firstVerse).selectNext();
   else if ($isParaNode(chapterContentStart) || $isImpliedParaNode(chapterContentStart))
     chapterContentStart.select(0, 0);
   return true;

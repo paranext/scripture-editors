@@ -1,4 +1,5 @@
 import { $selectionPlainText, isCopyFromOutsideEditor } from "./copyLimit/copyLimit.utils";
+import { $uncutClipboardData } from "./markerEdit/uncutClipboard.utils";
 import {
   hiddenViewCopySpelling,
   registerViewCopyWriter,
@@ -7,6 +8,7 @@ import { $getClipboardDataFromSelection } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { COMMAND_PRIORITY_LOW } from "lexical";
 import { useEffect } from "react";
+import { LoggerBasic } from "shared";
 
 /**
  * Copies a hidden-marker view's selection the way Lexical's own copy does, except that `text/plain`
@@ -15,7 +17,9 @@ import { useEffect } from "react";
  * `allowInvisibleCharacters` (`ViewOptions.allowInvisibleCharacters`) off, a no-break space the text
  * stores is written as `~`, as Paratext 9's views show and copy one; on, as itself.
  *
- * `text/html` and `application/x-lexical-editor` stay Lexical's own, because the editor's own paste
+ * `text/html` and `application/x-lexical-editor` stay Lexical's own (written from the tree without
+ * annotations when the selection touches one, `$uncutClipboardData`, so a mark or a cut carrier
+ * does not paste back as separate spans or pieces), because the editor's own paste
  * reads them back: Ctrl+V reads `text/html` (`navigator.clipboard.read()` offers no internal
  * flavor) and rebuilds notes from it. They still carry the note spacers, which that paste saves as
  * NBSPs into a note holding loose text; leaving them out of `text/html` is a separate fix. They keep
@@ -42,9 +46,12 @@ import { useEffect } from "react";
 export function HiddenMarkersViewCopyPlugin({
   allowInvisibleCharacters,
   copyLimit,
+  logger,
 }: {
   allowInvisibleCharacters?: boolean;
   copyLimit?: number;
+  /** Told when an annotated copy cannot be written without its annotations. */
+  logger?: LoggerBasic;
 }): null {
   const [editor] = useLexicalComposerContext();
 
@@ -61,11 +68,14 @@ export function HiddenMarkersViewCopyPlugin({
             hiddenViewCopySpelling(allowInvisibleCharacters),
           );
           if (plain === "") return undefined;
-          return { ...$getClipboardDataFromSelection(selection), "text/plain": plain };
+          const flavors =
+            $uncutClipboardData(editor, selection, logger) ??
+            $getClipboardDataFromSelection(selection);
+          return { ...flavors, "text/plain": plain };
         },
         copyLimit,
       ),
-    [editor, allowInvisibleCharacters, copyLimit],
+    [editor, allowInvisibleCharacters, copyLimit, logger],
   );
 
   return null;

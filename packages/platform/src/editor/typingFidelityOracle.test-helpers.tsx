@@ -1227,6 +1227,9 @@ const CARETS_OVERRIDE: number | "all" | undefined =
   process.env.TYPING_FIDELITY_ORACLE_CARETS === "all"
     ? "all"
     : Number(process.env.TYPING_FIDELITY_ORACLE_CARETS) || undefined;
+/** A row's time limit: the default spread finishes well inside ten minutes, and an override, set
+ * by the full-suite workflow or by hand, visits many more carets. */
+const ROW_TIMEOUT_MS = CARETS_OVERRIDE === undefined ? 600_000 : 3_600_000;
 const WRITE = process.env.TYPING_FIDELITY_ORACLE_WRITE === "1";
 const DUMP = process.env.TYPING_FIDELITY_ORACLE_DUMP === "1";
 /** Mount the document afresh for every keystroke, to tell a failure that depends on the keystrokes
@@ -1645,7 +1648,7 @@ export function describeTypingFidelityOracle(
           "listed without the reason it is left failing",
         ).toEqual([]);
       },
-      600_000,
+      ROW_TIMEOUT_MS,
     );
   });
 }

@@ -2,6 +2,7 @@
 
 import { $getParticularNodeOps } from "../../plugins/usj/collab/editor-delta.adaptor";
 import { DeltaOpInsertNoteEmbed } from "../../plugins/usj/collab/rich-text-ot.model";
+import { DecoratorPaintedText } from "./DecoratorPaintedText";
 import { $getNoteIndex } from "./note-index.utils";
 import {
   $applyNodeReplacement,
@@ -205,7 +206,11 @@ export class ImmutableNoteCallerNode extends DecoratorNode<ReactNode> {
     const callerId = `${this.__caller}_${this.__previewText}}`.replace(/\s+/g, "").substring(0, 25);
     return (
       <button onClick={onClick} title={this.__previewText} data-caller-id={callerId}>
-        {this.getRenderedText()}
+        <DecoratorPaintedText
+          editor={editor}
+          nodeKey={callerNodeKey}
+          text={this.getRenderedText()}
+        />
       </button>
     );
   }

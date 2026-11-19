@@ -13,6 +13,7 @@ import {
 } from "lexical";
 import {
   $createGutterMarkerNode,
+  $createTypedMarkNode,
   $createImmutableChapterNode,
   $createParaNode,
   $isImmutableChapterNode,
@@ -96,6 +97,30 @@ describe("ParaNodePlugin", () => {
 
     editor.getEditorState().read(() => {
       expect($getRoot().getLastChild()?.getTextContent()).toBe("\\q1 text");
+    });
+  });
+
+  // A mark holding the new paragraph's first text is presentation: the space goes as it goes with
+  // no mark.
+  it.each([
+    ["holds the space and the text after it", [" God"], " b"],
+    ["holds only the space", [" "], "God b"],
+  ])("should remove the leading space a mark %s", async (_, held, after) => {
+    const { editor } = await testEnvironment();
+
+    await sutUpdate(editor, () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTypedMarkNode({ spelling: ["s1"] }).append(
+            ...held.map((text) => $createTextNode(text)),
+          ),
+          $createTextNode(after),
+        ),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getLastChild()?.getTextContent()).toBe("God b");
     });
   });
 
