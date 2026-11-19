@@ -1134,11 +1134,17 @@ export interface EditorOptions {
   markerMenuTrigger?: string;
   /** Options for some editor nodes. */
   nodes?: UsjNodeOptions;
-  /** Additional items to append to the editor context menu. */
+  /**
+   * Additional items to append to the editor context menu. Has no effect when
+   * {@link EditorOptions.hasBuiltInContextMenu} is `false`.
+   */
   contextMenu?: ContextMenuOptionConfig[];
   /**
    * Whether the editor mounts its own right-click menu. Set to `false` when the host shows its own
    * menu for the editor. Defaults to `true`. Independent of `hasExternalUI`.
+   *
+   * @remarks With `false` the editor leaves `contextmenu` events alone: it neither prevents the
+   *   default nor shows a menu, so the host must prevent the browser's own menu itself.
    *
    * @experimental This member is unstable and may change shape or disappear without notice.
    */

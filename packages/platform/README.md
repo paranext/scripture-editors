@@ -227,13 +227,14 @@ Programmatic control over the editor. Self-evident methods (`focus`, `undo`, `re
 Self-evident options (`isReadonly`, `hasSpellCheck`, `textDirection`, `nodes`) are omitted — see
 the full reference below.
 
-| Option              | Note                                                       |
-| ------------------- | ---------------------------------------------------------- |
-| `hasExternalUI`     | Disables the built-in toolbar and marker menu              |
-| `markerMenuTrigger` | Defaults to `\`; has no effect when `hasExternalUI` is set |
-| `contextMenu`       | Append custom items to the built-in context menu           |
-| `view`              | EXPERIMENTAL: only formatted view is functional            |
-| `debug`             | Shows Lexical TreeView                                     |
+| Option                  | Note                                                                                                                                                        |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hasExternalUI`         | Disables the built-in toolbar and marker menu                                                                                                               |
+| `markerMenuTrigger`     | Defaults to `\`; has no effect when `hasExternalUI` is set                                                                                                  |
+| `contextMenu`           | Append custom items to the built-in context menu; ignored when `hasBuiltInContextMenu` is `false`                                                           |
+| `hasBuiltInContextMenu` | EXPERIMENTAL: `false` stops the editor mounting its own right-click menu, for a host that shows its own; independent of `hasExternalUI`. Defaults to `true` |
+| `view`                  | EXPERIMENTAL: only formatted view is functional                                                                                                             |
+| `debug`                 | Shows Lexical TreeView                                                                                                                                      |
 
 > Full API reference: [platform-editor.api.md](etc/platform-editor.api.md)
 
