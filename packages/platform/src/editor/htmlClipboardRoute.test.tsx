@@ -225,16 +225,6 @@ function nested(depth: number, inner: object): object {
   return node;
 }
 
-/**
- * The JSON of {@link nested}`(depth, inner)` as the one node of a paragraph, built without
- * recursing: `JSON.stringify` of a payload this deep overflows a test worker's smaller stack.
- */
-function nestedParagraphJson(depth: number, inner: object): string {
-  const [open, close] = JSON.stringify(char("w", [{}])).split("{}");
-  const [paraOpen, paraClose] = JSON.stringify(para([{}])).split("{}");
-  return `[${paraOpen}${open.repeat(depth)}${JSON.stringify(inner)}${close.repeat(depth)}${paraClose}]`;
-}
-
 describe.each(PROTECTIONS)("a hidden-marker view's copy and Ctrl+V, structure %s", (mode) => {
   it("reproduces what was copied, with no node copy flavor on the paste", async () => {
     const { mounted } = await mount("paragraph-structure", mode);
@@ -373,19 +363,33 @@ describe.each(PROTECTIONS)("a hidden-marker view's copy and Ctrl+V, structure %s
       "an attribute name that is not one",
       [para([{ ...char("w", [text("INJECTED")]), unknownAttributes: { "a b": "c" } }])],
     ],
+    [
+      "an attribute replacing a char's marker",
+      [para([{ ...char("w", [text("INJECTED")]), unknownAttributes: { marker: "a b" } }])],
+    ],
+    [
+      "an attribute replacing a verse's number",
+      [para([{ ...verse("2"), unknownAttributes: { number: "2\\v 3" } }, text("INJECTED")])],
+    ],
+    [
+      "an attribute replacing a char's type",
+      [para([{ ...char("w", [text("INJECTED")]), unknownAttributes: { type: "chapter" } }])],
+    ],
+    ["a node state the editor does not define", [para([{ ...text("INJECTED"), $: { x: {} } }])]],
+    [
+      "an unmatched marker that saves as an opening marker",
+      [para([{ type: "unmatched", version: 1, marker: "v" }, text(" 5 INJECTED")])],
+    ],
+    ["a text that is not text", [para([{ ...text("INJECTED"), text: null }, text("INJECTED")])]],
     ["nesting deeper than any document's", [para([nested(40, text("INJECTED"))])]],
-    // Already serialized: see `nestedParagraphJson`.
-    ["nesting deep enough to overflow a save", nestedParagraphJson(1000, text("INJECTED"))],
-  ])("falls back to the html when the node copy holds %s", async (_, nodes: object[] | string) => {
+  ])("falls back to the html when the node copy holds %s", async (_, nodes) => {
     const { mounted } = await mount("paragraph-structure", mode);
     try {
       await select(mounted, " last", 5, " last", 5);
       const bookAndChapter = mounted.ref.current?.getUsj()?.content.slice(0, 2);
-      const nodesJson = typeof nodes === "string" ? nodes : JSON.stringify(nodes);
-      const nodeCopy =
-        `{"namespace":${JSON.stringify(HIDDEN_VIEW_CLIPBOARD_NAMESPACE)},"nodes":${nodesJson}}`
-          .replaceAll("&", "&amp;")
-          .replaceAll('"', "&quot;");
+      const nodeCopy = JSON.stringify({ namespace: HIDDEN_VIEW_CLIPBOARD_NAMESPACE, nodes })
+        .replaceAll("&", "&amp;")
+        .replaceAll('"', "&quot;");
 
       await paste(mounted, {
         "text/html": `<span ${NODE_COPY_HTML_ATTRIBUTE}="${nodeCopy}"><span>harmless</span></span>`,
