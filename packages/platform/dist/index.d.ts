@@ -288,6 +288,13 @@ export declare interface EditorOptions {
   /** Additional items to append to the editor context menu. */
   contextMenu?: ContextMenuOptionConfig[];
   /**
+   * Whether the editor mounts its own right-click menu. Set to `false` when the host shows its own
+   * menu for the editor. Defaults to `true`. Independent of `hasExternalUI`.
+   *
+   * @experimental This member is unstable and may change shape or disappear without notice.
+   */
+  hasBuiltInContextMenu?: boolean;
+  /**
    * View options of the editor. Defaults to the formatted view mode. Named modes:
    * "formatted", "unformatted", "paragraph-structure", "standard".
    */
