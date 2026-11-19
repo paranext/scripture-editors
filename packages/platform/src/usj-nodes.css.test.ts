@@ -112,6 +112,19 @@ describe("usj-nodes.css gutter paragraph marker", () => {
   });
 });
 
+describe("usj-nodes.css UnknownNode block box", () => {
+  const css = readFileSync(new URL("./usj-nodes.css", import.meta.url), "utf-8");
+  /** The stylesheet with comments stripped, so prose about a declaration can't count as it. */
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // `text-indent` is inherited, and a block box applies it to its own first line. A box inside a
+  // `\q` paragraph (`text-indent: -10vw`) would otherwise draw its opening `\fig` glyph out past
+  // its left edge, and one inside an indented paragraph would leave a gap before the glyph.
+  it("does not inherit its paragraph's first-line indent", () => {
+    expect(rules).toMatch(/\.marker-editable \.unknown-block\s*\{[^}]*text-indent: 0;/);
+  });
+});
+
 /**
  * Pins the empty-verse caret rules. The rules hold the line still when the caret lands in an empty
  * verse and draw the caret right after its number, which only layout shows, so jsdom can't test
