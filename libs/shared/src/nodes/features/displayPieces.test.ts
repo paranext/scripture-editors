@@ -1095,7 +1095,9 @@ describe("carrier offsets and per-node passes", () => {
       editor.read(() => {
         const text = $getNodeByKey(moved.getKey()) ?? undefined;
         // The pieces split off are a plain text, not a carrier of the verse's class.
-        const [replaced] = $getRoot().getChildren()[1].getChildren();
+        const block = $getRoot().getChildAtIndex(1);
+        if (!$isElementNode(block)) throw new Error("no second block");
+        const [replaced] = block.getChildren();
         expect(replaced.getType()).toBe("text");
         expect(replaced.getTextContent()).toBe(" ");
         expect(text === undefined || text.getType() === "text").toBe(true);
