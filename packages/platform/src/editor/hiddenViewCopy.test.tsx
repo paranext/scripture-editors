@@ -8,7 +8,9 @@ import { editorView, enabledViews, mountInView } from "./editorViews.test-helper
 import { $generateJSONFromSelectedNodes } from "@lexical/clipboard";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
+import { $dfs } from "@lexical/utils";
 import {
+  $createPoint,
   $createRangeSelection,
   $getRoot,
   $getSelection,
@@ -22,7 +24,7 @@ import {
 } from "lexical";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { $isParaNode, $isUnknownNode } from "shared";
+import { $isGutterMarkerNode, $isParaNode, $isUnknownNode } from "shared";
 import {
   $hiddenViewLexicalFlavor,
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
@@ -648,4 +650,69 @@ describe("hidden-marker view copy", () => {
       mounted.unmount();
     }
   });
+});
+
+describe("a cut of only a line's gutter marker glyph", () => {
+  const glyphUsj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["T"] },
+      { type: "chapter", marker: "c", number: "1" },
+      { type: "para", marker: "p", content: [{ type: "verse", marker: "v", number: "1" }, "one"] },
+      { type: "para", marker: "q1", content: ["two"] },
+    ],
+  } as unknown as Usj;
+
+  it.each(["off", "guarded", "protected"] as const)(
+    "writes nothing and removes nothing, structure %s",
+    async (structureProtectionMode) => {
+      const mounted = await mountInView(glyphUsj, editorView("paragraph-structure"), {
+        structureProtectionMode,
+      });
+      // As a double-click on the `\q1` line's glyph selects it.
+      await act(async () =>
+        mounted.lexical.update(
+          () => {
+            const glyph = $dfs()
+              .map(({ node }) => node)
+              .filter($isGutterMarkerNode)
+              .at(-1);
+            if (!glyph) throw new Error("no gutter marker glyph");
+            const para = glyph.getParentOrThrow();
+            const selection = $createRangeSelection();
+            selection.anchor = $createPoint(para.getKey(), glyph.getIndexWithinParent(), "element");
+            selection.focus = $createPoint(
+              para.getKey(),
+              glyph.getIndexWithinParent() + 1,
+              "element",
+            );
+            $setSelection(selection);
+          },
+          { discrete: true },
+        ),
+      );
+      const store = new Map<string, string>();
+      const cut = new ClipboardEvent("cut", { cancelable: true });
+      Object.defineProperty(cut, "clipboardData", {
+        value: {
+          types: [],
+          files: [],
+          getData: (type: string) => store.get(type) ?? "",
+          setData: (type: string, value: string) => store.set(type, value),
+        },
+      });
+
+      await act(async () =>
+        mounted.lexical.update(() => {
+          mounted.lexical.dispatchCommand(CUT_COMMAND, cut);
+        }),
+      );
+
+      expect(cut.defaultPrevented).toBe(true);
+      expect(store.size).toBe(0);
+      expect(mounted.ref.current?.getUsj()?.content).toEqual(glyphUsj.content);
+      mounted.unmount();
+    },
+  );
 });

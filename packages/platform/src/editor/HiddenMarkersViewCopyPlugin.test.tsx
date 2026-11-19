@@ -396,12 +396,15 @@ describe("HiddenMarkersViewCopyPlugin", () => {
     expect(getData("application/x-lexical-editor")).toContain('"number":"2"');
   });
 
-  it("writes nothing on a copy of only a paragraph's gutter marker glyph", async () => {
-    const { editor } = await renderEditor();
+  it.each([
+    ["led by a verse", PSALM_1_2],
+    ["led by text", `<para style="q2">nor stand in the way of sinners</para>`],
+  ])("writes nothing on a copy of only the gutter marker glyph of a line %s", async (_, paras) => {
+    const { editor } = await renderEditor(paras);
     // As a double-click on the glyph selects it.
     await act(async () =>
       editor.update(() => {
-        // The `\\q1` paragraph's, after the book line's.
+        // The paragraph's, after the book line's.
         const glyph = $dfs()
           .map(({ node }) => node)
           .filter($isGutterMarkerNode)
