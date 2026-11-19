@@ -1,5 +1,6 @@
 import { ViewOptions } from "../../../views/view-options.utils";
 import { useDisplayAnnotationIndex } from "./displayAnnotations.index";
+import { registerDisplayPieces } from "./displayPieces.register";
 import { AnnotationRange } from "./selection.model";
 import { $getRangeFromUsjSelection } from "./selection.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -23,7 +24,14 @@ import {
   PASTE_COMMAND,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
-import { ForwardedRef, forwardRef, useEffect, useImperativeHandle, useMemo } from "react";
+import {
+  ForwardedRef,
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+} from "react";
 import {
   $coveredDisplayText,
   $createTypedMarkNode,
@@ -254,6 +262,9 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
     return new Map();
   }, []);
   useAnnotations(editor, markNodeMap);
+  // Before the paint index, in a layout effect as it is, so a carrier is cut and kept consistent
+  // by the time any passive effect sets an annotation.
+  useLayoutEffect(() => registerDisplayPieces(editor), [editor]);
   const displayIndex = useDisplayAnnotationIndex(editor);
 
   /**

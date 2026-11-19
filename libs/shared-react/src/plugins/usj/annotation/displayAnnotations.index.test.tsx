@@ -9,6 +9,7 @@ import {
   DISPLAY_ANNOTATION_CLASS_NAME,
   DISPLAY_PIECE_CONTINUATION_ATTRIBUTE,
 } from "./displayAnnotations.index";
+import { registerDisplayPieces } from "./displayPieces.register";
 import {
   $addUpdateTag,
   $copyNode,
@@ -98,6 +99,7 @@ function setup(
   lastContainer = container;
   document.body.appendChild(container);
   editor.setRootElement(container);
+  registerDisplayPieces(editor);
   const { index, release } = acquireDisplayAnnotationIndex(editor);
   lastRelease = release;
   let run!: TextNode;
@@ -1705,6 +1707,7 @@ describe("the first and last element an annotation paints", () => {
     lastContainer = container;
     document.body.appendChild(container);
     editor.setRootElement(container);
+    registerDisplayPieces(editor);
     const { release } = acquireDisplayAnnotationIndex(editor);
     lastRelease = release;
     return editor;

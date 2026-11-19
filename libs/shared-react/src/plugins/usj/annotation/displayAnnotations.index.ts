@@ -6,8 +6,9 @@
  * `AnnotationPlugin` and `CommentPlugin` need it.
  *
  * Painting is by element only. A text leaf is always painted whole — an editable carrier is cut
- * into pieces where a hold ends (`displayPieces.state.ts`), so what an annotation paints on it is
- * either all of a piece or none. A read-only decorator held in part paints sub-spans of its own
+ * into pieces where a hold ends (`displayPieces.state.ts`, kept so by `registerDisplayPieces`,
+ * which this index does not register), so what an annotation paints on it is either all of a piece
+ * or none. A read-only decorator held in part paints sub-spans of its own
  * rendered text, through the paint store in `decoratorPaint.ts`.
  *
  * Every annotation's first painted element, by document order, also gets its type's start class and
@@ -32,33 +33,18 @@ import {
 import { addClassNamesToElement, mergeRegister, removeClassNamesFromElement } from "@lexical/utils";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import {
-  BaseSelection,
-  $findMatchingParent,
-  INTERNAL_$isBlock,
   $getNearestNodeFromDOMNode,
   $getNodeByKey,
-  $getSelection,
   $isDecoratorNode,
-  $isRangeSelection,
-  $isTextNode,
-  COMMAND_PRIORITY_CRITICAL,
-  COMMAND_PRIORITY_EDITOR,
-  COMMAND_PRIORITY_LOW,
   EditorState,
   HISTORIC_TAG,
-  INSERT_LINE_BREAK_COMMAND,
-  INSERT_PARAGRAPH_COMMAND,
   Klass,
-  LexicalCommand,
   LexicalEditor,
   LexicalNode,
   NodeKey,
   NodeMutation,
-  RangeSelection,
-  SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   TextNode,
   $isElementNode,
-  $setState,
 } from "lexical";
 import {
   $coveredDisplayText,
@@ -73,7 +59,6 @@ import {
   DecoratorPaint,
   deleteDisplayAnnotationRegistration,
   DisplayAnnotation,
-  displayAnnotationsState,
   EXTERNAL_USJ_MUTATION_TAG,
   isDomPaintedDecorator,
   paintedSubSpanKeys,
@@ -86,14 +71,8 @@ import {
   ImmutableUnmatchedNode,
   MarkerNode,
   NoteNode,
-  registerDisplayAnnotationBasis,
-  $restatePastedPieces,
-  $isSplitCarrier,
-  $logicalOffset,
-  $splitCarrierAt,
   // The index keys its maps by the shared annotation key; locals name one `annotationKey`.
   annotationKey as indexKey,
-  $removeRangeHeldByMarks,
   setDecoratorBytesReader,
   clearTypedMarkRemovalSilences,
   forgetTypedMarkCallbacks,
@@ -162,83 +141,6 @@ function parseIndexKey(key: string): [string, string] {
   const parsed: unknown = JSON.parse(key);
   if (!isTypeIdPair(parsed)) throw new Error(`not an annotation index key: ${key}`);
   return parsed;
-}
-
-/** Remove `displayAnnotationsState` from pasted sibling `nodes` and their whole subtrees, and
- * make the pieces among them pieces of the paste alone (`$restatePastedPieces`): a carrier pasted
- * whole stays one carrier, which the piece transform joins once the holds are gone, a piece
- * pasted without its head is a carrier of its own, and a part of a cut token is the whole token,
- * as a copy of the token takes it. Mutating (`nodes` too). */
-function $stripDisplayAnnotations(nodes: LexicalNode[]): void {
-  $restatePastedPieces(nodes);
-  for (const node of nodes) {
-    $setState(node, displayAnnotationsState, undefined);
-    if ($isElementNode(node)) $stripDisplayAnnotations(node.getChildren());
-  }
-}
-
-/**
- * Before pasted nodes go in at the caret, split the carrier the caret is inside where the insertion
- * splits a text (`$splitCarrierAt`): `RangeSelection.insertNodes` splits the text node at the
- * caret, but in a carrier cut into pieces the caret may sit between two of them, where no text is
- * left to split, and in one holding an annotation each part would re-measure the holds it copied
- * rather than keep its own. Only what the insertion itself does first is done here: nothing for no
- * nodes (it returns before touching the document), else a range removed. Mutating. */
-function $splitCarrierAtInsertion(
-  nodes: readonly LexicalNode[],
-  insertion: BaseSelection | null,
-): void {
-  if (nodes.length === 0 || !$isRangeSelection(insertion)) return;
-  if (!insertion.isCollapsed()) insertion.removeText();
-  // The insertion splits the text at the editor's own range selection when there is one (Lexical's
-  // `$removeTextAndSplitBlock`), else at its own anchor.
-  const current = $getSelection();
-  // Inline nodes go into the block the caret is in; with no block there the insertion refuses,
-  // splitting nothing.
-  const isInline = (pasted: LexicalNode) =>
-    !($isElementNode(pasted) || $isDecoratorNode(pasted)) || pasted.isInline();
-  $splitCarrierAtPoint($isRangeSelection(current) ? current : insertion, nodes.every(isInline));
-}
-
-/**
- * Before a paragraph or line break goes in at a collapsed caret, split the carrier the caret is
- * inside where the break splits a text, as {@link $splitCarrierAtInsertion} does for a paste:
- * `RangeSelection.insertParagraph`/`insertLineBreak` split the text at the caret, so the bytes of a
- * carrier after the caret go on as content (a glyph's tail, a verse's number moved to the next
- * paragraph), and between two pieces of a cut carrier the break would find no text to split and
- * leave the pieces after it the same carrier as those before. It splits the text with no block
- * around it too (a span beside its chapter). Mutating. */
-function $splitCarrierAtBreak(): void {
-  const selection = $getSelection();
-  if ($isRangeSelection(selection) && selection.isCollapsed())
-    $splitCarrierAtPoint(selection, false);
-}
-
-/**
- * Split the carrier `at`'s anchor is inside at the anchor, with `splitText` on its whole text
- * (`$splitCarrierAt`), when it is cut into pieces or holds an annotation, and restate `at`'s points
- * on the split: the end of the part before the caret. `needsBlock`: only inside a block, where an
- * insertion of inline nodes or a paragraph break goes in at all. Mutating. */
-function $splitCarrierAtPoint(at: RangeSelection, needsBlock: boolean): void {
-  const { anchor } = at;
-  // A caret on the parent between two pieces is the end of the piece before it.
-  const node =
-    anchor.type === "text"
-      ? anchor.getNode()
-      : $isElementNode(anchor.getNode())
-        ? anchor.getNode().getChildAtIndex(anchor.offset - 1)
-        : null;
-  if (!$isTextNode(node)) return;
-  if (!$isSplitCarrier(node) && $displayAnnotationsOf(node).length === 0) return;
-  if (needsBlock && !$isElementNode($findMatchingParent(node, INTERNAL_$isBlock))) return;
-  const offset = anchor.type === "text" ? anchor.offset : node.getTextContentSize();
-  const isCollapsed = at.isCollapsed();
-  const before = $splitCarrierAt(node, $logicalOffset(node, offset));
-  if (!before) return;
-  // The split moves the editor's selection with its bytes and no other, so the point the insertion
-  // reads is restated on the split: the end of the part before the caret.
-  const points = isCollapsed ? [at.anchor, at.focus] : [at.anchor];
-  for (const point of points) point.set(before.getKey(), before.getTextContentSize(), "text");
 }
 
 /**
@@ -1006,7 +908,6 @@ function createIndex(editor: LexicalEditor): Entry {
       : () => undefined,
     listenForTypedMarkRemovalReports(editor),
     editor.registerUpdateListener(reportDestroyed),
-    registerDisplayAnnotationBasis(editor, [ImmutableVerseNode, ImmutableNoteCallerNode]),
     editor.registerUpdateListener(({ dirtyLeaves, dirtyElements }) => {
       if (dirtyLeaves.size === 0 && dirtyElements.size === 0) return;
       refreshPaint([...dirtyLeaves, ...dirtyElements.keys()]);
@@ -1020,44 +921,6 @@ function createIndex(editor: LexicalEditor): Entry {
       listeners.abort();
       clearDecoratorPaints(editor);
     },
-    editor.registerCommand(
-      SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
-      ({ nodes, selection }) => {
-        // A check result or a comment names one place; a pasted copy of its bytes is not it.
-        $stripDisplayAnnotations(nodes);
-        // A range a mark holds an end of is removed first, as for any paste, so no handler types
-        // over a range whose ends a mark alone puts in different parents.
-        if (nodes.length > 0 && $isRangeSelection(selection)) $removeRangeHeldByMarks(selection);
-        return false;
-      },
-      // Critical, and never handling the command, so a handler that does handle it cannot skip the
-      // strip.
-      COMMAND_PRIORITY_CRITICAL,
-    ),
-    editor.registerCommand(
-      SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
-      ({ nodes, selection }) => {
-        $splitCarrierAtInsertion(nodes, selection);
-        return false;
-      },
-      // Last, never handling the command: only when no handler inserts the nodes its own way (a
-      // range one replaces itself, which a range removed here first would leave it no range to
-      // replace) does Lexical's own insertion run, whose text split this is.
-      COMMAND_PRIORITY_EDITOR,
-    ),
-    ...[INSERT_PARAGRAPH_COMMAND, INSERT_LINE_BREAK_COMMAND].map(
-      (command: LexicalCommand<unknown>) =>
-        editor.registerCommand(
-          command,
-          () => {
-            $splitCarrierAtBreak();
-            return false;
-          },
-          // Low, never handling the command: after every handler that claims a break (a guard that
-          // refuses it, a split of its own) and before the generic one, whose text split this is.
-          COMMAND_PRIORITY_LOW,
-        ),
-    ),
   );
 
   // The mutation listeners' initialization above found every holder already in the document; none

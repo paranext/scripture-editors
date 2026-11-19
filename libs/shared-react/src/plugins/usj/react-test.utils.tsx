@@ -8,6 +8,7 @@ import {
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { updateSelection as updateSelectionInternal } from "../../../../../libs/shared/src/nodes/usj/test.utils";
 import { SerializedImmutableNoteCallerNode, usjReactNodes } from "../../nodes/usj";
+import { registerDisplayPieces } from "./annotation/displayPieces.register";
 import { InitialEditorStateType, LexicalComposer } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -56,7 +57,6 @@ import {
   $pieceHead,
   BookNode,
   NBSP,
-  registerDisplayAnnotationBasis,
   segmentState,
   SerializedNoteNode,
   SerializedParaNode,
@@ -493,13 +493,13 @@ export const PIECE_CUT_ANNOTATION_TYPE = "piece-cut";
  * three pieces. A carrier cut this way is the same document as the uncut one, so every reader must
  * give the same answer for both.
  *
- * Registers the hold-basis and piece transforms on `editor` (as the annotation plugin does) and
- * leaves them registered.
+ * Registers the piece handlers on `editor` ({@link registerDisplayPieces}, as the annotation plugin
+ * does) and leaves them registered.
  *
  * @returns How many carriers were cut.
  */
 export async function cutEveryCarrierIntoPieces(editor: LexicalEditor): Promise<number> {
-  registerDisplayAnnotationBasis(editor);
+  registerDisplayPieces(editor);
   let cut = 0;
   await act(async () => {
     editor.update(
