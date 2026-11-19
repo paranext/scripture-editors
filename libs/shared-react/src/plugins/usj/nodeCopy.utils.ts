@@ -16,6 +16,7 @@ import {
   $getRoot,
   $isElementNode,
   $isTextNode,
+  AnyStateConfig,
   LexicalNode,
   LineBreakNode,
   NODE_STATE_KEY,
@@ -28,8 +29,12 @@ import {
 import {
   $isGutterMarkerNode,
   $isUnknownNode,
+  authoredNbspState,
   BookNode,
+  caretHostState,
+  charIdState,
   CharNode,
+  displayAnnotationsState,
   ImmutableChapterNode,
   ImmutableTableCellNode,
   ImmutableTableNode,
@@ -43,6 +48,7 @@ import {
   NODE_ATTRIBUTE_PREFIX,
   NoteNode,
   ParaNode,
+  segmentState,
   SomeSerializedParaNode,
   textTypeState,
   UnknownNode,
@@ -316,8 +322,9 @@ function htmlWithoutNodeCopy(html: string): string {
  * It also makes none when the copy is not one a hidden-marker view writes ({@link nodeCopyProblem}):
  * an entry, at any depth, of a type the view's document never holds (the root, a marker), in a place
  * it never holds it (a note caller outside its note, a paragraph in a paragraph), or with a field it
- * never holds (a marker that is not one, a verse number holding a space or a `\`, a styled text),
- * or a copy nested deeper than any document. Any web page can put a node copy in its html, and such
+ * never holds (a marker that is not one, a verse number holding a space or a `\`, a styled text, an
+ * attribute named for a field the save writes, a node state the editor does not define), or a copy
+ * nested deeper than any document. Any web page can put a node copy in its html, and such
  * an entry could leave the editor throwing on every update, save USFM that reads back as other
  * markers, or show text the view never saves. The copy is checked before any node is made, because
  * making some types changes the document (`RootNode.importJSON` returns the live root).
@@ -375,8 +382,14 @@ interface Entry {
 interface NodeCopyRule {
   /** Where an entry of the type may sit. */
   placements: readonly Placement[];
-  /** Where the entry's children sit; a type without it holds no children. */
+  /** Where the entry's children sit; a type without it holds no children, and is not an element. */
   holds?: Placement;
+  /**
+   * The fields the save writes for the type besides `type`, `marker` and `content`
+   * (`editor-usj.adaptor.ts`, platform). The save spreads the attributes after them, so an
+   * attribute of one of these names would replace the field.
+   */
+  savedFields?: readonly string[];
   /**
    * What is wrong with the entry's own fields, `undefined` when nothing.
    *
@@ -411,11 +424,38 @@ const FIELD = /^[^\\\p{Cc}\p{Zl}\p{Zp}]*$/u;
 /** A note caller: a {@link FIELD} with no whitespace, which would save as note text. */
 const CALLER = /^[^\s\\\p{Cc}]*$/u;
 
-/** An unmatched marker: a closer (`nd*`, `+nd*`) or a lone `*`. */
-const UNMATCHED_MARKER = /^\+?[\w-]*\*?$/;
+/** An unmatched marker: a closer (`nd*`, `+nd*`) or a lone `*`. Without its `*`, `v` would save as
+ * an opening `\v`. */
+const UNMATCHED_MARKER = /^\+?[\w-]*\*$/;
 
 /** An attribute name, which saves as the name of an attribute only when it is one word. */
 const ATTRIBUTE_NAME = /^[\w-]+$/;
+
+/** The fields every type's save writes ahead of its attributes. */
+const ALWAYS_SAVED_FIELDS: readonly string[] = ["type", "marker", "content"];
+
+/** Names an attribute may not take, whatever the type: an object's own machinery. */
+const OBJECT_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
+
+/** The modes a text takes (`TextNode.setMode`). */
+const TEXT_MODES: ReadonlySet<unknown> = new Set(["normal", "token", "segmented"]);
+
+/**
+ * The node states (`$` of a serialized node) this editor defines, which a copy may hold. Lexical
+ * keeps a state it does not know as it is, at any depth, on every later update.
+ */
+const NODE_STATES: ReadonlyMap<string, AnyStateConfig> = new Map(
+  [
+    authoredNbspState,
+    caretHostState,
+    charIdState,
+    displayAnnotationsState,
+    segmentState,
+    startsMidParagraphState,
+    textTypeState,
+    verseBlockSourceState,
+  ].map((state) => [state.key, state]),
+);
 
 /** The constructs a USJ document holds that the editor has no node of its own for, so holds in an
  * `UnknownNode` (`tag`): where each sits, and whether it holds paragraphs or inline content. */
@@ -429,10 +469,11 @@ const UNKNOWN_TAG_RULES: ReadonlyMap<string, NodeCopyRule> = new Map([
 
 /**
  * The Lexical node types a hidden-marker view's node copy ({@link $hiddenViewLexicalFlavor}) holds,
- * where it holds them, and what their fields may hold. Left out: the root; the marker, editable
- * chapter and verse, and attribute-run nodes that only views showing markers build; the gutter
- * glyphs and annotation marks a copy leaves out; and the block-verse layout's wrapper, which a copy
- * leaves out too.
+ * where it holds them, and what their fields may hold: each field a type's `updateFromJSON` reads,
+ * and each its save writes, is checked here or in {@link entryProblem}. Left out: the root; the
+ * marker, editable chapter and verse, and attribute-run nodes that only views showing markers
+ * build; the gutter glyphs and annotation marks a copy leaves out; and the block-verse layout's
+ * wrapper, which a copy leaves out too.
  */
 const NODE_COPY_RULES: ReadonlyMap<string, NodeCopyRule> = new Map<string, NodeCopyRule>([
   [
@@ -440,6 +481,7 @@ const NODE_COPY_RULES: ReadonlyMap<string, NodeCopyRule> = new Map<string, NodeC
     {
       placements: BLOCK,
       holds: "inline",
+      savedFields: ["code"],
       fieldProblem: (entry) =>
         entry.marker !== "id" ||
         typeof entry.code !== "string" ||
@@ -452,6 +494,7 @@ const NODE_COPY_RULES: ReadonlyMap<string, NodeCopyRule> = new Map<string, NodeC
     ImmutableChapterNode.getType(),
     {
       placements: BLOCK,
+      savedFields: ["number", "sid", "altnumber", "pubnumber"],
       fieldProblem: (entry) =>
         entry.marker === "c" ? numberProblem(entry, "a chapter") : "a chapter that is not one",
     },
@@ -461,14 +504,10 @@ const NODE_COPY_RULES: ReadonlyMap<string, NodeCopyRule> = new Map<string, NodeC
     {
       placements: BLOCK,
       holds: "inline",
-      fieldProblem: (entry) =>
-        markerProblem(entry, "a paragraph", undefined, true) ?? paragraphTextProblem(entry),
+      fieldProblem: (entry) => markerProblem(entry, "a paragraph", undefined, true),
     },
   ],
-  [
-    ImpliedParaNode.getType(),
-    { placements: BLOCK, holds: "inline", fieldProblem: paragraphTextProblem },
-  ],
+  [ImpliedParaNode.getType(), { placements: BLOCK, holds: "inline" }],
   [ImmutableTableNode.getType(), { placements: BLOCK, holds: "table" }],
   [
     ImmutableTableRowNode.getType(),
@@ -483,6 +522,7 @@ const NODE_COPY_RULES: ReadonlyMap<string, NodeCopyRule> = new Map<string, NodeC
     {
       placements: ["row"],
       holds: "inline",
+      savedFields: ["align", "colspan"],
       fieldProblem: (entry) =>
         markerProblem(entry, "a table cell") ??
         fieldsProblem(entry, "a table cell", ["align", "colspan"]),
@@ -501,10 +541,12 @@ const NODE_COPY_RULES: ReadonlyMap<string, NodeCopyRule> = new Map<string, NodeC
     {
       placements: INLINE,
       holds: "note",
+      savedFields: ["caller", "category"],
       fieldProblem: (entry) =>
         markerProblem(entry, "a note") ??
         (typeof entry.caller === "string" && CALLER.test(entry.caller)
-          ? fieldsProblem(entry, "a note", ["category"])
+          ? (fieldsProblem(entry, "a note", ["category"]) ??
+            optionalProblem(entry, "a note", "isCollapsed", "boolean"))
           : `a note caller "${String(entry.caller)}"`),
     },
   ],
@@ -512,10 +554,11 @@ const NODE_COPY_RULES: ReadonlyMap<string, NodeCopyRule> = new Map<string, NodeC
     ImmutableNoteCallerNode.getType(),
     {
       placements: ["note"],
-      // A caller shows its own text, while the note saves its own caller.
+      // A caller shows its own text, while the note saves its own caller. Its preview text is
+      // rebuilt from the note's content (`NoteNodePlugin`).
       fieldProblem: (entry, parent) =>
         entry.caller === parent?.caller && !("onClick" in entry)
-          ? undefined
+          ? optionalProblem(entry, "a note caller", "previewText", "string")
           : "a note caller that is not its note's",
     },
   ],
@@ -523,6 +566,7 @@ const NODE_COPY_RULES: ReadonlyMap<string, NodeCopyRule> = new Map<string, NodeC
     ImmutableVerseNode.getType(),
     {
       placements: INLINE,
+      savedFields: ["number", "sid", "altnumber", "pubnumber"],
       fieldProblem: (entry) =>
         entry.marker === "v" ? numberProblem(entry, "a verse") : "a verse that is not one",
     },
@@ -531,8 +575,11 @@ const NODE_COPY_RULES: ReadonlyMap<string, NodeCopyRule> = new Map<string, NodeC
     MilestoneNode.getType(),
     {
       placements: INLINE,
+      savedFields: ["sid", "eid"],
       fieldProblem: (entry) =>
-        markerProblem(entry, "a milestone") ?? fieldsProblem(entry, "a milestone", ["sid", "eid"]),
+        markerProblem(entry, "a milestone") ??
+        fieldsProblem(entry, "a milestone", ["sid", "eid"]) ??
+        attributeOrderProblem(entry),
     },
   ],
   [
@@ -543,21 +590,27 @@ const NODE_COPY_RULES: ReadonlyMap<string, NodeCopyRule> = new Map<string, NodeC
         typeof entry.marker === "string" &&
         UNMATCHED_MARKER.test(entry.marker) &&
         (entry.text === undefined || entry.text === unmatchedGlyphText(entry.marker))
-          ? textProblem(entry)
+          ? textProblem(entry, true)
           : "an unmatched marker that shows other text",
     },
   ],
   [UnknownNode.getType(), { placements: INLINE }],
   [LineBreakNode.getType(), { placements: INLINE }],
-  [TabNode.getType(), { placements: INLINE, fieldProblem: textProblem }],
-  [TextNode.getType(), { placements: INLINE, fieldProblem: textProblem }],
+  [
+    TabNode.getType(),
+    {
+      placements: INLINE,
+      fieldProblem: (entry) => (entry.text === "\t" ? textProblem(entry) : "a tab that is text"),
+    },
+  ],
+  [TextNode.getType(), { placements: INLINE, fieldProblem: (entry) => textProblem(entry) }],
 ]);
 
 /**
  * Why `serialized` is not a node copy a hidden-marker view writes, so must not be made into nodes;
  * `undefined` when it is one. Every entry, at any depth, must be of a type the view's document
  * holds, sit where the document holds it, and hold only what the document saves and shows as it
- * saves it ({@link NODE_COPY_RULES}); the copy may nest no deeper than
+ * saves it ({@link NODE_COPY_RULES}, {@link entryProblem}); the copy may nest no deeper than
  * {@link MAX_NODE_COPY_DEPTH}.
  */
 function nodeCopyProblem(
@@ -582,11 +635,11 @@ function nodeCopyProblem(
     if (!rule.placements.includes(placement))
       return `a "${type}" node ${placement === "top" ? "at the top level" : `in a "${String(parent?.type)}" node`}`;
     const problem =
+      entryProblem(entry, rule) ??
       rule.fieldProblem?.(entry, parent) ??
       (type === UnknownNode.getType() && entry.marker !== undefined
         ? markerProblem(entry, "an unknown")
-        : undefined) ??
-      attributesProblem(entry);
+        : undefined);
     if (problem !== undefined) return problem;
     const { children } = entry;
     if (children === undefined) continue;
@@ -595,6 +648,50 @@ function nodeCopyProblem(
     if (childProblem !== undefined) return childProblem;
   }
   return undefined;
+}
+
+/**
+ * What is wrong with the fields any entry of its kind carries: its node state, its attributes, and
+ * an element's own Lexical fields.
+ */
+function entryProblem(entry: Entry, rule: NodeCopyRule): string | undefined {
+  return (
+    stateProblem(entry) ??
+    attributesProblem(entry, rule) ??
+    (rule.holds === undefined ? undefined : elementProblem(entry))
+  );
+}
+
+/**
+ * What is wrong with `entry`'s node state (`$`): a state this editor does not define, or a value
+ * its own `parse` would not keep.
+ */
+function stateProblem(entry: Entry): string | undefined {
+  const state = entry[NODE_STATE_KEY];
+  if (state === undefined) return undefined;
+  if (!isRecord(state)) return "a node state that is not one";
+  const key = Object.keys(state).find((name) => {
+    const config = NODE_STATES.get(name);
+    if (config === undefined) return true;
+    const value = state[name];
+    const parsed: unknown = config.parse(value);
+    return typeof value === "object" && value !== null ? parsed === undefined : parsed !== value;
+  });
+  return key === undefined ? undefined : `a node state "${key}"`;
+}
+
+/**
+ * What is wrong with an element's Lexical fields: an alignment, indent, direction or text style its
+ * paragraph would show, or give typed text, but never save.
+ */
+function elementProblem(entry: Entry): string | undefined {
+  return (entry.format ?? "") === "" &&
+    (entry.indent ?? 0) === 0 &&
+    (entry.direction ?? null) === null &&
+    (entry.textStyle ?? "") === "" &&
+    (entry.textFormat ?? 0) === 0
+    ? undefined
+    : `a "${String(entry.type)}" node with a style`;
 }
 
 /**
@@ -625,7 +722,8 @@ function markerProblem(
 /** What is wrong with a verse's or chapter's number and the fields it saves beside it. */
 function numberProblem(entry: Entry, kind: string): string | undefined {
   return typeof entry.number === "string" && NUMBER.test(entry.number)
-    ? fieldsProblem(entry, kind, ["altnumber", "pubnumber", "sid"])
+    ? (fieldsProblem(entry, kind, ["altnumber", "pubnumber", "sid"]) ??
+        optionalProblem(entry, kind, "showMarker", "boolean"))
     : `${kind} number "${String(entry.number)}"`;
 }
 
@@ -638,44 +736,80 @@ function fieldsProblem(entry: Entry, kind: string, keys: readonly string[]): str
   return key === undefined ? undefined : `${kind} ${key} "${String(entry[key])}"`;
 }
 
-/** What is wrong with `entry`'s attributes, saved as they are named: a name that is not one, or a
- * value that is not a string. */
-function attributesProblem(entry: Entry): string | undefined {
+/** What is wrong with `entry`'s optional `key`: a value not of `valueType`. */
+function optionalProblem(
+  entry: Entry,
+  kind: string,
+  key: string,
+  valueType: "boolean" | "string",
+): string | undefined {
+  const value = entry[key];
+  return value === undefined || typeof value === valueType
+    ? undefined
+    : `${kind} ${key} "${String(value)}"`;
+}
+
+/**
+ * What is wrong with `entry`'s attributes, saved as they are named after the fields the save writes
+ * for its type: a name that is not one, or is one of those fields, which it would replace; or a
+ * value that is not a string.
+ */
+function attributesProblem(entry: Entry, rule: NodeCopyRule): string | undefined {
   const { unknownAttributes } = entry;
   if (unknownAttributes === undefined) return undefined;
+  const savedFields = [...ALWAYS_SAVED_FIELDS, ...(rule.savedFields ?? [])];
   if (
-    typeof unknownAttributes === "object" &&
-    unknownAttributes !== null &&
-    !Array.isArray(unknownAttributes) &&
+    isRecord(unknownAttributes) &&
     Object.entries(unknownAttributes).every(
       ([name, value]) =>
-        ATTRIBUTE_NAME.test(name) && (value === undefined || typeof value === "string"),
+        ATTRIBUTE_NAME.test(name) &&
+        !OBJECT_KEYS.has(name) &&
+        !savedFields.includes(name) &&
+        (value === undefined || typeof value === "string"),
     )
   )
     return undefined;
   return `attributes ${JSON.stringify(unknownAttributes)}`;
 }
 
-/** What is wrong with a paragraph's text style: one its new text would show but never save. */
-function paragraphTextProblem(entry: Entry): string | undefined {
-  return (entry.textStyle ?? "") === "" && (entry.textFormat ?? 0) === 0
+/** What is wrong with a milestone's attribute order: one that is not a list of attribute names,
+ * which every later update reads as one. */
+function attributeOrderProblem(entry: Entry): string | undefined {
+  const { attributeOrder } = entry;
+  return attributeOrder === undefined ||
+    (Array.isArray(attributeOrder) &&
+      attributeOrder.every(
+        (name) => typeof name === "string" && ATTRIBUTE_NAME.test(name) && !OBJECT_KEYS.has(name),
+      ))
     ? undefined
-    : "a paragraph with a text style";
+    : `a milestone attribute order ${JSON.stringify(attributeOrder)}`;
 }
 
 /**
- * What is wrong with a text: a style or format, which it would show but never save; a type, which
- * marks text the save leaves out, other than a note's layout spacer; or the start a save reads as a
- * milestone's attributes and leaves out.
+ * What is wrong with a text: text that is not a string; a style or format, which it would show but
+ * never save; a mode or detail that is not one; a type, which marks text the save leaves out,
+ * other than a note's layout spacer; or the start a save reads as a milestone's attributes and
+ * leaves out.
+ *
+ * @param entry - The entry.
+ * @param mayOmitText - Whether the entry may leave its text out: an unmatched marker's is its glyph.
  */
-function textProblem(entry: Entry): string | undefined {
+function textProblem(entry: Entry, mayOmitText = false): string | undefined {
+  const { text } = entry;
+  if (typeof text !== "string" && !(mayOmitText && text === undefined))
+    return `a text "${String(text)}"`;
   const textType = isRecord(entry[NODE_STATE_KEY])
     ? entry[NODE_STATE_KEY][textTypeState.key]
     : undefined;
   if ((entry.style ?? "") !== "" || (entry.format ?? 0) !== 0) return "a text with a style";
+  if (entry.mode !== undefined && !TEXT_MODES.has(entry.mode))
+    return `a text mode "${String(entry.mode)}"`;
+  const detail = entry.detail ?? 0;
+  if (typeof detail !== "number" || !Number.isInteger(detail) || detail < 0 || detail > 3)
+    return `a text detail "${String(detail)}"`;
   if (textType !== undefined && textType !== MARKER_TRAILING_SPACE_TEXT_TYPE)
     return `a text of type "${String(textType)}"`;
-  if (typeof entry.text === "string" && entry.text.startsWith(NODE_ATTRIBUTE_PREFIX))
+  if (typeof text === "string" && text.startsWith(NODE_ATTRIBUTE_PREFIX))
     return "a text that saves as attributes";
   return undefined;
 }
