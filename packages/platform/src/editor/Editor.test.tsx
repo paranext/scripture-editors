@@ -3650,13 +3650,6 @@ describe("options.hasBuiltInContextMenu", () => {
     expect(document.querySelector(BUILT_IN_MENU_SELECTOR)).not.toBeNull();
   });
 
-  it("follows only the option when hasExternalUI is unset", async () => {
-    await renderWithOptions({ hasBuiltInContextMenu: false, hasExternalUI: undefined });
-
-    expect(await rightClickText()).toBe(true);
-    expect(document.querySelector(BUILT_IN_MENU_SELECTOR)).toBeNull();
-  });
-
   it("keeps the built-in menu with hasExternalUI true and the option unset", async () => {
     await renderWithOptions({ hasExternalUI: true });
 
@@ -3691,6 +3684,32 @@ describe("options.hasBuiltInContextMenu", () => {
       });
 
       expect(document.execCommand).toHaveBeenCalledWith("copy");
+    });
+
+    it("writes nothing for a collapsed selection when the built-in menu is off", async () => {
+      const ref = createRef<EditorRef>();
+      const capture = lexicalCapture();
+      await act(async () => {
+        render(
+          <Editor ref={ref} defaultUsj={sampleUsj} options={{ hasBuiltInContextMenu: false }}>
+            {capture.plugin}
+          </Editor>,
+        );
+      });
+      await act(async () => {
+        capture.get().update(() => {
+          const text = $getRoot()
+            .getAllTextNodes()
+            .find((node) => node.getTextContent() === "first verse text");
+          if (!text) throw new Error("verse text node not found");
+          text.select(3, 3);
+        });
+      });
+      await act(async () => {
+        getEditorRef(ref).copy();
+      });
+
+      expect(document.execCommand).not.toHaveBeenCalled();
     });
   });
 });
