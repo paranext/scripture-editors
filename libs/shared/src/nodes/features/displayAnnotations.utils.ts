@@ -707,7 +707,9 @@ function $joinUndoStepWhenOnlyPiecesChanged(): void {
  * where a hold ends (`$normalizeCarrierPieces`). `TextNode` covers attribute runs, a note's caller
  * and a chapter's glyph; `MarkerNode`, `VerseNode` and `ImmutableUnmatchedNode` register their own
  * transforms, as do the decorator carriers defined here and any in `decoratorKlasses` (those
- * `shared-react` defines). Returns the unregister function.
+ * `shared-react` defines). Returns the unregister function. An editor registers this through
+ * `shared-react`'s `registerDisplayPieces`, which adds the paste and line-break handlers that keep
+ * pieces consistent; registering it alone suits a test of the transforms.
  *
  * Registering a transform marks every existing node of the class dirty once, so each mount runs
  * one extra pass over them (a decorator's is decorated again); neither transform reads state for
