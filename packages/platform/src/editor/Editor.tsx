@@ -511,6 +511,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     nodes,
     debug = false,
     contextMenu,
+    hasBuiltInContextMenu = true,
     styleInfo,
     markerSettleDelayMs,
     copyLimit,
@@ -2163,7 +2164,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               the `\` marker menu consume it), so CommandMenuPlugin - which preventDefaults typed
               or pasted `\` and `/` - only guards the non-editable views. */}
           {viewOptions?.markerMode !== "editable" && <CommandMenuPlugin logger={stableLogger} />}
-          <ContextMenuPlugin options={contextMenuOptions} />
+          {hasBuiltInContextMenu && <ContextMenuPlugin options={contextMenuOptions} />}
           {/* Must mount before every plugin with a CRITICAL cut handler (MarkerEditPlugin,
               OpaqueBlockGuardPlugin, StructureKeyboardPlugin). Its CRITICAL fit shortens the
               selection of a limited copy or cut, and at equal priority handlers run in the order

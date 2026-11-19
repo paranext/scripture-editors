@@ -18,6 +18,8 @@ refused. The public surface grew substantially; nothing was removed.
 
 - `generateUsjFontCss` — the font part of `generateUsjCss`'s output only (the base font family and
   size, and each marker's font family), for a view that keeps its own marker layout.
+- `EditorOptions.hasBuiltInContextMenu` (experimental) — set to `false` to stop the editor mounting its own
+  right-click menu when the host shows its own; independent of `hasExternalUI`. Defaults to `true`.
 - `STANDARD_VIEW_MODE`, plus `"standard"` in `getDefaultViewMode()` and `viewModeToViewNames`.
 - `EditorRef` methods: `isFocused`, `commitPendingMarkerEdits`, `setTransientInput`,
   `getMarkerMenuContext`, `applyMarkerMenuSelection`, `splitParagraphWithMarker`,
