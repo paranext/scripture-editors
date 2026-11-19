@@ -3608,3 +3608,89 @@ describe("options.copyLimit", () => {
     expect(selectedTextLength(lexical)).toBe(verseTextLength);
   });
 });
+
+describe("options.hasBuiltInContextMenu", () => {
+  const BUILT_IN_MENU_SELECTOR = '[aria-label="Editor context menu"]';
+
+  /** Right-clicks the first paragraph of the rendered editor. Returns whether the event was left
+   * alone (not default-prevented), which is what a host's own menu needs to see. */
+  async function rightClickText(): Promise<boolean> {
+    const paragraph = document.querySelector<HTMLElement>(".editor-input p");
+    if (!paragraph) throw new Error("Editor paragraph not found");
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    await act(async () => {
+      paragraph.dispatchEvent(event);
+    });
+    return !event.defaultPrevented;
+  }
+
+  async function renderWithOptions(options?: EditorOptions): Promise<RefObject<EditorRef | null>> {
+    return createEditorRefForTesting({ options });
+  }
+
+  it("mounts no built-in menu and leaves the event alone when false", async () => {
+    await renderWithOptions({ hasBuiltInContextMenu: false });
+
+    expect(await rightClickText()).toBe(true);
+    expect(document.querySelector(BUILT_IN_MENU_SELECTOR)).toBeNull();
+    expect(document.querySelector(".auto-embed-menu")).toBeNull();
+  });
+
+  it("mounts the built-in menu when the option is unset", async () => {
+    await renderWithOptions();
+
+    expect(await rightClickText()).toBe(false);
+    expect(document.querySelector(BUILT_IN_MENU_SELECTOR)).not.toBeNull();
+  });
+
+  it("mounts the built-in menu when true", async () => {
+    await renderWithOptions({ hasBuiltInContextMenu: true });
+
+    expect(await rightClickText()).toBe(false);
+    expect(document.querySelector(BUILT_IN_MENU_SELECTOR)).not.toBeNull();
+  });
+
+  it("follows only the option when hasExternalUI is unset", async () => {
+    await renderWithOptions({ hasBuiltInContextMenu: false, hasExternalUI: undefined });
+
+    expect(await rightClickText()).toBe(true);
+    expect(document.querySelector(BUILT_IN_MENU_SELECTOR)).toBeNull();
+  });
+
+  it("keeps the built-in menu with hasExternalUI true and the option unset", async () => {
+    await renderWithOptions({ hasExternalUI: true });
+
+    expect(await rightClickText()).toBe(false);
+    expect(document.querySelector(BUILT_IN_MENU_SELECTOR)).not.toBeNull();
+  });
+
+  it("drops the built-in menu with hasExternalUI true and the option false", async () => {
+    await renderWithOptions({ hasExternalUI: true, hasBuiltInContextMenu: false });
+
+    expect(await rightClickText()).toBe(true);
+    expect(document.querySelector(BUILT_IN_MENU_SELECTOR)).toBeNull();
+  });
+
+  describe("EditorRef.copy()", () => {
+    let originalExecCommand: Document["execCommand"];
+
+    beforeEach(() => {
+      originalExecCommand = document.execCommand;
+      document.execCommand = vi.fn();
+    });
+
+    afterEach(() => {
+      document.execCommand = originalExecCommand;
+    });
+
+    it("still copies the selection when the built-in menu is off", async () => {
+      const ref = await renderWithOptions({ hasBuiltInContextMenu: false });
+      await act(async () => {
+        getEditorRef(ref).setSelection(testRange);
+        getEditorRef(ref).copy();
+      });
+
+      expect(document.execCommand).toHaveBeenCalledWith("copy");
+    });
+  });
+});

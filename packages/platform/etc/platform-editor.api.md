@@ -128,6 +128,7 @@ export interface EditorOptions {
     contextMenu?: ContextMenuOptionConfig[];
     copyLimit?: number;
     debug?: boolean;
+    hasBuiltInContextMenu?: boolean;
     hasExternalUI?: boolean;
     hasSpellCheck?: boolean;
     isReadonly?: boolean;
