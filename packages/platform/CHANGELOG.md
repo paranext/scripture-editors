@@ -371,8 +371,16 @@ refused. The public surface grew substantially; nothing was removed.
   `onUnstorableTextRemoved` report for them, and its book line and chapter tokens go whole, so a
   whole-chapter copy adds no book code, chapter number or empty paragraph. Another program's paste
   is unchanged.
-- **A copy of only a paragraph's gutter marker glyph writes nothing** in the views that hide
-  markers. Double-clicking the glyph and copying wrote its text, such as `\q1 `.
+- **A copy or cut of only a paragraph's gutter marker glyph writes nothing** in the views that hide
+  markers, and the cut removes nothing. Double-clicking the glyph and copying or cutting wrote its
+  text, such as `\q1 `.
+- **A copy or cut of a range inside a collapsed note takes the whole note.** Such a range copied
+  part of the note (`\f - \cat things\cat*`) while the cut removed all of it, so a cut pasted back
+  lost the rest of the note. A copy leaves the selection where it was.
+- **Under protected structure, a drop lands where it is dropped.** It went in at the selection,
+  which at a drop is still what was dragged, so a drag-move within the editor moved nothing and a
+  copy-drop or a drop from another program replaced the selection. A move within the editor is now
+  made as in the unlocked views, and a drop point that would replace structure is refused.
 - **Under protected structure, a paste whose paragraphs are all filtered out inserts nothing**, as
   it does where structure is not protected. A paste of paragraphs each holding only `\` over a
   figure replaced the figure with the space put between the paragraphs, without calling

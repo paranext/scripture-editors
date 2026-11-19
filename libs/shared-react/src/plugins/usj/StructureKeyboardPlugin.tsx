@@ -132,7 +132,8 @@ function $restorerFor(selection: RangeSelection): () => void {
  * @param $filterPastedNodes - Under `"protected"`, called on the nodes a paste or drop is about to
  *   insert (from its node copy or its html), after sanitizing, to change them in place before they go in (e.g. to remove
  *   text the view cannot store, with `$filterUnstorablePastedNodes`). Called inside the update.
- *   When it leaves nothing to insert (see `$insertsNothing`), nothing is inserted.
+ *   When it leaves nothing to insert but the spaces put between pasted paragraphs (see
+ *   `$insertsOnlyParagraphSeparators`), nothing is inserted.
  * @param nodeCopyNamespace - Under `"protected"`, a paste whose node copy
  *   (`application/x-lexical-editor`, or an attribute of its html: see `nodeCopyIn`) is tagged with
  *   this namespace is sanitized and inserted from that copy rather than from its html, so
