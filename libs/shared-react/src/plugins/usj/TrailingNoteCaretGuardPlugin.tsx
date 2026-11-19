@@ -8,6 +8,7 @@ import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $setSelection,
   CLICK_COMMAND,
   COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_EDITOR,
@@ -335,11 +336,17 @@ export function TrailingNoteCaretGuardPlugin(): null {
         },
         COMMAND_PRIORITY_EDITOR,
       ),
-      // CRITICAL, so every copy writer below reads the whole note.
+      // CRITICAL, so every copy writer below reads the whole note. A copy changes nothing, so the
+      // selection goes back once they have written it: left on the whole note, the next keystroke
+      // would replace the note.
       editor.registerCommand(
         COPY_COMMAND,
         () => {
-          $takeCollapsedNotesIntoRange({ includeRangeWithinOneNote: true });
+          const selection = $getSelection();
+          const before = $isRangeSelection(selection) ? selection.clone() : undefined;
+          if (before && $takeCollapsedNotesIntoRange({ includeRangeWithinOneNote: true }))
+            // Queued behind this command's dispatch, so after every copy writer has run.
+            editor.update(() => $setSelection(before));
           return false;
         },
         COMMAND_PRIORITY_CRITICAL,

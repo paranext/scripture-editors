@@ -1,8 +1,8 @@
 /**
  * A copy or cut of a range that lies wholly inside one collapsed note takes the whole note. Such a
- * note shows only its caller, so a range inside it cannot be a choice of part of it: copying that
- * part put `\f - \cat things\cat*` on the clipboard with the rest of the note missing, and the cut
- * then removed the whole note, so cutting and pasting back lost everything after the category.
+ * note shows only its caller, so a range inside it cannot be a choice of part of it, and a cut
+ * removes the whole note: the copy carries all of it, so a cut pasted back restores it. A copy
+ * leaves the selection where it was.
  */
 import { editorView, MountedEditor, mountInView } from "./editorViews.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -11,6 +11,9 @@ import {
   $createRangeSelection,
   $getRoot,
   $setSelection,
+  $getSelection,
+  $isRangeSelection,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
   CUT_COMMAND,
   PASTE_COMMAND,
@@ -141,6 +144,46 @@ describe.each(["standard", "paragraph-structure"])(
       inside.unmount();
 
       expect(insideCopy.get("text/plain")).toBe(wholeCopy.get("text/plain"));
+    });
+
+    it("leaves the selection as it was after a copy, so typing next does what it would have", async () => {
+      const $selection = (mounted: MountedEditor) =>
+        mounted.lexical.getEditorState().read(() => {
+          const selection = $getSelection();
+          return $isRangeSelection(selection)
+            ? [selection.anchor, selection.focus].map(({ key, offset, type }) => ({
+                key,
+                offset,
+                type,
+              }))
+            : undefined;
+        });
+      const typeX = (mounted: MountedEditor) =>
+        act(async () =>
+          mounted.lexical.update(() => {
+            mounted.lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "X");
+          }),
+        );
+      const typed = await mountInView(usj, editorView(viewName));
+      await act(async () => typed.lexical.update($selectInsideNote, { discrete: true }));
+      await settle();
+      await typeX(typed);
+      await settle();
+      const typedContent = await settledContent(typed);
+      typed.unmount();
+
+      const copied = await mountInView(usj, editorView(viewName));
+      await act(async () => copied.lexical.update($selectInsideNote, { discrete: true }));
+      await settle();
+      const selected = $selection(copied);
+      await clip(copied, () => undefined, COPY_COMMAND);
+      const afterCopy = $selection(copied);
+      await typeX(copied);
+      await settle();
+
+      expect(afterCopy).toEqual(selected);
+      expect(await settledContent(copied)).toEqual(typedContent);
+      copied.unmount();
     });
 
     it("cuts the whole note, which pastes back as it was", async () => {
