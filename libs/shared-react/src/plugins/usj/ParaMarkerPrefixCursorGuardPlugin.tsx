@@ -37,6 +37,7 @@ import {
   $getPreviousNode,
   $getSelectedParaMarkerPara,
   $isBookNode,
+  $isCaretHost,
   $isGutterMarkerNode,
   $isImmutableTypedTextNode,
   $isParaLikeNode,
@@ -479,8 +480,8 @@ export function $guardCursorOnClick(event: MouseEvent): void {
 /**
  * The boundary index of `para`'s first content position: how many structural prefix children
  * lead it — the para-marker prefix (`MarkerNode` or `ImmutableTypedTextNode`) with its trailing
- * NBSP, then any leading verse nodes (`VerseNode` or `ImmutableVerseNode`). `0` when nothing
- * leads the content.
+ * NBSP, then any leading verse nodes (`VerseNode` or `ImmutableVerseNode`), and a caret host
+ * between a gutter glyph and the leading verse. `0` when nothing leads the content.
  *
  * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
  * command handler.
@@ -504,6 +505,14 @@ export function $paraContentStartIndex(para: ParaLikeNode): number {
         child = child.getNextSibling();
       }
     } else if ($isSomeVerseNode(child)) {
+      index++;
+      child = child.getNextSibling();
+    } else if (
+      $isCaretHost(child) &&
+      $isGutterMarkerNode(child.getPreviousSibling()) &&
+      $isSomeVerseNode(child.getNextSibling())
+    ) {
+      // The caret host of the stop before the leading verse number stands for no content.
       index++;
       child = child.getNextSibling();
     } else {
