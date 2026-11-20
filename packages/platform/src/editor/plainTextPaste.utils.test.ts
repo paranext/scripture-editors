@@ -35,6 +35,12 @@ describe("usfmToPlainProse", () => {
     expect(prose("\\p one\n\\q1 two")).toBe("one\ntwo");
   });
 
+  it("keeps the space a paragraph's line ends with", () => {
+    expect(prose("\\p one \n\\q1 two")).toBe("one \ntwo");
+    // Before an inline marker the line break is a space either way.
+    expect(prose("\\p one \n\\v 2 two")).toBe("one two");
+  });
+
   it("normalizes CRLF line breaks", () => {
     expect(prose("\\p one\r\n\\p two")).toBe("one\ntwo");
   });
@@ -59,6 +65,29 @@ describe("usfmToPlainProse", () => {
     expect(prose("x \\zzz* y")).toBe("x \\zzz* y");
     expect(prose("x \\+zzz y\\+zzz*")).toBe("x \\+zzz y\\+zzz*");
     expect(prose("x \\f + \\zzz y\\f*")).toBe("x \\f + \\zzz y\\f*");
+  });
+
+  it("reads the note category marker, which the stylesheet lacks but USFM defines", () => {
+    expect(
+      prose(" \\f + \\cat \\+wj stuff \\+wj*\\cat* \\fr 1:2 \\ft Other footnote text.\\f*."),
+    ).toBe(" stuff  1:2 Other footnote text. .");
+  });
+
+  it("reads a marker the stylesheet does not know as a paragraph where it opens a line", () => {
+    expect(prose("r \n\\zunk Unknown marker content.\n\\p Au")).toBe(
+      "r \nUnknown marker content.\nAu",
+    );
+    // The same name anywhere but at a line's start is not read as a marker.
+    expect(prose("a\n\\zzz b \\zzz c")).toBe("a\n\\zzz b \\zzz c");
+    expect(prose("\\zzz b")).toBe("\\zzz b");
+  });
+
+  it("reads a bare backslash that opens a line as a paragraph whose marker has no name", () => {
+    expect(prose(". \n\\ 2 \\v 2 A \\bd \n\\ te")).toBe(". \n2 A \nte");
+  });
+
+  it("keeps a stray `\\*`, which closes no milestone, as its bytes", () => {
+    expect(prose("s \n\\t-s \\* and t-e\n\\p Fo")).toBe("s \n\\* and t-e\nFo");
   });
 
   it("drops the markers of a nested char style", () => {

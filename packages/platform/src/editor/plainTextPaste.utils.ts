@@ -5,6 +5,7 @@ import { MarkerContent } from "@eten-tech-foundation/scripture-utilities";
 import { $createRangeSelection, $getRoot, createEditor } from "lexical";
 import {
   BOOK_MARKER,
+  isAttributeMarker,
   LoggerBasic,
   MarkerLookup,
   TypedMarkNode,
@@ -40,6 +41,10 @@ export interface PlainProseOptions {
  *
  * Text holding a marker `getMarker` does not know (`C:\temp`, say) is not USFM that can be read
  * without guessing, so it is returned unchanged rather than lose the bytes the guess would drop.
+ * Two readings are not guesses: a name that only ever opens a line is a paragraph marker, the way
+ * Standard view's copy writes every paragraph after the first (a bare `\` there is a paragraph
+ * whose marker has no name); and `\cat`, a note's category, is USFM the tokenizer knows by name
+ * though the bundled stylesheet lacks it.
  */
 export function usfmToPlainProse(text: string, options: PlainProseOptions): string {
   if (!text.includes("\\")) return text;
@@ -48,11 +53,24 @@ export function usfmToPlainProse(text: string, options: PlainProseOptions): stri
   if (!formattedOptions) return text;
   const hiddenOptions: ViewOptions = { ...formattedOptions, allowInvisibleCharacters };
   try {
-    const content = usfmFragmentToUsjContent(text.replace(/\r\n?/g, "\n"), {
-      getMarker,
-      nbspSpelling: getNbspSpelling(hiddenOptions),
-    });
-    if (holdsUnknownMarker(content, getMarker)) return text;
+    const usfm = text.replace(/\r\n?/g, "\n");
+    const nbspSpelling = getNbspSpelling(hiddenOptions);
+    // The tokenizer reads a bare `\` as a nameless paragraph's marker only where a fragment opens,
+    // so each line that opens with one is tokenized as a fragment of its own. A paragraph marker
+    // closes whatever is open before it, so this reads the text as one fragment would.
+    const content = usfm.split(NAMELESS_LINE_BREAK).flatMap((fragment, index) =>
+      usfmFragmentToUsjContent(fragment.replace(LINE_BREAK_AFTER_SPACE, ""), {
+        getMarker,
+        nbspSpelling,
+        opensNamelessParagraph: index > 0,
+      }),
+    );
+    const linesOpenedOnly = markersOpeningLinesOnly(usfm);
+    const isKnown = (marker: string, type: string) =>
+      getMarker(marker) !== undefined ||
+      isAttributeMarker(marker) ||
+      (type === "para" && linesOpenedOnly.has(marker));
+    if (holdsUnknownMarker(content, isKnown)) return text;
     const editor = createEditor({
       namespace: "plain-text-paste",
       nodes: [TypedMarkNode, ...usjReactNodes],
@@ -88,23 +106,63 @@ export function usfmToPlainProse(text: string, options: PlainProseOptions): stri
   }
 }
 
+/**
+ * A line break before a bare `\` — one followed by whitespace, another `\`, or nothing — the glyph
+ * Standard view shows, and its copy writes, for a paragraph whose marker is the empty name.
+ */
+const NAMELESS_LINE_BREAK = /\n(?=\\(?:[\s\u00A0\u200B\\]|$))/;
+
+/**
+ * A line break after a space and before a marker. Standard view's copy ends each paragraph's line
+ * with a line break, so a space in front of one is the paragraph's own last character; the
+ * tokenizer would fold the space into the break and drop both before a paragraph marker. Without
+ * the break the space stays, and still separates the marker from the text.
+ */
+const LINE_BREAK_AFTER_SPACE = /(?<=[ \t])\n(?=\\)/g;
+
+/** A marker token: `\`, then its name, which ends where the tokenizer ends it (a `*` ends a
+ * closer's name and is part of it). */
+const MARKER_TOKEN = /\\([^\\|\s\u200B*]*\*?)/g;
+
+/**
+ * The names of the markers in `usfm` that only ever open a line after a line break. Standard view's
+ * copy writes each paragraph on a line of its own, opening with its marker, so a name the
+ * stylesheet does not know is still a paragraph marker there (the tokenizer reads it as one).
+ * Elsewhere such a name may be no marker at all (`C:\temp`).
+ */
+function markersOpeningLinesOnly(usfm: string): Set<string> {
+  const openingLines = new Set<string>();
+  const elsewhere = new Set<string>();
+  for (const { 1: name, index } of usfm.matchAll(MARKER_TOKEN))
+    (index > 0 && usfm[index - 1] === "\n" ? openingLines : elsewhere).add(name);
+  elsewhere.forEach((name) => openingLines.delete(name));
+  return openingLines;
+}
+
 /** USJ object types whose marker names a stylesheet marker. */
 const STYLED_TYPES = new Set(["para", "char", "note"]);
 
 /**
- * Whether `content` holds a marker `getMarker` does not know. The tokenizer guesses at such a
- * marker by where it sits (a paragraph in body text, a character span in a note, keeping a nested
- * `+` in its name), so it shows up as a paragraph, span or note, or as a stray closer, named by a
- * marker the stylesheet lacks. A bare `\*`, which closes a milestone, names none.
+ * Whether `content` holds a marker `isKnown` rejects. The tokenizer guesses at an unknown marker by
+ * where it sits (a paragraph in body text, a character span in a note, keeping a nested `+` in its
+ * name), so it shows up as a paragraph, span or note, or as a stray closer, named by a marker the
+ * stylesheet lacks. A bare `\*`, which closes a milestone, names none, and neither does a nameless
+ * paragraph, which the tokenizer reads only where a line opens with one.
  */
-function holdsUnknownMarker(content: MarkerContent[], getMarker: MarkerLookup): boolean {
+function holdsUnknownMarker(
+  content: MarkerContent[],
+  isKnown: (marker: string, type: string) => boolean,
+): boolean {
   return content.some((item) => {
     if (typeof item === "string") return false;
     const marker =
       item.type === "unmatched" ? item.marker?.replace(/^\+/, "").replace(/\*$/, "") : item.marker;
-    const isNamed = STYLED_TYPES.has(item.type) || (item.type === "unmatched" && marker !== "");
-    if (isNamed && marker !== undefined && !getMarker(marker)) return true;
-    return item.content ? holdsUnknownMarker(item.content, getMarker) : false;
+    const isNamed =
+      (STYLED_TYPES.has(item.type) || item.type === "unmatched") &&
+      marker !== undefined &&
+      marker !== "";
+    if (isNamed && !isKnown(marker, item.type)) return true;
+    return item.content ? holdsUnknownMarker(item.content, isKnown) : false;
   });
 }
 
@@ -115,10 +173,15 @@ const PROSELESS_TYPES = new Set(["unmatched", "ms", "chapter"]);
  * `content` without what stands for no prose, and with each optbreak as the `//` it was. The
  * tokenizer reads a book line (`\id GEN …`) as an ordinary paragraph, so it is left out by its
  * marker.
+ *
+ * A stray `\*` stays as its bytes, the way a hidden-marker view shows it: it closes no milestone
+ * (a copy cannot split one, so it never leaves half of one behind), and a named closer may be the
+ * end of a span the copy started inside, which writes no prose.
  */
 function proseContent(content: MarkerContent[]): MarkerContent[] {
   return content.flatMap((item): MarkerContent[] => {
     if (typeof item === "string") return [item];
+    if (item.type === "unmatched" && item.marker === "*") return ["\\*"];
     if (PROSELESS_TYPES.has(item.type)) return [];
     if (item.type === "para" && item.marker === BOOK_MARKER) return [];
     if (item.type === "optbreak") return ["//"];
