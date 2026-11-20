@@ -651,6 +651,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     [stableLogger],
   );
+
   // Annotations address the loaded document, so they wait for the load in flight.
   // `LoadStatePlugin` reports each load's start in the layout phase of the commit that renders it,
   // before a host's own layout effects; `setUsj` closes the gate earlier still, at the call.
