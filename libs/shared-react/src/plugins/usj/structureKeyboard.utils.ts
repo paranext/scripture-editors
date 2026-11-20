@@ -554,9 +554,10 @@ export function $isArmedSelection(selection: BaseSelection | null, armed: ArmedD
       $isRangeSelection(selection) && !selection.isCollapsed() && $isAtSnapshot(selection, armed)
     );
   }
-  // A paragraph armed on its gutter marker stays armed while that marker stays selected; one that
-  // shows no marker, while the caret stays where it was.
-  if ($getSelectedParaMarkerPara(selection)?.getKey() === armed.key) return true;
+  // A paragraph armed on its gutter marker stays armed while that marker stays selected; one armed
+  // from a caret, while the caret stays where it was. Selecting the marker of a paragraph armed
+  // from a caret (an arrow key reaching it) is a move, which ends that arm.
+  if (!armed.anchor && $getSelectedParaMarkerPara(selection)?.getKey() === armed.key) return true;
   return $isRangeSelection(selection) && $isAtSnapshot(selection, armed);
 }
 
@@ -771,7 +772,9 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   // prefix glyph (markerMode "editable"'s MarkerNode, or the "visible" mode's marker-typed
   // ImmutableTypedTextNode) is still its first child here; moving it into `prev` would fuse it
   // onto `prev`'s trailing text as a literal marker byte (e.g. `first\qsecond`), so it is dropped
-  // along with the separator instead of moved.
+  // along with the separator instead of moved. So is a transient caret host the caret was in (the
+  // stop before the paragraph's leading verse number): it stood for a position in a paragraph that
+  // is going, and carried over it would outlive the caret in the paragraph it joins.
   // Lexical's history folds an update whose only dirty leaf is a text that kept its text into the
   // step before, even one tagged `history-push`. Removing an empty paragraph touches only the text
   // the caret lands in, so the leaves that go with the paragraph are marked too, and Undo takes the
@@ -781,7 +784,9 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
     .getChildren()
     .filter(
       (child) =>
-        !$isMarkerTrailingSeparator(child) && !(dropsLeadingPrefix && child.is(leadingPrefix)),
+        !$isMarkerTrailingSeparator(child) &&
+        !(dropsLeadingPrefix && child.is(leadingPrefix)) &&
+        !$isCaretHost(child),
     );
   prev.append(...moved);
   para.remove();

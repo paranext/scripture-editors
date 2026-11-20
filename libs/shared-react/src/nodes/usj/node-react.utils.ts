@@ -18,6 +18,8 @@ import {
 } from "lexical";
 import {
   $findNearestPreviousNode,
+  $isCaretHost,
+  $isGutterMarkerNode,
   $isNodeWithMarker,
   $isParaNode,
   $isSomeChapterNode,
@@ -573,6 +575,13 @@ export function $resolveVerseNode(
     $isElementNode(startNode) &&
     $isRangeSelection(selection) &&
     selection.anchor.key === startNode.getKey();
+
+  // A caret host between a paragraph's gutter glyph and its leading verse number stands for the
+  // element point there, which reads the verse after it, as below.
+  if ($isCaretHost(startNode) && $isGutterMarkerNode(startNode.getPreviousSibling())) {
+    const next = startNode.getNextSibling();
+    if ($isSomeVerseNode(next)) return next;
+  }
 
   if (isCursorOnElement) {
     const childAtOffset = startNode.getChildAtIndex(selection.anchor.offset);
