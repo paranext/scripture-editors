@@ -2,16 +2,33 @@ import {
   copySelection,
   cutSelection,
   pasteSelection,
+  PlainTextPasteTransform,
   pasteSelectionAsPlainText,
   registerEmptyCopyGuard,
   registerInlineProsePaste,
 } from "./clipboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
-export function ClipboardPlugin(): null {
+/**
+ * Wires the clipboard shortcuts (copy, cut, paste, paste as plain text) to the editor.
+ *
+ * `plainTextPasteTransform` rewrites the text Ctrl+Shift+V pastes. It is read when the key is
+ * pressed, so a new one takes effect without the listeners below being registered again.
+ */
+export function ClipboardPlugin({
+  plainTextPasteTransform,
+}: {
+  plainTextPasteTransform?: PlainTextPasteTransform;
+} = {}): null {
   const [editor] = useLexicalComposerContext();
+  // Held in a ref because the effect below must register once per editor: registering again would
+  // move this plugin's command listeners behind later-registered ones of the same priority.
+  const plainTextPasteTransformRef = useRef(plainTextPasteTransform);
+  useLayoutEffect(() => {
+    plainTextPasteTransformRef.current = plainTextPasteTransform;
+  }, [plainTextPasteTransform]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -31,7 +48,7 @@ export function ClipboardPlugin(): null {
         cutSelection(editor);
       } else if (key.toLowerCase() === "v") {
         event.preventDefault();
-        if (shiftKey) pasteSelectionAsPlainText(editor);
+        if (shiftKey) pasteSelectionAsPlainText(editor, plainTextPasteTransformRef.current);
         else pasteSelection(editor);
       }
     };

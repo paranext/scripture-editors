@@ -153,7 +153,18 @@ export const pasteSelection = (editor: LexicalEditor) => {
   });
 };
 
-export const pasteSelectionAsPlainText = (editor: LexicalEditor) => {
+/** Rewrites the text of a Paste as Plain Text, after tab cleanup and before it reaches the paste
+ * command. */
+export type PlainTextPasteTransform = (text: string) => string;
+
+/**
+ * Pastes the clipboard's text as plain text. `transform`, when given, rewrites that text (after tab
+ * cleanup) before it is pasted, so a host can turn what the text says into what it should paste.
+ */
+export const pasteSelectionAsPlainText = (
+  editor: LexicalEditor,
+  transform?: PlainTextPasteTransform,
+) => {
   navigator.clipboard.read().then(async () => {
     const permission = await navigator.permissions.query({
       // @ts-expect-error These types are incorrect.
@@ -167,7 +178,8 @@ export const pasteSelectionAsPlainText = (editor: LexicalEditor) => {
 
     const data = new DataTransfer();
     const text = await navigator.clipboard.readText();
-    data.setData("text/plain", cleanupText(text));
+    const cleaned = cleanupText(text);
+    data.setData("text/plain", transform ? transform(cleaned) : cleaned);
 
     const event = new ClipboardEvent("paste", {
       clipboardData: data,

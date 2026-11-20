@@ -50,6 +50,7 @@ import {
 import { $getMarkerMenuContext } from "./markerMenu/markerMenuContext.utils";
 import { MarkersViewCopyPlugin } from "./MarkersViewCopyPlugin";
 import { ParaMarkerPrefixGuardPlugin } from "./ParaMarkerPrefixGuardPlugin";
+import { usfmToPlainProse } from "./plainTextPaste.utils";
 import {
   isLiveSettledIdentical,
   SettledPositionContext,
@@ -203,6 +204,7 @@ import {
   ParaNodePlugin,
   pasteSelection,
   pasteSelectionAsPlainText,
+  PlainTextPasteTransform,
   readLatest,
   releaseTagsAfterNextCommit,
   SelectionRange,
@@ -623,6 +625,27 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     loggerRef.current = logger;
   }
   const stableLogger = loggerRef.current;
+
+  // Where markers are editable text, a copied footnote or character span is USFM that the paste
+  // would tokenize back into a note or span. Paste as Plain Text pastes its words instead: the
+  // prose a hidden-marker copy of the same selection writes. A view with hidden markers has no
+  // such text on its clipboard.
+  const plainTextPasteTransform = useMemo<PlainTextPasteTransform | undefined>(
+    () =>
+      viewOptions?.markerMode === "editable"
+        ? (text) =>
+            usfmToPlainProse(text, {
+              getMarker: markerLookup,
+              allowInvisibleCharacters: viewOptions.allowInvisibleCharacters,
+              logger: stableLogger,
+            })
+        : undefined,
+    [viewOptions, markerLookup, stableLogger],
+  );
+  // Read through a ref so the imperative handle never pastes through a transform from an earlier
+  // view.
+  const plainTextPasteTransformRef = useRef(plainTextPasteTransform);
+  plainTextPasteTransformRef.current = plainTextPasteTransform;
 
   // Annotations address the loaded document, so they wait for the load in flight.
   // `LoadStatePlugin` reports each load's start in the layout phase of the commit that renders it,
@@ -1137,7 +1160,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     pastePlainText() {
       assertEditable("paste as plain text");
-      if (editorRef.current) pasteSelectionAsPlainText(editorRef.current);
+      if (editorRef.current)
+        pasteSelectionAsPlainText(editorRef.current, plainTextPasteTransformRef.current);
     },
     getUsj() {
       return readSettledUsj();
@@ -2159,12 +2183,17 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <AnnotationPlugin ref={annotationRef} logger={stableLogger} viewOptions={viewOptions} />
           <ArrowNavigationPlugin viewOptions={viewOptions} />
           <CharNodePlugin />
-          <ClipboardPlugin />
+          <ClipboardPlugin plainTextPasteTransform={plainTextPasteTransform} />
           {/* Editable marker modes require literal backslash input (the marker-edit engine and
               the `\` marker menu consume it), so CommandMenuPlugin - which preventDefaults typed
               or pasted `\` and `/` - only guards the non-editable views. */}
           {viewOptions?.markerMode !== "editable" && <CommandMenuPlugin logger={stableLogger} />}
-          {hasBuiltInContextMenu && <ContextMenuPlugin options={contextMenuOptions} />}
+          {hasBuiltInContextMenu && (
+            <ContextMenuPlugin
+              options={contextMenuOptions}
+              plainTextPasteTransform={plainTextPasteTransform}
+            />
+          )}
           {/* Must mount before every plugin with a CRITICAL cut handler (MarkerEditPlugin,
               OpaqueBlockGuardPlugin, StructureKeyboardPlugin). Its CRITICAL fit shortens the
               selection of a limited copy or cut, and at equal priority handlers run in the order
