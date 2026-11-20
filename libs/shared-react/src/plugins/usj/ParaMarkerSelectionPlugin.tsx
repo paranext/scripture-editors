@@ -1,4 +1,6 @@
+import { getEditorTextDirection } from "./ArrowNavigationPlugin";
 import { isEditingKey } from "./OpaqueBlockGuardPlugin";
+import { $moveParaEdgeStop, ParaEdgeDirection } from "./paraEdgeNavigation.utils";
 import {
   $advancePastParaPrefixes,
   $placeCaretAtParaContentStart,
@@ -32,6 +34,8 @@ import {
   COPY_COMMAND,
   CUT_COMMAND,
   DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
   DRAGSTART_COMMAND,
   DROP_COMMAND,
   EditorState,
@@ -44,6 +48,7 @@ import {
   LexicalEditor,
   NodeKey,
   PASTE_COMMAND,
+  SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
 import {
@@ -87,18 +92,22 @@ const TARGETED_INPUT_TYPES = new Set([
  * every key and command that reaches it.
  *
  * A marker is selected by a `NodeSelection` of its gutter glyph (`$getSelectedParaMarker`, shared),
- * made only by clicking the glyph; arrow keys never stop on it. Mounting registers the editor with
+ * made by clicking the glyph or by a plain ← or → that reaches it from the paragraph's text or the
+ * paragraph before (`paraEdgeNavigation.utils.ts`, unless markers are protected). Mounting registers the editor with
  * `registerParaMarkerSelectionOwner`, which is what lets `$selectParaMarker` select at all.
  * Everywhere else a selected marker counts as a caret at the start of its paragraph's content.
  *
  * - Highlight: {@link PARA_MARKER_SELECTED_CLASS_NAME} on the selected marker's paragraph,
  *   recomputed every update, plus the root's `aria-activedescendant` naming the glyph, which
  *   carries `role="option"` and `aria-selected` while selected. Hidden while read-only.
- * - Keys (CRITICAL): Enter with no modifier (or a virtual keyboard's) and Alt+↓ call
- *   `onParaMarkerMenuRequest` when it is set; without it, or with a modifier, Enter acts at the
- *   content start and Alt+↓ acts like any other arrow. Every arrow, Escape,
- *   typing and text input collapse to the content start; an input aimed at a range of its own (a
- *   spellcheck replacement, a drop) acts there instead.
+ * - Keys (CRITICAL): Enter with no modifier (or a virtual keyboard's), a typed `\` (AltGr and
+ *   Option included) and Alt+↓ call `onParaMarkerMenuRequest` when it is set; without it, Enter and
+ *   `\` act at the content start, as a modified Enter does, and Alt+↓ acts like any other arrow. A
+ *   Ctrl or Cmd chord on `\` leaves the marker selected. A plain ← or → moves on to the next
+ *   paragraph-edge stop: the caret before the leading verse number (or the text), or the end of
+ *   the previous paragraph. Every other arrow, Escape, typing and text input collapse to the
+ *   content start; an input aimed at a range of its own (a spellcheck replacement, a drop) acts
+ *   there instead.
  * - Removing the marker (Backspace/Delete, by key, command or input event, or a Backspace from the
  *   start of the text of a paragraph with no leading verse) merges its paragraph into the one
  *   before, or removes it when it is empty and right after a chapter (`$deletePara`), leaving a
@@ -235,15 +244,46 @@ export function ParaMarkerSelectionPlugin({
       return false;
     };
 
+    /**
+     * A plain ← or → at a paragraph's edge, in reading order: the stops before the leading verse
+     * number, on the marker, and at the previous paragraph's end (`paraEdgeNavigation.utils.ts`).
+     */
+    const $handleParaEdgeArrow = (event: KeyboardEvent): boolean => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return false;
+      if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return false;
+      const root = editor.getRootElement();
+      if (!root || !editor.isEditable()) return false;
+      const isRtl = getEditorTextDirection(root) === "rtl";
+      const direction: ParaEdgeDirection =
+        (event.key === "ArrowLeft") !== isRtl ? "previous" : "next";
+      if (!$moveParaEdgeStop(direction, structureProtectionModeRef.current === "protected"))
+        return false;
+      event.preventDefault();
+      // A caret before a leading verse number has no DOM position until a caret host is put there,
+      // so the browser reports no selection change of its own for the guards to answer.
+      editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      return true;
+    };
+
     const $handleKeyDown = (event: KeyboardEvent): boolean => {
       if (typeof event.key !== "string") return false;
       // The key then acts from the repaired caret, as it would from any other.
       if ($repairOrphanedSelection()) return false;
+      if ($handleParaEdgeArrow(event)) return true;
       const para = $getActivePara();
       if (!para) return false;
 
       const hasMenu = onMenuRequestRef.current !== undefined;
       switch (event.key) {
+        case "\\":
+          // A chord on the backslash key (a host's Ctrl+\ shortcut) is no typing: the marker stays
+          // selected. A typed one — on many layouts through AltGr or Option — changes the
+          // paragraph's marker, the menu Enter opens, rather than starting a new marker in the text.
+          if (!isTypingKey(event)) return false;
+          if (!hasMenu) break;
+          event.preventDefault();
+          requestMenu();
+          return true;
         case "Enter":
           // Only a bare Enter asks for the menu. A modified one (a line break, a host's shortcut)
           // acts from the paragraph's text, as Enter does with no menu.
@@ -256,8 +296,9 @@ export function ParaMarkerSelectionPlugin({
         case "ArrowLeft":
         case "ArrowRight":
           event.preventDefault();
-          // Alt+ArrowDown opens the marker menu; every other arrow, with any modifier, only returns
-          // to the paragraph's text — the arrow's own movement does not follow.
+          // Alt+ArrowDown opens the marker menu; every other arrow (a plain ← or → has moved on
+          // above), with any modifier, only returns to the paragraph's text — the arrow's own
+          // movement does not follow.
           if (event.key === "ArrowDown" && event.altKey && hasMenu) requestMenu();
           else $advancePastParaPrefixes(para);
           return true;
@@ -301,6 +342,17 @@ export function ParaMarkerSelectionPlugin({
       const emptyBefore = $getEmptyParaBefore(para);
       if (emptyBefore) $deletePara(emptyBefore, "deleteForward");
       else $deletePara(para);
+      return true;
+    };
+
+    // A word or line delete backward from the start of a gutter paragraph's text has nothing on
+    // its line to remove before the caret, so it is the character delete there: the paragraph
+    // merge, or the answer structure protection gives it. Left to rich-text, the word delete would
+    // extend over the gutter glyph and delete it.
+    const $handleWordOrLineDelete = (isBackward: boolean): boolean => {
+      if (!isBackward || !editor.isEditable() || $getActivePara()) return false;
+      if (!$getGutterParaWithCaretAtStart($getSelection())) return false;
+      editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
       return true;
     };
 
@@ -516,6 +568,16 @@ export function ParaMarkerSelectionPlugin({
       editor.registerCommand(
         DELETE_CHARACTER_COMMAND,
         $handleDeleteCharacter,
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
+        DELETE_WORD_COMMAND,
+        $handleWordOrLineDelete,
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
+        DELETE_LINE_COMMAND,
+        $handleWordOrLineDelete,
         COMMAND_PRIORITY_CRITICAL,
       ),
       editor.registerCommand(BEFORE_INPUT_COMMAND, $handleBeforeInput, COMMAND_PRIORITY_CRITICAL),

@@ -9,11 +9,14 @@ import {
   $getState,
   $isRangeSelection,
   $isTextNode,
+  $onUpdate,
   $setState,
   BLUR_COMMAND,
   COMMAND_PRIORITY_EDITOR,
+  DELETE_LINE_COMMAND,
   FOCUS_COMMAND,
   HISTORY_MERGE_TAG,
+  LexicalCommand,
   LexicalEditor,
   LexicalNode,
   NodeKey,
@@ -125,6 +128,41 @@ function $restingKey(): NodeKey | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
   return selection.anchor.type === "text" ? selection.anchor.key : undefined;
+}
+
+/**
+ * Runs a delete pressed in a caret host from the boundary the host stands for: removes the host,
+ * collapses the caret at that boundary, and sends `command` again, so every delete handler judges
+ * it as it would with no host. Run from inside the host instead, a delete would only remove the
+ * host's own placeholder.
+ *
+ * A line delete is sent once this update has been committed. Its extent is the browser's line
+ * boundary, which Lexical reads by extending the DOM selection, and until the commit the DOM still
+ * holds the removed host there. The removal is then an update of its own, tagged like every other
+ * host removal, so it is no undo step and no Scripture change.
+ *
+ * Mutating: call inside `editor.update()` (a command handler is).
+ *
+ * @returns Always `true`: the host is gone, so the delete it stood in for has been run.
+ */
+export function $deleteFromCaretHost(
+  editor: LexicalEditor,
+  host: TextNode,
+  command: LexicalCommand<boolean>,
+  isBackward: boolean,
+): true {
+  const parent = host.getParentOrThrow();
+  const boundary = host.getIndexWithinParent();
+  host.remove();
+  parent.select(boundary, boundary);
+  if (command === DELETE_LINE_COMMAND) {
+    $addUpdateTag(CURSOR_CHANGE_TAG);
+    $addUpdateTag(HISTORY_MERGE_TAG);
+    $onUpdate(() => editor.dispatchCommand(command, isBackward));
+  } else {
+    editor.dispatchCommand(command, isBackward);
+  }
+  return true;
 }
 
 /**

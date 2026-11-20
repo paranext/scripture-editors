@@ -2912,9 +2912,11 @@ describe("Backward navigation into a collapsed note ending the previous block", 
   });
 });
 
-// A paragraph's gutter marker can be selected by clicking it, but it is not a keyboard stop: with
-// the plugin that owns a selected marker mounted, arrows move exactly as they do without it.
-describe("paragraph gutter markers are not arrow stops", () => {
+// With the plugin that owns a selected marker mounted, a plain ← or → at a paragraph's edge stops
+// before its leading verse number and on its marker (`paraEdgeNavigation.utils.ts`); the rest of
+// the walk is in `paraEdgeNavigation.test.tsx`. These pin how those stops sit beside this plugin's
+// own rules.
+describe("paragraph gutter markers are arrow stops at a paragraph's edges", () => {
   const paragraphStructureView = getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE);
 
   /** A paragraph as the paragraph-structure view builds it: its gutter marker glyph, then content. */
@@ -2925,16 +2927,16 @@ describe("paragraph gutter markers are not arrow stops", () => {
     );
   }
 
-  /** Arrow navigation, with or without the plugin that lets a marker be selected. */
+  /** Arrow navigation, with the plugin that lets a marker be selected. */
   async function gutterEnvironment(
     $initialEditorState: () => void,
-    { canSelectMarker = true, textDirection = "ltr" as "ltr" | "rtl" } = {},
+    { textDirection = "ltr" as "ltr" | "rtl" } = {},
   ) {
     return baseTestEnvironment(
       $initialEditorState,
       <>
         <ArrowNavigationPlugin viewOptions={paragraphStructureView} />
-        {canSelectMarker && <ParaMarkerSelectionPlugin />}
+        <ParaMarkerSelectionPlugin />
         <TextDirectionPlugin textDirection={textDirection} />
       </>,
     );
@@ -2943,17 +2945,18 @@ describe("paragraph gutter markers are not arrow stops", () => {
   /** `\p first`, `\li2 \v 2 second`, `\q1 third`, with the caret placed by `place`. */
   async function selectionAfterPress(
     key: string,
-    place: (texts: { first: TextNode; second: TextNode }) => [TextNode, number?],
-    options: { canSelectMarker?: boolean; textDirection?: "ltr" | "rtl" } = {},
+    place: (texts: { first: TextNode; second: TextNode; third: TextNode }) => [TextNode, number?],
+    options: { textDirection?: "ltr" | "rtl" } = {},
   ) {
-    const texts = {} as { first: TextNode; second: TextNode };
+    const texts = {} as { first: TextNode; second: TextNode; third: TextNode };
     const { editor } = await gutterEnvironment(() => {
       texts.first = $createTextNode("first");
       texts.second = $createTextNode("second");
+      texts.third = $createTextNode("third");
       $getRoot().append(
         $createGutterParaNode("p", texts.first),
         $createGutterParaNode("li2", $createImmutableVerseNode("2"), texts.second),
-        $createGutterParaNode("q1", $createTextNode("third")),
+        $createGutterParaNode("q1", texts.third),
       );
     }, options);
     const [node, offset] = place(texts);
@@ -2981,19 +2984,30 @@ describe("paragraph gutter markers are not arrow stops", () => {
     ["ltr", "ArrowLeft"],
     ["rtl", "ArrowRight"],
   ] as const)(
-    "backward (%s %s) at a paragraph's first content position moves as it does with no selectable marker",
+    "backward (%s %s) at a paragraph's first content position stops before its leading verse number",
     async (textDirection, key) => {
-      const place = ({ second }: { second: TextNode }): [TextNode, number] => [second, 0];
-
-      const actual = await selectionAfterPress(key, place, { textDirection });
-      const unselectable = await selectionAfterPress(key, place, {
-        textDirection,
-        canSelectMarker: false,
-      });
+      const actual = await selectionAfterPress(key, ({ second }) => [second, 0], { textDirection });
 
       expect(actual.selectedMarker).toBeUndefined();
-      expect(actual.isRange).toBe(true);
-      expect(actual.anchor).toEqual(unselectable.anchor);
+      // Between the glyph and the verse number: the element point a caret host is put at.
+      expect(actual.anchor).toEqual({
+        node: "para",
+        text: expect.any(String),
+        offset: 1,
+        type: "element",
+      });
+    },
+  );
+
+  it.each([
+    ["ltr", "ArrowLeft"],
+    ["rtl", "ArrowRight"],
+  ] as const)(
+    "backward (%s %s) at the start of a paragraph with no leading verse selects its marker",
+    async (textDirection, key) => {
+      const actual = await selectionAfterPress(key, ({ third }) => [third, 0], { textDirection });
+
+      expect(actual.selectedMarker).toBe(`\\q1${NBSP}`);
     },
   );
 
@@ -3001,28 +3015,18 @@ describe("paragraph gutter markers are not arrow stops", () => {
     ["ltr", "ArrowRight"],
     ["rtl", "ArrowLeft"],
   ] as const)(
-    "forward (%s %s) at a paragraph's end moves as it does with no selectable marker",
+    "forward (%s %s) at a paragraph's end selects the next paragraph's marker",
     async (textDirection, key) => {
-      const place = ({ first }: { first: TextNode }): [TextNode] => [first];
+      const actual = await selectionAfterPress(key, ({ first }) => [first], { textDirection });
 
-      const actual = await selectionAfterPress(key, place, { textDirection });
-      const unselectable = await selectionAfterPress(key, place, {
-        textDirection,
-        canSelectMarker: false,
-      });
-
-      expect(actual.selectedMarker).toBeUndefined();
-      expect(actual.isRange).toBe(true);
-      expect(actual.anchor).toEqual(unselectable.anchor);
+      expect(actual.selectedMarker).toBe(`\\li2${NBSP}`);
     },
   );
 
-  it("ArrowRight before a collapsed note that ends its paragraph hops to the next paragraph's content", async () => {
+  it("ArrowRight before a collapsed note that ends its paragraph selects the next paragraph's marker", async () => {
     let one: TextNode;
-    let two: TextNode;
     const { editor } = await gutterEnvironment(() => {
       one = $createTextNode("one");
-      two = $createTextNode("two");
       $getRoot().append(
         $createGutterParaNode(
           "p",
@@ -3032,15 +3036,17 @@ describe("paragraph gutter markers are not arrow stops", () => {
             $createCharNode("ft").append($createTextNode("note body")),
           ),
         ),
-        $createGutterParaNode("q1", two),
+        $createGutterParaNode("q1", $createTextNode("two")),
       );
     });
     updateSelection(editor, one!);
 
     await pressKey(editor, "ArrowRight");
 
+    // The note's content is hidden, so nothing is left to reach between the text and the
+    // paragraph's end: the press goes on to the next paragraph's first stop, not past it.
     editor.getEditorState().read(() => {
-      $expectSelectionToBe(two!, 0);
+      expect($getSelectedParaMarker($getSelection())?.getTextContent()).toBe(`\\q1${NBSP}`);
     });
   });
 });

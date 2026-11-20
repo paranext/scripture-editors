@@ -249,12 +249,35 @@ describe("consumers of a selected paragraph marker", () => {
     expect(selectedMarker(lexical)).toBe("li2");
     expect(onScrRefChange).not.toHaveBeenCalled();
 
-    // ArrowLeft is the arrow whose ordinary movement would leave \li2 for verse 1. From a selected
-    // marker it only returns the caret to \li2's content, still in verse 2, so nothing is reported.
-    await pressKeyOn(lexical, { key: "ArrowLeft" });
+    // A vertical arrow from a selected marker only returns the caret to \li2's content, still in
+    // verse 2, so nothing is reported.
+    await pressKeyOn(lexical, { key: "ArrowDown" });
     await flushQueuedEvents();
     expect(selectedMarker(lexical)).toBeUndefined();
     expect(onScrRefChange).not.toHaveBeenCalled();
+  });
+
+  it("reports the previous verse when ArrowLeft goes on from a selected marker to the paragraph before", async () => {
+    const onScrRefChange = vi.fn();
+    const { lexical } = await mountParagraphStructure({
+      scrRef: { book: "GEN", chapterNum: 1, verseNum: 2 },
+      onScrRefChange,
+    });
+    act(() => {
+      lexical.getRootElement()?.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    await clickElement(glyphElementOf(lexical, "li2"));
+    await flushQueuedEvents();
+    onScrRefChange.mockClear();
+
+    // The caret, the reference and the box move to the paragraph before together, in one press.
+    await pressKeyOn(lexical, { key: "ArrowLeft" });
+    await flushQueuedEvents();
+
+    expect(selectedMarker(lexical)).toBeUndefined();
+    expect(onScrRefChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ book: "GEN", chapterNum: 1, verseNum: 1 }),
+    );
   });
 });
 
