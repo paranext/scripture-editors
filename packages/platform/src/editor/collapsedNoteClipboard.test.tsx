@@ -14,8 +14,6 @@ import {
   $getSelection,
   $isRangeSelection,
   CONTROLLED_TEXT_INSERTION_COMMAND,
-  COPY_COMMAND,
-  CUT_COMMAND,
   PASTE_COMMAND,
 } from "lexical";
 import { $isNoteNode, NoteNode } from "shared";
@@ -56,8 +54,11 @@ const usj: Usj = {
   ],
 };
 
-function clipboardEvent(store: Map<string, string>): ClipboardEvent {
-  const event = new ClipboardEvent("copy", { bubbles: true, cancelable: true });
+function clipboardEvent(
+  store: Map<string, string>,
+  type: "copy" | "cut" | "paste" = "copy",
+): ClipboardEvent {
+  const event = new ClipboardEvent(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, "clipboardData", {
     value: {
       get types() {
@@ -107,19 +108,22 @@ function $selectWholeNote(): void {
   $setSelection(selection);
 }
 
+/**
+ * Selects with `$select`, then copies or cuts through a clipboard event on the editor, as Ctrl+C or
+ * Ctrl+X does: Lexical dispatches the command outside any update, so it runs each priority's
+ * handlers in an update of its own.
+ */
 async function clip(
   { lexical }: MountedEditor,
   $select: () => void,
-  command: typeof COPY_COMMAND | typeof CUT_COMMAND,
+  type: "copy" | "cut",
 ): Promise<Map<string, string>> {
   await act(async () => lexical.update($select, { discrete: true }));
   await settle();
   const store = new Map<string, string>();
-  await act(async () =>
-    lexical.update(() => {
-      lexical.dispatchCommand(command, clipboardEvent(store));
-    }),
-  );
+  await act(async () => {
+    lexical.getRootElement()?.dispatchEvent(clipboardEvent(store, type));
+  });
   await settle();
   return store;
 }
@@ -137,10 +141,10 @@ describe.each(["standard", "paragraph-structure"])(
   (viewName) => {
     it("copies the whole note", async () => {
       const whole = await mountInView(usj, editorView(viewName));
-      const wholeCopy = await clip(whole, $selectWholeNote, COPY_COMMAND);
+      const wholeCopy = await clip(whole, $selectWholeNote, "copy");
       whole.unmount();
       const inside = await mountInView(usj, editorView(viewName));
-      const insideCopy = await clip(inside, $selectInsideNote, COPY_COMMAND);
+      const insideCopy = await clip(inside, $selectInsideNote, "copy");
       inside.unmount();
 
       expect(insideCopy.get("text/plain")).toBe(wholeCopy.get("text/plain"));
@@ -176,7 +180,7 @@ describe.each(["standard", "paragraph-structure"])(
       await act(async () => copied.lexical.update($selectInsideNote, { discrete: true }));
       await settle();
       const selected = $selection(copied);
-      await clip(copied, () => undefined, COPY_COMMAND);
+      await clip(copied, () => undefined, "copy");
       const afterCopy = $selection(copied);
       await typeX(copied);
       await settle();
@@ -188,7 +192,7 @@ describe.each(["standard", "paragraph-structure"])(
 
     it("cuts the whole note, which pastes back as it was", async () => {
       const mounted = await mountInView(usj, editorView(viewName));
-      const store = await clip(mounted, $selectInsideNote, CUT_COMMAND);
+      const store = await clip(mounted, $selectInsideNote, "cut");
       await act(async () =>
         mounted.lexical.update(() => {
           mounted.lexical.dispatchCommand(
