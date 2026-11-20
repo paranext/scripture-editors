@@ -592,5 +592,7 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Security
 
-- Bundled DOMPurify updated from 3.4.13 to 3.4.18, past its published security advisories (one
-  critical, one high, three low) and a further `SAFE_FOR_TEMPLATES` fix in 3.4.18.
+- Bundled DOMPurify updated from 3.4.13 to 3.4.18, past its published security advisories
+  GHSA-cg2g-xh64-v4q7 (critical), GHSA-mrv2-3pqr-j5jr (high), and GHSA-c6gr-qvv4-5v3f,
+  GHSA-6688-9rhm-gjv2 and GHSA-p98j-92pf-mc4p (low), and a further `SAFE_FOR_TEMPLATES` fix in
+  3.4.18.
