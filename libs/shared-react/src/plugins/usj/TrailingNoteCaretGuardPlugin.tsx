@@ -344,9 +344,20 @@ export function TrailingNoteCaretGuardPlugin(): null {
         () => {
           const selection = $getSelection();
           const before = $isRangeSelection(selection) ? selection.clone() : undefined;
-          if (before && $takeCollapsedNotesIntoRange({ includeRangeWithinOneNote: true }))
-            // Queued behind this command's dispatch, so after every copy writer has run.
-            editor.update(() => $setSelection(before));
+          if (!before || !$takeCollapsedNotesIntoRange({ includeRangeWithinOneNote: true }))
+            return false;
+          const widened = $getSelection()?.clone();
+          // Not an update queued from here: a dispatch from outside an update (a real Ctrl+C) runs
+          // each priority's handlers in an update of its own, so that would commit before the
+          // writers at lower priorities read the selection. A microtask runs once the whole
+          // dispatch has returned. Only a selection the handlers left as widened goes back, so the
+          // restore never undoes what one of them did (a cut that took this copy).
+          queueMicrotask(() =>
+            editor.update(() => {
+              const current = $getSelection();
+              if (widened && current?.is(widened)) $setSelection(before);
+            }),
+          );
           return false;
         },
         COMMAND_PRIORITY_CRITICAL,
