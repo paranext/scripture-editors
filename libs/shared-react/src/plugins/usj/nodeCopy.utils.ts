@@ -12,6 +12,7 @@
  */
 import { $sliceSelectedTextNodeContent } from "@lexical/selection";
 import { $generateNodesFromSerializedNodes } from "@lexical/clipboard";
+import { deepEqual } from "fast-equals";
 import {
   $getRoot,
   $isElementNode,
@@ -323,8 +324,8 @@ function htmlWithoutNodeCopy(html: string): string {
  * an entry, at any depth, of a type the view's document never holds (the root, a marker), in a place
  * it never holds it (a note caller outside its note, a paragraph in a paragraph), or with a field it
  * never holds (a marker that is not one, a verse number holding a space or a `\`, a styled text, an
- * attribute named for a field the save writes, a node state the editor does not define), or a copy
- * nested deeper than any document. Any web page can put a node copy in its html, and such
+ * attribute named for a field the save writes, a node state the editor does not define or would not
+ * keep as it is), or a copy nested deeper than any document. Any web page can put a node copy in its html, and such
  * an entry could leave the editor throwing on every update, save USFM that reads back as other
  * markers, or show text the view never saves. The copy is checked before any node is made, because
  * making some types changes the document (`RootNode.importJSON` returns the live root).
@@ -339,14 +340,15 @@ export function $nodesFromNodeCopy(
   logger?: LoggerBasic,
 ): LexicalNode[] | undefined {
   if (serialized.length === 0) return undefined;
-  const problem = nodeCopyProblem(serialized);
-  if (problem !== undefined) {
-    logger?.warn(
-      `A pasted node copy holds ${problem}, which a view that hides markers never holds there, so its html or plain text goes in instead`,
-    );
-    return undefined;
-  }
   try {
+    // Inside the try: describing a crafted entry nested deep enough overflows the stack.
+    const problem = nodeCopyProblem(serialized);
+    if (problem !== undefined) {
+      logger?.warn(
+        `A pasted node copy holds ${problem}, which a view that hides markers never holds there, so its html or plain text goes in instead`,
+      );
+      return undefined;
+    }
     const nodes = $generateNodesFromSerializedNodes(serialized);
     if (nodes.some((node) => node.isAttached()))
       throw new Error("a node it makes is already in the document");
@@ -431,8 +433,9 @@ const UNMATCHED_MARKER = /^\+?[\w-]*\*$/;
 /** An attribute name, which saves as the name of an attribute only when it is one word. */
 const ATTRIBUTE_NAME = /^[\w-]+$/;
 
-/** The fields every type's save writes ahead of its attributes. */
-const ALWAYS_SAVED_FIELDS: readonly string[] = ["type", "marker", "content"];
+/** The fields every type's save writes ahead of its attributes, and `style`, the marker as the USX
+ * a document saves through spells it, which the USX writer writes ahead of them too. */
+const ALWAYS_SAVED_FIELDS: readonly string[] = ["type", "marker", "content", "style"];
 
 /** Names an attribute may not take, whatever the type: an object's own machinery. */
 const OBJECT_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
@@ -663,8 +666,16 @@ function entryProblem(entry: Entry, rule: NodeCopyRule): string | undefined {
 }
 
 /**
+ * How deep a node state's value may nest: as deep as display annotations (an object holding a list
+ * of objects). Lexical keeps the value as it was pasted until the state is read, so a deeper one
+ * would overflow the stack when the document is next serialized.
+ */
+const MAX_NODE_STATE_DEPTH = 3;
+
+/**
  * What is wrong with `entry`'s node state (`$`): a state this editor does not define, or a value
- * its own `parse` would not keep.
+ * its own `parse` would not give back as it is, or one nested deeper than
+ * {@link MAX_NODE_STATE_DEPTH}.
  */
 function stateProblem(entry: Entry): string | undefined {
   const state = entry[NODE_STATE_KEY];
@@ -674,8 +685,7 @@ function stateProblem(entry: Entry): string | undefined {
     const config = NODE_STATES.get(name);
     if (config === undefined) return true;
     const value = state[name];
-    const parsed: unknown = config.parse(value);
-    return typeof value === "object" && value !== null ? parsed === undefined : parsed !== value;
+    return nestsDeeperThan(value, MAX_NODE_STATE_DEPTH) || !deepEqual(config.parse(value), value);
   });
   return key === undefined ? undefined : `a node state "${key}"`;
 }
@@ -812,6 +822,13 @@ function textProblem(entry: Entry, mayOmitText = false): string | undefined {
   if (typeof text === "string" && text.startsWith(NODE_ATTRIBUTE_PREFIX))
     return "a text that saves as attributes";
   return undefined;
+}
+
+/** Whether `value` holds objects or lists more than `levels` deep. Stops looking at that depth. */
+function nestsDeeperThan(value: unknown, levels: number): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  if (levels === 0) return true;
+  return Object.values(value).some((child) => nestsDeeperThan(child, levels - 1));
 }
 
 function isRecord(value: unknown): value is Entry {

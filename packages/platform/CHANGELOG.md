@@ -332,7 +332,7 @@ refused. The public surface grew substantially; nothing was removed.
   `data-platform-editor-node-copy` of a `<span>` around the html's own content; what the html shows
   is unchanged. A node copy a view that hides markers would not write — a node it never holds, or
   holds elsewhere (a note caller outside its note), a field it never holds (a marker with a space, a
-  verse number holding `\v`, a styled text, an attribute named for a field the save writes, a node state the editor does not define), or nesting deeper than 32 levels — goes in by its html
+  verse number holding `\v`, a styled text, an attribute named for a field the save writes or for `style`, a node state the editor does not define or a value it would not keep as it is), or nesting deeper than 32 levels — goes in by its html
   or plain text instead, since any web page can put one in its html. See
   `docs/clipboard-semantics.md`.
 - **Standard view's and the Markers view's `text/html` carries one new attribute**, the empty

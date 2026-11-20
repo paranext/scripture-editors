@@ -264,6 +264,11 @@ describe("$nodesFromNodeCopy", () => {
       "attributes",
     ],
     [
+      "an attribute named for the marker as the saved USX spells it",
+      [para([char("w", [], { unknownAttributes: { style: "v" } })])],
+      "attributes",
+    ],
+    [
       "an attribute named for an object's prototype",
       [para([char("w", [], { unknownAttributes: JSON.parse('{"__proto__": "x"}') as object })])],
       "attributes",
@@ -295,6 +300,30 @@ describe("$nodesFromNodeCopy", () => {
       "a node state holding an object it reads as text",
       [para([text("a", { $: { textType: { a: { b: {} } } } })])],
       'node state "textType"',
+    ],
+    [
+      "a node state holding an object it reads as true or false",
+      [para([text("a", { $: { isAuthoredNbsp: { a: { b: {} } } } })])],
+      'node state "isAuthoredNbsp"',
+    ],
+    [
+      "display annotations holding more than display annotations",
+      [para([], { $: { displayAnnotations: { basis: "x", annotations: [], extra: {} } } })],
+      'node state "displayAnnotations"',
+    ],
+    [
+      "a display annotation nesting deeper than one",
+      [
+        para([], {
+          $: {
+            displayAnnotations: {
+              basis: "x",
+              annotations: [{ type: "t", id: "i", start: 0, end: 1, extra: { a: { b: {} } } }],
+            },
+          },
+        }),
+      ],
+      'node state "displayAnnotations"',
     ],
     [
       "display annotations that are not",
@@ -353,5 +382,22 @@ describe("$nodesFromNodeCopy", () => {
 
     expect(made).toBeUndefined();
     expect(warning).toContain(problem);
+  });
+
+  it.each([
+    [
+      "an attribute value",
+      (inner: object) => [para([char("w", [], { unknownAttributes: { x: inner } })])],
+    ],
+    ["an entry that is not a node", (inner: object) => [[inner]]],
+  ])("refuses, rather than throws on, %s nested too deep to describe", (_, copy) => {
+    // Deep enough to overflow the stack of a recursive `JSON.stringify` or `String`.
+    let inner: object = [];
+    for (let level = 0; level < 100_000; level += 1) inner = [inner];
+
+    const { made, warning } = read(copy(inner));
+
+    expect(made).toBeUndefined();
+    expect(warning).toBeDefined();
   });
 });
