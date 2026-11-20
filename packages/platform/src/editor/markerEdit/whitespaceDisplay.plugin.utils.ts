@@ -68,6 +68,8 @@ import {
   MARKER_TEXT_HTML_ATTRIBUTE,
 } from "shared-react";
 import {
+  $liesBeforeElementPoint,
+  $offsetInText,
   isCopyFromOutsideEditor,
   normalizeCopyLimit,
   sliceToCopyLimit,
@@ -1245,35 +1247,6 @@ export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "
 }
 
 /**
- * Where `point` falls in text node `node`, as an offset into its text: the point's own offset when
- * it is a text point on `node`, otherwise 0 when it lies before `node` and the text's length when it
- * lies after. An element point is placed by the child it stands before, where Lexical's
- * `$getCharacterOffsets` answers 0 for any element point short of its element's end — so a range
- * ending on the root between two paragraphs would read as taking none of the last one's text.
- *
- * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
- */
-function $offsetInText(node: TextNode, point: PointType): number {
-  const length = node.getTextContentSize();
-  if (point.type === "text") {
-    if (point.key === node.getKey()) return point.offset;
-    return point.getNode().isBefore(node) ? 0 : length;
-  }
-  return $liesBeforeElementPoint(node, point) ? length : 0;
-}
-
-/** Whether leaf `node` lies wholly before element point `point`. */
-function $liesBeforeElementPoint(node: LexicalNode, point: PointType): boolean {
-  const element = point.getNode();
-  if (!$isElementNode(element)) return false;
-  const after = element.getChildAtIndex(point.offset);
-  if (after === null) return element.isParentOf(node) || node.isBefore(element);
-  return (
-    after !== node && !($isElementNode(after) && after.isParentOf(node)) && node.isBefore(after)
-  );
-}
-
-/**
  * Whether `node` starts at or after element point `point`. `RangeSelection.getNodes` reaches past
  * an end on the root between two paragraphs into the next one, whose block and first child are no
  * part of the range.
@@ -1525,7 +1498,8 @@ export function $writeCopyPayload(
  * (`MarkersViewCopyPlugin.tsx`) and the hidden-marker views' (`HiddenMarkersViewCopyPlugin.tsx`).
  * For a range selection that is not collapsed, `$payload` gives the flavors to write and
  * {@link $writeCopyPayload} writes them; `$payload` returns `undefined` to leave the command to the
- * handlers below. `isCut` tells a cut from a copy. `copyLimit` is `EditorOptions.copyLimit`.
+ * handlers below. `isCut` tells a cut from a copy. `copyLimit` is `EditorOptions.copyLimit`, and
+ * `$removeRange` is how a cut removes the range ({@link $writeCopyPayload}'s).
  *
  * `event` is the command's payload when it is a browser clipboard event (Lexical's root `copy` and
  * `cut` listeners, the usual path), otherwise `undefined`: Lexical's key-down handling passes a
@@ -1544,6 +1518,7 @@ export function registerViewCopyWriter(
     isCut: boolean,
   ) => LexicalClipboardData | undefined,
   copyLimit?: number,
+  $removeRange?: (range: RangeSelection) => void,
 ): () => void {
   const $copy = (payload: ClipboardEvent | KeyboardEvent | null, isCut: boolean): boolean => {
     const selection = $getSelection();
@@ -1555,7 +1530,8 @@ export function registerViewCopyWriter(
       payload && typeof payload === "object" && "clipboardData" in payload ? payload : undefined;
     const data = $payload(selection, event, isCut);
     return (
-      data !== undefined && $writeCopyPayload(event, editor, selection, data, isCut, copyLimit)
+      data !== undefined &&
+      $writeCopyPayload(event, editor, selection, data, isCut, copyLimit, $removeRange)
     );
   };
   return mergeRegister(

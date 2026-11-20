@@ -139,8 +139,11 @@ refused. The public surface grew substantially; nothing was removed.
   and optional empty verses after the book's front matter, the same place the `\` menu's `\c` puts
   it. The verses are left out when the chapter content already holds anything (text, a verse, a
   note, a milestone or a figure), which they would otherwise go above. A no-break space counts as
-  whitespace in every view. Returns `false`, changing nothing, outside chapter 1 or once the
-  document has a chapter.
+  whitespace in every view. An empty paragraph of verse text, such as `\p` or `\q1`, takes the
+  verses inside it (`\c 1 \p \v 1 …`); an empty section heading, `\b` or `\d` keeps them above it.
+  A book that is all front matter, as a new book is, gets them in a new `\p`, as does one whose
+  content starts with blank text in no paragraph, such as an empty document. Returns `false`,
+  changing nothing, outside chapter 1 or once the document has a chapter.
 - `MarkerMenuContext.canInsertChapter` — set in chapter 1 of a document with no chapter yet, where
   `getMarkerMenuItems` offers `\c`.
 - `EditorOptions.onUnstorableTextRemoved`, with the types `UnstorableTextRemovedHandler`,
@@ -462,6 +465,17 @@ refused. The public surface grew substantially; nothing was removed.
   pasted into an editor that became read-only while the clipboard was read. The `alert` for a
   denied clipboard permission is gone: it ran only after a read had succeeded, so it never showed.
   Paste as Plain Text reads the clipboard once (`readText`), not twice.
+- `onStateChange` now fires when the caret moves into text outside any paragraph marker (an
+  implied paragraph), with `blockMarker` set to `p`. It used to stay silent there, so a host kept
+  the previous block's marker, often `id`, and scoped its character-marker menu to `\id`.
+- `EditorRef.formatPara` with a selection from the `\id` line into verses outside any paragraph
+  marker now retags those verses too. It used to split the `\id` line and leave the verses with no
+  paragraph marker.
+- `EditorRef.setAnnotation` and `removeAnnotation` no longer drop an annotation requested while a
+  document load is pending — at mount, after `setUsj`, or once the editor re-renders with a new
+  `options.view` or `logger`. Both wait until the load finishes, keep their order with each other,
+  and run after any other ref call made alongside them; only the last of several calls for one
+  annotation runs, and a removal that replaces a waiting set still reports it through `onRemove`.
 - Undoing an edit that restores a char span's separator (its no-break space after the glyph) sends
   the separator to the host as U+00A0, not a space, so the span gains no leading content space.
 - A delta applied in Standard view places the ops after an inserted char span correctly. An insert
@@ -507,6 +521,15 @@ refused. The public surface grew substantially; nothing was removed.
   paragraph next to another paragraph, by Delete inside it or by Backspace from the start of the
   paragraph after it, now removes the empty one instead of moving the other paragraph's text under
   its marker. None of this applies in Standard view, where markers are editable text.
+- Copying or cutting text in a hidden-marker view (Formatted, Paragraph Structure, Block verse) no
+  longer puts the NBSP spacers it shows around a collapsed note, or an empty span's placeholder,
+  into `text/plain`, so a footnote pasted with Paste as Plain Text no longer has two spaces at each
+  end. One ordinary space now separates a note's text from the text around it, where neither side
+  already has whitespace. A stored no-break space is still written as `~` when invisible characters
+  are not allowed. `text/html` and the internal flavor still hold the spacers, as the editor's own
+  paste reads them back. These views' copies and cuts are now written by the editor rather than by
+  Lexical's rich-text handler. Lexical's handler still takes a range with no text to copy (a lone verse number, or only spacers
+  or placeholders), and writes it as before.
 - A text node holding only zero-width spaces that the author typed (a line-break opportunity in
   Thai, Khmer and Lao), which an annotation or other split leaves in a node of its own, is now kept
   by `getUsj()`, sent in delta ops, and counted in annotation and OT positions. It used to be taken
@@ -769,3 +792,10 @@ refused. The public surface grew substantially; nothing was removed.
 - In the views that show a marker glyph on a blank line (`\b`), deleting the empty paragraph after
   it, with Delete or Backspace, leaves the blank line a `\b`. It had taken that paragraph's marker,
   so `\b`, `\q1`, `\p` saved as `\q1`, `\p`.
+
+### Security
+
+- Bundled DOMPurify updated from 3.4.13 to 3.4.18, past its published security advisories
+  GHSA-cg2g-xh64-v4q7 (critical), GHSA-mrv2-3pqr-j5jr (high), and GHSA-c6gr-qvv4-5v3f,
+  GHSA-6688-9rhm-gjv2 and GHSA-p98j-92pf-mc4p (low), and a further `SAFE_FOR_TEMPLATES` fix in
+  3.4.18.

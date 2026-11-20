@@ -622,6 +622,9 @@ async function dispatchClipboard(
   command: typeof COPY_COMMAND | typeof CUT_COMMAND,
 ): Promise<Map<string, string>> {
   const store = new Map<string, string>();
+  // A read-only editor does not draw its selection on the page, so a page selection an earlier
+  // test left behind would read as a copy from outside the editor (`isCopyFromOutsideEditor`).
+  if (!editor.isEditable()) document.getSelection()?.removeAllRanges();
   await act(async () =>
     editor.update(() => {
       if (!$isRangeSelection($getSelection())) throw new Error("no range selection to copy");
