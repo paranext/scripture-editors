@@ -39,12 +39,17 @@ export interface PlainProseOptions {
  * and each paragraph is a line. Book and chapter lines are left out: their text is an identifier
  * and a number, not prose.
  *
- * Text holding a marker `getMarker` does not know (`C:\temp`, say) is not USFM that can be read
- * without guessing, so it is returned unchanged rather than lose the bytes the guess would drop.
- * Two readings are not guesses: a name that only ever opens a line is a paragraph marker, the way
- * Standard view's copy writes every paragraph after the first (a bare `\` there is a paragraph
- * whose marker has no name); and `\cat`, a note's category, is USFM the tokenizer knows by name
- * though the bundled stylesheet lacks it.
+ * Text is read as USFM only when it names a marker USFM defines: one `getMarker` knows, `\cat` (a
+ * note's category, which the tokenizer knows by name though the bundled stylesheet lacks it), or a
+ * custom `\z…` marker. Other text (`C:\temp`, `\section{Intro}`) is returned unchanged.
+ *
+ * Text that is USFM but holds a marker `getMarker` does not know is returned unchanged as well,
+ * rather than lose the bytes a guess at that marker would drop, with one exception: a name that
+ * only ever opens a line after a line break is read as a paragraph marker, because Standard view's
+ * copy writes every paragraph after the first that way (and a bare `\` there as a paragraph whose
+ * marker has no name). That is still a guess: in USFM-looking text, a later line holding only a
+ * backslash word (`\temp`) loses that word. A name that opens the text's first line is not read
+ * this way, so a copy that starts at an unknown paragraph marker pastes unchanged.
  */
 export function usfmToPlainProse(text: string, options: PlainProseOptions): string {
   if (!text.includes("\\")) return text;
@@ -54,6 +59,9 @@ export function usfmToPlainProse(text: string, options: PlainProseOptions): stri
   const hiddenOptions: ViewOptions = { ...formattedOptions, allowInvisibleCharacters };
   try {
     const usfm = text.replace(/\r\n?/g, "\n");
+    const isUsfmMarker = (marker: string) =>
+      getMarker(marker) !== undefined || isAttributeMarker(marker) || marker.startsWith("z");
+    if (!namesUsfmMarker(usfm, isUsfmMarker)) return text;
     const nbspSpelling = getNbspSpelling(hiddenOptions);
     // The tokenizer reads a bare `\` as a nameless paragraph's marker only where a fragment opens,
     // so each line that opens with one is tokenized as a fragment of its own. A paragraph marker
@@ -124,6 +132,16 @@ const LINE_BREAK_AFTER_SPACE = /(?<=[ \t])\n(?=\\)/g;
  * closer's name and is part of it). */
 const MARKER_TOKEN = /\\([^\\|\s\u200B*]*\*?)/g;
 
+/** Whether a marker token in `usfm` names a marker `isUsfmMarker` accepts, a nested `+` and a
+ * closer's `*` aside. */
+function namesUsfmMarker(usfm: string, isUsfmMarker: (marker: string) => boolean): boolean {
+  for (const { 1: name } of usfm.matchAll(MARKER_TOKEN)) {
+    const marker = name.replace(/^\+/, "").replace(/\*$/, "");
+    if (marker && isUsfmMarker(marker)) return true;
+  }
+  return false;
+}
+
 /**
  * The names of the markers in `usfm` that only ever open a line after a line break. Standard view's
  * copy writes each paragraph on a line of its own, opening with its marker, so a name the
@@ -147,7 +165,8 @@ const STYLED_TYPES = new Set(["para", "char", "note"]);
  * where it sits (a paragraph in body text, a character span in a note, keeping a nested `+` in its
  * name), so it shows up as a paragraph, span or note, or as a stray closer, named by a marker the
  * stylesheet lacks. A bare `\*`, which closes a milestone, names none, and neither does a nameless
- * paragraph, which the tokenizer reads only where a line opens with one.
+ * paragraph, which the tokenizer reads only where a line opens with one. An empty name on anything
+ * else is unknown.
  */
 function holdsUnknownMarker(
   content: MarkerContent[],
@@ -157,10 +176,11 @@ function holdsUnknownMarker(
     if (typeof item === "string") return false;
     const marker =
       item.type === "unmatched" ? item.marker?.replace(/^\+/, "").replace(/\*$/, "") : item.marker;
+    const isNameless = marker === "" && (item.type === "para" || item.type === "unmatched");
     const isNamed =
       (STYLED_TYPES.has(item.type) || item.type === "unmatched") &&
       marker !== undefined &&
-      marker !== "";
+      !isNameless;
     if (isNamed && !isKnown(marker, item.type)) return true;
     return item.content ? holdsUnknownMarker(item.content, isKnown) : false;
   });

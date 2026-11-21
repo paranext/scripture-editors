@@ -77,9 +77,21 @@ describe("usfmToPlainProse", () => {
     expect(prose("r \n\\zunk Unknown marker content.\n\\p Au")).toBe(
       "r \nUnknown marker content.\nAu",
     );
+    // A custom `\z…` marker shows the text is USFM, as a marker the stylesheet knows does.
+    expect(prose("r \n\\zunk Un")).toBe("r \nUn");
+    expect(prose("r \n\\qqq Un\n\\p Au")).toBe("r \nUn\nAu");
     // The same name anywhere but at a line's start is not read as a marker.
     expect(prose("a\n\\zzz b \\zzz c")).toBe("a\n\\zzz b \\zzz c");
     expect(prose("\\zzz b")).toBe("\\zzz b");
+    // Nor at the first line's start: a copy that starts at an unknown paragraph marker is pasted
+    // as it is.
+    expect(prose("\\zunk text\n\\p more")).toBe("\\zunk text\n\\p more");
+  });
+
+  it("leaves text that names no USFM marker unchanged, whatever opens its lines", () => {
+    for (const text of ["Copy to:\n\\Program Files", "a\n\\temp", "Steps:\n\\section{Intro}"])
+      expect(prose(text)).toBe(text);
+    for (const text of ["a\n\\", "a\n\\ b"]) expect(prose(text)).toBe(text);
   });
 
   it("reads a bare backslash that opens a line as a paragraph whose marker has no name", () => {
