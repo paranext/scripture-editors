@@ -29,7 +29,7 @@ import {
   PASTE_COMMAND,
   TextNode,
 } from "lexical";
-import { ReactElement, useEffect } from "react";
+import { ReactElement, useEffect, useState } from "react";
 import { $createParaNode, TypedMarkNode } from "shared";
 import { usjReactNodes } from "../../nodes/usj";
 
@@ -822,14 +822,24 @@ describe("ContextMenuPlugin — Paste as Plain Text through a transform", () => 
   async function pasteThroughMenu(
     option: number,
     transform: ((text: string) => string) | undefined,
+    transformAfterMount?: (text: string) => string,
   ): Promise<string[]> {
     stubAsyncClipboard("a\tb\\c");
+    const handle: { set?: (next: ((text: string) => string) | undefined) => void } = {};
+    function Controlled() {
+      const [current, set] = useState<((text: string) => string) | undefined>(() => transform);
+      useEffect(() => {
+        handle.set = (next) => set(() => next);
+      }, []);
+      return <ContextMenuPlugin plainTextPasteTransform={current} />;
+    }
     const { editor } = await baseTestEnvironment(
       () => {
         $getRoot().append($createParaNode("p").append($createTextNode("In the beginning")));
       },
-      <ContextMenuPlugin plainTextPasteTransform={transform} />,
+      <Controlled />,
     );
+    if (transformAfterMount) await act(async () => handle.set?.(transformAfterMount));
     const pasted: string[] = [];
     editor.registerCommand(
       PASTE_COMMAND,
@@ -850,6 +860,12 @@ describe("ContextMenuPlugin — Paste as Plain Text through a transform", () => 
     expect(await pasteThroughMenu(PASTE_PLAIN_OPTION, (text) => text.toUpperCase())).toEqual([
       "A B\\C",
     ]);
+  });
+
+  it("a transform given after mount is used", async () => {
+    expect(
+      await pasteThroughMenu(PASTE_PLAIN_OPTION, undefined, (text) => text.toUpperCase()),
+    ).toEqual(["A B\\C"]);
   });
 
   it("Paste is not transformed", async () => {

@@ -50,12 +50,22 @@ describe("usfmToPlainProse", () => {
     expect(prose("\\id GEN x\n\\p y")).toBe("y");
   });
 
+  it("leaves text unchanged when its prose would be empty", () => {
+    expect(prose("\\v 5 ")).toBe("\\v 5 ");
+    expect(prose("\\c 2")).toBe("\\c 2");
+  });
+
   it("drops verse numbers", () => {
     expect(prose("\\v 1 a \\v 2 b")).toBe("a b");
   });
 
-  it("keeps an optbreak as its `//`", () => {
+  it("reads a footnote character style that a footnote editor holds on its own", () => {
+    expect(prose("\\fq Yahweh\\fq*")).toBe("Yahweh");
+  });
+
+  it("keeps an optbreak as its `//`, which a hidden-marker copy drops", () => {
     expect(prose("\\ft see https://ebible.org\\f*")).toBe("see https://ebible.org");
+    expect(prose("\\f + \\ft see https://ebible.org\\f*")).toBe("see https://ebible.org");
     expect(prose("a // \\nd b\\nd*")).toBe("a // b");
   });
 
@@ -129,6 +139,8 @@ describe("usfmToPlainProse", () => {
       expect(addMissingComments).toHaveBeenCalled();
       expect(addMissingComments.mock.calls.flatMap(([ids]) => ids)).toEqual([]);
     } finally {
+      // `initialize` ignores undefined, so this does not uninstall the spy. That is harmless:
+      // Vitest isolates files, and no later test in this file serializes.
       initialize(undefined, undefined);
     }
   });

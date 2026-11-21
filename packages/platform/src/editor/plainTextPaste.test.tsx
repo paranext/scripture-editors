@@ -77,8 +77,11 @@ function rootOf(mounted: MountedEditor): HTMLElement {
   return root;
 }
 
-async function mountWithCaret(view = editorView("standard")): Promise<MountedEditor> {
-  stubAsyncClipboard(FOOTNOTE_USFM);
+async function mountWithCaret(
+  view = editorView("standard"),
+  clipboardText = FOOTNOTE_USFM,
+): Promise<MountedEditor> {
+  stubAsyncClipboard(clipboardText);
   const mounted = await mountInView(hostUsj, view);
   await act(async () => {
     mounted.ref.current?.setSelection({ start: AFTER_POSSESSIVE, end: AFTER_POSSESSIVE });
@@ -212,5 +215,15 @@ describe("Paste as Plain Text in Standard view", () => {
     await pressCtrlShiftV(mounted);
 
     expect(mounted.ref.current?.getUsj()).toEqual(before);
+  });
+});
+
+describe("Paste as Plain Text in a footnote editor", () => {
+  it("pastes the words of a copied footnote character span", async () => {
+    const mounted = await mountWithCaret(editorView("footnotes-pane-row"), "\\fq Yahweh\\fq*");
+
+    await pressCtrlShiftV(mounted);
+
+    expect(paraText(mounted)).toBe("Yahweh’sYahweh law.");
   });
 });

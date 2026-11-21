@@ -628,8 +628,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
 
   // Where markers are editable text, a copied footnote or character span is USFM that the paste
   // would tokenize back into a note or span. Paste as Plain Text pastes its words instead: the
-  // prose a hidden-marker copy of the same selection writes. A view with hidden markers has no
-  // such text on its clipboard.
+  // prose a hidden-marker copy of the same selection writes. A view with hidden markers keeps its
+  // own plain-text paste (clipboard-semantics S5), and its paste gate refuses `\` text anyway.
   const plainTextPasteTransform = useMemo<PlainTextPasteTransform | undefined>(
     () =>
       viewOptions?.markerMode === "editable"

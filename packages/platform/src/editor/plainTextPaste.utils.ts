@@ -30,14 +30,22 @@ export interface PlainProseOptions {
 
 /**
  * Prose for a plain-text paste, or `text` unchanged when it holds no marker or cannot be converted
- * without losing text. Pure: no live-editor access; safe outside any update.
+ * without losing text. Needs no live editor and is safe outside any update. Like the other
+ * side-serializers, it goes through the adaptor's module state: it sets the view options and calls
+ * the host's comment callback (`addMissingComments`), with no comment ids.
  *
  * The prose is what a hidden-marker view's copy of the same USFM writes as `text/plain`: the text
  * is tokenized as USFM, laid out as the Formatted view lays it out in a throwaway editor, and
  * copied from there with that view's copy (`$selectionPlainText`). So a note's words go inline,
- * markers, verse numbers and milestones leave no text, an optbreak stays the `//` the text spells,
- * and each paragraph is a line. Book and chapter lines are left out: their text is an identifier
- * and a number, not prose.
+ * markers, verse numbers and milestones leave no text, and each paragraph is a line. Book and
+ * chapter lines are left out: their text is an identifier and a number, not prose. An optbreak is
+ * the one deliberate departure from a hidden-marker copy, which drops every optbreak (so
+ * `https://ebible.org` in a note copies as `https:ebible.org`): the `//` the text spells is kept,
+ * because keeping it loses no text.
+ *
+ * Every editable-marker view converts, not only Standard: the library's Unformatted view
+ * (`markerMode` "editable") does too. Its copy is Lexical's display text rather than Standard's
+ * USFM copy, so its own copies may not round-trip through this conversion as Standard's do.
  *
  * Text is read as USFM only when it names a marker USFM defines: one `getMarker` knows, `\cat` (a
  * note's category, which the tokenizer knows by name though the bundled stylesheet lacks it), or a
@@ -49,7 +57,12 @@ export interface PlainProseOptions {
  * copy writes every paragraph after the first that way (and a bare `\` there as a paragraph whose
  * marker has no name). That is still a guess: in USFM-looking text, a later line holding only a
  * backslash word (`\temp`) loses that word. A name that opens the text's first line is not read
- * this way, so a copy that starts at an unknown paragraph marker pastes unchanged.
+ * this way, so a copy that starts at an unknown paragraph marker pastes unchanged. A `\z…` name
+ * that opens a later line counts as USFM evidence by itself, so `See:\n\zebra stripes` loses
+ * `\zebra`.
+ *
+ * Text whose prose comes out empty (a copy of only `\v 5 ` or `\c 2`) is returned unchanged too:
+ * pasting nothing over a selection would delete it. Whitespace-only prose is pasted as it is.
  */
 export function usfmToPlainProse(text: string, options: PlainProseOptions): string {
   if (!text.includes("\\")) return text;
@@ -94,7 +107,7 @@ export function usfmToPlainProse(text: string, options: PlainProseOptions): stri
         hiddenOptions,
       ),
     );
-    return state.read(
+    const prose = state.read(
       () => {
         const root = $getRoot();
         const selection = $createRangeSelection();
@@ -108,6 +121,7 @@ export function usfmToPlainProse(text: string, options: PlainProseOptions): stri
       },
       { editor },
     );
+    return prose === "" ? text : prose;
   } catch (error) {
     logger?.warn("Pasting the text as it is: it could not be converted to plain prose.", error);
     return text;
