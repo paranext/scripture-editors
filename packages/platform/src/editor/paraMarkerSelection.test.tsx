@@ -576,6 +576,32 @@ describe("EditorProps.onParaMarkerMenuRequest", () => {
       expect(ref.current?.getSelectedParaMarker()).toBe("li2");
     },
   );
+
+  // A modified Enter acts at the paragraph's text, as Enter does with no menu; Shift+Enter's line
+  // break has no USFM representation, so there it is Enter, as in Paratext 9.
+  it("does not fire on Shift+Enter, which splits at the paragraph's text as Enter does with no menu", async () => {
+    const afterKey = async (shiftKey: boolean, onParaMarkerMenuRequest?: () => void) => {
+      const { ref, lexical } = await mountParagraphStructure({ onParaMarkerMenuRequest });
+      await clickElement(glyphElementOf(lexical, "li2"));
+      await act(async () => {
+        lexical.getRootElement()?.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            shiftKey,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      return ref.current?.getUsj();
+    };
+    const onParaMarkerMenuRequest = vi.fn();
+    const enter = await afterKey(false);
+    const shiftEnter = await afterKey(true, onParaMarkerMenuRequest);
+
+    expect(onParaMarkerMenuRequest).not.toHaveBeenCalled();
+    expect(shiftEnter).toEqual(enter);
+  });
 });
 
 describe("Backspace/Delete on a selected paragraph marker", () => {

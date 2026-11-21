@@ -9,6 +9,7 @@ import {
   SerializedParagraphNode,
 } from "lexical";
 import { PARA_MARKER_DEFAULT } from "./node-constants.js";
+import { $createParaNode, ParaNode } from "./ParaNode.js";
 
 export const IMPLIED_PARA_VERSION = 1;
 
@@ -41,11 +42,13 @@ export class ImpliedParaNode extends ParagraphNode {
 
   // Mutation
 
-  override insertNewAfter(
-    rangeSelection: RangeSelection,
-    restoreSelection: boolean,
-  ): ImpliedParaNode {
-    const newElement = $createImpliedParaNode();
+  /**
+   * The line a split of this one (Enter, a pasted line break) puts after it: a `\p` paragraph
+   * (the marker this line reports), not another line with no marker. Adjacent lines with no marker
+   * are saved as one run of text, so a second one would lose the break.
+   */
+  override insertNewAfter(rangeSelection: RangeSelection, restoreSelection: boolean): ParaNode {
+    const newElement = $createParaNode(this.getMarker());
     newElement.setTextFormat(rangeSelection.format);
     newElement.setTextStyle(rangeSelection.style);
     newElement.setDirection(this.getDirection());

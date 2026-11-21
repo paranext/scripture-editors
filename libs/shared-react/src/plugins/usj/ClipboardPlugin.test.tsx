@@ -1,12 +1,20 @@
 import { ClipboardPlugin } from "./ClipboardPlugin";
 import { copySelection } from "./clipboard.utils";
-import { baseTestEnvironment } from "./react-test.utils";
+import { baseTestEnvironment, settle } from "./react-test.utils";
+import { objectKlassEquals } from "@lexical/utils";
 import { act } from "@testing-library/react";
 import {
   $createNodeSelection,
+  $createRangeSelection,
+  $createTabNode,
   $createTextNode,
+  $getNodeByKey,
   $getRoot,
+  $getSelection,
+  $isRangeSelection,
+  $isTabNode,
   $setSelection,
+  COMMAND_PRIORITY_CRITICAL,
   LexicalEditor,
   PASTE_COMMAND,
   TextNode,
@@ -191,6 +199,268 @@ describe("ClipboardPlugin — paste keys are unaffected", () => {
     // now follow must not reach these.
     expect((await pressShortcut(editor, "v")).defaultPrevented).toBe(true);
     expect((await pressShortcut(editor, "v", true)).defaultPrevented).toBe(true);
+  });
+});
+
+/** The async clipboard read `pasteSelection`/`pasteSelectionAsPlainText` start with. */
+function clipboardRead() {
+  return vi.mocked(navigator.clipboard.read);
+}
+
+describe("ClipboardPlugin — Ctrl+V", () => {
+  it("reads the clipboard, claiming the keystroke", async () => {
+    const { editor, text } = await clipboardEnvironment();
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    const event = await pressShortcut(editor, "v");
+    await settle();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(clipboardRead()).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["Ctrl+V", false],
+    ["Ctrl+Shift+V", true],
+  ])("logs a clipboard read that fails for %s to the plugin's logger", async (_name, shiftKey) => {
+    const denied = () => Promise.reject(new Error("clipboard read denied"));
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { read: denied, readText: denied } });
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    const { editor } = await baseTestEnvironment(
+      () => $getRoot().append($createParaNode("p").append($createTextNode("text"))),
+      <ClipboardPlugin logger={logger} />,
+    );
+
+    await pressShortcut(editor, "v", shiftKey);
+    await settle();
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(String(logger.warn.mock.calls[0][0])).toContain("clipboard read denied");
+  });
+});
+
+describe("ClipboardPlugin — a paste as reading the clipboard gives it", () => {
+  /** What a paste handler registered after the plugin reads of a paste carrying all three
+   * flavors. */
+  async function seenBy(pastesAsClipboardRead: boolean | undefined) {
+    const { editor } = await baseTestEnvironment(
+      () => $getRoot().append($createParaNode("p").append($createTextNode("text"))),
+      <ClipboardPlugin pastesAsClipboardRead={pastesAsClipboardRead} />,
+    );
+    const flavors = new Map([
+      ["application/x-lexical-editor", '{"namespace":"platformEditor","nodes":[]}'],
+      ["text/html", "<span>html</span>"],
+      ["text/plain", "plain"],
+    ]);
+    const event = {
+      clipboardData: {
+        types: [...flavors.keys()],
+        files: [],
+        getData: (type: string) => flavors.get(type) ?? "",
+      },
+      preventDefault: vi.fn(),
+    } as unknown as ClipboardEvent;
+    let seen: { types: readonly string[]; flavor: string; plain: string } | undefined;
+    editor.registerCommand(
+      PASTE_COMMAND,
+      (pasted) => {
+        const data = (pasted as ClipboardEvent).clipboardData;
+        if (data)
+          seen = {
+            types: [...data.types],
+            flavor: data.getData("application/x-lexical-editor"),
+            plain: data.getData("text/plain"),
+          };
+        return true;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    );
+    await act(async () => {
+      editor.update(() => {
+        editor.dispatchCommand(PASTE_COMMAND, event);
+      });
+    });
+    return seen;
+  }
+
+  it("leaves the node copy flavor out of every paste when asked", async () => {
+    expect(await seenBy(true)).toEqual({
+      types: ["text/html", "text/plain"],
+      flavor: "",
+      plain: "plain",
+    });
+  });
+
+  it("leaves a paste as it is by default", async () => {
+    expect((await seenBy(undefined))?.flavor).toContain("platformEditor");
+  });
+
+  it("pastes the html in place of the node copy, keeping the browser from pasting again", async () => {
+    let text: TextNode | undefined;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        text = $createTextNode("text");
+        $getRoot().append($createParaNode("p").append(text));
+      },
+      <ClipboardPlugin pastesAsClipboardRead />,
+    );
+    if (!text) throw new Error("expected the initial text node to exist");
+    const textKey = text.getKey();
+    await act(async () => {
+      editor.update(() => $getNodeByKey(textKey)?.selectEnd(), { discrete: true });
+    });
+    // The editor's own node copy, which Lexical would paste in place of the html were it read.
+    const nodeCopy = JSON.stringify({
+      namespace: "TestEditor",
+      nodes: [{ type: "text", version: 1, text: "nodes", detail: 0, format: 0, mode: "normal" }],
+    });
+    const flavors = new Map([
+      ["application/x-lexical-editor", nodeCopy],
+      ["text/html", "<span>html</span>"],
+      ["text/plain", "plain"],
+    ]);
+    const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        types: [...flavors.keys()],
+        files: [],
+        getData: (type: string) => flavors.get(type) ?? "",
+      },
+    });
+
+    await act(async () => {
+      editor.update(() => {
+        editor.dispatchCommand(PASTE_COMMAND, event);
+      });
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe("texthtml");
+  });
+});
+
+describe("ClipboardPlugin — a native paste the browser delivers", () => {
+  /** A paste event as the browser raises one, carrying the editor's node copy beside its html and
+   * plain text. */
+  function nativePaste(): ClipboardEvent {
+    const flavors = new Map([
+      ["application/x-lexical-editor", '{"namespace":"TestEditor","nodes":[]}'],
+      ["text/html", "<span>html</span>"],
+      ["text/plain", "plain"],
+    ]);
+    const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        types: [...flavors.keys()],
+        files: [],
+        getData: (type: string) => flavors.get(type) ?? "",
+      },
+    });
+    return event;
+  }
+
+  /** An editor with the plugin taking the node copy out, and a paste handler registered after it
+   * that records how it sees the paste and claims it. */
+  async function pasteEnvironment() {
+    const { editor } = await baseTestEnvironment(
+      () => $getRoot().append($createParaNode("p").append($createTextNode("text"))),
+      <ClipboardPlugin pastesAsClipboardRead />,
+    );
+    const seen: {
+      isClipboardEvent: boolean;
+      isClipboardEventByName: boolean;
+      isInputEvent: boolean;
+      hasClipboardData: boolean;
+      target: EventTarget | null;
+      flavor: string | undefined;
+    }[] = [];
+    editor.registerCommand(
+      PASTE_COMMAND,
+      (pasted) => {
+        seen.push({
+          isClipboardEvent: pasted instanceof ClipboardEvent,
+          isClipboardEventByName: objectKlassEquals(pasted, ClipboardEvent),
+          isInputEvent: objectKlassEquals(pasted, InputEvent),
+          hasClipboardData: "clipboardData" in pasted,
+          target: pasted.target,
+          flavor: (pasted as ClipboardEvent).clipboardData?.getData("application/x-lexical-editor"),
+        });
+        pasted.preventDefault();
+        return true;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    );
+    return { editor, seen };
+  }
+
+  it("reaches the handlers after it as the browser's own event, but for the node copy", async () => {
+    const { editor, seen } = await pasteEnvironment();
+    const root = editor.getRootElement();
+    if (!root) throw new Error("editor has no root element");
+    const event = nativePaste();
+
+    await act(async () => {
+      root.dispatchEvent(event);
+    });
+
+    // Lexical's own paste checks a paste's class by name, other handlers with `instanceof`, and a
+    // paste into an input inside a decorator by its target.
+    expect(seen).toEqual([
+      {
+        isClipboardEvent: true,
+        isClipboardEventByName: true,
+        isInputEvent: false,
+        hasClipboardData: true,
+        target: root,
+        flavor: "",
+      },
+    ]);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("is not taken at all in a read-only editor, which takes no paste", async () => {
+    const { editor, seen } = await pasteEnvironment();
+    act(() => editor.setEditable(false));
+    const root = editor.getRootElement();
+    if (!root) throw new Error("editor has no root element");
+    const event = nativePaste();
+
+    await act(async () => {
+      root.dispatchEvent(event);
+    });
+
+    expect(seen).toEqual([]);
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe("text");
+  });
+});
+
+describe("ClipboardPlugin — a tab becomes a space", () => {
+  it("replaces a tab node with a space, keeping a selection of the tab on the space", async () => {
+    const { editor, text } = await clipboardEnvironment();
+
+    await act(async () =>
+      editor.update(
+        () => {
+          const tab = $createTabNode();
+          text.insertAfter(tab);
+          tab.insertAfter($createTextNode("and"));
+          const selection = $createRangeSelection();
+          selection.anchor.set(tab.getKey(), 0, "text");
+          selection.focus.set(tab.getKey(), 1, "text");
+          $setSelection(selection);
+        },
+        { discrete: true },
+      ),
+    );
+
+    editor.getEditorState().read(() => {
+      const nodes = $getRoot().getAllTextNodes();
+      expect(nodes.some($isTabNode)).toBe(false);
+      expect($getRoot().getTextContent()).toBe("In the beginning and");
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.getTextContent()).toBe(" ");
+    });
   });
 });
 

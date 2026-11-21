@@ -41,3 +41,12 @@ tags the release but does not edit this file; see the README's "Releasing" secti
   changed from a truthiness test to an explicit `undefined`/`null` test. An empty value is an
   unambiguous "present but not yet filled in", so parsing it loses nothing. **Consumers will see
   `attr=""` in output that previously omitted the attribute entirely.**
+
+### Fixed
+
+- **`usxStringToUsj` keeps NEL (U+0085), LINE SEPARATOR (U+2028) and PARAGRAPH SEPARATOR (U+2029).**
+  It read USX by the XML 1.1 line-end rules, xmldom's default, which turn each of them into a line
+  feed in text and a space in an attribute value; a text node holding only one of them was dropped
+  as formatting whitespace. ParatextData writes USX as XML 1.0, so the converter now reads it by
+  those rules: CR LF and a lone CR still become a line feed, and the three characters come back as
+  they are stored.

@@ -30,6 +30,7 @@ import {
   $isPlainProse,
   $selectionContainsVerseMarker,
   $shouldBlockSelectionReplacement,
+  BEFORE_PLAIN_TEXT_INSERTION_COMMAND,
   CONFIRMED_DELETE_TAG,
   StructureProtectionMode,
 } from "shared-react";
@@ -59,7 +60,9 @@ import { useEffect } from "react";
  * removed first and is then Lexical's to insert at the caret, as it holds line breaks and tabs that
  * typed text does not. Any other payload is inserted with `insertNodes`, which does not have this
  * problem. Plain text waits at `COMMAND_PRIORITY_LOW`, behind every handler that can refuse the paste,
- * so a refused paste has removed nothing.
+ * so a refused paste has removed nothing. Plain text that `UnstorableTextPlugin` inserts itself (once
+ * filtered, joined into one line, or freed of marker tokens) has the range removed the same way,
+ * when it dispatches `BEFORE_PLAIN_TEXT_INSERTION_COMMAND`.
  *
  * Mounted ahead of `StructureKeyboardPlugin`, so it claims these commands first. It therefore
  * leaves a range that plugin judges to it, which is what keeps structure protection in force for
@@ -120,6 +123,11 @@ export function InlineRangeEditPlugin({
             return false;
           },
           COMMAND_PRIORITY_LOW,
+        ),
+        editor.registerCommand(
+          BEFORE_PLAIN_TEXT_INSERTION_COMMAND,
+          () => $replaceInlineRange("", structureProtectionMode, "caretForPaste"),
+          COMMAND_PRIORITY_HIGH,
         ),
       ),
     [editor, structureProtectionMode],

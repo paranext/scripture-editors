@@ -9,7 +9,7 @@ import { copyEvent } from "./markerEdit/markerEdit.test-helpers";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { baseTestEnvironment } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
-import { $getClipboardDataFromSelection, LexicalClipboardData } from "@lexical/clipboard";
+import { $getHtmlContent, LexicalClipboardData } from "@lexical/clipboard";
 import { $dfs } from "@lexical/utils";
 import { usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -26,11 +26,13 @@ import {
   LexicalEditor,
   TextNode,
 } from "lexical";
-import { $isMarkerTrailingSeparator, NBSP } from "shared";
+import { $isGutterMarkerNode, $isMarkerTrailingSeparator, NBSP } from "shared";
 import {
+  $hiddenViewLexicalFlavor,
   $isSomeVerseNode,
   FORMATTED_VIEW_MODE,
   getViewOptions,
+  htmlWithNodeCopy,
   PARAGRAPH_STRUCTURE_VIEW_MODE,
 } from "shared-react";
 
@@ -129,6 +131,24 @@ function $selectBetween(from: string, to: string) {
   $select($textNode(from), 0, $textNode(to), -1);
 }
 
+/** The `text/html` and node copy a hidden-marker view's copy of the current selection writes:
+ * Lexical's html export holding the view's node copy in an attribute, and that node copy. */
+function $expectedRichFlavors(editor: LexicalEditor): Omit<LexicalClipboardData, "text/plain"> {
+  return editor.getEditorState().read(
+    () => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      const nodeCopy = $hiddenViewLexicalFlavor(selection);
+      if (nodeCopy === undefined) throw new Error("expected a node copy");
+      return {
+        "text/html": htmlWithNodeCopy($getHtmlContent(editor, selection), nodeCopy),
+        "application/x-lexical-editor": nodeCopy,
+      };
+    },
+    { editor },
+  );
+}
+
 async function copy(editor: LexicalEditor, command = COPY_COMMAND) {
   const { event, getData } = copyEvent();
   await act(async () => editor.dispatchCommand(command, event));
@@ -167,29 +187,26 @@ describe("HiddenMarkersViewCopyPlugin", () => {
     expect(getData("text/plain")).toBe(`${PSALM_1_2_PROSE} Day${NBSP}and night.`);
   });
 
-  it("keeps Lexical's own html and internal flavors, which the editor's own paste reads", async () => {
+  it("writes the view's own html and node copy, which the editor's own paste reads", async () => {
     const { editor } = await renderEditor();
     await act(async () => editor.update(() => $selectBetween("but his", "night.")));
-    const expected = editor
-      .getEditorState()
-      .read(() => $getClipboardDataFromSelection($getSelection()), { editor });
+    const expected = $expectedRichFlavors(editor);
     const { getData } = await copy(editor);
 
     expect(getData("text/html")).toBe(expected["text/html"]);
     expect(getData("application/x-lexical-editor")).toBe(expected["application/x-lexical-editor"]);
+    // They keep the note's spacers, which the paste rebuilds the note with.
+    expect(getData("text/html")).toContain("&nbsp;");
   });
 
   it("writes the same flavors for a Ctrl+C, which dispatches no clipboard event", async () => {
     const { editor } = await renderEditor();
     await act(async () => editor.update(() => $selectBetween("but his", "night.")));
-    const expected = editor
-      .getEditorState()
-      .read(() => $getClipboardDataFromSelection($getSelection()), { editor });
+    const expected = $expectedRichFlavors(editor);
     await act(async () => editor.dispatchCommand(COPY_COMMAND, null));
 
     expect(copyToClipboardSpy.mock.calls.at(-1)?.[2]).toEqual({
-      "text/html": expected["text/html"],
-      "application/x-lexical-editor": expected["application/x-lexical-editor"],
+      ...expected,
       "text/plain": `${PSALM_1_2_PROSE} Day${NBSP}and night.`,
     });
   });
@@ -377,6 +394,36 @@ describe("HiddenMarkersViewCopyPlugin", () => {
     // Lexical's copy wrote the verse in its own flavors.
     expect(event.defaultPrevented).toBe(true);
     expect(getData("application/x-lexical-editor")).toContain('"number":"2"');
+  });
+
+  it.each([
+    ["led by a verse", PSALM_1_2],
+    ["led by text", `<para style="q2">nor stand in the way of sinners</para>`],
+  ])("writes nothing on a copy of only the gutter marker glyph of a line %s", async (_, paras) => {
+    const { editor } = await renderEditor(paras);
+    // As a double-click on the glyph selects it.
+    await act(async () =>
+      editor.update(() => {
+        // The paragraph's, after the book line's.
+        const glyph = $dfs()
+          .map(({ node }) => node)
+          .filter($isGutterMarkerNode)
+          .at(-1);
+        if (!glyph) throw new Error("fixture has no gutter marker glyph");
+        const para = glyph.getParentOrThrow();
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(para.getKey(), glyph.getIndexWithinParent(), "element");
+        selection.focus = $createPoint(para.getKey(), glyph.getIndexWithinParent() + 1, "element");
+        $setSelection(selection);
+      }),
+    );
+    const before = editor.getEditorState().read(() => $getRoot().getTextContent());
+    const { event, getData } = await copyWithLexicalFallback(editor);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(getData("text/plain")).toBe("");
+    expect(getData("text/html")).toBe("");
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(before);
   });
 
   it("leaves a copy whose page selection runs outside the editor to Lexical's own copy", async () => {

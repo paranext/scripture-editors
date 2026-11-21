@@ -1,4 +1,5 @@
 import { $isSomeVerseNode, SomeVerseNode } from "../../nodes/usj";
+import { $isBookOrChapterLine } from "./bookAndChapterLines.utils";
 import { $isOpaqueBlockNode, $rangeReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $placeCaretAtParaContentStart } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { $findMatchingParent } from "@lexical/utils";
@@ -809,19 +810,20 @@ export function $placeCaretAfterParaChild(para: ParaLikeNode, child: LexicalNode
 }
 
 /**
- * Flattens one pasted/dropped node for a structure-protected document: verse and chapter
- * markers vanish (leaf markers), paragraph wrappers are removed but their children kept,
- * and all other (inline) nodes pass through unchanged.
+ * Flattens one pasted/dropped node for a structure-protected document: verse markers and book and
+ * chapter lines vanish ({@link $isBookOrChapterLine}: the document has its own, text and all),
+ * paragraph wrappers are removed but their children kept, and all other (inline) nodes pass through
+ * unchanged.
  */
 function $flattenForProtectedStructure(node: LexicalNode): LexicalNode[] {
-  if ($isSomeVerseNode(node) || $isSomeChapterNode(node)) return [];
+  if ($isSomeVerseNode(node) || $isBookOrChapterLine(node)) return [];
   if ($isSomeParaNode(node)) return node.getChildren().flatMap($flattenForProtectedStructure);
   return [node];
 }
 
 /**
  * Sanitizes a flat array of pasted/dropped nodes for a structure-protected document by
- * stripping structural markers (paragraph breaks, verse markers, chapter markers) while
+ * stripping structural markers (paragraph breaks, verse markers, book and chapter lines) while
  * preserving text, inline character formatting, and notes. A removed top-level paragraph
  * boundary is replaced with a single space so words from adjacent paragraphs do not fuse;
  * nested paragraphs are flattened without inserting a separator.
@@ -834,8 +836,39 @@ export function $sanitizeNodesForProtectedStructure(nodes: LexicalNode[]): Lexic
   for (const node of nodes) {
     const flattened = $flattenForProtectedStructure(node);
     if (flattened.length === 0) continue;
-    if ($isSomeParaNode(node) && result.length > 0) result.push($createTextNode(" "));
+    if ($isSomeParaNode(node) && result.length > 0) {
+      const separator = $createTextNode(" ");
+      PARAGRAPH_SEPARATORS.add(separator);
+      result.push(separator);
+    }
     result.push(...flattened);
   }
   return result;
+}
+
+/**
+ * The spaces {@link $sanitizeNodesForProtectedStructure} puts between pasted paragraphs. Each is
+ * made, judged and inserted in the one update that sanitizes its paste, so the node is the same
+ * object throughout.
+ */
+const PARAGRAPH_SEPARATORS = new WeakSet<LexicalNode>();
+
+/** Whether `node` holds a leaf other than a paragraph separator. */
+function $holdsContent(node: LexicalNode): boolean {
+  return $isElementNode(node)
+    ? node.getChildren().some($holdsContent)
+    : !PARAGRAPH_SEPARATORS.has(node);
+}
+
+/**
+ * Whether inserting `nodes`, as {@link $sanitizeNodesForProtectedStructure} left them, would put
+ * nothing into the document but the spaces it put between paragraphs: once a filter has emptied
+ * every pasted paragraph (one holding only `\`, say), those spaces separate nothing, so the paste
+ * inserts nothing, as it does where structure is not protected.
+ *
+ * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
+ * handler.
+ */
+export function $insertsOnlyParagraphSeparators(nodes: LexicalNode[]): boolean {
+  return !nodes.some($holdsContent);
 }

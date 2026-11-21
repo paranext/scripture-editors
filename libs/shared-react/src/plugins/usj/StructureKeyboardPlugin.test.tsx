@@ -295,13 +295,22 @@ describe("StructureKeyboardPlugin — paste/drop payload sanitization", () => {
       t1 = $createTextNode("hello world");
       $getRoot().append($createParaNode("p").append(t1));
     });
-    updateSelection(editor, t1!, 5);
-
-    await act(async () => {
-      editor.update(() => {
-        editor.dispatchCommand(DROP_COMMAND, htmlDropEvent(VERSE_HTML));
-      });
+    // The drop lands where it is dropped: jsdom has no `caretRangeFromPoint`, so it answers there.
+    const range = document.createRange();
+    range.setStart(editor.getElementByKey(t1!.getKey())!.firstChild!, 5);
+    Object.defineProperty(document, "caretRangeFromPoint", {
+      configurable: true,
+      value: () => range,
     });
+    try {
+      await act(async () => {
+        editor.update(() => {
+          editor.dispatchCommand(DROP_COMMAND, htmlDropEvent(VERSE_HTML));
+        });
+      });
+    } finally {
+      Reflect.deleteProperty(document, "caretRangeFromPoint");
+    }
 
     editor.getEditorState().read(() => {
       const para = $getRoot().getChildren()[0];

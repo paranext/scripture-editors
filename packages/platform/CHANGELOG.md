@@ -16,6 +16,9 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Added
 
+- **Hosts:** `onUnstorableTextRemoved`'s `source` can be `"paste"`, `"drop"`, `"typing"`,
+  `"deletion"` or `"move"` (exported as `UnstorableTextSource`), so a host that switches over
+  `source` needs a case for each, and a fallback for values added later.
 - `generateUsjFontCss` — the font part of `generateUsjCss`'s output only (the base font family and
   size, and each marker's font family), for a view that keeps its own marker layout.
 - `STANDARD_VIEW_MODE`, plus `"standard"` in `getDefaultViewMode()` and `viewModeToViewNames`.
@@ -146,6 +149,11 @@ refused. The public surface grew substantially; nothing was removed.
   changing nothing, outside chapter 1 or once the document has a chapter.
 - `MarkerMenuContext.canInsertChapter` — set in chapter 1 of a document with no chapter yet, where
   `getMarkerMenuItems` offers `\c`.
+- `EditorOptions.onUnstorableTextRemoved`, with the types `UnstorableTextRemovedHandler`,
+  `UnstorableTextRemoved` and `UnstorableCharacter`: called once per paste, drop, keystroke, delete,
+  transpose or drag-move in a view whose `markerMode` is `"hidden"` that removed or refused `\` or
+  `//`, with its `source` and what was `removed`, so the host can tell the user why text is missing
+  or why a delete or move did nothing. Never called in Standard or Markers view.
 
 ### Changed
 
@@ -166,11 +174,16 @@ refused. The public surface grew substantially; nothing was removed.
   they carried it under `milestone`. `applyUpdate` and `replaceEmbedUpdate` still accept
   `milestone`, so ops from earlier builds keep their milestones.
 - **Standard view turns incoming control characters into spaces.** Every C0 control character but
-  tab, line feed and carriage return in a loaded document (text and attribute values), a paste, a
-  drop, typed text or applied delta ops becomes a space, so none can be saved as the stand-in for a
-  no-break space. Paratext's reader makes the same of all of them but vertical tab (U+000B) and
-  form feed (U+000C), which become spaces here on purpose, since JavaScript reads them as
-  whitespace.
+  U+0000, tab, line feed and carriage return in a loaded document (text and attribute values) or
+  applied delta ops becomes a space, so none can be saved as the stand-in for a no-break space.
+  Paratext's reader (`ScrText.ProcessBookOrChapterText`) makes the same of every one of them, so a
+  project's text never holds one.
+- **Control characters the user types, pastes or drops go in as spaces, in every view.** Every C0
+  control character but tab, line feed and carriage return (U+0000 included) becomes a space, as
+  Paratext's reader reads it when the text is next opened; text the document already holds is never
+  changed, and text an input method is composing is left alone. The editors keep two for
+  themselves: Standard view's stand-in for a stored no-break space (U+001A) and a marker settle's
+  display-only line break (U+000B).
 - **A drop into Standard view goes in as a paste of the same data does** (`\c`/`\id` stripped,
   no-break spaces resolved positionally, lines replayed), instead of through Lexical's own
   insertion, and a drag out of Standard view carries the same USFM text and html a copy writes.
@@ -288,9 +301,115 @@ refused. The public surface grew substantially; nothing was removed.
   claimed the cut ahead of that refusal and removed the range — a paragraph boundary or a verse
   marker included. It now declines, as the paste handler already did, so nothing is copied or
   removed.
+- **The views that hide markers leave `\` and `//` out of a paste, drop or typing, and keep the
+  rest.** A paste or drop holding any `\` or `/` was refused whole, so a URL or "and/or" could not
+  be pasted. Now each `\` is removed, then each `//`, then a `/` that would touch a `/` already in
+  the document; a lone `/` stays (`https://example.org` goes in as `https:example.org`). A typed
+  `\` or a `/` beside a `/` is refused at the keystroke. Marker glyphs in pasted html are left out.
+  The Markers view still refuses `\` and `/`; Standard view is unchanged. See `docs/clipboard-semantics.md`.
+- **The views that hide markers refuse a delete or cut that would join two `/` into `//`.**
+  Deleting `b` from `a/b/c` saved `a//c`, which USFM reads as an optional line break, so the view
+  showed `ac` after the next load. Such a delete (Backspace, Delete and their word and line chords,
+  a selection delete, a cut, a paragraph join, the removal half of a drag-move) now does nothing and
+  reports `source: "deletion"`. An optional line break counts as the `//` the file stores; a `//`
+  already in the text is left alone. Standard view is unchanged. See `docs/clipboard-semantics.md`.
+- **A drag-move within the editor, in the views that hide markers, lands where it was dropped, or
+  is refused if it would lose a `/`.** Dragging the lone `/` out of `a/b` to just after `c/` saved
+  `ab c/`, and a move within one line landed at the start of its text node. Such a move now goes in
+  at the drop point as one undo step, and one that would lose a `/` where it lands does nothing and
+  reports `source: "move"`. A copy-drop and a drop from another program keep the filter. See
+  `docs/clipboard-semantics.md`.
+- **The views that hide markers refuse a transpose that would join two `/` into `//`.** macOS
+  Ctrl+T in `/x/` with the caret before the second `/` would have saved `//x`. Such a transpose now
+  does nothing, keeps the caret, and reports `source: "typing"`; any other transpose goes ahead.
+- **A copy in the views that hide markers is read back only by those views.** Its node copy
+  (`application/x-lexical-editor`) is tagged with the namespace `"platformEditor/hidden-markers"`,
+  so a copy from Standard view pasted into one of them, or the reverse, goes in by its html or plain
+  text. It is not written for a selection with an end inside a construct the view hides (a figure,
+  an optional break, a table). Where written, `text/html` also carries it, in the attribute
+  `data-platform-editor-node-copy` of a `<span>` around the html's own content; what the html shows
+  is unchanged. A node copy a view that hides markers would not write — a node it never holds, or
+  holds elsewhere (a note caller outside its note), a field it never holds (a marker with a space, a
+  verse number holding `\v`, a styled text, an attribute named for a field the save writes or for `style`, a node state the editor does not define or a value it would not keep as it is), or nesting deeper than 32 levels — goes in by its html
+  or plain text instead, since any web page can put one in its html. See
+  `docs/clipboard-semantics.md`.
+- **Standard view's and the Markers view's `text/html` carries one new attribute**, the empty
+  `data-platform-editor-marker-text` on its first `<p>`, which tells a view that hides markers that
+  the text is USFM. The text a consumer reads is unchanged.
 
 ### Fixed
 
+- **A marker settle keeps the Unicode line separators (U+2028) a paragraph holds.** Typing a marker
+  into such a paragraph, or any edit whose settle re-reads its text, dropped each U+2028, in
+  Standard view and the Unformatted view. They stay characters, as in Paratext 9.
+- **A Standard-view copy whose selection ends on the editor root between two paragraphs copies
+  that last paragraph.** It wrote none of the paragraph's text, so a cut and paste back left it
+  empty. No gesture in Standard view is known to end a selection there; code that sets one can.
+- **A paste the browser delivers itself pastes as Ctrl+V does in the views that show markers**
+  (Standard, the Footnotes pane's row editor, Unformatted, Markers). macOS's Edit > Paste,
+  Shift+Insert and a `PASTE_COMMAND` carrying the editor's node copy took Lexical's node-tree path,
+  which threw on a cut collapsed footnote, put a paste meant inside a note after it, and showed a
+  pasted marker it did not save. They now take the html and plain text, as Ctrl+V does; the views
+  that hide markers still read their own node copy.
+- **Select All, then copy, cut or paste, keeps one book line and one chapter line in the views that
+  hide markers.** Under `"off"` and `"guarded"` structure a copy of Select All pasted at the end
+  added a second chapter, so every later save of the chapter failed, and a paste over Select All or
+  a cut and its paste back lost the chapter line, the book line's text and every pasted note's
+  `\cat`. No paste or drop there inserts a book or chapter line now, and a cut or a paste over a
+  selection keeps the ones it runs across. Select All, cut, then paste back restores the document,
+  front matter included, and typing, Enter or a drag-move over Select All keeps both lines. A copy
+  starting partway into a front matter line joins the line before the chapter line. Standard view
+  is unchanged. See `docs/clipboard-semantics.md`.
+- **A copy from the block-verse layout pastes as normal paragraphs.** Its node copy carried one
+  fragment per verse, so a paste into paragraph-structure started a paragraph at each verse and
+  could leave an empty `\p`. The fragments of one paragraph are rejoined; what the column shows,
+  and its plain text and html, are unchanged.
+- **A copy from a view that shows markers pastes into a view that hides them without its markers.**
+  Standard view, the Markers view and the Footnotes pane's row editor write USFM as html and plain
+  text, so a copy of `1 \ft TR and ` saved as `1 ft TR and `, a marker's name as a word of
+  Scripture. Such a paste now loses its marker tokens (`1 TR and `), with no
+  `onUnstorableTextRemoved` report for them, and its book line and chapter tokens go whole, so a
+  whole-chapter copy adds no book code, chapter number or empty paragraph. Another program's paste
+  is unchanged.
+- **A copy or cut of only a paragraph's gutter marker glyph writes nothing** in the views that hide
+  markers, and the cut removes nothing. Double-clicking the glyph and copying or cutting wrote its
+  text, such as `\q1 `.
+- **A copy or cut of a range inside a collapsed note takes the whole note.** Such a range copied
+  part of the note (`\f - \cat things\cat*`) while the cut removed all of it, so a cut pasted back
+  lost the rest of the note. A copy leaves the selection where it was.
+- **Under protected structure, a drop lands where it is dropped.** It went in at the selection,
+  which at a drop is still what was dragged, so a drag-move within the editor moved nothing and a
+  copy-drop or a drop from another program replaced the selection. A move within the editor is now
+  made as in the unlocked views, and a drop point that would replace structure is refused.
+- **Under protected structure, a paste whose paragraphs are all filtered out inserts nothing**, as
+  it does where structure is not protected. A paste of paragraphs each holding only `\` over a
+  figure replaced the figure with the space put between the paragraphs, without calling
+  `onHiddenContentDelete`.
+- **A line with no paragraph marker keeps the breaks Enter and a paste put in it.** In the blank
+  line after a chapter line, or in text USFM holds with no marker, typing `one`, Enter, `two`, or
+  pasting those two lines, showed two lines but saved `onetwo`. A split there now starts a `\p`
+  paragraph, in every view, and a marker picked from the Enter menu there (`splitParagraphWithMarker`)
+  starts a paragraph of that marker. Under `"protected"` structure Enter there is refused and a
+  paste's lines join with one space, as before.
+- **Shift+Enter is Enter, and a line break is never saved as nothing.** Shift+Enter in `one|two`
+  showed two lines and saved `onetwo`, in every view. A line break requested any way (Shift+Enter,
+  macOS Ctrl+O, a `beforeinput` `insertLineBreak`, a typed `\n`) now runs Enter, as in Paratext 9,
+  and is refused where Enter is refused. A line break a paste or drop brings in splits the
+  paragraph, or, where it cannot be split (`"protected"` structure, a note, the `\id` line), is a
+  space (nothing beside whitespace). In the views that hide markers a pasted lone carriage return is
+  a line break too. A view without spacing (`hasSpacing: false`) keeps the line breaks that are its
+  layout. See `docs/clipboard-semantics.md`.
+- **Text inserted as one string holding a line break no longer keeps it as a character.**
+  Dictation, autocorrect, a yank or an extension's insertion could leave `\n`, `\r\n` or a lone
+  `\r` in the text, shown as two lines and saved as a space. Each such line break now goes in as a
+  pasted one does (a paragraph split, or a space where it cannot split). Text an input method is
+  composing is left alone. U+2028 and U+2029 are not line breaks and stay characters, as in
+  Paratext 9.
+- **Ctrl+V, Ctrl+Shift+V, the context menu's Paste items and `EditorRef.paste`/`pastePlainText`
+  handle a failed clipboard read.** A refused or failed read was an unhandled promise rejection; it
+  is now logged at `warn` to the `Editor`'s `logger`. An empty clipboard pastes nothing, and nothing
+  is pasted into an editor that became read-only during the read. The `alert` for a denied
+  clipboard permission, which never showed, is gone. Paste as Plain Text reads the clipboard once.
 - `onStateChange` now fires when the caret moves into text outside any paragraph marker (an
   implied paragraph), with `blockMarker` set to `p`. It used to stay silent there, so a host kept
   the previous block's marker, often `id`, and scoped its character-marker menu to `\id`.
@@ -352,7 +471,7 @@ refused. The public surface grew substantially; nothing was removed.
   into `text/plain`, so a footnote pasted with Paste as Plain Text no longer has two spaces at each
   end. One ordinary space now separates a note's text from the text around it, where neither side
   already has whitespace. A stored no-break space is still written as `~` when invisible characters
-  are not allowed. `text/html` and the internal flavor are unchanged, as the editor's own
+  are not allowed. `text/html` and the internal flavor still hold the spacers, as the editor's own
   paste reads them back. These views' copies and cuts are now written by the editor rather than by
   Lexical's rich-text handler. Lexical's handler still takes a range with no text to copy (a lone verse number, or only spacers
   or placeholders), and writes it as before.
@@ -582,6 +701,28 @@ refused. The public surface grew substantially; nothing was removed.
   — acts on the whole span. Lexical records that end as a child index on the span, which was read
   as a text offset, so `removeCharacterMarker()` over `\add God\add*` left `G\add od\add*`, and removing `\nd`
   from a span holding a nested one changed nothing.
+- A copy in the views that hide markers no longer carries text the view does not show: the
+  paragraph-structure view's gutter markers (`\q1 `) and a hidden figure's caption. A collapsed
+  note's text stays in `text/plain`; a copy over `copyLimit` still writes plain text alone.
+- A multi-line plain-text paste or drop under `"protected"` structure in the views that hide
+  markers stays in the paragraph at the caret, as an html paste's paragraphs do, instead of making a
+  paragraph per line. Its lines join with one space: each run of line breaks becomes one space, or
+  nothing next to whitespace, so `x` and a line break pasted before `verse` no longer saves
+  `xverse` or a doubled space. Wherever the paragraph cannot be split (the `\id` line, inside a
+  note) its lines join the same way under every structure protection, as a pasted html line break
+  does there. Each tab in it becomes a space.
+- A copy and paste within the views that hide markers reproduces the copied Scripture exactly:
+  character and note attributes, note details, milestones, alternate and published verse numbers,
+  optional breaks and figures all survive, under every structure protection (`"protected"` still
+  joins paragraphs and drops verses and chapters). A cut and paste back of a caption-less figure or
+  an optional break restores it. A pasted optional break against a `/` is left out and reported
+  through `onUnstorableTextRemoved` as a `//`, since the file stores it as a bare `//`. Html from
+  another program is pasted as before.
+- A note pasted in the editor opens like the one copied: clicking its caller calls
+  `nodes.noteCallerOnClick`, in every view.
+- A tab a paste inserts as Lexical's tab node is saved as a space, in every view, as a paste that
+  reads the clipboard itself already saved it; it was saved as nothing, joining the words either
+  side. A tab inside pasted text stays a tab, as Standard view's own paste stores it.
 - In the views that hide markers, an edit that arrives with no keydown (an input method composing,
   macOS Ctrl+H) over a range holding a verse marker no longer bypasses structure protection. Under
   `"protected"` it is refused instead of removing the verse; under `"guarded"` a delete arms the

@@ -8,9 +8,12 @@ import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $setSelection,
   CLICK_COMMAND,
   COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_EDITOR,
+  COPY_COMMAND,
+  CUT_COMMAND,
   getDOMSelectionFromTarget,
   isDOMNode,
   KEY_DOWN_COMMAND,
@@ -176,13 +179,20 @@ function $collapsedNoteAt(point: PointType): NoteNode | undefined {
  * behind. A range end inside a collapsed note moves to the near side of the note on the end that
  * is inside: the start before it, the end past it.
  *
- * A range with both ends inside the same note is left alone; whoever made that selection (the
- * marker menu working inside a footnote) meant the content. A caret is left alone for the same
- * reason.
+ * A range with both ends inside the same note is left alone unless `includeRangeWithinOneNote` is
+ * set; whoever made that selection (the marker menu working inside a footnote) meant the content. A
+ * copy or cut sets it: the user sees only the caller, so the copy would carry part of the note,
+ * while the cut, by damaging the note's glyph pair, removes all of it. A caret is always left
+ * alone.
  *
  * Mutating (moves the selection): call inside `editor.update()` or a command handler.
+ *
+ * @param options - `includeRangeWithinOneNote`: also take the whole note into a range with both
+ *   ends inside it.
  */
-export function $takeCollapsedNotesIntoRange(): boolean {
+export function $takeCollapsedNotesIntoRange({
+  includeRangeWithinOneNote = false,
+}: { includeRangeWithinOneNote?: boolean } = {}): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
   const [start, end] = selection.isBackward()
@@ -190,7 +200,7 @@ export function $takeCollapsedNotesIntoRange(): boolean {
     : [selection.anchor, selection.focus];
   const startNote = $collapsedNoteAt(start);
   const endNote = $collapsedNoteAt(end);
-  if (startNote && endNote && startNote.is(endNote)) return false;
+  if (!includeRangeWithinOneNote && startNote && endNote && startNote.is(endNote)) return false;
   let changed = false;
   const startParent = startNote?.getParent();
   if (startNote && startParent) {
@@ -271,6 +281,10 @@ function $selectedTrailingNote(): NoteNode | undefined {
  * follows makes Lexical clear the DOM range before the click is even dispatched. That one is caught
  * a step earlier, on `SELECTION_CHANGE_COMMAND`, which is the last moment the landing survives.
  *
+ * A range with an end inside a collapsed note takes the whole note when the selection changes
+ * ({@link $takeCollapsedNotesIntoRange}), and so does a range wholly inside one when it is copied
+ * or cut.
+ *
  * Not gated on view options: whether a note renders as an atom is the note's own `isCollapsed`
  * state, which is the same axis every other collapsed-note rule reads.
  *
@@ -321,6 +335,40 @@ export function TrailingNoteCaretGuardPlugin(): null {
           return false;
         },
         COMMAND_PRIORITY_EDITOR,
+      ),
+      // CRITICAL, so every copy writer below reads the whole note. A copy changes nothing, so the
+      // selection goes back once they have written it: left on the whole note, the next keystroke
+      // would replace the note.
+      editor.registerCommand(
+        COPY_COMMAND,
+        () => {
+          const selection = $getSelection();
+          const before = $isRangeSelection(selection) ? selection.clone() : undefined;
+          if (!before || !$takeCollapsedNotesIntoRange({ includeRangeWithinOneNote: true }))
+            return false;
+          const widened = $getSelection()?.clone();
+          // Not an update queued from here: a dispatch from outside an update (a real Ctrl+C) runs
+          // each priority's handlers in an update of its own, so that would commit before the
+          // writers at lower priorities read the selection. A microtask runs once the whole
+          // dispatch has returned. Only a selection the handlers left as widened goes back, so the
+          // restore never undoes what one of them did (a cut that took this copy).
+          queueMicrotask(() =>
+            editor.update(() => {
+              const current = $getSelection();
+              if (widened && current?.is(widened)) $setSelection(before);
+            }),
+          );
+          return false;
+        },
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
+        CUT_COMMAND,
+        () => {
+          $takeCollapsedNotesIntoRange({ includeRangeWithinOneNote: true });
+          return false;
+        },
+        COMMAND_PRIORITY_CRITICAL,
       ),
       editor.registerCommand<MouseEvent>(
         CLICK_COMMAND,

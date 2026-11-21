@@ -29,9 +29,26 @@ interface Attribs {
  * @public
  */
 export function usxStringToUsj(usxString: string): Usj {
-  const parser = new DOMParser();
+  const parser = new DOMParser({ normalizeLineEndings: normalizeXml10LineEndings });
   const inputUsxDom = parser.parseFromString(usxString, "text/xml");
   return usxDomToUsj(inputUsxDom.documentElement);
+}
+
+/**
+ * Normalizes line ends by the XML 1.0 rules: CR LF and a lone CR become LF, and nothing else
+ * changes.
+ *
+ * ParatextData writes USX as XML 1.0, but xmldom's default applies the XML 1.1 rules, which also
+ * turn NEL (U+0085), LINE SEPARATOR (U+2028) and PARAGRAPH SEPARATOR (U+2029) into LF in text and
+ * into a space in attribute values. A project's USFM can hold those characters as text (Paratext 9
+ * keeps them), so the XML 1.1 rules would change the text on load, and the next save would store a
+ * space in its place.
+ *
+ * @param input - The XML source.
+ * @returns The source with its line ends normalized.
+ */
+function normalizeXml10LineEndings(input: string): string {
+  return input.replace(/\r\n?/g, "\n");
 }
 
 /**
