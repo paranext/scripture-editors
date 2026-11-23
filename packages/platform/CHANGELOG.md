@@ -18,6 +18,8 @@ refused. The public surface grew substantially; nothing was removed.
 
 - `generateUsjFontCss` — the font part of `generateUsjCss`'s output only (the base font family and
   size, and each marker's font family), for a view that keeps its own marker layout.
+- `EditorOptions.hasBuiltInContextMenu` (experimental) — set to `false` to stop the editor mounting its own
+  right-click menu when the host shows its own; independent of `hasExternalUI`. Defaults to `true`.
 - `STANDARD_VIEW_MODE`, plus `"standard"` in `getDefaultViewMode()` and `viewModeToViewNames`.
 - `EditorRef` methods: `isFocused`, `commitPendingMarkerEdits`, `setTransientInput`,
   `getMarkerMenuContext`, `applyMarkerMenuSelection`, `splitParagraphWithMarker`,
@@ -593,3 +595,10 @@ refused. The public surface grew substantially; nothing was removed.
   sidebars, `\periph`, ...) starts at its opening marker. It had inherited its paragraph's
   first-line indent, so in a `\q` line the opening glyph was drawn past the box's left edge, and in
   an indented line such as `\p` it started after an extra gap.
+
+### Security
+
+- Bundled DOMPurify updated from 3.4.13 to 3.4.18, past its published security advisories
+  GHSA-cg2g-xh64-v4q7 (critical), GHSA-mrv2-3pqr-j5jr (high), and GHSA-c6gr-qvv4-5v3f,
+  GHSA-6688-9rhm-gjv2 and GHSA-p98j-92pf-mc4p (low), and a further `SAFE_FOR_TEMPLATES` fix in
+  3.4.18.
