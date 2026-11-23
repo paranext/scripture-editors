@@ -61,8 +61,10 @@ export interface PlainProseOptions {
  * that opens a later line counts as USFM evidence by itself, so `See:\n\zebra stripes` loses
  * `\zebra`.
  *
- * Text whose prose comes out empty (a copy of only `\v 5 ` or `\c 2`) is returned unchanged too:
- * pasting nothing over a selection would delete it. Whitespace-only prose is pasted as it is.
+ * Text whose prose comes out empty or whitespace-only (a copy of only `\v 5 ` or `\c 2`, or of two
+ * empty paragraphs, `\p ` and `\p `, on lines of their own) is returned unchanged too: pasting
+ * nothing, or only blanks, over a selection would wipe out the text it replaces. Prose with words
+ * in it is never trimmed.
  */
 export function usfmToPlainProse(text: string, options: PlainProseOptions): string {
   if (!text.includes("\\")) return text;
@@ -121,7 +123,7 @@ export function usfmToPlainProse(text: string, options: PlainProseOptions): stri
       },
       { editor },
     );
-    return prose === "" ? text : prose;
+    return prose.trim() === "" ? text : prose;
   } catch (error) {
     logger?.warn("Pasting the text as it is: it could not be converted to plain prose.", error);
     return text;

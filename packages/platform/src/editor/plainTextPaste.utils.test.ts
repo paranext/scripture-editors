@@ -55,6 +55,18 @@ describe("usfmToPlainProse", () => {
     expect(prose("\\c 2")).toBe("\\c 2");
   });
 
+  it("leaves text unchanged when its prose would be only whitespace", () => {
+    // Two empty paragraphs convert to a lone line break.
+    expect(prose("\\p \n\\p ")).toBe("\\p \n\\p ");
+    expect(prose("\\q1 \n\\q2 ")).toBe("\\q1 \n\\q2 ");
+    expect(prose("\\p\n\\b\n\\p")).toBe("\\p\n\\b\n\\p");
+  });
+
+  it("does not trim prose that has words in it", () => {
+    expect(prose("a \\nd b\\nd* ")).toBe("a b ");
+    expect(prose("\\p one \n\\p ")).toBe("one \n");
+  });
+
   it("drops verse numbers", () => {
     expect(prose("\\v 1 a \\v 2 b")).toBe("a b");
   });
