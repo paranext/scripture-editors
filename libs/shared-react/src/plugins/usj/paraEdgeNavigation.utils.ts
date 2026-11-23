@@ -1,6 +1,6 @@
 import { $isSomeVerseNode } from "../../nodes/usj";
 import { $markLeadingVerseArrival } from "./LeadingVerseCaretGuardPlugin";
-import { $placeCaretAfterParaChild } from "./structureKeyboard.utils";
+import { $placeCaretAfterParaChild, $placeCaretAtEnd } from "./structureKeyboard.utils";
 import {
   $getSelection,
   $isElementNode,
@@ -171,11 +171,32 @@ function $isCaretAtEndOf(block: ElementNode): boolean {
 }
 
 /**
- * Collapses the caret at the end of `block`: past its last child, never inside it, so never in a
- * collapsed note's hidden content.
+ * Whether the caret steps into `node` rather than past it: an inline element such as a character
+ * span, whose text is the paragraph's own. Never a note, whose content a collapsed note hides.
+ */
+function $isSteppedInto(node: LexicalNode | null | undefined): node is ElementNode {
+  return $isElementNode(node) && node.isInline() && !$isNoteNode(node);
+}
+
+/**
+ * Collapses the caret at the end of `block`, where walking to it would put it: at the end of its
+ * last text, inside the character spans that end the block, so text typed there keeps their style.
+ * Never inside a note, so never in a collapsed note's hidden content.
  */
 function $placeCaretAtEndOf(block: ParaLikeNode): void {
-  $placeCaretAfterParaChild(block, block.getLastChild());
+  const last = $structuralChildren(block).at(-1);
+  if (!$isSteppedInto(last)) {
+    $placeCaretAfterParaChild(block, last ?? null);
+    return;
+  }
+  let span: ElementNode = last;
+  let inner = $structuralChildren(span).at(-1);
+  while ($isSteppedInto(inner)) {
+    span = inner;
+    inner = $structuralChildren(span).at(-1);
+  }
+  if ($isTextNode(inner)) $placeCaretAtEnd(inner);
+  else span.select(span.getChildrenSize(), span.getChildrenSize());
 }
 
 /** The sibling of `node` one step in `direction`. */
@@ -216,10 +237,24 @@ function $placeCaretBeforeLeadingVerse(para: ParaNode): void {
   para.select(index, index);
 }
 
-/** Collapses the caret at the start of `para`'s first text, past its marker and leading verse. */
+/**
+ * Collapses the caret at the start of `para`'s first text, past its marker and leading verse, and
+ * inside the character spans that start it, where a click on that text puts it.
+ */
 function $placeCaretAtContentStart(para: ParaNode): void {
   const before = $leadingVerse(para) ?? para.getFirstChildOrThrow();
-  $placeCaretAtBoundary(para, before.getIndexWithinParent() + 1);
+  let first = before.getNextSibling();
+  if (!$isSteppedInto(first)) {
+    $placeCaretAtBoundary(para, before.getIndexWithinParent() + 1);
+    return;
+  }
+  let span: ElementNode = first;
+  first = span.getFirstChild();
+  while ($isSteppedInto(first)) {
+    span = first;
+    first = span.getFirstChild();
+  }
+  $placeCaretAtBoundary(span, 0);
 }
 
 /**

@@ -4,6 +4,7 @@ import { $placeCaretAtParaContentStart } from "./ParaMarkerPrefixCursorGuardPlug
 import { $findMatchingParent } from "@lexical/utils";
 import {
   $createTextNode,
+  $getSelection,
   $isDecoratorNode,
   $isElementNode,
   $isNodeSelection,
@@ -715,11 +716,19 @@ export function $getEmptyParaBefore(para: SomeParaNode): SomeParaNode | undefine
   return $isSomeParaNode(prev) && $canRemoveEmptyPara(prev) ? prev : undefined;
 }
 
+/** Whether a collapsed caret rests in `block` or in one of its descendants. */
+function $isCaretIn(block: LexicalNode): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const node = selection.focus.getNode();
+  return node.is(block) || block.isParentOf(node);
+}
+
 /**
  * Performs a paragraph delete on `para`. An empty paragraph alone in its chapter becomes a blank
  * line with no marker, with the caret in it. Any other empty paragraph is removed outright, and the
  * caret goes to the start of the paragraph after it, when a Delete removes it or there is nothing
- * before it to merge into (a chapter). Otherwise `para` merges into the block before it
+ * before it to merge into (a chapter); a caret already in that paragraph stays where it is. Otherwise `para` merges into the block before it
  * ({@link $mergeParaIntoPrevious}), a no-op when that cannot be done.
  *
  * Mutating: call inside `editor.update()` (dispatched from StructureKeyboardPlugin.tsx and
@@ -739,8 +748,10 @@ export function $deletePara(para: SomeParaNode, intent: DeleteIntent = "deleteBa
   if ($canRemoveEmptyPara(para) && (intent === "deleteForward" || !$canMergeIntoPrevious(para))) {
     const next = para.getNextSibling();
     para.remove();
-    // Always a paragraph, by `$canRemoveEmptyPara`; the check only narrows its type.
-    if ($isParaLikeNode(next)) $placeCaretAtParaContentStart(next);
+    // Always a paragraph, by `$canRemoveEmptyPara`; the check only narrows its type. A Backspace
+    // from `next`'s start leaves the caret where it was: at the stop before a leading verse
+    // number, the content start is past the number.
+    if ($isParaLikeNode(next) && !$isCaretIn(next)) $placeCaretAtParaContentStart(next);
     return;
   }
   $mergeParaIntoPrevious(para);

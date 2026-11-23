@@ -484,6 +484,76 @@ describe("paragraph-edge arrow stops when the text starts inside a character spa
 
     expect(press(editor, "ArrowLeft")).toBe("host between marker and 16");
   });
+
+  it("→ from the stop before the leading verse number goes back into the span", async () => {
+    let words: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        words = $createTextNode("For God");
+        $getRoot().append(
+          $createGutterParaNode("p", $createTextNode("first")),
+          $createGutterParaNode(
+            "q1",
+            $createImmutableVerseNode("16"),
+            $createCharNode("wj").append(words),
+          ),
+        );
+      },
+      <>
+        <ParaMarkerSelectionPlugin />
+        <LeadingVerseCaretGuardPlugin />
+      </>,
+    );
+    act(() => {
+      editor.getRootElement()?.focus();
+    });
+    updateSelection(editor, words!, 0);
+    expect(press(editor, "ArrowLeft")).toBe("host between marker and 16");
+
+    // In the span's text, so what is typed there takes the span's style.
+    expect(press(editor, "ArrowRight")).toBe('"For God"@0');
+  });
+
+  it("→ from the marker goes back into the paragraph's first span", async () => {
+    let lord: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        lord = $createTextNode("LORD");
+        $getRoot().append(
+          $createGutterParaNode("p", $createTextNode("first")),
+          $createGutterParaNode("q1", $createCharNode("nd").append(lord), $createTextNode(" is")),
+        );
+      },
+      <ParaMarkerSelectionPlugin />,
+    );
+    updateSelection(editor, lord!, 0);
+    expect(press(editor, "ArrowLeft")).toBe("marker \\q1");
+
+    expect(press(editor, "ArrowRight")).toBe('"LORD"@0');
+  });
+
+  it("← into a paragraph that ends in a span lands at the end of the span's text", async () => {
+    let next: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        next = $createTextNode("next");
+        $getRoot().append(
+          $createGutterParaNode(
+            "p",
+            $createTextNode("Jesus said, "),
+            $createCharNode("wj").append($createTextNode("I am the way")),
+          ),
+          $createGutterParaNode("q1", next),
+        );
+      },
+      <ParaMarkerSelectionPlugin />,
+    );
+    updateSelection(editor, next!, 0);
+    expect(press(editor, "ArrowLeft")).toBe("marker \\q1");
+
+    // In the span's text, so what is typed there takes the span's style.
+    expect(press(editor, "ArrowLeft")).toBe('"I am the way"@12');
+  });
 });
 
 describe("the stop before a leading verse number", () => {
@@ -620,6 +690,24 @@ describe("the stop before a leading verse number", () => {
 
       expect(paragraphs(editor)).toEqual(["\\p firstsecond", "\\q1 third"]);
     });
+
+    it("forward, then Undo, puts the caret back at the stop with its host", async () => {
+      const { editor } = await atStopBeforeVerse2({ withHistory: true });
+
+      act(() => {
+        editor.dispatchCommand(DELETE_LINE_COMMAND, false);
+      });
+      await settle();
+      updateNow(editor, () => {
+        editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      });
+      act(() => {
+        editor.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+      await settle();
+
+      expect(stopOf(editor)).toBe("host between marker and 2");
+    });
   });
 
   it("a caret put there after an arrival has ended gets no host", async () => {
@@ -638,6 +726,64 @@ describe("the stop before a leading verse number", () => {
     });
 
     expect(stopOf(editor)).toBe("element li2@1");
+  });
+
+  it("is hosted again when the caret comes back to it from a selection in its paragraph", async () => {
+    const { editor } = await atStopBeforeVerse2();
+    pressNow(editor, "ArrowRight", { shiftKey: true });
+    updateNow(editor, () => {
+      editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+
+    // ←, as the browser collapses the range to its start.
+    updateNow(editor, () => {
+      $getRoot().getChildAtIndex<ParaNode>(1)!.select(1, 1);
+    });
+    updateNow(editor, () => {
+      editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+
+    expect(stopOf(editor)).toBe("host between marker and 2");
+  });
+
+  it("Backspace removes an empty paragraph before it and leaves the caret at the stop", async () => {
+    let second: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        second = $createTextNode("second");
+        $getRoot().append(
+          $createGutterParaNode("p", $createImmutableVerseNode("1"), $createTextNode("first")),
+          $createGutterParaNode("b"),
+          $createGutterParaNode("li2", $createImmutableVerseNode("2"), second),
+        );
+      },
+      <>
+        <ParaMarkerSelectionPlugin structureProtectionMode="off" />
+        <StructureKeyboardPlugin structureProtectionMode="off" />
+        <LeadingVerseCaretGuardPlugin />
+        <EmptyVerseCaretGuardPlugin />
+      </>,
+    );
+    act(() => {
+      editor.getRootElement()?.focus();
+    });
+    updateSelection(editor, second!, 0);
+    expect(press(editor, "ArrowLeft")).toBe("host between marker and 2");
+
+    act(() => {
+      editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+    });
+    await settle();
+
+    expect(
+      editor.read(() =>
+        $getRoot()
+          .getChildren()
+          .map((para) => ($isParaNode(para) ? para.getMarker() : "?")),
+      ),
+    ).toEqual(["p", "li2"]);
+    // Not past the verse number, where a second Backspace would delete it.
+    expect(stopOf(editor)).toBe("host between marker and 2");
   });
 });
 

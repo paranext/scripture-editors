@@ -59,6 +59,7 @@ import {
   $createParaNode,
   $createUnknownNode,
   $getSelectedParaMarker,
+  $getSelectedParaMarkerPara,
   $isGutterMarkerNode,
   $isImpliedParaNode,
   $isParaNode,
@@ -1623,6 +1624,19 @@ describe("ParaMarkerSelectionPlugin — a selection whose marker goes away", () 
     editor.getEditorState().read(() => {
       $expectSelectionToBe(firstText, "first".length);
     });
+  });
+
+  it("lets the → that repairs it go on to the next paragraph-edge stop", async () => {
+    const { editor, li2, q1 } = await environment();
+    await selectMarkerOf(editor, li2);
+    await sutUpdate(editor, () => li2.remove());
+
+    // Repaired to the end of `\p`, from where → selects the next paragraph's marker.
+    await pressKey(editor, "ArrowRight");
+
+    expect(
+      editor.getEditorState().read(() => $getSelectedParaMarkerPara($getSelection())?.getKey()),
+    ).toBe(q1.getKey());
   });
 
   it("collapses to the next paragraph's text when a chapter number is all that precedes it", async () => {

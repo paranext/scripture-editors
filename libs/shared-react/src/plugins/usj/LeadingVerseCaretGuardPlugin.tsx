@@ -38,7 +38,8 @@ import { $isSomeVerseNode } from "../../nodes/usj";
  * Per editor, the paragraph whose leading-verse stop an arrow key has just moved the caret to.
  * Only that arrival gets a host: a caret put at a paragraph's start any other way (a click, a
  * programmatic selection, the caret a merge leaves) keeps its existing handling. Kept while the
- * caret stays at that stop, so focus returning there re-hosts it; dropped once it leaves.
+ * selection stays in that paragraph, so a caret or focus returning to the stop is hosted again;
+ * dropped once the selection leaves the paragraph.
  */
 const leadingVerseArrivals = new WeakMap<LexicalEditor, NodeKey>();
 
@@ -92,6 +93,16 @@ function $leadingVerseStopGlyph(arrivalParaKey: NodeKey | undefined): LexicalNod
   const glyph = $getSelectableParaMarker(para);
   if (!glyph || !before?.is(glyph) || !$isSomeVerseNode(after)) return undefined;
   return glyph;
+}
+
+/** Whether both ends of a range selection are in the paragraph keyed `paraKey`. */
+function $isSelectionInPara(paraKey: NodeKey): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return false;
+  return [selection.anchor, selection.focus].every((point) => {
+    const node = point.getNode();
+    return node.getKey() === paraKey || node.getParents().some((p) => p.getKey() === paraKey);
+  });
 }
 
 /**
@@ -161,14 +172,14 @@ export function LeadingVerseCaretGuardPlugin(): null {
     () =>
       mergeRegister(
         // Ahead of the host sync (COMMAND_PRIORITY_EDITOR), which still sees an arrival the caret
-        // has just made. Once the caret is anywhere but that arrival's stop, the arrival is over.
+        // has just made. Once the selection leaves the arrival's paragraph, the arrival is over;
+        // until then a caret coming back to the stop (Shift+→ then ←, say) is hosted again.
         editor.registerCommand(
           SELECTION_CHANGE_COMMAND,
           () => {
             const arrival = leadingVerseArrivals.get(editor);
-            if (arrival === undefined) return false;
-            const glyph = $leadingVerseStopGlyph(arrival);
-            if (glyph?.getParent()?.getKey() !== arrival) leadingVerseArrivals.delete(editor);
+            if (arrival !== undefined && !$isSelectionInPara(arrival))
+              leadingVerseArrivals.delete(editor);
             return false;
           },
           COMMAND_PRIORITY_LOW,

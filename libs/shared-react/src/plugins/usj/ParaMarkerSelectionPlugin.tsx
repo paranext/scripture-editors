@@ -267,8 +267,8 @@ export function ParaMarkerSelectionPlugin({
 
     const $handleKeyDown = (event: KeyboardEvent): boolean => {
       if (typeof event.key !== "string") return false;
-      // The key then acts from the repaired caret, as it would from any other.
-      if ($repairOrphanedSelection()) return false;
+      // The key then acts from the repaired caret, as it would from any other, edge stops included.
+      if ($repairOrphanedSelection()) return $handleParaEdgeArrow(event);
       if ($handleParaEdgeArrow(event)) return true;
       const para = $getActivePara();
       if (!para) return false;
