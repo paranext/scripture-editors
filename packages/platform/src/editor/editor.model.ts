@@ -120,6 +120,13 @@ export interface EditorRef {
   paste(): void;
   /**
    * Paste text as plain text at the current cursor position.
+   *
+   * @remarks
+   * In an editor whose markers are editable text and that keeps Standard view's whitespace
+   * (Standard view, and the footnote editors over it), USFM on the clipboard is converted to the
+   * prose a hidden-marker view's copy of it writes: a note's words go inline, and markers and verse
+   * numbers leave no text. A copy whose prose shows nothing pastes nothing. Ctrl+Shift+V and the
+   * context menu's Paste as Plain Text paste the same.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
    */

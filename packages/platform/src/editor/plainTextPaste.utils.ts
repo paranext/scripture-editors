@@ -96,8 +96,9 @@ export interface PlainProseOptions {
  * The conversion is a function of the text alone: it knows nothing of where the text will land. So
  * multi-line prose pasted with the caret on the `\id` line joins the book line's text, as any
  * multi-line plain text pasted there does. It cannot tell USFM copied from this editor from USFM
- * copied from another program either. Text opening with a bare `\`, and a nested closer with no
- * name (`\+*`), are read however the tokenizer reads them.
+ * copied from another program either. A bare `\` that opens the text stays in the prose as its
+ * bytes (`\ x \nd y\nd*` gives `\ x y`), and a nested closer with no name (`\+*`) is dropped like
+ * any other stray closer.
  */
 export function usfmToPlainProse(text: string, options: PlainProseOptions): string {
   if (!text.includes("\\")) return text;
