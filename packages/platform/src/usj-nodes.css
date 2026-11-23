@@ -2821,7 +2821,6 @@ span.read img {
   top: 0;
   direction: ltr;
   unicode-bidi: isolate;
-  text-align: right;
   white-space: nowrap;
   /* The paragraph's own text-indent (negative for hanging indents, positive for \p) is inherited,
      and would widen or collapse this shrink-to-fit box and shift the glyph inside it. */
@@ -2836,8 +2835,9 @@ span.read img {
    properties. var(--para-indent) is inherited from the paragraph element (the same variable the
    LTR `right` calc uses), so indented para types get the correct gutter column without per-type
    overrides. The marker's text stays LTR, so its trailing no-break space is on the outer side
-   here and needs no 1ch correction. text-align is not overridden: with `text-indent: 0` the box
-   is exactly as wide as its text, so alignment inside it does not move the glyph. */
+   here and needs no 1ch correction. No text-align is set in either direction: with
+   `text-indent: 0` the box is exactly as wide as its text, so alignment inside it would not move
+   the glyph. */
 .psc-gutter-markers[dir="rtl"] .para > .marker:not(.verse):not(.chapter):first-child,
 .psc-gutter-markers[dir="rtl"] .book > .marker:first-child {
   right: auto;
