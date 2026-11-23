@@ -13,12 +13,18 @@ import {
   $canSelectParaMarker,
   $getSelectableParaMarker,
   $getSelectedParaMarkerPara,
+  $isAttributeDisplayRun,
+  $isAttributeRunNode,
   $isCaretHost,
+  $isGutterMarkerNode,
+  $isImmutableTypedTextNode,
+  $isMilestoneNode,
   $isNoteNode,
   $isParaLikeNode,
   $isParaNode,
   $placeCaretAtBoundary,
   $selectParaMarker,
+  MARKER_TEXT_TYPE,
   ParaLikeNode,
   ParaNode,
 } from "shared";
@@ -39,7 +45,11 @@ import {
  * with no leading verse number has no first stop. When markers are protected the marker stop is
  * skipped. Each stop is a single press; the browser's own movement would otherwise rest on an
  * invisible position in front of the glyph, where the box and the reference disagree about which
- * paragraph the caret is in.
+ * paragraph the caret is in. A caret that has come to rest there anyway (a range collapsed to the
+ * paragraph's start) moves on from it as from the paragraph's first stop.
+ *
+ * What the view hides (a milestone, its marker glyphs and attribute text) takes no press: a stop
+ * is judged past it.
  */
 
 /** Which way a press moves through the document, whatever the script direction. */
@@ -50,6 +60,7 @@ export type ParaEdgeDirection = "previous" | "next";
  * on none of them.
  */
 export type ParaEdgeStop =
+  | { stop: "paraStart"; para: ParaNode }
   | { stop: "marker"; para: ParaNode }
   | { stop: "beforeLeadingVerse"; para: ParaNode }
   | { stop: "contentStart"; para: ParaNode }
@@ -60,6 +71,36 @@ function $structuralChildren(para: ElementNode): LexicalNode[] {
   return para.getChildren().filter((child) => !$isCaretHost(child));
 }
 
+/**
+ * Whether `node` renders nothing in the gutter view: a milestone, a marker glyph or attribute text
+ * the view hides (every marker but a paragraph's own gutter glyph), or a run made only of those.
+ */
+function $rendersNothing(node: LexicalNode): boolean {
+  if ($isImmutableTypedTextNode(node))
+    return node.getTextType() === MARKER_TEXT_TYPE && !$isGutterMarkerNode(node);
+  if ($isAttributeRunNode(node)) return node.getChildren().every($rendersNothing);
+  return $isMilestoneNode(node) || $isAttributeDisplayRun(node);
+}
+
+/** Whether a caret walks past `node` without a press of its own: a caret host or hidden node. */
+function $isSkipped(node: LexicalNode): boolean {
+  return $isCaretHost(node) || $rendersNothing(node);
+}
+
+/** `node`, or the nearest sibling before it that is not {@link $isSkipped}; `"start"` if none. */
+function $shownAtOrBefore(node: LexicalNode | null): LexicalNode | "start" {
+  let current = node;
+  while (current && $isSkipped(current)) current = current.getPreviousSibling();
+  return current ?? "start";
+}
+
+/** `node`, or the nearest sibling after it that is not {@link $isSkipped}. */
+function $shownAtOrAfter(node: LexicalNode | null): LexicalNode | undefined {
+  let current = node;
+  while (current && $isSkipped(current)) current = current.getNextSibling();
+  return current ?? undefined;
+}
+
 /** `para`'s first verse number, when it directly follows the marker glyph. */
 function $leadingVerse(para: ParaNode): LexicalNode | undefined {
   const second = $structuralChildren(para)[1];
@@ -67,20 +108,20 @@ function $leadingVerse(para: ParaNode): LexicalNode | undefined {
 }
 
 /**
- * The child that a collapsed caret sits right after, at `para`'s own level. `null` when the caret
- * sits at the start of `para`; `undefined` when the caret is not at a child boundary of `para`.
- * A caret in a transient caret host counts as sitting where the host is, and a caret at the very
- * start of a child (the first text of a `\wj` or `\nd` span, say) counts as sitting in front of it.
+ * The child that a collapsed caret sits right after, at `para`'s own level, passing over what the
+ * view hides. `"start"` when the caret sits at the start of `para`; `undefined` when the caret is
+ * not at a child boundary of `para`. A caret in a transient caret host counts as sitting where the
+ * host is, and a caret at the very start of a child (the first text of a `\wj` or `\nd` span, say)
+ * counts as sitting in front of it.
  */
-function $childBeforeCaret(para: ElementNode): LexicalNode | null | undefined {
+function $childBeforeCaret(para: ElementNode): LexicalNode | "start" | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
   const { anchor } = selection;
   let node: LexicalNode = anchor.getNode();
   if (node.is(para)) {
     if (anchor.type !== "element") return undefined;
-    const before = para.getChildAtIndex(anchor.offset - 1);
-    return before && $isCaretHost(before) ? before.getPreviousSibling() : before;
+    return $shownAtOrBefore(para.getChildAtIndex(anchor.offset - 1));
   }
   const isAtNodeStart =
     $isCaretHost(node) || (($isTextNode(node) || anchor.type === "element") && anchor.offset === 0);
@@ -90,7 +131,7 @@ function $childBeforeCaret(para: ElementNode): LexicalNode | null | undefined {
     if (!parent || node.getPreviousSibling()) return undefined;
     node = parent;
   }
-  return node.getPreviousSibling();
+  return $shownAtOrBefore(node.getPreviousSibling());
 }
 
 /**
@@ -120,7 +161,9 @@ export function $getParaEdgeStop(): ParaEdgeStop | undefined {
   if (para) {
     const before = $childBeforeCaret(para);
     const glyph = para.getFirstChild();
-    if (before !== undefined && before !== null) {
+    // In front of the glyph: no stop of its own, so the next press moves on as from the first.
+    if (before === "start") return { stop: "paraStart", para };
+    if (before !== undefined) {
       const leadingVerse = $leadingVerse(para);
       if (leadingVerse && before.is(glyph)) return { stop: "beforeLeadingVerse", para };
       // Just past the leading verse number (or the glyph, with none): the first verse's text, even
@@ -139,7 +182,8 @@ export function $getParaEdgeStop(): ParaEdgeStop | undefined {
  * caret host, or a collapsed note, whose content is hidden.
  */
 function $isInvisibleTrailer(node: LexicalNode | null): boolean {
-  return $isCaretHost(node) || ($isNoteNode(node) && node.getIsCollapsed() === true);
+  if (!node) return false;
+  return $isSkipped(node) || ($isNoteNode(node) && node.getIsCollapsed() === true);
 }
 
 /** Whether `node` and every sibling after it are {@link $isInvisibleTrailer}, or there are none. */
@@ -184,19 +228,24 @@ function $isSteppedInto(node: LexicalNode | null | undefined): node is ElementNo
  * Never inside a note, so never in a collapsed note's hidden content.
  */
 function $placeCaretAtEndOf(block: ParaLikeNode): void {
-  const last = $structuralChildren(block).at(-1);
-  if (!$isSteppedInto(last)) {
-    $placeCaretAfterParaChild(block, last ?? null);
-    return;
+  let container: ElementNode = block;
+  let last = $lastShownChild(block);
+  while ($isSteppedInto(last)) {
+    container = last;
+    last = $lastShownChild(last);
   }
-  let span: ElementNode = last;
-  let inner = $structuralChildren(span).at(-1);
-  while ($isSteppedInto(inner)) {
-    span = inner;
-    inner = $structuralChildren(span).at(-1);
+  if (container.is(block)) $placeCaretAfterParaChild(block, last ?? null);
+  else if ($isTextNode(last)) $placeCaretAtEnd(last);
+  else {
+    const boundary = last ? last.getIndexWithinParent() + 1 : 0;
+    container.select(boundary, boundary);
   }
-  if ($isTextNode(inner)) $placeCaretAtEnd(inner);
-  else span.select(span.getChildrenSize(), span.getChildrenSize());
+}
+
+/** `element`'s last child that is not {@link $isSkipped}, if any. */
+function $lastShownChild(element: ElementNode): LexicalNode | undefined {
+  const last = $shownAtOrBefore(element.getLastChild());
+  return last === "start" ? undefined : last;
 }
 
 /** The sibling of `node` one step in `direction`. */
@@ -243,18 +292,16 @@ function $placeCaretBeforeLeadingVerse(para: ParaNode): void {
  */
 function $placeCaretAtContentStart(para: ParaNode): void {
   const before = $leadingVerse(para) ?? para.getFirstChildOrThrow();
-  let first = before.getNextSibling();
-  if (!$isSteppedInto(first)) {
-    $placeCaretAtBoundary(para, before.getIndexWithinParent() + 1);
-    return;
-  }
-  let span: ElementNode = first;
-  first = span.getFirstChild();
+  let container: ElementNode = para;
+  let first = $shownAtOrAfter(before.getNextSibling());
   while ($isSteppedInto(first)) {
-    span = first;
-    first = span.getFirstChild();
+    container = first;
+    first = $shownAtOrAfter(first.getFirstChild());
   }
-  $placeCaretAtBoundary(span, 0);
+  const fallback = container.is(para) ? before.getIndexWithinParent() + 1 : 0;
+  // Before a note that opens the text there is no text to put the caret in, so the guard hosts it.
+  if (container.is(para) && !$isTextNode(first)) $markLeadingVerseArrival(para);
+  $placeCaretAtBoundary(container, first ? first.getIndexWithinParent() : fallback);
 }
 
 /**
@@ -282,6 +329,7 @@ export function $moveParaEdgeStop(direction: ParaEdgeDirection, isProtected: boo
         }
         return $leaveBackward(at.para, canStopOnMarker);
       case "beforeLeadingVerse":
+      case "paraStart":
         return $leaveBackward(at.para, canStopOnMarker);
       case "marker": {
         const previous = $adjacentBlock(at.para, "previous");
@@ -300,6 +348,7 @@ export function $moveParaEdgeStop(direction: ParaEdgeDirection, isProtected: boo
       return $enterForward(next, canStopOnMarker);
     }
     case "marker":
+    case "paraStart":
       if ($leadingVerse(at.para)) $placeCaretBeforeLeadingVerse(at.para);
       else $placeCaretAtContentStart(at.para);
       return true;

@@ -344,16 +344,18 @@ export function ScriptureReferencePlugin({
   // catches IME/voice/paste input paths that move the selection without a pointerdown or keydown.
   // ANY keydown counts, including pure modifiers and Escape: closing the navigation window early
   // fails toward user control (worst case, one stale settle reports), while filtering keys fails
-  // toward suppressing a real user move - eager close is the deliberate choice.
+  // toward suppressing a real user move - eager close is the deliberate choice. Listened for in the
+  // capture phase, ahead of Lexical's own handlers: a key whose handler moves the selection itself
+  // (an arrow onto a paragraph marker, a selection with no selectionchange to follow) must find the
+  // window already closed when that move is reported.
   useEffect(() => {
     const handleUserInput = () => onUserInteracted(machineRef.current);
+    const events = ["pointerdown", "keydown", "beforeinput"] as const;
     return editor.registerRootListener((rootElement, prevRootElement) => {
-      prevRootElement?.removeEventListener("pointerdown", handleUserInput);
-      prevRootElement?.removeEventListener("keydown", handleUserInput);
-      prevRootElement?.removeEventListener("beforeinput", handleUserInput);
-      rootElement?.addEventListener("pointerdown", handleUserInput);
-      rootElement?.addEventListener("keydown", handleUserInput);
-      rootElement?.addEventListener("beforeinput", handleUserInput);
+      for (const type of events) {
+        prevRootElement?.removeEventListener(type, handleUserInput, { capture: true });
+        rootElement?.addEventListener(type, handleUserInput, { capture: true });
+      }
     });
   }, [editor]);
 

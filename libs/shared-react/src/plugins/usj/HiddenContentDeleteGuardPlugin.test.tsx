@@ -41,6 +41,7 @@ import {
 } from "lexical";
 import { ReactNode } from "react";
 import {
+  $createCaretHostNode,
   $createGutterMarkerNode,
   $createImmutableChapterNode,
   $createNoteNode,
@@ -416,6 +417,53 @@ describe("HiddenContentDeleteGuardPlugin", () => {
 
       expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
       expect(readCaret(editor)).toEqual({ key: before!.getKey(), offset: 2, isCollapsed: true });
+    });
+
+    describe("held from a transient caret host", () => {
+      let para: ParaNode;
+      let host: TextNode;
+      const $initWithHost = () => {
+        para = $createParaNode("p");
+        host = $createCaretHostNode();
+        $getRoot().append(
+          para.append(
+            $createTextNode("before"),
+            $createFigureNode(),
+            host,
+            $createTextNode("after"),
+          ),
+        );
+      };
+
+      it("still deletes once the prompt's blur has replaced the host with its boundary", async () => {
+        const { handler, answer } = answeringLater();
+        const { editor } = await guardedEnvironment($initWithHost, handler);
+        updateSelection(editor, host, 0);
+
+        await pressKey(editor, "Backspace");
+        // What a blur does to a caret in a host: removes the host, leaving the caret where it stood.
+        await sutUpdate(editor, () => {
+          const boundary = host.getIndexWithinParent();
+          host.remove();
+          para.select(boundary, boundary);
+        });
+        await act(async () => answer("delete"));
+        await settle();
+
+        expect(readTree(editor)).toEqual(["beforeafter"]);
+      });
+
+      it("still deletes when the host is there when the answer comes", async () => {
+        const { handler, answer } = answeringLater();
+        const { editor } = await guardedEnvironment($initWithHost, handler);
+        updateSelection(editor, host, 0);
+
+        await pressKey(editor, "Backspace");
+        await act(async () => answer("delete"));
+        await settle();
+
+        expect(readTree(editor)[0]).not.toContain("[figure");
+      });
     });
 
     it("leaves Shift+Delete, the cut chord off Apple platforms, to the cut handler", async () => {

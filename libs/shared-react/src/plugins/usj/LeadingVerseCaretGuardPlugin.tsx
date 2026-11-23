@@ -28,6 +28,7 @@ import { useCallback, useEffect } from "react";
 import {
   $getSelectableParaMarker,
   $isCaretHost,
+  $isNoteNode,
   $isParaNode,
   CURSOR_CHANGE_TAG,
   ParaNode,
@@ -35,7 +36,8 @@ import {
 import { $isSomeVerseNode } from "../../nodes/usj";
 
 /**
- * Per editor, the paragraph whose leading-verse stop an arrow key has just moved the caret to.
+ * Per editor, the paragraph whose leading stop an arrow key has just moved the caret to: the one
+ * before its leading verse number, or the start of a text that opens with a note.
  * Only that arrival gets a host: a caret put at a paragraph's start any other way (a click, a
  * programmatic selection, the caret a merge leaves) keeps its existing handling. Kept while the
  * selection stays in that paragraph, so a caret or focus returning to the stop is hosted again;
@@ -44,8 +46,8 @@ import { $isSomeVerseNode } from "../../nodes/usj";
 const leadingVerseArrivals = new WeakMap<LexicalEditor, NodeKey>();
 
 /**
- * Records that the caret is being moved to the stop before `para`'s leading verse number by an
- * arrow key, so {@link LeadingVerseCaretGuardPlugin} hosts it.
+ * Records that the caret is being moved to one of `para`'s leading stops by an arrow key, so
+ * {@link LeadingVerseCaretGuardPlugin} hosts it.
  *
  * Mutating: call inside the `editor.update()` that moves the caret.
  */
@@ -54,13 +56,14 @@ export function $markLeadingVerseArrival(para: ParaNode): void {
 }
 
 /**
- * The gutter glyph a caret before a paragraph's leading verse number belongs after, or
- * `undefined`.
+ * The node a caret at one of a paragraph's leading stops belongs after, or `undefined`: the gutter
+ * glyph, for the stop before the leading verse number, or the glyph or that verse number, for the
+ * start of a text that opens with a note.
  *
  * In the gutter view a paragraph's marker is a glyph drawn in the gutter and its first verse number
- * is a decorator, so a caret between the two is an element point with no text to draw it in: the
- * browser shows no caret there and a keystroke lands nowhere. This names the glyph, so a host is
- * put just past it, before the number. The arrow keys stop there (`paraEdgeNavigation.utils.ts`).
+ * and a note's caller are decorators, so a caret between two of them is an element point with no
+ * text to draw it in: the browser shows no caret there and a keystroke lands nowhere. This names
+ * the node a host goes just past. The arrow keys stop there (`paraEdgeNavigation.utils.ts`).
  *
  * A caret already in a host there counts wherever it came from; a bare element point counts only
  * in `arrivalParaKey`'s paragraph.
@@ -69,7 +72,7 @@ export function $markLeadingVerseArrival(para: ParaNode): void {
  *
  * @param arrivalParaKey - The paragraph an arrow key last moved the caret to the stop of, if any.
  */
-function $leadingVerseStopGlyph(arrivalParaKey: NodeKey | undefined): LexicalNode | undefined {
+function $leadingStopAnchor(arrivalParaKey: NodeKey | undefined): LexicalNode | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
   const { anchor } = selection;
@@ -91,8 +94,28 @@ function $leadingVerseStopGlyph(arrivalParaKey: NodeKey | undefined): LexicalNod
 
   if (!$isParaNode(para)) return undefined;
   const glyph = $getSelectableParaMarker(para);
-  if (!glyph || !before?.is(glyph) || !$isSomeVerseNode(after)) return undefined;
-  return glyph;
+  if (!glyph || !before) return undefined;
+  if (before.is(glyph)) return $isSomeVerseNode(after) || $isNoteNode(after) ? glyph : undefined;
+  // The host of the stop before it may not be gone yet.
+  let beforeVerse = before.getPreviousSibling();
+  while ($isCaretHost(beforeVerse)) beforeVerse = beforeVerse?.getPreviousSibling() ?? null;
+  const isLeadingVerse = $isSomeVerseNode(before) && !!beforeVerse?.is(glyph);
+  return isLeadingVerse && $isNoteNode(after) ? before : undefined;
+}
+
+/**
+ * Keeps `editor`'s arrival with the caret: moved to the paragraph a caret still hosted at a stop is
+ * now in (an edit carried it there), and dropped once the selection is anywhere else outside the
+ * arrival's paragraph.
+ *
+ * Read-only on the editor state: safe in any read, including `editorState.read()`.
+ */
+function $followArrival(editor: LexicalEditor): void {
+  const arrival = leadingVerseArrivals.get(editor);
+  if (arrival === undefined || $isSelectionInPara(arrival)) return;
+  const para = $leadingStopAnchor(undefined)?.getParent();
+  if (para) leadingVerseArrivals.set(editor, para.getKey());
+  else leadingVerseArrivals.delete(editor);
 }
 
 /** Whether both ends of a range selection are in the paragraph keyed `paraKey`. */
@@ -106,7 +129,8 @@ function $isSelectionInPara(paraKey: NodeKey): boolean {
 }
 
 /**
- * The caret host the caret rests in before a paragraph's leading verse number, or `undefined`.
+ * The caret host the caret rests in at a paragraph's leading stop (see {@link $leadingStopAnchor}),
+ * or `undefined`.
  *
  * Read-only: safe in any read.
  */
@@ -115,7 +139,7 @@ function $leadingVerseHost(): TextNode | undefined {
   if (!$isRangeSelection(selection)) return undefined;
   const host = selection.anchor.getNode();
   if (!$isTextNode(host) || !$isCaretHost(host)) return undefined;
-  return $leadingVerseStopGlyph(undefined) ? host : undefined;
+  return $leadingStopAnchor(undefined) ? host : undefined;
 }
 
 /** The deletes a caret in a host must not swallow: by character, by word, and to the line's end. */
@@ -136,7 +160,7 @@ const DELETE_COMMANDS: readonly LexicalCommand<boolean>[] = [
  */
 function $extendForwardFromLeadingVerseHost(): boolean {
   const host = $leadingVerseHost();
-  if (!host) return false;
+  if (!host || !$isSomeVerseNode(host.getNextSibling())) return false;
   const para = host.getParentOrThrow();
   const boundary = host.getIndexWithinParent();
   host.remove();
@@ -164,7 +188,7 @@ function $extendForwardFromLeadingVerseHost(): boolean {
 export function LeadingVerseCaretGuardPlugin(): null {
   const [editor] = useLexicalComposerContext();
   const $caretHostAnchor = useCallback(
-    () => $leadingVerseStopGlyph(leadingVerseArrivals.get(editor)),
+    () => $leadingStopAnchor(leadingVerseArrivals.get(editor)),
     [editor],
   );
   useTransientCaretHost($caretHostAnchor);
@@ -177,13 +201,16 @@ export function LeadingVerseCaretGuardPlugin(): null {
         editor.registerCommand(
           SELECTION_CHANGE_COMMAND,
           () => {
-            const arrival = leadingVerseArrivals.get(editor);
-            if (arrival !== undefined && !$isSelectionInPara(arrival))
-              leadingVerseArrivals.delete(editor);
+            $followArrival(editor);
             return false;
           },
           COMMAND_PRIORITY_LOW,
         ),
+        // An edit can carry the hosted caret into another paragraph with no selection change of
+        // its own: Enter at the stop splits the paragraph, and the new one gets its own glyph.
+        editor.registerUpdateListener(({ editorState }) => {
+          if (leadingVerseArrivals.has(editor)) editorState.read(() => $followArrival(editor));
+        }),
         editor.registerCommand(
           KEY_DOWN_COMMAND,
           (event) => {

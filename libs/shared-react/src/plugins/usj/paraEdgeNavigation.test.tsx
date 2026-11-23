@@ -21,10 +21,12 @@ import {
   $getRoot,
   $getSelection,
   $isRangeSelection,
+  BLUR_COMMAND,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   DELETE_CHARACTER_COMMAND,
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
+  FOCUS_COMMAND,
   KEY_DOWN_COMMAND,
   LexicalEditor,
   LexicalNode,
@@ -36,6 +38,7 @@ import {
   $createCharNode,
   $createGutterMarkerNode,
   $createImmutableChapterNode,
+  $createMilestoneNode,
   $createNoteNode,
   $createParaNode,
   $createUnknownNode,
@@ -440,6 +443,124 @@ describe("paragraph-edge arrow stops around a collapsed note", () => {
   });
 });
 
+describe("paragraph-edge arrow stops around a milestone, which the view hides", () => {
+  it("stops forward on the next paragraph's marker in one press from text a milestone ends", async () => {
+    let quote: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        quote = $createTextNode("king?”");
+        $getRoot().append(
+          $createGutterParaNode("q1", quote, $createMilestoneNode("qt-e")),
+          $createGutterParaNode("q2", $createImmutableVerseNode("3"), $createTextNode("Jesus")),
+        );
+      },
+      <ParaMarkerSelectionPlugin />,
+    );
+    updateSelection(editor, quote!);
+
+    expect(press(editor, "ArrowRight")).toBe("marker \\q2");
+  });
+
+  it("stops backward before the leading verse number from text a milestone opens", async () => {
+    let words: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        words = $createTextNode("“Are you");
+        $getRoot().append(
+          $createGutterParaNode("p", $createTextNode("first")),
+          $createGutterParaNode(
+            "p",
+            $createImmutableVerseNode("2"),
+            $createMilestoneNode("qt-s"),
+            words,
+          ),
+        );
+      },
+      <>
+        <ParaMarkerSelectionPlugin />
+        <LeadingVerseCaretGuardPlugin />
+      </>,
+    );
+    act(() => {
+      editor.getRootElement()?.focus();
+    });
+    updateSelection(editor, words!, 0);
+
+    expect(press(editor, "ArrowLeft")).toBe("host between marker and 2");
+    // And → comes back past the milestone, to the text.
+    expect(press(editor, "ArrowRight")).toBe('"“Are you"@0');
+  });
+});
+
+describe("a caret in front of a paragraph's marker glyph", () => {
+  /** Collapses the caret to the very start of `\\li2`, in front of its glyph. */
+  function atLi2Start(editor: LexicalEditor) {
+    updateNow(editor, () => {
+      $getRoot().getChildAtIndex<ParaNode>(1)!.select(0, 0);
+    });
+  }
+
+  it("→ moves on to the stop before the leading verse number", async () => {
+    const { editor } = await environment();
+    atLi2Start(editor);
+
+    expect(press(editor, "ArrowRight")).toBe("host between marker and 2");
+  });
+
+  it("← stops on the marker", async () => {
+    const { editor } = await environment();
+    atLi2Start(editor);
+
+    expect(press(editor, "ArrowLeft")).toBe("marker \\li2");
+  });
+});
+
+describe("paragraph-edge arrow stops before a note that opens a paragraph's text", () => {
+  /** `\\p first`, then a `\\q1` whose text opens with a note, after a verse number if asked. */
+  async function noteFirstEnvironment(hasLeadingVerse: boolean) {
+    let first: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        first = $createTextNode("first");
+        $getRoot().append(
+          $createGutterParaNode("p", first),
+          $createGutterParaNode(
+            "q1",
+            ...(hasLeadingVerse ? [$createImmutableVerseNode("1")] : []),
+            $createCollapsedNoteNode("body"),
+            $createTextNode("In the beginning"),
+          ),
+        );
+      },
+      <>
+        <ParaMarkerSelectionPlugin />
+        <LeadingVerseCaretGuardPlugin />
+      </>,
+    );
+    act(() => {
+      editor.getRootElement()?.focus();
+    });
+    updateSelection(editor, first!);
+    return editor;
+  }
+
+  it("hosts the caret → brings past the leading verse number, and ← goes back", async () => {
+    const editor = await noteFirstEnvironment(true);
+    expect(press(editor, "ArrowRight")).toBe("marker \\q1");
+    expect(press(editor, "ArrowRight")).toBe("host between marker and 1");
+
+    expect(press(editor, "ArrowRight")).toBe("host between 1 and end");
+    expect(press(editor, "ArrowLeft")).toBe("host between marker and 1");
+  });
+
+  it("hosts the caret → brings past the marker of a paragraph with no verse number", async () => {
+    const editor = await noteFirstEnvironment(false);
+    expect(press(editor, "ArrowRight")).toBe("marker \\q1");
+
+    expect(press(editor, "ArrowRight")).toBe("host between marker and end");
+  });
+});
+
 describe("paragraph-edge arrow stops when the text starts inside a character span", () => {
   it("stops backward on the marker from the start of a paragraph's first span", async () => {
     let lord: TextNode;
@@ -744,6 +865,31 @@ describe("the stop before a leading verse number", () => {
     });
 
     expect(stopOf(editor)).toBe("host between marker and 2");
+  });
+
+  it("is hosted again when focus returns, after a split has carried it into a new paragraph", async () => {
+    const { editor } = await atStopBeforeVerse2();
+    // Enter at the stop, as the editor splits there: the host, the verse number and the text go
+    // to a new paragraph with a glyph of its own.
+    updateNow(editor, () => {
+      const li2 = $getRoot().getChildAtIndex<ParaNode>(1)!;
+      const moved = li2.getChildren().slice(1);
+      const split = $createGutterParaNode("li2");
+      li2.insertAfter(split);
+      split.append(...moved);
+    });
+
+    act(() => {
+      editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
+    });
+    expect(stopOf(editor)).toBe("element li2@1");
+    act(() => {
+      editor.dispatchCommand(FOCUS_COMMAND, new FocusEvent("focus"));
+    });
+    await settle();
+
+    expect(stopOf(editor)).toBe("host between marker and 2");
+    expect(editor.read(() => $getRoot().getChildrenSize())).toBe(4);
   });
 
   it("Backspace removes an empty paragraph before it and leaves the caret at the stop", async () => {

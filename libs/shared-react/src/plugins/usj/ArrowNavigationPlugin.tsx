@@ -288,8 +288,9 @@ function useArrowKeys(editor: LexicalEditor, viewOptions: ViewOptions | undefine
 
 /**
  * The direction the editor's content reads in, from its root element — what "forward" means for a
- * horizontal arrow key. It lives here because arrow navigation is the only caller; it is exported
- * only so the unit test can reach it, as `hasVisualLineBeyondCaret` above is.
+ * horizontal arrow key. Every handler that maps ← and → to reading order reads it from here: this
+ * plugin's, the paragraph-edge stops (`ParaMarkerSelectionPlugin`), and the caret hosts' own arrow
+ * handling (`EmptyVerseCaretGuardPlugin`, `LeadingVerseCaretGuardPlugin`).
  *
  * KNOWN GAP: a project configured for "auto" direction reads as `"ltr"` here. `TextDirectionPlugin`
  * returns early without setting `dir` on the root when the configured direction is `"auto"`, and

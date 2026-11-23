@@ -463,6 +463,29 @@ describe("ParaMarkerSelectionPlugin — asking to change the marker", () => {
     expect(onMenuRequest).toHaveBeenCalledTimes(1);
     expect(selectedMarkerOf(editor)).toBe("li2");
   });
+
+  it("a virtual keyboard's backslash requests the marker menu, as a typed one does", async () => {
+    const onMenuRequest = vi.fn();
+    const { editor, li2, secondText } = await environment("ltr", onMenuRequest);
+    await selectMarkerOf(editor, li2);
+    const event = new InputEvent("beforeinput", {
+      inputType: "insertText",
+      data: "\\",
+      cancelable: true,
+    });
+
+    await act(async () => {
+      editor.dispatchCommand(BEFORE_INPUT_COMMAND, event);
+    });
+    await flushTimers();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onMenuRequest).toHaveBeenCalledTimes(1);
+    expect(selectedMarkerOf(editor)).toBe("li2");
+    expect(editor.getEditorState().read(() => secondText.getLatest().getTextContent())).toBe(
+      "second",
+    );
+  });
 });
 
 describe("ParaMarkerSelectionPlugin — without a marker menu", () => {

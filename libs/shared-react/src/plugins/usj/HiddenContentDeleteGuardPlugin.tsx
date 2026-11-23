@@ -64,7 +64,7 @@ import {
   REMOVE_TEXT_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $isUnknownNode, LoggerBasic, UnknownNode } from "shared";
+import { $isCaretHost, $isUnknownNode, LoggerBasic, UnknownNode } from "shared";
 
 type DeleteGranularity = "character" | "word" | "line";
 
@@ -236,7 +236,7 @@ export function HiddenContentDeleteGuardPlugin({
       settlement: Settlement,
       reach: RangeSnapshot[] = [],
     ): true => {
-      const ranges = [$rangeSnapshot(selection), ...reach];
+      const ranges = [$rangeSnapshot(selection), ...reach].map($outsideCaretHosts);
       const held: HeldEdit = {
         ...ranges[0],
         hiddenKeys: hidden.map((node) => node.getKey()),
@@ -810,8 +810,12 @@ function $coveredContent(ranges: RangeSnapshot[]): string | undefined {
   for (const snapshot of ranges) {
     const range = $rangeFrom(snapshot);
     if (!range) return undefined;
+    // A caret covers nothing, whichever node its point names.
+    if (range.isCollapsed()) continue;
+    // A caret host is no content, and is gone once the prompt's blur has removed it.
     for (const node of range.getNodes())
-      parts.push(node.getKey(), $isTextNode(node) ? node.getTextContent() : "");
+      if (!$isCaretHost(node))
+        parts.push(node.getKey(), $isTextNode(node) ? node.getTextContent() : "");
   }
   return parts.join("\u0000");
 }
@@ -835,7 +839,45 @@ function $isSelectionUnmoved(held: HeldEdit): boolean {
   const selection = $getSelection();
   if (!selection) return true;
   if (!$isRangeSelection(selection)) return false;
-  return isSamePoint(selection.anchor, held.anchor) && isSamePoint(selection.focus, held.focus);
+  const { anchor, focus } = $rangeSnapshot(selection);
+  return (
+    isSamePoint($asBoundary(anchor), $asBoundary(held.anchor)) &&
+    isSamePoint($asBoundary(focus), $asBoundary(held.focus))
+  );
+}
+
+/**
+ * `point` as the boundary between children it stands for, when it is at one: a point in a caret
+ * host, or at either edge of a text node. The same caret can be spelled either way (the element
+ * point a blur leaves where a host was, the text point Lexical resolves it to), and this makes the
+ * two compare equal. A point inside a text node's text is returned as it is.
+ */
+function $asBoundary(point: PointSnapshot): PointSnapshot {
+  const node = $getNodeByKey(point.key);
+  const parent = node?.getParent();
+  if (!$isTextNode(node) || !parent || point.type !== "text") return point;
+  const index = node.getIndexWithinParent();
+  if ($isCaretHost(node) || point.offset === 0)
+    return { key: parent.getKey(), offset: index, type: "element" };
+  if (point.offset === node.getTextContentSize())
+    return { key: parent.getKey(), offset: index + 1, type: "element" };
+  return point;
+}
+
+/**
+ * `snapshot` with each endpoint in a transient caret host moved to the boundary the host stands
+ * for. The boundary outlasts the host: a prompt that takes focus blurs the editor, which removes
+ * the host and leaves the caret on that boundary, so an edit held from the host is still the
+ * user's when the answer comes.
+ */
+function $outsideCaretHosts(snapshot: RangeSnapshot): RangeSnapshot {
+  const outside = (point: PointSnapshot): PointSnapshot => {
+    const node = $getNodeByKey(point.key);
+    const parent = node?.getParent();
+    if (!node || !parent || !$isCaretHost(node)) return point;
+    return { key: parent.getKey(), offset: node.getIndexWithinParent(), type: "element" };
+  };
+  return { anchor: outside(snapshot.anchor), focus: outside(snapshot.focus) };
 }
 
 /**

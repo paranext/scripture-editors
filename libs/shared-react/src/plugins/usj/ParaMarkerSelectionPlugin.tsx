@@ -100,8 +100,8 @@ const TARGETED_INPUT_TYPES = new Set([
  * - Highlight: {@link PARA_MARKER_SELECTED_CLASS_NAME} on the selected marker's paragraph,
  *   recomputed every update, plus the root's `aria-activedescendant` naming the glyph, which
  *   carries `role="option"` and `aria-selected` while selected. Hidden while read-only.
- * - Keys (CRITICAL): Enter with no modifier (or a virtual keyboard's), a typed `\` (AltGr and
- *   Option included) and Alt+↓ call `onParaMarkerMenuRequest` when it is set; without it, Enter and
+ * - Keys (CRITICAL): Enter with no modifier, a typed `\` (AltGr and Option included; either
+ *   one from a virtual keyboard too) and Alt+↓ call `onParaMarkerMenuRequest` when it is set; without it, Enter and
  *   `\` act at the content start, as a modified Enter does, and Alt+↓ acts like any other arrow. A
  *   Ctrl or Cmd chord on `\` leaves the marker selected. A plain ← or → moves on to the next
  *   paragraph-edge stop: the caret before the leading verse number (or the text), or the end of
@@ -371,8 +371,11 @@ export function ParaMarkerSelectionPlugin({
         else $removeMarker(para);
         return true;
       }
-      // A virtual keyboard's Enter, which names no key: the same request a hardware Enter makes.
-      if (inputType === "insertParagraph" && onMenuRequestRef.current) {
+      // A virtual keyboard's Enter or backslash, which names no key: the same request a hardware
+      // one makes. (A hardware key's own keydown has already claimed it, so none arrives here.)
+      const isMenuInput =
+        inputType === "insertParagraph" || (inputType === "insertText" && event.data === "\\");
+      if (isMenuInput && onMenuRequestRef.current) {
         event.preventDefault();
         requestMenu();
         return true;

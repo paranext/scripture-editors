@@ -97,8 +97,8 @@ refused. The public surface grew substantially; nothing was removed.
   - A plain ← or → moves on to the next paragraph-edge stop. Any other arrow returns the caret to
     that position without moving further. Typing, dictation, pasting and the emoji picker insert
     there. A spellcheck replacement or a drop acts where it was aimed.
-  - Enter with no modifier (a virtual keyboard's too), a typed `\` (through AltGr or Option too)
-    and Alt+↓ call `onParaMarkerMenuRequest` when it is set, to change the paragraph's marker.
+  - Enter with no modifier, a typed `\` (through AltGr or Option too; either from a virtual
+    keyboard too) and Alt+↓ call `onParaMarkerMenuRequest` when it is set, to change the paragraph's marker.
     Without it, Enter and `\` act at that position, and Alt+↓ acts like any other arrow. A modified
     Enter (Shift+Enter, a host's Ctrl+Enter) always acts at that position, and a Ctrl or Cmd chord
     on `\` leaves the marker selected.
