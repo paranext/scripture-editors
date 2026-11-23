@@ -14,7 +14,7 @@ import {
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   TextNode,
 } from "lexical";
-import { textTypeState } from "shared";
+import { LoggerBasic, textTypeState } from "shared";
 
 function cleanupText(text: string): string {
   return text.replaceAll("\t", " ");
@@ -159,31 +159,54 @@ export type PlainTextPasteTransform = (text: string) => string;
 
 /**
  * Pastes the clipboard's text as plain text. `transform`, when given, rewrites that text (after tab
- * cleanup) before it is pasted, so a host can turn what the text says into what it should paste.
+ * cleanup) before it is pasted, so a host can turn what the text says into what it should paste. A
+ * transform that throws is reported to `logger` and the cleaned text is pasted as it is; a clipboard
+ * that cannot be read, or any other failure, is reported to `logger` and nothing is pasted.
  */
 export const pasteSelectionAsPlainText = (
   editor: LexicalEditor,
   transform?: PlainTextPasteTransform,
+  logger?: LoggerBasic,
 ) => {
-  navigator.clipboard.read().then(async () => {
-    const permission = await navigator.permissions.query({
-      // @ts-expect-error These types are incorrect.
-      name: "clipboard-read",
+  navigator.clipboard
+    .read()
+    .then(async () => {
+      const permission = await navigator.permissions.query({
+        // @ts-expect-error These types are incorrect.
+        name: "clipboard-read",
+      });
+
+      if (permission.state === "denied") {
+        alert("Not allowed to paste from clipboard.");
+        return;
+      }
+
+      const data = new DataTransfer();
+      const text = await navigator.clipboard.readText();
+      const cleaned = cleanupText(text);
+      data.setData("text/plain", transformOrKeep(cleaned, transform, logger));
+
+      const event = new ClipboardEvent("paste", {
+        clipboardData: data,
+      });
+      editor.dispatchCommand(PASTE_COMMAND, event);
+    })
+    .catch((error: unknown) => {
+      logger?.error("Paste as Plain Text failed.", error);
     });
-
-    if (permission.state === "denied") {
-      alert("Not allowed to paste from clipboard.");
-      return;
-    }
-
-    const data = new DataTransfer();
-    const text = await navigator.clipboard.readText();
-    const cleaned = cleanupText(text);
-    data.setData("text/plain", transform ? transform(cleaned) : cleaned);
-
-    const event = new ClipboardEvent("paste", {
-      clipboardData: data,
-    });
-    editor.dispatchCommand(PASTE_COMMAND, event);
-  });
 };
+
+/** `text` as `transform` rewrites it, or `text` itself when there is no transform or it throws. */
+function transformOrKeep(
+  text: string,
+  transform: PlainTextPasteTransform | undefined,
+  logger: LoggerBasic | undefined,
+): string {
+  if (!transform) return text;
+  try {
+    return transform(text);
+  } catch (error) {
+    logger?.error("Paste as Plain Text is pasting the text as it is: its transform failed.", error);
+    return text;
+  }
+}
