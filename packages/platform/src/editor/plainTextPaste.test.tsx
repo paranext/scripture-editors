@@ -205,6 +205,21 @@ describe("Paste as Plain Text in Standard view", () => {
     expect(paraText(mounted)).toBe(EXPECTED_TEXT);
   });
 
+  // Its markers are editable, but it does not keep Standard view's whitespace, which the conversion
+  // reads the text by: the clipboard's USFM is pasted as it is, and rebuilds the footnote.
+  it("Unformatted view is not converted: the clipboard text is pasted as it is", async () => {
+    const mounted = await mountWithCaret(editorView("unformatted"));
+
+    await act(async () => mounted.ref.current?.pastePlainText());
+    await settle();
+
+    const notes = paraContent(mounted).filter(
+      (entry) => typeof entry !== "string" && entry.type === "note",
+    );
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({ type: "note", marker: "f" });
+  });
+
   // A view with hidden markers refuses a paste holding a backslash (the command menu's gate), so
   // there is nothing to convert and nothing is pasted. This pins that the transform is not what
   // changed that: the document is left as it was.
