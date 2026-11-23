@@ -141,6 +141,8 @@ describe("usj-nodes.css gutter paragraph marker", () => {
     // A paragraph's text-indent is for its text: inherited, it would collapse or widen this
     // shrink-to-fit box (a hanging `\q2`'s box would be 0px wide) and shift the glyph in RTL.
     expect(marker).toContain("text-indent: 0;");
+    // Gutter-side padding keeps the rest of the marker's gutter row clickable, the glyph unmoved.
+    expect(marker).toContain("padding-left: var(--psc-gutter-width);");
     expect(marker).not.toContain("width:");
   });
 
@@ -148,6 +150,9 @@ describe("usj-nodes.css gutter paragraph marker", () => {
     const rtl = ruleBody('.psc-gutter-markers[dir="rtl"] .book > .marker:first-child');
     expect(rtl).toContain("right: auto;");
     expect(rtl).toContain("left: calc(100% + var(--para-indent) + var(--psc-gutter-marker-gap));");
+    // The gutter is on the right in RTL, and so is the click-target padding.
+    expect(rtl).toContain("padding-left: 0;");
+    expect(rtl).toContain("padding-right: var(--psc-gutter-width);");
     expect(rtl).not.toContain("direction: rtl");
   });
 });

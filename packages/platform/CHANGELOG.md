@@ -119,8 +119,9 @@ refused. The public surface grew substantially; nothing was removed.
   needing a second press. A word or line delete backward from the start of a paragraph's text acts
   as a character delete there, rather than reaching over the gutter glyph.
 - **Gutter markers are right-aligned** (`hasGutterParaMarkers`): each marker's visible text ends a
-  fixed gap before its paragraph's text, whatever the paragraph's font size, and the active text
-  box (`hasActiveTextFocusBox`) reaches 3px past the end of the text column. A host that vendors
+  fixed gap before its paragraph's text, whatever the paragraph's font size, and the rest of each
+  marker's gutter row stays part of its click target. The active text box
+  (`hasActiveTextFocusBox`) reaches 3px past the end of the text column. A host that vendors
   its own copy of `usj-nodes.css` needs the new rules in it, including the `@property`
   registrations of `--psc-gutter-width` and `--psc-gutter-marker-gap`: unregistered, the gutter's
   width follows each paragraph's own font size.
