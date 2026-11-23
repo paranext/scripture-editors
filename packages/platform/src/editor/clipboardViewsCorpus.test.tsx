@@ -63,7 +63,7 @@ import {
 } from "lexical";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createMarkerLookup, defaultStyleInfo, NBSP } from "shared";
+import { createMarkerLookup, defaultStyleInfo, NBSP, NBSP_STAND_IN } from "shared";
 import { ViewOptions } from "shared-react";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -310,6 +310,7 @@ type RangeKind =
   | "ends inside a char style"
   | "contains a footnote"
   | "across a paragraph boundary"
+  | "starts at a paragraph's end"
   | "spans a whole paragraph"
   | "across a verse number"
   | "inside note content";
@@ -462,8 +463,9 @@ function paragraphEndDestination(usj: Usj): TextPoint {
  * into `text` falls in it. Only plain `text` nodes: Standard view's marker and verse nodes are
  * text nodes of other types. */
 function $locate(text: string, offset: number): { node: TextNode; offset: number } {
-  // Standard view displays a data NBSP as `~`, one character for one.
-  for (const shown of [text, text.replaceAll(NBSP, "~")]) {
+  // Standard view displays a data NBSP as `~`, or as `NBSP_STAND_IN` with invisible characters
+  // allowed, one character for one.
+  for (const shown of [text, text.replaceAll(NBSP, "~"), text.replaceAll(NBSP, NBSP_STAND_IN)]) {
     const hits: TextNode[] = [];
     const walk = (node: LexicalNode) => {
       if ($isTextNode(node) && node.getType() === "text" && node.getTextContent().includes(shown))
@@ -997,9 +999,32 @@ type ProseViewName = (typeof PROSE_VIEWS)[number];
  * a paragraph boundary also writes the next paragraph's gutter glyph, so only a range inside one
  * paragraph is compared with it. */
 function proseReferencesFor(kind: RangeKind): Exclude<ProseViewName, "standard">[] {
-  return kind === "across a paragraph boundary" || kind === "spans a whole paragraph"
+  return kind === "across a paragraph boundary" ||
+    kind === "starts at a paragraph's end" ||
+    kind === "spans a whole paragraph"
     ? ["formatted"]
     : ["formatted", "paragraph-structure"];
+}
+
+/**
+ * The ranges the prose rows copy: the sampled ones, and the range across a paragraph boundary
+ * moved to start exactly at the first paragraph's end, where a copy opens with a line break. Only
+ * these rows sample it: the copy and paste rows above have no model for a paste that opens with a
+ * paragraph break.
+ */
+function proseRanges(usj: Usj): SampledRange[] {
+  const ranges = sampleRanges(usj);
+  const across = ranges.find((range) => range.kind === "across a paragraph boundary");
+  const text = across && itemAt(usj.content, across.start.path);
+  if (!across || typeof text !== "string") return ranges;
+  return [
+    ...ranges,
+    {
+      kind: "starts at a paragraph's end",
+      start: { ...across.start, offset: text.length },
+      end: across.end,
+    },
+  ];
 }
 
 /** Selects each range in turn in one mount of `usj` in `view`, and returns what each copy wrote as
@@ -1028,35 +1053,88 @@ async function copyEachRange(
  * what a hidden-marker view's copy of the same selection writes. For every sampled range, the
  * Standard copy, converted, must be the Formatted copy — and, inside one paragraph, the Paragraph
  * Structure copy — and hold no `\` the selection does not hold itself (in a stray marker, which a
- * hidden-marker view shows as its bytes).
+ * hidden-marker view shows as its bytes). Each fixture runs with `allowInvisibleCharacters` off and
+ * on, which changes how a stored no-break space is copied (`~`, or itself) and read back.
  *
  * One mount per fixture and view serves every range, so these rows take seconds, not a minute.
  */
 describe("Paste as Plain Text in Standard view writes what a hidden-marker copy writes", () => {
-  for (const fixture of FIXTURES)
-    describe(fixture, () => {
-      const usj = readFixture(fixture);
-      const ranges = sampleRanges(usj);
-      const copies = new Map<ProseViewName, Map<SampledRange, string>>();
-      beforeAll(async () => {
-        for (const name of PROSE_VIEWS)
-          copies.set(name, await copyEachRange(usj, editorView(name), ranges));
-      }, 60_000);
+  for (const allowInvisibleCharacters of [false, true])
+    for (const fixture of FIXTURES)
+      describe(`${fixture} | allowInvisibleCharacters ${allowInvisibleCharacters}`, () => {
+        const usj = readFixture(fixture);
+        const ranges = proseRanges(usj);
+        const copies = new Map<ProseViewName, Map<SampledRange, string>>();
+        beforeAll(async () => {
+          for (const name of PROSE_VIEWS)
+            copies.set(
+              name,
+              await copyEachRange(usj, { ...editorView(name), allowInvisibleCharacters }, ranges),
+            );
+        }, 60_000);
 
-      for (const range of ranges)
-        for (const reference of proseReferencesFor(range.kind))
-          it(`${range.kind} | standard as prose vs ${reference}`, () => {
-            const standardText = copies.get("standard")?.get(range);
-            const referenceText = copies.get(reference)?.get(range);
-            expect(standardText, "Standard view's copy wrote text/plain").toBeTruthy();
-            expect(referenceText, `${reference} view's copy wrote text/plain`).toBeTruthy();
-            const prose = usfmToPlainProse(standardText ?? "", {
-              getMarker: getBundledMarker,
-              allowInvisibleCharacters: editorView("standard").allowInvisibleCharacters,
+        for (const range of ranges)
+          for (const reference of proseReferencesFor(range.kind))
+            it(`${range.kind} | standard as prose vs ${reference}`, () => {
+              const standardText = copies.get("standard")?.get(range);
+              const referenceText = copies.get(reference)?.get(range);
+              expect(standardText, "Standard view's copy wrote text/plain").toBeTruthy();
+              expect(referenceText, `${reference} view's copy wrote text/plain`).toBeTruthy();
+              const prose = usfmToPlainProse(standardText ?? "", {
+                getMarker: getBundledMarker,
+                allowInvisibleCharacters,
+              });
+              expect(prose).toBe(referenceText);
+              if (!contentText(sliceUsj(usj.content, range.start, range.end)).includes("\\"))
+                expect(prose).not.toContain("\\");
             });
-            expect(prose).toBe(referenceText);
-            if (!contentText(sliceUsj(usj.content, range.start, range.end)).includes("\\"))
-              expect(prose).not.toContain("\\");
-          });
+      });
+});
+
+/**
+ * A paragraph whose stored no-break spaces sit everywhere a paste could lose one: after a space,
+ * at a span's start after its marker's separator, and two together.
+ */
+const NBSP_USJ: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    {
+      type: "para",
+      marker: "p",
+      content: [
+        "alpha  beta ",
+        { type: "char", marker: "nd", content: [" Lord"] },
+        " gamma  delta",
+      ],
+    },
+  ],
+};
+
+describe("Paste as Plain Text in Standard view keeps every stored no-break space", () => {
+  for (const allowInvisibleCharacters of [false, true])
+    it(`allowInvisibleCharacters ${allowInvisibleCharacters}: standard as prose vs formatted`, async () => {
+      const range: SampledRange = {
+        kind: "spans a whole paragraph",
+        start: { path: [0, 0], offset: 0 },
+        end: { path: [0, 2], offset: " gamma  delta".length },
+      };
+      const copy = async (name: ProseViewName) =>
+        (
+          await copyEachRange(NBSP_USJ, { ...editorView(name), allowInvisibleCharacters }, [range])
+        ).get(range);
+      const standardText = await copy("standard");
+      const formattedText = await copy("formatted");
+      expect(formattedText).toBe(
+        allowInvisibleCharacters
+          ? "alpha  beta  Lord gamma  delta"
+          : "alpha ~beta ~Lord gamma~~delta",
+      );
+      expect(
+        usfmToPlainProse(standardText ?? "", {
+          getMarker: getBundledMarker,
+          allowInvisibleCharacters,
+        }),
+      ).toBe(formattedText);
     });
 });

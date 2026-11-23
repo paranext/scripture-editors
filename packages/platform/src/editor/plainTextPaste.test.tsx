@@ -227,3 +227,80 @@ describe("Paste as Plain Text in a footnote editor", () => {
     expect(paraText(mounted)).toBe("Yahweh’sYahweh law.");
   });
 });
+
+const LAW_TEXT = "Yahweh’s law is good.";
+const LAW_START = "Yahweh’s ".length;
+const LAW_END = "Yahweh’s law".length;
+
+/** Where a paste over `law` happens: Standard view's verse line, and the footnotes pane's row
+ * editor, whose document is a scaffold paragraph holding the one note it edits. */
+const LAW_HOSTS = [
+  {
+    name: "standard",
+    usj: {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        {
+          type: "para",
+          marker: "p",
+          content: [{ type: "verse", marker: "v", number: "1" }, LAW_TEXT],
+        },
+      ],
+    },
+    path: "$.content[2].content[1]",
+  },
+  {
+    name: "footnotes-pane-row",
+    usj: {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            {
+              type: "note",
+              marker: "f",
+              caller: "+",
+              content: [{ type: "char", marker: "ft", content: [LAW_TEXT] }],
+            },
+          ],
+        },
+      ],
+    },
+    path: "$.content[0].content[0].content[0].content[0]",
+  },
+] as const satisfies readonly { name: string; usj: Usj; path: string }[];
+
+describe("Paste as Plain Text of a copy with no prose", () => {
+  for (const host of LAW_HOSTS)
+    for (const clipboardText of ["", "\\v 5 ", "\\v 5 ‏", "\\c 2"])
+      it(`${host.name}: ${JSON.stringify(clipboardText)} over a selection leaves the document and selection`, async () => {
+        stubAsyncClipboard(clipboardText);
+        const mounted = await mountInView(host.usj, editorView(host.name));
+        const jsonPath = host.path as `$.content[${number}].content[${number}]`;
+        await act(async () => {
+          mounted.ref.current?.setSelection({
+            start: { jsonPath, offset: LAW_START },
+            end: { jsonPath, offset: LAW_END },
+          });
+        });
+        await settle();
+        const usjBefore = mounted.ref.current?.getUsj();
+        const selectionBefore = mounted.ref.current?.getSelection();
+        expect(selectionBefore).toEqual({
+          start: { jsonPath, offset: LAW_START },
+          end: { jsonPath, offset: LAW_END },
+        });
+
+        await act(async () => mounted.ref.current?.pastePlainText());
+        await settle();
+
+        expect(mounted.ref.current?.getUsj()).toEqual(usjBefore);
+        expect(mounted.ref.current?.getSelection()).toEqual(selectionBefore);
+      });
+});
