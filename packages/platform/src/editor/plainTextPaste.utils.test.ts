@@ -172,6 +172,13 @@ describe("usfmToPlainProse", () => {
     for (const text of ["a\n\\", "a\n\\ b"]) expect(prose(text)).toBe(text);
   });
 
+  it("loses the words of the documented residuals in text that otherwise reads as USFM", () => {
+    // A backslash word alone on a later line reads as a paragraph marker with no text.
+    expect(prose("\\p Copy to:\n\\temp")).toBe("Copy to:\n");
+    // Path-like text made only of marker names reads as those markers.
+    expect(prose("See C:\\it\\add file")).toBe("See C:file");
+  });
+
   it("reads a bare backslash that opens a line as a paragraph whose marker has no name", () => {
     expect(prose(". \n\\ 2 \\v 2 A \\bd \n\\ te")).toBe(". \n2 A \nte");
   });
