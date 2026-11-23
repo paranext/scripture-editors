@@ -90,3 +90,6 @@ docs/superpowers
 
 # Vitest coverage/report temp output
 test-output
+
+.nx/polygraph
+.nx/self-healing
