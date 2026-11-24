@@ -11,6 +11,7 @@ import {
   $isRangeSelection,
   $isTextNode,
   BaseSelection,
+  ElementNode,
   LexicalNode,
   NodeKey,
   PointType,
@@ -716,19 +717,27 @@ export function $getEmptyParaBefore(para: SomeParaNode): SomeParaNode | undefine
   return $isSomeParaNode(prev) && $canRemoveEmptyPara(prev) ? prev : undefined;
 }
 
-/** Whether a collapsed caret rests in `block` or in one of its descendants. */
-function $isCaretIn(block: LexicalNode): boolean {
+/**
+ * Whether a collapsed caret rests in `block` where a caret is drawn: anywhere in it but in front of
+ * a gutter paragraph's glyph or within the glyph, where none is.
+ */
+function $isCaretShownIn(block: ElementNode): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const node = selection.focus.getNode();
-  return node.is(block) || block.isParentOf(node);
+  const { focus } = selection;
+  const node = focus.getNode();
+  const glyph = block.getFirstChild();
+  if (!$isGutterMarkerNode(glyph)) return node.is(block) || block.isParentOf(node);
+  if (node.is(block)) return focus.offset > 0;
+  return block.isParentOf(node) && !node.is(glyph);
 }
 
 /**
  * Performs a paragraph delete on `para`. An empty paragraph alone in its chapter becomes a blank
  * line with no marker, with the caret in it. Any other empty paragraph is removed outright, and the
  * caret goes to the start of the paragraph after it, when a Delete removes it or there is nothing
- * before it to merge into (a chapter); a caret already in that paragraph stays where it is. Otherwise `para` merges into the block before it
+ * before it to merge into (a chapter); a caret already in that paragraph, where one is drawn,
+ * stays where it is. Otherwise `para` merges into the block before it
  * ({@link $mergeParaIntoPrevious}), a no-op when that cannot be done.
  *
  * Mutating: call inside `editor.update()` (dispatched from StructureKeyboardPlugin.tsx and
@@ -749,9 +758,9 @@ export function $deletePara(para: SomeParaNode, intent: DeleteIntent = "deleteBa
     const next = para.getNextSibling();
     para.remove();
     // Always a paragraph, by `$canRemoveEmptyPara`; the check only narrows its type. A Backspace
-    // from `next`'s start leaves the caret where it was: at the stop before a leading verse
-    // number, the content start is past the number.
-    if ($isParaLikeNode(next) && !$isCaretIn(next)) $placeCaretAtParaContentStart(next);
+    // from `next`'s start leaves a caret already past its glyph where it was: at the stop before a
+    // leading verse number, the content start is past the number.
+    if ($isParaLikeNode(next) && !$isCaretShownIn(next)) $placeCaretAtParaContentStart(next);
     return;
   }
   $mergeParaIntoPrevious(para);

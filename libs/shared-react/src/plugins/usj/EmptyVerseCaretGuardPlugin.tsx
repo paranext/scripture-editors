@@ -15,6 +15,7 @@ import {
   KEY_DOWN_COMMAND,
   LexicalCommand,
   LexicalEditor,
+  SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { useEffect } from "react";
 import { $caretHostAtBoundary, $isCaretHost, $placeCaretAtBoundary } from "shared";
@@ -144,6 +145,9 @@ export function EmptyVerseCaretGuardPlugin(): null {
             const forwardKey = getEditorTextDirection(root) === "rtl" ? "ArrowLeft" : "ArrowRight";
             if (event.key !== forwardKey || !$moveForwardOutOfEmptyVerse()) return false;
             event.preventDefault();
+            // Lexical reports no selection change for a move it made itself, so the caret hosts
+            // and the scripture reference would not follow it.
+            editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
             return true;
           },
           COMMAND_PRIORITY_CRITICAL,

@@ -3,11 +3,13 @@ import { $isPassedOverInGutterView } from "./gutterHiddenNodes.utils";
 import { $markLeadingVerseArrival } from "./LeadingVerseCaretGuardPlugin";
 import { $placeCaretAfterParaChild, $placeCaretAtEnd } from "./structureKeyboard.utils";
 import {
+  $addUpdateTag,
   $getSelection,
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
   ElementNode,
+  HISTORY_MERGE_TAG,
   LexicalNode,
 } from "lexical";
 import {
@@ -20,6 +22,7 @@ import {
   $isParaNode,
   $placeCaretAtBoundary,
   $selectParaMarker,
+  CURSOR_CHANGE_TAG,
   ParaLikeNode,
   ParaNode,
 } from "shared";
@@ -86,7 +89,8 @@ function $leadingVerse(para: ParaNode): LexicalNode | undefined {
  * view hides. `"start"` when the caret sits at the start of `para`; `undefined` when the caret is
  * not at a child boundary of `para`. A caret in a transient caret host counts as sitting where the
  * host is, and a caret at the very start of a child (the first text of a `\wj` or `\nd` span, say)
- * counts as sitting in front of it.
+ * counts as sitting in front of it, even with a node the view hides before it in the span. Never
+ * out of a note: a caret in an expanded note's text is at none of `para`'s boundaries.
  */
 function $childBeforeCaret(para: ElementNode): LexicalNode | "start" | undefined {
   const selection = $getSelection();
@@ -102,7 +106,8 @@ function $childBeforeCaret(para: ElementNode): LexicalNode | "start" | undefined
   if (!isAtNodeStart) return undefined;
   // Out of the spans the caret starts, to the child of `para` it is in front of.
   for (let parent = node.getParent(); !parent?.is(para); parent = node.getParent()) {
-    if (!parent || node.getPreviousSibling()) return undefined;
+    if (!parent || $isNoteNode(parent)) return undefined;
+    if ($shownAtOrBefore(node.getPreviousSibling()) !== "start") return undefined;
     node = parent;
   }
   return $shownAtOrBefore(node.getPreviousSibling());
@@ -169,7 +174,8 @@ function $isOnlyInvisibleFrom(node: LexicalNode | null): boolean {
 
 /**
  * Whether a collapsed caret rests at the very end of `block`, counting a caret before a collapsed
- * note that ends the block as at its end: nothing a caret can reach is left between the two.
+ * note that ends the block as at its end: nothing a caret can reach is left between the two. A
+ * caret in an expanded note's text is never at the block's end: the note's own end comes first.
  */
 function $isCaretAtEndOf(block: ElementNode): boolean {
   const selection = $getSelection();
@@ -182,7 +188,7 @@ function $isCaretAtEndOf(block: ElementNode): boolean {
   while (!node.is(block)) {
     if (!$isOnlyInvisibleFrom(node.getNextSibling())) return false;
     const parent = node.getParent();
-    if (!parent) return false;
+    if (!parent || $isNoteNode(parent)) return false;
     node = parent;
   }
   return true;
@@ -356,5 +362,36 @@ function $enterForward(para: ParaNode, canStopOnMarker: boolean): boolean {
   if (canStopOnMarker && glyph && $selectParaMarker(glyph)) return true;
   if ($leadingVerse(para)) $placeCaretBeforeLeadingVerse(para);
   else $placeCaretAtContentStart(para);
+  return true;
+}
+
+/**
+ * A Shift+arrow backward from the caret before a leading verse number: extends the selection from
+ * there to the previous paragraph's end, where the plain arrow's last stop is. Left to the browser,
+ * the range leaves the caret's host, which removes the host and collapses the selection back.
+ *
+ * Mutating: call inside `editor.update()` (a command handler already runs inside one).
+ *
+ * @returns `true` if the selection was extended.
+ */
+export function $extendBackwardFromLeadingVerseStop(): boolean {
+  const at = $getParaEdgeStop();
+  if (at?.stop !== "beforeLeadingVerse") return false;
+  const leadingVerse = $leadingVerse(at.para);
+  const previous = $adjacentBlock(at.para, "previous");
+  if (!leadingVerse || !previous) return false;
+  const selection = $getSelection();
+  const host = $isRangeSelection(selection) ? selection.anchor.getNode() : undefined;
+  if (host && $isCaretHost(host)) {
+    host.remove();
+    // Removing a host is no edit, as everywhere else one is removed.
+    $addUpdateTag(CURSOR_CHANGE_TAG);
+    $addUpdateTag(HISTORY_MERGE_TAG);
+  }
+  $placeCaretAtEndOf(previous);
+  const range = $getSelection();
+  if (!$isRangeSelection(range)) return false;
+  const boundary = leadingVerse.getIndexWithinParent();
+  range.anchor.set(at.para.getKey(), boundary, "element");
   return true;
 }

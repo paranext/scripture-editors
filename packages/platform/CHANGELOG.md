@@ -114,7 +114,9 @@ refused. The public surface grew substantially; nothing was removed.
   where text and markers can be typed in front of the verse), then on the paragraph's marker, then
   at the end of the previous paragraph. → from the end of a paragraph visits the same stops in the
   opposite order. A paragraph with no leading verse number has no first stop, and `"protected"`
-  `structureProtectionMode` skips the marker stop.
+  `structureProtectionMode` skips the marker stop. From the stop before the verse number, Shift+→
+  selects the verse number and Shift+← extends the selection back to the previous paragraph's end.
+  Inside an expanded note, the arrows move as they do anywhere in the note's text.
 - **→ in an empty verse moves on to the next verse** when another verse number follows, instead of
   needing a second press. A word or line delete backward from the start of a paragraph's text acts
   as a character delete there, rather than reaching over the gutter glyph.

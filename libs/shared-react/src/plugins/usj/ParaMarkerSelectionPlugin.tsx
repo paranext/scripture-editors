@@ -1,6 +1,10 @@
 import { getEditorTextDirection } from "./ArrowNavigationPlugin";
 import { isEditingKey } from "./OpaqueBlockGuardPlugin";
-import { $moveParaEdgeStop, ParaEdgeDirection } from "./paraEdgeNavigation.utils";
+import {
+  $extendBackwardFromLeadingVerseStop,
+  $moveParaEdgeStop,
+  ParaEdgeDirection,
+} from "./paraEdgeNavigation.utils";
 import {
   $advancePastParaPrefixes,
   $placeCaretAtParaContentStart,
@@ -265,8 +269,25 @@ export function ParaMarkerSelectionPlugin({
       return true;
     };
 
+    /**
+     * A Shift+arrow backward from the caret before a leading verse number, which a browser cannot
+     * extend from the caret's host (`$extendBackwardFromLeadingVerseStop`).
+     */
+    const $handleShiftBackwardArrow = (event: KeyboardEvent): boolean => {
+      if (!event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return false;
+      const root = editor.getRootElement();
+      if (!root || !editor.isEditable()) return false;
+      const backwardKey = getEditorTextDirection(root) === "rtl" ? "ArrowRight" : "ArrowLeft";
+      if (event.key !== backwardKey || !$extendBackwardFromLeadingVerseStop()) return false;
+      event.preventDefault();
+      // As for a plain edge arrow: the browser reports no selection change for this move.
+      editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      return true;
+    };
+
     const $handleKeyDown = (event: KeyboardEvent): boolean => {
       if (typeof event.key !== "string") return false;
+      if ($handleShiftBackwardArrow(event)) return true;
       // The key then acts from the repaired caret, as it would from any other, edge stops included.
       if ($repairOrphanedSelection()) return $handleParaEdgeArrow(event);
       if ($handleParaEdgeArrow(event)) return true;

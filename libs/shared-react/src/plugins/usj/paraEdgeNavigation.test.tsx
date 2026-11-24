@@ -12,6 +12,8 @@ import { LeadingVerseCaretGuardPlugin } from "./LeadingVerseCaretGuardPlugin";
 import { ParaMarkerSelectionPlugin } from "./ParaMarkerSelectionPlugin";
 import { baseTestEnvironment, settle, updateSelection } from "./react-test.utils";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
+import { $getParaEdgeStop } from "./paraEdgeNavigation.utils";
+import { $deletePara } from "./structureKeyboard.utils";
 import { StructureProtectionMode } from "./structure-protection.model";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
 import { createEmptyHistoryState, HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
@@ -403,6 +405,43 @@ describe("an empty verse", () => {
     expect(stopOf(editor)).toBe("host between 4 and 5");
 
     expect(press(editor, "ArrowRight")).toBe('"fifth"@0');
+  });
+
+  it("→ into another empty verse hosts the caret there, and leaves no host behind", async () => {
+    const { editor } = await environment();
+    let selectionChanges = 0;
+    editor.registerCommand(
+      SELECTION_CHANGE_COMMAND,
+      () => {
+        selectionChanges += 1;
+        return false;
+      },
+      0,
+    );
+    updateNow(editor, () => {
+      $getRoot()
+        .clear()
+        .append(
+          $createGutterParaNode(
+            "p",
+            $createImmutableVerseNode("4"),
+            $createImmutableVerseNode("5"),
+            $createImmutableVerseNode("6"),
+            $createTextNode("sixth"),
+          ),
+        );
+      $getRoot().getFirstChildOrThrow<ParaNode>().select(2, 2);
+    });
+    updateNow(editor, () => {
+      editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+    expect(stopOf(editor)).toBe("host between 4 and 5");
+    const before = selectionChanges;
+
+    expect(press(editor, "ArrowRight")).toBe("host between 5 and 6");
+    // Announced, so the scripture reference follows the caret.
+    expect(selectionChanges).toBeGreaterThan(before);
+    expect(editor.read(() => $getRoot().getAllTextNodes().filter($isCaretHost).length)).toBe(1);
   });
 });
 
@@ -1053,6 +1092,129 @@ describe("the stop before a leading verse number", () => {
     ).toEqual(["p", "li2"]);
     // Not past the verse number, where a second Backspace would delete it.
     expect(stopOf(editor)).toBe("host between marker and 2");
+  });
+
+  it("a delete that removes an empty paragraph moves a caret in front of the next glyph to its text", async () => {
+    let third: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        third = $createTextNode("third");
+        $getRoot().append(
+          $createGutterParaNode("p", $createTextNode("first")),
+          $createGutterParaNode("b"),
+          $createGutterParaNode("q1", third),
+        );
+      },
+      <StructureKeyboardPlugin structureProtectionMode="off" />,
+    );
+    updateNow(editor, () => {
+      // In front of the glyph: the invisible position the stops never leave a caret at.
+      $getRoot().getChildAtIndex<ParaNode>(2)!.select(0, 0);
+      $deletePara($getRoot().getChildAtIndex<ParaNode>(1)!, "deleteForward");
+    });
+
+    expect(stopOf(editor)).toBe('"third"@0');
+  });
+});
+
+describe("Shift+← from the caret before a leading verse number", () => {
+  it("extends the selection back to the previous paragraph's end", async () => {
+    const { editor, first, second } = await environment();
+    updateSelection(editor, second, 0);
+    expect(press(editor, "ArrowLeft")).toBe("host between marker and 2");
+
+    const event = pressNow(editor, "ArrowLeft", { shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    const range = editor.read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) return undefined;
+      return {
+        focus: selection.focus.getNode().is(first) ? `first@${selection.focus.offset}` : "other",
+        hosts: $getRoot().getAllTextNodes().filter($isCaretHost).length,
+      };
+    });
+    expect(range?.focus).toBe("first@5");
+    expect(range?.hosts).toBe(0);
+    // Anchored where the caret stood: in front of the verse number.
+    expect(
+      editor.read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return undefined;
+        const { anchor } = selection;
+        const node = anchor.getNode();
+        return $isParaNode(node) && $isSomeVerseNode(node.getChildAtIndex(anchor.offset));
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("paragraph-edge arrow stops at a span that opens with a hidden node", () => {
+  it("← from the start of a span whose first child is a milestone selects the marker", async () => {
+    let quote: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        quote = $createTextNode("I am the way");
+        $getRoot().append(
+          $createGutterParaNode("p", $createTextNode("first")),
+          $createGutterParaNode(
+            "q1",
+            $createCharNode("wj").append($createMilestoneNode("zmsc-s"), quote),
+          ),
+        );
+      },
+      <ParaMarkerSelectionPlugin />,
+    );
+    updateSelection(editor, quote!, 0);
+
+    expect(press(editor, "ArrowLeft")).toBe("marker \\q1");
+  });
+});
+
+describe("paragraph-edge arrow stops inside an expanded note", () => {
+  it("is no stop at the end of a note that ends the paragraph", async () => {
+    let body: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        body = $createTextNode("body");
+        $getRoot().append(
+          $createGutterParaNode(
+            "p",
+            $createTextNode("first"),
+            $createNoteNode("f", "+", false).append(
+              $createImmutableNoteCallerNode("+", "note preview"),
+              $createCharNode("ft").append(body),
+            ),
+          ),
+          $createGutterParaNode("q1", $createTextNode("third")),
+        );
+      },
+      <ParaMarkerSelectionPlugin />,
+    );
+    updateSelection(editor, body!, 4);
+
+    expect(editor.getEditorState().read($getParaEdgeStop)).toBeUndefined();
+  });
+
+  it("is no stop at the start of a note that opens the paragraph's text", async () => {
+    let body: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        body = $createTextNode("body");
+        $getRoot().append(
+          $createGutterParaNode("p", $createTextNode("first")),
+          $createGutterParaNode(
+            "q1",
+            $createNoteNode("f", "+", false).append($createCharNode("ft").append(body)),
+            $createTextNode("third"),
+          ),
+        );
+      },
+      <ParaMarkerSelectionPlugin />,
+    );
+    updateSelection(editor, body!, 0);
+
+    expect(editor.getEditorState().read($getParaEdgeStop)).toBeUndefined();
   });
 });
 
