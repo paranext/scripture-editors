@@ -6,6 +6,7 @@ import {
   copySelection,
   cutSelection,
   pasteSelection,
+  PlainTextPasteTransform,
   pasteSelectionAsPlainText,
   registerEmptyCopyGuard,
 } from "./clipboard.utils";
@@ -20,7 +21,7 @@ import {
   useState,
 } from "react";
 import * as ReactDOM from "react-dom";
-import { isImmutableChapterElement } from "shared";
+import { isImmutableChapterElement, LoggerBasic } from "shared";
 
 /**
  * A context menu option to add to the editor context menu.
@@ -143,8 +144,15 @@ export class ContextMenuOption {
 
 export function ContextMenuPlugin({
   options: extraOptions,
+  plainTextPasteTransform,
+  logger,
 }: {
   options?: ContextMenuOptionConfig[];
+  /** Rewrites the text the Paste as Plain Text option pastes. */
+  plainTextPasteTransform?: PlainTextPasteTransform;
+  /** Told when the Paste as Plain Text transform throws (the text is then pasted as it is) or the
+   * paste fails. */
+  logger?: LoggerBasic;
 } = {}): ReactElement | null {
   const [editor] = useLexicalComposerContext();
   const [isReadonly, setIsReadonly] = useState(() => !editor.isEditable());
@@ -181,7 +189,7 @@ export function ContextMenuPlugin({
       }),
       new ContextMenuOption(`Paste as Plain Text`, {
         onSelect: () => {
-          pasteSelectionAsPlainText(editor);
+          pasteSelectionAsPlainText(editor, plainTextPasteTransform, logger);
         },
         isDisabled: isReadonly,
       }),
@@ -191,7 +199,7 @@ export function ContextMenuPlugin({
         new ContextMenuOption(opt.title, { onSelect: opt.onSelect, isDisabled: opt.isDisabled }),
     );
     return [...builtIn, ...extra];
-  }, [editor, isReadonly, extraOptions]);
+  }, [editor, isReadonly, extraOptions, plainTextPasteTransform, logger]);
 
   const menuRef = useRef<HTMLDivElement>(null);
   // What had focus when the menu opened, so the keydown guard below can tell "focus never moved"

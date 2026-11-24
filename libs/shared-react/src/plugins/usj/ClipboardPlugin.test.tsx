@@ -1,5 +1,5 @@
 import { ClipboardPlugin } from "./ClipboardPlugin";
-import { copySelection } from "./clipboard.utils";
+import { copySelection, PlainTextPasteTransform } from "./clipboard.utils";
 import { baseTestEnvironment } from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
@@ -8,14 +8,17 @@ import {
   $getRoot,
   $setSelection,
   LexicalEditor,
+  COMMAND_PRIORITY_CRITICAL,
   PASTE_COMMAND,
   TextNode,
 } from "lexical";
+import { useEffect, useState } from "react";
 import {
   $createCharNode,
   $createImmutableTypedTextNode,
   $createNoteNode,
   $createParaNode,
+  LoggerBasic,
   ParaNode,
 } from "shared";
 
@@ -70,16 +73,19 @@ async function clipboardEnvironment(): Promise<{ editor: LexicalEditor; text: Te
   return { editor, text };
 }
 
-/** Presses a clipboard shortcut on the editor's root element, where the plugin listens. */
+/** Presses a clipboard shortcut on the editor's root element, where the plugin listens. `code` is
+ * the physical key, which a non-Latin keyboard layout reports apart from its own letter in `key`. */
 async function pressShortcut(
   editor: LexicalEditor,
   key: string,
   shiftKey = false,
+  code?: string,
 ): Promise<KeyboardEvent> {
   const rootElement = editor.getRootElement();
   if (!rootElement) throw new Error("editor has no root element to press a key on");
   const event = new KeyboardEvent("keydown", {
     key,
+    code,
     ctrlKey: true,
     shiftKey,
     bubbles: true,
@@ -128,6 +134,23 @@ describe("ClipboardPlugin — copy/cut with a selection", () => {
 
     await pressShortcut(editor, "x");
 
+    expect(execCommand).toHaveBeenCalledWith("copy");
+  });
+
+  it("copies on the C key of a non-Latin keyboard layout", async () => {
+    const { editor, text } = await clipboardEnvironment();
+    await act(async () => editor.update(() => text.select(0, text.getTextContentSize())));
+
+    // A Russian layout reports its own letter, `с`, for the key Latin layouts call C.
+    expect((await pressShortcut(editor, "с", false, "KeyC")).defaultPrevented).toBe(true);
+    expect(execCommand).toHaveBeenCalledWith("copy");
+  });
+
+  it("cuts on the X key of a non-Latin keyboard layout", async () => {
+    const { editor, text } = await clipboardEnvironment();
+    await act(async () => editor.update(() => text.select(0, text.getTextContentSize())));
+
+    expect((await pressShortcut(editor, "ч", false, "KeyX")).defaultPrevented).toBe(true);
     expect(execCommand).toHaveBeenCalledWith("copy");
   });
 
@@ -191,6 +214,174 @@ describe("ClipboardPlugin — paste keys are unaffected", () => {
     // now follow must not reach these.
     expect((await pressShortcut(editor, "v")).defaultPrevented).toBe(true);
     expect((await pressShortcut(editor, "v", true)).defaultPrevented).toBe(true);
+  });
+});
+
+/** Stands in the async clipboard the paste shortcuts read, holding `text` as its one flavor. */
+function stubAsyncClipboard(text: string): void {
+  class FakeDataTransfer {
+    private readonly store = new Map<string, string>();
+    readonly files = [];
+    get types() {
+      return [...this.store.keys()];
+    }
+    setData(format: string, data: string) {
+      this.store.set(format, data);
+    }
+    getData(format: string) {
+      return this.store.get(format) ?? "";
+    }
+  }
+  class FakeClipboardEvent extends Event {
+    readonly clipboardData: FakeDataTransfer;
+    constructor(type: string, init: { clipboardData: FakeDataTransfer }) {
+      super(type);
+      this.clipboardData = init.clipboardData;
+    }
+  }
+  vi.stubGlobal("DataTransfer", FakeDataTransfer);
+  vi.stubGlobal("ClipboardEvent", FakeClipboardEvent);
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    clipboard: {
+      read: async () => [
+        { types: ["text/plain"], getType: async () => ({ text: async () => text }) },
+      ],
+      readText: async () => text,
+    },
+    permissions: { query: async () => ({ state: "granted" }) },
+  });
+}
+
+describe("ClipboardPlugin — Paste as Plain Text through a transform", () => {
+  const upperCase: PlainTextPasteTransform = (text) => text.toUpperCase();
+
+  /** Mounts the plugin over a clipboard holding a tab and a backslash. `setTransform` swaps the
+   * transform on the mounted plugin; `pasted` collects the `text/plain` of each paste the editor
+   * is asked to take. */
+  async function transformEnvironment(transform?: PlainTextPasteTransform, logger?: LoggerBasic) {
+    stubAsyncClipboard("a\tb\\c");
+    const handle: { set?: (next: PlainTextPasteTransform | undefined) => void } = {};
+    function Controlled() {
+      const [current, set] = useState<PlainTextPasteTransform | undefined>(() => transform);
+      useEffect(() => {
+        handle.set = (next) => set(() => next);
+      }, []);
+      return <ClipboardPlugin plainTextPasteTransform={current} logger={logger} />;
+    }
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append($createParaNode("p").append($createTextNode("In the beginning")));
+      },
+      <Controlled />,
+    );
+    const pasted: string[] = [];
+    editor.registerCommand(
+      PASTE_COMMAND,
+      (event) => {
+        pasted.push((event as ClipboardEvent).clipboardData?.getData("text/plain") ?? "");
+        return true;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    );
+    return {
+      editor,
+      pasted,
+      setTransform: (next: PlainTextPasteTransform | undefined) =>
+        act(async () => handle.set?.(next)),
+    };
+  }
+
+  async function settlePaste(): Promise<void> {
+    await act(async () => {
+      for (let i = 0; i < 3; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it("Ctrl+Shift+V pastes the transformed text", async () => {
+    const { editor, pasted } = await transformEnvironment(upperCase);
+
+    await pressShortcut(editor, "v", true);
+    await settlePaste();
+
+    expect(pasted).toEqual(["A B\\C"]);
+  });
+
+  it("Ctrl+V is not transformed", async () => {
+    const { editor, pasted } = await transformEnvironment(upperCase);
+
+    await pressShortcut(editor, "v");
+    await settlePaste();
+
+    expect(pasted).toEqual(["a b\\c"]);
+  });
+
+  it("a transform given after mount is used", async () => {
+    const { editor, pasted, setTransform } = await transformEnvironment();
+    await setTransform(upperCase);
+
+    await pressShortcut(editor, "v", true);
+    await settlePaste();
+
+    expect(pasted).toEqual(["A B\\C"]);
+  });
+
+  it("without a transform Ctrl+Shift+V pastes the cleaned text unchanged", async () => {
+    const { editor, pasted } = await transformEnvironment();
+
+    await pressShortcut(editor, "v", true);
+    await settlePaste();
+
+    expect(pasted).toEqual(["a b\\c"]);
+  });
+
+  it("Ctrl+Shift+V on a non-Latin keyboard layout pastes the transformed text", async () => {
+    const { editor, pasted } = await transformEnvironment(upperCase);
+
+    // A Russian layout reports its own letter, `м`, for the key Latin layouts call V.
+    const event = await pressShortcut(editor, "м", true, "KeyV");
+    await settlePaste();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(pasted).toEqual(["A B\\C"]);
+  });
+
+  it("Ctrl+V on a non-Latin keyboard layout pastes the text untransformed", async () => {
+    const { editor, pasted } = await transformEnvironment(upperCase);
+
+    const event = await pressShortcut(editor, "м", false, "KeyV");
+    await settlePaste();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(pasted).toEqual(["a b\\c"]);
+  });
+
+  it("a transform that throws still pastes the cleaned text, and is logged", async () => {
+    const logger: LoggerBasic = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    const { editor, pasted } = await transformEnvironment(() => {
+      throw new Error("no stylesheet");
+    }, logger);
+
+    await pressShortcut(editor, "v", true);
+    await settlePaste();
+
+    expect(pasted).toEqual(["a b\\c"]);
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("a clipboard that cannot be read is logged", async () => {
+    const logger: LoggerBasic = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    const { editor, pasted } = await transformEnvironment(upperCase, logger);
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { read: async () => Promise.reject(new Error("denied")) },
+    });
+
+    await pressShortcut(editor, "v", true);
+    await settlePaste();
+
+    expect(pasted).toEqual([]);
+    expect(logger.error).toHaveBeenCalledTimes(1);
   });
 });
 

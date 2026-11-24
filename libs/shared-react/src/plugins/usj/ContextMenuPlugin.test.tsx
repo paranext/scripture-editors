@@ -21,13 +21,15 @@ import {
   $getRoot,
   COMMAND_PRIORITY_LOW,
   COMMAND_PRIORITY_NORMAL,
+  COMMAND_PRIORITY_CRITICAL,
   COPY_COMMAND,
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   LexicalEditor,
+  PASTE_COMMAND,
   TextNode,
 } from "lexical";
-import { ReactElement, useEffect } from "react";
+import { ReactElement, useEffect, useState } from "react";
 import { $createParaNode, TypedMarkNode } from "shared";
 import { usjReactNodes } from "../../nodes/usj";
 
@@ -768,5 +770,105 @@ describe("ContextMenuPlugin — Escape", () => {
     });
 
     expect(escape.defaultPrevented).toBe(false);
+  });
+});
+
+describe("ContextMenuPlugin — Paste as Plain Text through a transform", () => {
+  const PASTE_OPTION = 2;
+  const PASTE_PLAIN_OPTION = 3;
+
+  /** Stands in the async clipboard the paste options read, holding `text` as its one flavor. */
+  function stubAsyncClipboard(text: string): void {
+    class FakeDataTransfer {
+      private readonly store = new Map<string, string>();
+      readonly files = [];
+      get types() {
+        return [...this.store.keys()];
+      }
+      setData(format: string, data: string) {
+        this.store.set(format, data);
+      }
+      getData(format: string) {
+        return this.store.get(format) ?? "";
+      }
+    }
+    class FakeClipboardEvent extends Event {
+      readonly clipboardData: FakeDataTransfer;
+      constructor(type: string, init: { clipboardData: FakeDataTransfer }) {
+        super(type);
+        this.clipboardData = init.clipboardData;
+      }
+    }
+    vi.stubGlobal("DataTransfer", FakeDataTransfer);
+    vi.stubGlobal("ClipboardEvent", FakeClipboardEvent);
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: {
+        read: async () => [
+          { types: ["text/plain"], getType: async () => ({ text: async () => text }) },
+        ],
+        readText: async () => text,
+      },
+      permissions: { query: async () => ({ state: "granted" }) },
+    });
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** The `text/plain` of each paste the editor is asked to take after the menu option at `option`
+   * is chosen over a clipboard holding a tab and a backslash. */
+  async function pasteThroughMenu(
+    option: number,
+    transform: ((text: string) => string) | undefined,
+    transformAfterMount?: (text: string) => string,
+  ): Promise<string[]> {
+    stubAsyncClipboard("a\tb\\c");
+    const handle: { set?: (next: ((text: string) => string) | undefined) => void } = {};
+    function Controlled() {
+      const [current, set] = useState<((text: string) => string) | undefined>(() => transform);
+      useEffect(() => {
+        handle.set = (next) => set(() => next);
+      }, []);
+      return <ContextMenuPlugin plainTextPasteTransform={current} />;
+    }
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append($createParaNode("p").append($createTextNode("In the beginning")));
+      },
+      <Controlled />,
+    );
+    if (transformAfterMount) await act(async () => handle.set?.(transformAfterMount));
+    const pasted: string[] = [];
+    editor.registerCommand(
+      PASTE_COMMAND,
+      (event) => {
+        pasted.push((event as ClipboardEvent).clipboardData?.getData("text/plain") ?? "");
+        return true;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    );
+    await chooseContextMenuOption(editor, option);
+    await act(async () => {
+      for (let i = 0; i < 3; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    return pasted;
+  }
+
+  it("Paste as Plain Text pastes the transformed text", async () => {
+    expect(await pasteThroughMenu(PASTE_PLAIN_OPTION, (text) => text.toUpperCase())).toEqual([
+      "A B\\C",
+    ]);
+  });
+
+  it("a transform given after mount is used", async () => {
+    expect(
+      await pasteThroughMenu(PASTE_PLAIN_OPTION, undefined, (text) => text.toUpperCase()),
+    ).toEqual(["A B\\C"]);
+  });
+
+  it("Paste is not transformed", async () => {
+    expect(await pasteThroughMenu(PASTE_OPTION, (text) => text.toUpperCase())).toEqual(["a b\\c"]);
   });
 });

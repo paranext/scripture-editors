@@ -683,6 +683,15 @@ export function defaultMarkerAttribute(marker: string): string | undefined {
 }
 
 /**
+ * Whether the tokenizer reads `attributeText`, the bytes after a `|` in a `marker` character span,
+ * as that span's attributes rather than as literal text: a complete `name="value"` list, or a bare
+ * value for a marker with a default attribute.
+ */
+export function isCharAttributeList(attributeText: string, marker: string): boolean {
+  return parseAttributeText(attributeText, marker) !== undefined;
+}
+
+/**
  * USJ structural keys that a parsed attribute may never overwrite: the callers merge parsed
  * attributes straight onto the node object (`Object.assign` / spread), so an attribute literally
  * named `type`, `marker`, or `content` would clobber the node's own identity or replace its

@@ -31,6 +31,9 @@
  * - Standard view sits out ranges with an end inside a char span ({@link viewsFor}).
  *
  * Every row mounts its own editor. The whole suite runs in about a minute.
+ *
+ * A last suite holds Standard view's Paste as Plain Text to the same ranges: the copied USFM,
+ * converted to prose, must be what a hidden-marker view's copy of the range writes.
  */
 import {
   EditorViewName,
@@ -40,6 +43,7 @@ import {
   LIBRARY_VIEWS_ENABLED,
   mountInView,
 } from "./editorViews.test-helpers";
+import { usfmToPlainProse } from "./plainTextPaste.utils";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -59,9 +63,9 @@ import {
 } from "lexical";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { NBSP } from "shared";
+import { createMarkerLookup, defaultStyleInfo, NBSP, NBSP_STAND_IN } from "shared";
 import { ViewOptions } from "shared-react";
-import { describe, expect } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 // Located relative to the working directory, as the other testUSFM corpus suites do: the platform
 // project root under nx, the repo root otherwise.
@@ -306,6 +310,7 @@ type RangeKind =
   | "ends inside a char style"
   | "contains a footnote"
   | "across a paragraph boundary"
+  | "starts at a paragraph's end"
   | "spans a whole paragraph"
   | "across a verse number"
   | "inside note content";
@@ -458,8 +463,9 @@ function paragraphEndDestination(usj: Usj): TextPoint {
  * into `text` falls in it. Only plain `text` nodes: Standard view's marker and verse nodes are
  * text nodes of other types. */
 function $locate(text: string, offset: number): { node: TextNode; offset: number } {
-  // Standard view displays a data NBSP as `~`, one character for one.
-  for (const shown of [text, text.replaceAll(NBSP, "~")]) {
+  // Standard view displays a data NBSP as `~`, or as `NBSP_STAND_IN` with invisible characters
+  // allowed, one character for one.
+  for (const shown of [text, text.replaceAll(NBSP, "~"), text.replaceAll(NBSP, NBSP_STAND_IN)]) {
     const hits: TextNode[] = [];
     const walk = (node: LexicalNode) => {
       if ($isTextNode(node) && node.getType() === "text" && node.getTextContent().includes(shown))
@@ -603,8 +609,10 @@ function viewsFor(kind: RangeKind | undefined): { name: string; view: ViewOption
  * The paste payloads. "all flavors" is everything the copy wrote, which a native paste event (the
  * Electron Edit menu) delivers. "html and plain" is what Ctrl+V and the context menu's Paste
  * deliver: `pasteSelection` rebuilds the payload from `navigator.clipboard.read()`, which exposes
- * no private MIME type, so the internal Lexical flavor never reaches them. "plain text" is
- * Ctrl+Shift+V (`pasteSelectionAsPlainText`).
+ * no private MIME type, so the internal Lexical flavor never reaches them. "plain text" is a paste
+ * event carrying text/plain alone, dispatched as `PASTE_COMMAND` like the others. It is not Paste
+ * as Plain Text (Ctrl+Shift+V, `pasteSelectionAsPlainText`), which in Standard view converts the
+ * text to prose before it dispatches the paste (the Paste as Plain Text suite below).
  */
 type Operation =
   | "copy, paste all flavors"
@@ -972,3 +980,161 @@ describe.each(enabledViews(["formatted", "paragraph-structure"]))(
     });
   },
 );
+
+// ------------------------------------------------------------------------------------------------
+// Paste as Plain Text in Standard view
+// ------------------------------------------------------------------------------------------------
+
+/** The marker lookup the mounted Standard view classifies markers with: no project stylesheet is
+ * passed, so the editor falls back to the bundled one. */
+const getBundledMarker = createMarkerLookup(defaultStyleInfo);
+
+/** The views the prose rows copy in: Standard, and the hidden-marker views it is held to. Formatted
+ * view is the reference rather than a view under test, so it runs whether or not this run includes
+ * the library-only views. */
+const PROSE_VIEWS = ["standard", "formatted", "paragraph-structure"] as const;
+type ProseViewName = (typeof PROSE_VIEWS)[number];
+
+/** The hidden-marker views a range's prose is compared with. Paragraph Structure view's copy across
+ * a paragraph boundary also writes the next paragraph's gutter glyph, so only a range inside one
+ * paragraph is compared with it. */
+function proseReferencesFor(kind: RangeKind): Exclude<ProseViewName, "standard">[] {
+  return kind === "across a paragraph boundary" ||
+    kind === "starts at a paragraph's end" ||
+    kind === "spans a whole paragraph"
+    ? ["formatted"]
+    : ["formatted", "paragraph-structure"];
+}
+
+/**
+ * The ranges the prose rows copy: the sampled ones, and the range across a paragraph boundary
+ * moved to start exactly at the first paragraph's end, where a copy opens with a line break. Only
+ * these rows sample it: the copy and paste rows above have no model for a paste that opens with a
+ * paragraph break.
+ */
+function proseRanges(usj: Usj): SampledRange[] {
+  const ranges = sampleRanges(usj);
+  const across = ranges.find((range) => range.kind === "across a paragraph boundary");
+  const text = across && itemAt(usj.content, across.start.path);
+  if (!across || typeof text !== "string") return ranges;
+  return [
+    ...ranges,
+    {
+      kind: "starts at a paragraph's end",
+      start: { ...across.start, offset: text.length },
+      end: across.end,
+    },
+  ];
+}
+
+/** Selects each range in turn in one mount of `usj` in `view`, and returns what each copy wrote as
+ * text/plain. A copy leaves the document as it was, so one mount serves every range. */
+async function copyEachRange(
+  usj: Usj,
+  view: ViewOptions,
+  ranges: SampledRange[],
+): Promise<Map<SampledRange, string>> {
+  const mounted = await mountInView(usj, view);
+  try {
+    const texts = new Map<SampledRange, string>();
+    for (const range of ranges) {
+      await select(mounted.lexical, usj, range.start, range.end);
+      const clipboard = await dispatchClipboard(mounted.lexical, COPY_COMMAND);
+      texts.set(range, clipboard.get("text/plain") ?? "");
+    }
+    return texts;
+  } finally {
+    mounted.unmount();
+  }
+}
+
+/**
+ * Paste as Plain Text in Standard view pastes the copied USFM as prose ({@link usfmToPlainProse}):
+ * what a hidden-marker view's copy of the same selection writes. For every sampled range, the
+ * Standard copy, converted, must be the Formatted copy — and, inside one paragraph, the Paragraph
+ * Structure copy — and hold no `\` the selection does not hold itself (in a stray marker, which a
+ * hidden-marker view shows as its bytes). Each fixture runs with `allowInvisibleCharacters` off and
+ * on, which changes how a stored no-break space is copied (`~`, or itself) and read back.
+ *
+ * One mount per fixture and view serves every range, so these rows take seconds, not a minute.
+ */
+describe("Paste as Plain Text in Standard view writes what a hidden-marker copy writes", () => {
+  for (const allowInvisibleCharacters of [false, true])
+    for (const fixture of FIXTURES)
+      describe(`${fixture} | allowInvisibleCharacters ${allowInvisibleCharacters}`, () => {
+        const usj = readFixture(fixture);
+        const ranges = proseRanges(usj);
+        const copies = new Map<ProseViewName, Map<SampledRange, string>>();
+        beforeAll(async () => {
+          for (const name of PROSE_VIEWS)
+            copies.set(
+              name,
+              await copyEachRange(usj, { ...editorView(name), allowInvisibleCharacters }, ranges),
+            );
+        }, 60_000);
+
+        for (const range of ranges)
+          for (const reference of proseReferencesFor(range.kind))
+            it(`${range.kind} | standard as prose vs ${reference}`, () => {
+              const standardText = copies.get("standard")?.get(range);
+              const referenceText = copies.get(reference)?.get(range);
+              expect(standardText, "Standard view's copy wrote text/plain").toBeTruthy();
+              expect(referenceText, `${reference} view's copy wrote text/plain`).toBeTruthy();
+              const prose = usfmToPlainProse(standardText ?? "", {
+                getMarker: getBundledMarker,
+                allowInvisibleCharacters,
+              });
+              expect(prose).toBe(referenceText);
+              if (!contentText(sliceUsj(usj.content, range.start, range.end)).includes("\\"))
+                expect(prose).not.toContain("\\");
+            });
+      });
+});
+
+/**
+ * A paragraph whose stored no-break spaces sit everywhere a paste could lose one: after a space,
+ * at a span's start after its marker's separator, and two together.
+ */
+const NBSP_USJ: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    {
+      type: "para",
+      marker: "p",
+      content: [
+        "alpha  beta ",
+        { type: "char", marker: "nd", content: [" Lord"] },
+        " gamma  delta",
+      ],
+    },
+  ],
+};
+
+describe("Paste as Plain Text in Standard view keeps every stored no-break space", () => {
+  for (const allowInvisibleCharacters of [false, true])
+    it(`allowInvisibleCharacters ${allowInvisibleCharacters}: standard as prose vs formatted`, async () => {
+      const range: SampledRange = {
+        kind: "spans a whole paragraph",
+        start: { path: [0, 0], offset: 0 },
+        end: { path: [0, 2], offset: " gamma  delta".length },
+      };
+      const copy = async (name: ProseViewName) =>
+        (
+          await copyEachRange(NBSP_USJ, { ...editorView(name), allowInvisibleCharacters }, [range])
+        ).get(range);
+      const standardText = await copy("standard");
+      const formattedText = await copy("formatted");
+      expect(formattedText).toBe(
+        allowInvisibleCharacters
+          ? "alpha  beta  Lord gamma  delta"
+          : "alpha ~beta ~Lord gamma~~delta",
+      );
+      expect(
+        usfmToPlainProse(standardText ?? "", {
+          getMarker: getBundledMarker,
+          allowInvisibleCharacters,
+        }),
+      ).toBe(formattedText);
+    });
+});

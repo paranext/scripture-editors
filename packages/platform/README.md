@@ -120,7 +120,7 @@ export default function App() {
 - USJ editor with USX support
 - Read-only and edit mode
 - History - undo & redo
-- Cut, copy, paste, paste as plain text - context menu and keyboard shortcuts
+- Cut, copy, paste, paste as plain text - context menu and keyboard shortcuts. In Standard view (markers are editable text), paste as plain text converts USFM on the clipboard to prose: a note's words go inline, and markers and verse numbers leave no text.
 - Format block type - change `<para>` markers. The current implementation is a proof-of-concept and doesn't have all the markers available yet.
 - Insert markers - type '\\' (backslash - configurable to another key) for a marker menu. If text is selected first the marker will apply to the selection if possible, e.g. use '\\wj' to "red-letter" selected text.
 - Add comments to selected text, reply in comment threads, delete comments and threads (deprecated).

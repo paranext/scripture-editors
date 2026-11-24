@@ -706,6 +706,9 @@ describe("paste-as-plain-text equivalence: no literal mode, plain always wins", 
   // tokenize markers" code path in Standard view (matching P9, which has no Paste Special either):
   // the second pin below additionally asserts a plain-only paste still tokenizes a marker pair into
   // a real CharNode rather than leaving it as literal `\marker` text.
+  // These hosts are unconverted: the prose conversion Paste as Plain Text applies in an editable-marker
+  // editor happens before `PASTE_COMMAND` is dispatched (see plainTextPaste.test.tsx), so every paste
+  // here is the payload exactly as the command receives it.
   const MISMATCHED_HTML = "<p>this text must never appear in the pasted result</p>";
 
   it('"\\p one\\n\\p two" (multi-line paragraph split): full (plain+html) payload and plain-only payload paste identically', async () => {
