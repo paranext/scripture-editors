@@ -2216,7 +2216,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             logger={stableLogger}
           />
           {viewOptions?.markerMode === "visible" && <CommandMenuPlugin logger={stableLogger} />}
-          {hasBuiltInContextMenu && <ContextMenuPlugin options={contextMenuOptions} logger={stableLogger} />}
+          {hasBuiltInContextMenu && (
+            <ContextMenuPlugin options={contextMenuOptions} logger={stableLogger} />
+          )}
           {/* Must mount before every plugin with a CRITICAL cut handler (MarkerEditPlugin,
               OpaqueBlockGuardPlugin, StructureKeyboardPlugin). Its CRITICAL fit shortens the
               selection of a limited copy or cut, and at equal priority handlers run in the order
