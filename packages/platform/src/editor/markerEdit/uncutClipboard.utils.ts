@@ -293,11 +293,16 @@ function $nodeAt(path: readonly number[]): LexicalNode | undefined {
  * annotation puts in the tree, or the copy without annotations cannot be written, so the copy is
  * the editor's own. A copy that cannot be written is reported to `logger` as a warning. Read-only:
  * the live editor is only read, and nothing of it is written.
+ *
+ * @param write - Writes the flavors of a selection in an editor, called in a read of the scratch
+ *   editor with the selection restated there; Lexical's own copy when omitted.
  */
 export function $uncutClipboardData(
   editor: LexicalEditor,
   selection: RangeSelection,
   logger?: LoggerBasic,
+  write: (selection: RangeSelection, editor: LexicalEditor) => LexicalClipboardData = (uncut) =>
+    $getClipboardDataFromSelection(uncut),
 ): LexicalClipboardData | undefined {
   if (!$touchesAnnotations(selection)) return undefined;
   try {
@@ -322,7 +327,7 @@ export function $uncutClipboardData(
         const uncut = $createRangeSelection();
         uncut.anchor.set(anchorNode.getKey(), anchor.offset, anchor.type);
         uncut.focus.set(focusNode.getKey(), focus.offset, focus.type);
-        return $getClipboardDataFromSelection(uncut);
+        return write(uncut, scratch);
       },
       { editor: scratch },
     );
