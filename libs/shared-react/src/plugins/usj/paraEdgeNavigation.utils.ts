@@ -1,4 +1,5 @@
 import { $isSomeVerseNode } from "../../nodes/usj";
+import { $isPassedOverInGutterView } from "./gutterHiddenNodes.utils";
 import { $markLeadingVerseArrival } from "./LeadingVerseCaretGuardPlugin";
 import { $placeCaretAfterParaChild, $placeCaretAtEnd } from "./structureKeyboard.utils";
 import {
@@ -13,18 +14,12 @@ import {
   $canSelectParaMarker,
   $getSelectableParaMarker,
   $getSelectedParaMarkerPara,
-  $isAttributeDisplayRun,
-  $isAttributeRunNode,
   $isCaretHost,
-  $isGutterMarkerNode,
-  $isImmutableTypedTextNode,
-  $isMilestoneNode,
   $isNoteNode,
   $isParaLikeNode,
   $isParaNode,
   $placeCaretAtBoundary,
   $selectParaMarker,
-  MARKER_TEXT_TYPE,
   ParaLikeNode,
   ParaNode,
 } from "shared";
@@ -66,45 +61,24 @@ export type ParaEdgeStop =
   | { stop: "contentStart"; para: ParaNode }
   | { stop: "end"; para: ElementNode };
 
-/** The children of `para` that hold content or structure, ignoring a transient caret host. */
-function $structuralChildren(para: ElementNode): LexicalNode[] {
-  return para.getChildren().filter((child) => !$isCaretHost(child));
-}
-
-/**
- * Whether `node` renders nothing in the gutter view: a milestone, a marker glyph or attribute text
- * the view hides (every marker but a paragraph's own gutter glyph), or a run made only of those.
- */
-function $rendersNothing(node: LexicalNode): boolean {
-  if ($isImmutableTypedTextNode(node))
-    return node.getTextType() === MARKER_TEXT_TYPE && !$isGutterMarkerNode(node);
-  if ($isAttributeRunNode(node)) return node.getChildren().every($rendersNothing);
-  return $isMilestoneNode(node) || $isAttributeDisplayRun(node);
-}
-
-/** Whether a caret walks past `node` without a press of its own: a caret host or hidden node. */
-function $isSkipped(node: LexicalNode): boolean {
-  return $isCaretHost(node) || $rendersNothing(node);
-}
-
-/** `node`, or the nearest sibling before it that is not {@link $isSkipped}; `"start"` if none. */
+/** `node`, or the nearest sibling before it that is not {@link $isPassedOverInGutterView}; `"start"` if none. */
 function $shownAtOrBefore(node: LexicalNode | null): LexicalNode | "start" {
   let current = node;
-  while (current && $isSkipped(current)) current = current.getPreviousSibling();
+  while (current && $isPassedOverInGutterView(current)) current = current.getPreviousSibling();
   return current ?? "start";
 }
 
-/** `node`, or the nearest sibling after it that is not {@link $isSkipped}. */
+/** `node`, or the nearest sibling after it that is not {@link $isPassedOverInGutterView}. */
 function $shownAtOrAfter(node: LexicalNode | null): LexicalNode | undefined {
   let current = node;
-  while (current && $isSkipped(current)) current = current.getNextSibling();
+  while (current && $isPassedOverInGutterView(current)) current = current.getNextSibling();
   return current ?? undefined;
 }
 
-/** `para`'s first verse number, when it directly follows the marker glyph. */
+/** `para`'s first verse number, when nothing the view shows comes between it and the glyph. */
 function $leadingVerse(para: ParaNode): LexicalNode | undefined {
-  const second = $structuralChildren(para)[1];
-  return $isSomeVerseNode(second) ? second : undefined;
+  const next = $shownAtOrAfter(para.getFirstChild()?.getNextSibling() ?? null);
+  return $isSomeVerseNode(next) ? next : undefined;
 }
 
 /**
@@ -183,7 +157,7 @@ export function $getParaEdgeStop(): ParaEdgeStop | undefined {
  */
 function $isInvisibleTrailer(node: LexicalNode | null): boolean {
   if (!node) return false;
-  return $isSkipped(node) || ($isNoteNode(node) && node.getIsCollapsed() === true);
+  return $isPassedOverInGutterView(node) || ($isNoteNode(node) && node.getIsCollapsed() === true);
 }
 
 /** Whether `node` and every sibling after it are {@link $isInvisibleTrailer}, or there are none. */
@@ -242,7 +216,7 @@ function $placeCaretAtEndOf(block: ParaLikeNode): void {
   }
 }
 
-/** `element`'s last child that is not {@link $isSkipped}, if any. */
+/** `element`'s last child that is not {@link $isPassedOverInGutterView}, if any. */
 function $lastShownChild(element: ElementNode): LexicalNode | undefined {
   const last = $shownAtOrBefore(element.getLastChild());
   return last === "start" ? undefined : last;

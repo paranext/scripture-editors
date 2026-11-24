@@ -21,6 +21,7 @@ import {
   $getRoot,
   $getSelection,
   $isRangeSelection,
+  $setSelection,
   BLUR_COMMAND,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   DELETE_CHARACTER_COMMAND,
@@ -45,6 +46,8 @@ import {
   $getSelectedParaMarker,
   $isCaretHost,
   $isGutterMarkerNode,
+  $isMilestoneNode,
+  $isNoteNode,
   $isParaNode,
   NBSP,
   ParaNode,
@@ -127,7 +130,13 @@ function stopOf(editor: LexicalEditor): string {
       const before = node.getPreviousSibling();
       const after = node.getNextSibling();
       const describe = (n: LexicalNode | null) =>
-        $isGutterMarkerNode(n) ? "marker" : $isSomeVerseNode(n) ? n.getNumber() : "end";
+        $isGutterMarkerNode(n)
+          ? "marker"
+          : $isSomeVerseNode(n)
+            ? n.getNumber()
+            : $isMilestoneNode(n)
+              ? "milestone"
+              : "end";
       return `host between ${describe(before)} and ${describe(after)}`;
     }
     if ($isParaNode(node)) return `element ${node.getMarker()}@${selection.anchor.offset}`;
@@ -492,6 +501,82 @@ describe("paragraph-edge arrow stops around a milestone, which the view hides", 
   });
 });
 
+describe("paragraph-edge arrow stops with a milestone at a paragraph's start", () => {
+  /** `\\p first`, then a `\\q1` of `content`, focused, with the caret at the end of `first`. */
+  async function milestoneEnvironment($content: () => LexicalNode[]) {
+    let first: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        first = $createTextNode("first");
+        $getRoot().append(
+          $createGutterParaNode("p", first),
+          $createGutterParaNode("q1", ...$content()),
+        );
+      },
+      <>
+        <ParaMarkerSelectionPlugin />
+        <LeadingVerseCaretGuardPlugin />
+      </>,
+    );
+    act(() => {
+      editor.getRootElement()?.focus();
+    });
+    updateSelection(editor, first!);
+    return editor;
+  }
+
+  it("keeps the stop before a verse number a milestone comes before", async () => {
+    const editor = await milestoneEnvironment(() => [
+      $createMilestoneNode("qt-s"),
+      $createImmutableVerseNode("3"),
+      $createTextNode("text"),
+    ]);
+
+    expect(press(editor, "ArrowRight")).toBe("marker \\q1");
+    expect(press(editor, "ArrowRight")).toBe("host between milestone and 3");
+    expect(press(editor, "ArrowRight")).toBe('"text"@0');
+    expect(press(editor, "ArrowLeft")).toBe("host between milestone and 3");
+    expect(press(editor, "ArrowLeft")).toBe("marker \\q1");
+  });
+
+  it("hosts a caret put in front of the milestone, at the stop, while the arrival lasts", async () => {
+    const editor = await milestoneEnvironment(() => [
+      $createMilestoneNode("qt-s"),
+      $createImmutableVerseNode("3"),
+      $createTextNode("text"),
+    ]);
+    pressNow(editor, "ArrowRight");
+    expect(press(editor, "ArrowRight")).toBe("host between milestone and 3");
+
+    // The same stop, spelled in front of the milestone rather than past it.
+    updateNow(editor, () => {
+      const q1 = $getRoot().getLastChildOrThrow<ParaNode>();
+      q1.getChildren()
+        .filter($isCaretHost)
+        .forEach((host) => host.remove());
+      q1.select(1, 1);
+    });
+    updateNow(editor, () => {
+      editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+
+    expect(stopOf(editor)).toBe("host between marker and milestone");
+  });
+
+  it("hosts the caret in front of a note a milestone comes before", async () => {
+    const editor = await milestoneEnvironment(() => [
+      $createImmutableVerseNode("1"),
+      $createMilestoneNode("qt-s"),
+      $createCollapsedNoteNode("body"),
+      $createTextNode("In the beginning"),
+    ]);
+    pressNow(editor, "ArrowRight");
+    expect(press(editor, "ArrowRight")).toBe("host between marker and 1");
+
+    expect(press(editor, "ArrowRight")).toBe("host between milestone and end");
+  });
+});
+
 describe("a caret in front of a paragraph's marker glyph", () => {
   /** Collapses the caret to the very start of `\\li2`, in front of its glyph. */
   function atLi2Start(editor: LexicalEditor) {
@@ -551,6 +636,23 @@ describe("paragraph-edge arrow stops before a note that opens a paragraph's text
 
     expect(press(editor, "ArrowRight")).toBe("host between 1 and end");
     expect(press(editor, "ArrowLeft")).toBe("host between marker and 1");
+  });
+
+  it("Shift+→ from the caret in front of the note selects the note", async () => {
+    const editor = await noteFirstEnvironment(true);
+    pressNow(editor, "ArrowRight");
+    pressNow(editor, "ArrowRight");
+    expect(press(editor, "ArrowRight")).toBe("host between 1 and end");
+
+    const event = pressNow(editor, "ArrowRight", { shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    const selected = editor.read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || selection.isCollapsed()) return undefined;
+      return selection.getNodes().some($isNoteNode);
+    });
+    expect(selected).toBe(true);
   });
 
   it("hosts the caret → brings past the marker of a paragraph with no verse number", async () => {
@@ -889,7 +991,28 @@ describe("the stop before a leading verse number", () => {
     await settle();
 
     expect(stopOf(editor)).toBe("host between marker and 2");
-    expect(editor.read(() => $getRoot().getChildrenSize())).toBe(4);
+    expect(editor.getEditorState().read(() => $getRoot().getChildrenSize())).toBe(4);
+  });
+
+  it("is hosted again after an update that leaves no selection", async () => {
+    const { editor } = await atStopBeforeVerse2();
+    // Focus leaves, which takes the host away, then an update commits no selection at all: the
+    // editor has lost it, not moved it.
+    act(() => {
+      editor.dispatchCommand(BLUR_COMMAND, new FocusEvent("blur"));
+    });
+    updateNow(editor, () => {
+      $setSelection(null);
+    });
+
+    updateNow(editor, () => {
+      $getRoot().getChildAtIndex<ParaNode>(1)!.select(1, 1);
+    });
+    updateNow(editor, () => {
+      editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+
+    expect(stopOf(editor)).toBe("host between marker and 2");
   });
 
   it("Backspace removes an empty paragraph before it and leaves the caret at the stop", async () => {

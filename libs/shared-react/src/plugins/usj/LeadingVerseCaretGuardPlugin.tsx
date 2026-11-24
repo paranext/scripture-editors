@@ -1,4 +1,5 @@
 import { getEditorTextDirection } from "./ArrowNavigationPlugin";
+import { $isPassedOverInGutterView } from "./gutterHiddenNodes.utils";
 import { $deleteFromCaretHost, useTransientCaretHost } from "./transientCaretHost";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
@@ -94,13 +95,39 @@ function $leadingStopAnchor(arrivalParaKey: NodeKey | undefined): LexicalNode | 
 
   if (!$isParaNode(para)) return undefined;
   const glyph = $getSelectableParaMarker(para);
-  if (!glyph || !before) return undefined;
-  if (before.is(glyph)) return $isSomeVerseNode(after) || $isNoteNode(after) ? glyph : undefined;
-  // The host of the stop before it may not be gone yet.
-  let beforeVerse = before.getPreviousSibling();
-  while ($isCaretHost(beforeVerse)) beforeVerse = beforeVerse?.getPreviousSibling() ?? null;
-  const isLeadingVerse = $isSomeVerseNode(before) && !!beforeVerse?.is(glyph);
-  return isLeadingVerse && $isNoteNode(after) ? before : undefined;
+  // The host goes right after the node in front of the caret: never an old host on its way out.
+  const anchorNode = $nonHostAtOrBefore(before);
+  // Which stop it is goes by what the view shows, past hidden nodes on either side.
+  const shownBefore = $shownAtOrBefore(before);
+  const shownAfter = $shownAtOrAfter(after);
+  if (!glyph || !anchorNode || !shownBefore) return undefined;
+  if (shownBefore.is(glyph))
+    return $isSomeVerseNode(shownAfter) || $isNoteNode(shownAfter) ? anchorNode : undefined;
+  const isLeadingVerse =
+    $isSomeVerseNode(shownBefore) &&
+    !!$shownAtOrBefore(shownBefore.getPreviousSibling())?.is(glyph);
+  return isLeadingVerse && $isNoteNode(shownAfter) ? anchorNode : undefined;
+}
+
+/** `node`, or the nearest sibling before it that is not a caret host. */
+function $nonHostAtOrBefore(node: LexicalNode | null): LexicalNode | undefined {
+  let current = node;
+  while (current && $isCaretHost(current)) current = current.getPreviousSibling();
+  return current ?? undefined;
+}
+
+/** `node`, or the nearest sibling before it the gutter view shows. */
+function $shownAtOrBefore(node: LexicalNode | null): LexicalNode | undefined {
+  let current = node;
+  while (current && $isPassedOverInGutterView(current)) current = current.getPreviousSibling();
+  return current ?? undefined;
+}
+
+/** `node`, or the nearest sibling after it the gutter view shows. */
+function $shownAtOrAfter(node: LexicalNode | null): LexicalNode | undefined {
+  let current = node;
+  while (current && $isPassedOverInGutterView(current)) current = current.getNextSibling();
+  return current ?? undefined;
 }
 
 /**
@@ -112,7 +139,8 @@ function $leadingStopAnchor(arrivalParaKey: NodeKey | undefined): LexicalNode | 
  */
 function $followArrival(editor: LexicalEditor): void {
   const arrival = leadingVerseArrivals.get(editor);
-  if (arrival === undefined || $isSelectionInPara(arrival)) return;
+  // No selection is no move: the editor has lost focus, and the caret comes back where it was.
+  if (arrival === undefined || !$getSelection() || $isSelectionInPara(arrival)) return;
   const para = $leadingStopAnchor(undefined)?.getParent();
   if (para) leadingVerseArrivals.set(editor, para.getKey());
   else leadingVerseArrivals.delete(editor);
@@ -150,23 +178,24 @@ const DELETE_COMMANDS: readonly LexicalCommand<boolean>[] = [
 ];
 
 /**
- * A Shift+arrow forward from the host before a leading verse number: selects the verse number.
- * Left to the browser, the first step covers only the host's own placeholder, and a range that has
+ * A Shift+arrow forward from a leading stop's host: selects the verse number or note that follows
+ * it, with any hidden node between. Left to the browser, the first step covers only the host's own placeholder, and a range that has
  * left the host removes it and collapses back to where it stood, so the selection never grows.
  *
  * Mutating: call inside `editor.update()` (a command handler is).
  *
- * @returns `true` if the selection now covers the verse number.
+ * @returns `true` if the selection now covers the verse number or note.
  */
 function $extendForwardFromLeadingVerseHost(): boolean {
   const host = $leadingVerseHost();
-  if (!host || !$isSomeVerseNode(host.getNextSibling())) return false;
+  const next = $shownAtOrAfter(host?.getNextSibling() ?? null);
+  if (!host || !next || !($isSomeVerseNode(next) || $isNoteNode(next))) return false;
   const para = host.getParentOrThrow();
   const boundary = host.getIndexWithinParent();
   host.remove();
   const range = $createRangeSelection();
   range.anchor.set(para.getKey(), boundary, "element");
-  range.focus.set(para.getKey(), boundary + 1, "element");
+  range.focus.set(para.getKey(), next.getIndexWithinParent() + 1, "element");
   $setSelection(range);
   // Removing a host is no edit, as everywhere else one is removed.
   $addUpdateTag(CURSOR_CHANGE_TAG);
@@ -181,7 +210,7 @@ function $extendForwardFromLeadingVerseHost(): boolean {
  * {@link useTransientCaretHost} owns the host's lifetime and keeps it out of saved Scripture; this
  * file supplies the rule for where one is needed, the delete a host must not swallow (run from the
  * boundary the host stands for, `$deleteFromCaretHost`), and a Shift+arrow forward from it, which
- * selects the verse number.
+ * selects the verse number or note after it.
  *
  * @returns Always `null`; this plugin renders no UI.
  */

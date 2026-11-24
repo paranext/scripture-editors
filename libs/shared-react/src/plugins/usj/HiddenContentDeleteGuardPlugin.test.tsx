@@ -453,6 +453,44 @@ describe("HiddenContentDeleteGuardPlugin", () => {
         expect(readTree(editor)).toEqual(["beforeafter"]);
       });
 
+      it("still deletes a measured word, past the hidden content, once the blur has removed the host", async () => {
+        let wordPara!: ParaNode;
+        let wordHost!: TextNode;
+        let after!: TextNode;
+        const { handler, answer } = answeringLater();
+        const { editor } = await guardedEnvironment(() => {
+          wordPara = $createParaNode("p");
+          wordHost = $createCaretHostNode();
+          after = $createTextNode("after more");
+          // After a verse number, as a host stands: no text before it for the caret to settle in.
+          $getRoot().append(
+            wordPara.append($createImmutableVerseNode("2"), wordHost, $createFigureNode(), after),
+          );
+        }, handler);
+        updateSelection(editor, wordHost, 0);
+        // The browser measures the word forward to the end of "after".
+        const restore = stubSelectionModify(editor, (selection) => {
+          selection.focus.set(after.getKey(), "after".length, "text");
+        });
+
+        await act(async () => {
+          editor.dispatchCommand(DELETE_WORD_COMMAND, false);
+        });
+        restore();
+        await sutUpdate(editor, () => {
+          const boundary = wordHost.getIndexWithinParent();
+          wordHost.remove();
+          wordPara.select(boundary, boundary);
+        });
+        await act(async () => answer("delete"));
+        await settle();
+
+        const [text] = readTree(editor);
+        expect(text).not.toContain("[figure");
+        expect(text).not.toContain("after");
+        expect(text).toContain(" more");
+      });
+
       it("still deletes when the host is there when the answer comes", async () => {
         const { handler, answer } = answeringLater();
         const { editor } = await guardedEnvironment($initWithHost, handler);

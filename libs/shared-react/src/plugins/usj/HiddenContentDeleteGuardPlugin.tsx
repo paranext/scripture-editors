@@ -51,6 +51,7 @@ import {
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
   DRAGSTART_COMMAND,
+  ElementNode,
   INSERT_LINE_BREAK_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
   isExactShortcutMatch,
@@ -383,7 +384,9 @@ export function HiddenContentDeleteGuardPlugin({
       const canSkip =
         !!run && hidden.length === run.nodes.length && $canPlaceCaretPastHiddenRun(run, direction);
       const runKeys = run?.nodes.map((node) => node.getKey()) ?? [];
-      const range = extent?.range;
+      // The measured range, too, from the boundary a caret host stands for: the prompt's blur
+      // removes the host before the answer comes.
+      const range = extent?.range ? $outsideCaretHosts(extent.range) : undefined;
       return $hold(
         selection,
         hidden,
@@ -812,10 +815,16 @@ function $coveredContent(ranges: RangeSnapshot[]): string | undefined {
     if (!range) return undefined;
     // A caret covers nothing, whichever node its point names.
     if (range.isCollapsed()) continue;
-    // A caret host is no content, and is gone once the prompt's blur has removed it.
-    for (const node of range.getNodes())
-      if (!$isCaretHost(node))
-        parts.push(node.getKey(), $isTextNode(node) ? node.getTextContent() : "");
+    // A caret host is no content, and is gone once the prompt's blur has removed it. Sorted by
+    // key: the order `getNodes` lists them in depends on how the range's points are spelled (an
+    // element point beside a node, or a text point inside the next), which a host's removal can
+    // change while the content stays the same.
+    const covered = range
+      .getNodes()
+      .filter((node) => !$isCaretHost(node))
+      .map((node) => `${node.getKey()}\u0001${$isTextNode(node) ? node.getTextContent() : ""}`)
+      .sort();
+    parts.push(...covered);
   }
   return parts.join("\u0000");
 }
@@ -847,37 +856,80 @@ function $isSelectionUnmoved(held: HeldEdit): boolean {
 }
 
 /**
- * `point` as the boundary between children it stands for, when it is at one: a point in a caret
- * host, or at either edge of a text node. The same caret can be spelled either way (the element
- * point a blur leaves where a host was, the text point Lexical resolves it to), and this makes the
- * two compare equal. A point inside a text node's text is returned as it is.
+ * `point` as the boundary between children it stands for, counted without caret hosts, when it is
+ * at one: an element point, a point in a caret host, or a point at either edge of a text node. The
+ * same caret can be spelled several ways (the element point a blur leaves where a host was, the
+ * text point Lexical resolves it to, the host itself), and this makes them compare equal whether
+ * or not the host is still there. A point inside a text node's text is returned as it is.
  */
 function $asBoundary(point: PointSnapshot): PointSnapshot {
   const node = $getNodeByKey(point.key);
-  const parent = node?.getParent();
-  if (!$isTextNode(node) || !parent || point.type !== "text") return point;
+  if (!node) return point;
+  const hostsBefore = (parent: ElementNode, index: number) =>
+    parent.getChildren().slice(0, index).filter($isCaretHost).length;
+  if (point.type === "element")
+    return $isElementNode(node)
+      ? { ...point, offset: point.offset - hostsBefore(node, point.offset) }
+      : point;
+  const parent = node.getParent();
+  if (!$isTextNode(node) || !parent) return point;
   const index = node.getIndexWithinParent();
-  if ($isCaretHost(node) || point.offset === 0)
-    return { key: parent.getKey(), offset: index, type: "element" };
-  if (point.offset === node.getTextContentSize())
-    return { key: parent.getKey(), offset: index + 1, type: "element" };
+  const boundary = (at: number): PointSnapshot => ({
+    key: parent.getKey(),
+    offset: at - hostsBefore(parent, at),
+    type: "element",
+  });
+  if ($isCaretHost(node) || point.offset === 0) return boundary(index);
+  if (point.offset === node.getTextContentSize()) return boundary(index + 1);
   return point;
 }
 
 /**
- * `snapshot` with each endpoint in a transient caret host moved to the boundary the host stands
- * for. The boundary outlasts the host: a prompt that takes focus blurs the editor, which removes
- * the host and leaves the caret on that boundary, so an edit held from the host is still the
- * user's when the answer comes.
+ * `snapshot` with its endpoints spelled so they outlast any transient caret host. A prompt that
+ * takes focus blurs the editor, which removes the host and leaves the caret on the boundary it
+ * stood for, so an edit held from beside a host is still the user's when the answer comes.
+ *
+ * A point in a host becomes that boundary. A point between the children of an element holding a
+ * host is respelled by the text beside it, whose position the host's removal does not change: an
+ * element offset counts the host, and would name the next child once it is gone. With no text on
+ * either side, the offset is counted without hosts.
  */
 function $outsideCaretHosts(snapshot: RangeSnapshot): RangeSnapshot {
-  const outside = (point: PointSnapshot): PointSnapshot => {
-    const node = $getNodeByKey(point.key);
-    const parent = node?.getParent();
-    if (!node || !parent || !$isCaretHost(node)) return point;
-    return { key: parent.getKey(), offset: node.getIndexWithinParent(), type: "element" };
+  return {
+    anchor: $pointOutsideCaretHosts(snapshot.anchor),
+    focus: $pointOutsideCaretHosts(snapshot.focus),
   };
-  return { anchor: outside(snapshot.anchor), focus: outside(snapshot.focus) };
+}
+
+/** One endpoint, as {@link $outsideCaretHosts} spells it. */
+function $pointOutsideCaretHosts(point: PointSnapshot): PointSnapshot {
+  const node = $getNodeByKey(point.key);
+  if (!node) return point;
+  let parent: ElementNode;
+  let offset: number;
+  if ($isCaretHost(node)) {
+    const hostParent = node.getParent();
+    if (!hostParent) return point;
+    parent = hostParent;
+    offset = node.getIndexWithinParent();
+  } else if (point.type === "element" && $isElementNode(node)) {
+    parent = node;
+    offset = point.offset;
+  } else {
+    return point;
+  }
+  const children = parent.getChildren();
+  if (!children.some($isCaretHost)) return { key: parent.getKey(), offset, type: "element" };
+  const after = children.slice(offset).find((child) => !$isCaretHost(child));
+  if ($isTextNode(after)) return { key: after.getKey(), offset: 0, type: "text" };
+  const before = children
+    .slice(0, offset)
+    .reverse()
+    .find((child) => !$isCaretHost(child));
+  if ($isTextNode(before))
+    return { key: before.getKey(), offset: before.getTextContentSize(), type: "text" };
+  const hostsBefore = children.slice(0, offset).filter($isCaretHost).length;
+  return { key: parent.getKey(), offset: offset - hostsBefore, type: "element" };
 }
 
 /**
