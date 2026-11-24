@@ -2666,8 +2666,8 @@ span.read img {
   --scripture-accent-marker: rgba(196, 149, 106, 0.45);
   /* Gutter width, and the gap between each paragraph marker's visible text and the paragraph's
      text, the same for every marker whatever the paragraph's font size. A marker whose text is
-     wider than `--psc-gutter-width` minus the gap runs past the editor's edge, where
-     `.editor-container` clips it. */
+     wider than `--psc-gutter-width` minus the gap runs past the editor's edge, where the host
+     clips it: nothing in this package clips the editor (see the gutter marker rule). */
   --psc-gutter-width: 4em;
   --psc-gutter-marker-gap: 0.825em;
   /* An empty verse's ellipsis placeholder is a box of this fixed width, so a hidden one can be
@@ -2819,7 +2819,9 @@ span.read img {
      box is as wide as the marker, so a longer one grows away from the text. */
   right: calc(100% + var(--para-indent) + var(--psc-gutter-marker-gap) - 1ch);
   /* Padding on the gutter side makes the rest of the marker's gutter row part of its click target
-     without moving the glyph; the editor clips the box at the gutter's edge. */
+     without moving the glyph. The box reaches past the gutter's edge, and the editor deliberately
+     does not clip it: the host clips the editor's container there (Platform.Bible's scrolling
+     container does). */
   padding-left: var(--psc-gutter-width);
   top: 0;
   direction: ltr;
@@ -3082,8 +3084,8 @@ span.read img {
    inline-start so the box surrounds the marker too — using min() against the hanging-indent
    text start (--verse-text-start). For every marker in this file the marker's own column is
    further into the gutter, so it is what wins today. The gutter term is the gutter's outer edge,
-   which is also where the editor clips, so a marker too wide for the gutter is clipped there
-   rather than left outside the box. */
+   which is also where the host clips the editor, so a marker too wide for the gutter is clipped
+   there rather than left outside the box. */
 .psc-active-focus.psc-gutter-markers .psc-active-text::after {
   inset-inline-start: min(
     var(--verse-text-start, 0px),

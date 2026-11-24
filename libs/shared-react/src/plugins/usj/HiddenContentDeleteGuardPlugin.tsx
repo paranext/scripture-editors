@@ -813,7 +813,9 @@ function $coveredContent(ranges: RangeSnapshot[]): string | undefined {
   for (const snapshot of ranges) {
     const range = $rangeFrom(snapshot);
     if (!range) return undefined;
-    // A caret covers nothing, whichever node its point names.
+    // A caret covers nothing, whichever node its point names. The caret's own text is still
+    // fingerprinted: every held caret delete also holds its reach (`$reachOf`), a range from the
+    // caret to the hidden content, whose first node is the one the caret is in.
     if (range.isCollapsed()) continue;
     // A caret host is no content, and is gone once the prompt's blur has removed it. Sorted by
     // key: the order `getNodes` lists them in depends on how the range's points are spelled (an
