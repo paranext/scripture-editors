@@ -1117,6 +1117,42 @@ describe("the stop before a leading verse number", () => {
   });
 });
 
+describe("the verse a caret before a leading verse number reads", () => {
+  it("is that verse, with a milestone between the glyph and the verse number", async () => {
+    let second: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        second = $createTextNode("second");
+        $getRoot().append(
+          $createGutterParaNode("p", $createImmutableVerseNode("1"), $createTextNode("first")),
+          $createGutterParaNode(
+            "li2",
+            $createMilestoneNode("zaln-s"),
+            $createImmutableVerseNode("2"),
+            second,
+          ),
+        );
+      },
+      <>
+        <ParaMarkerSelectionPlugin />
+        <LeadingVerseCaretGuardPlugin />
+      </>,
+    );
+    act(() => {
+      editor.getRootElement()?.focus();
+    });
+    updateSelection(editor, second!, 0);
+    expect(press(editor, "ArrowLeft")).toBe("host between milestone and 2");
+
+    const verse = editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) return undefined;
+      return $resolveVerseNode(selection.anchor.getNode(), selection)?.getNumber();
+    });
+    expect(verse).toBe("2");
+  });
+});
+
 describe("Shift+← from the caret before a leading verse number", () => {
   it("extends the selection back to the previous paragraph's end", async () => {
     const { editor, first, second } = await environment();

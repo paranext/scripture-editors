@@ -581,6 +581,21 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(readTree(editor)).toEqual(["before[figure: caption]insertedafter"]);
     });
 
+    it("drops the edit when the text the caret is in changed while asking", async () => {
+      const { handler, answer } = answeringLater();
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      await sutUpdate(editor, () => {
+        after.setTextContent("changed after");
+      });
+      await act(async () => answer("delete"));
+      await settle();
+
+      expect(readTree(editor)).toEqual(["before[figure: caption]changed after"]);
+    });
+
     it("drops the edit, without moving the caret, when the document was replaced while asking", async () => {
       const { handler, answer } = answeringLater();
       const { editor } = await guardedEnvironment($init, handler);
