@@ -736,7 +736,7 @@ function $insertPastedTextIntoAttributeContext(
   // A range an annotation mark holds an end of is removed first, as for any paste
   // (`$removeRangeHeldByMarks`): Lexical's replacement of a range whose ends a mark puts in
   // different parents moves what follows the range's end into the start's parent.
-  $removeRangeHeldByMarks(selection);
+  $removeRangeHeldByMarks(selection, true);
   selection.insertText(resolved.replace(/\n/g, " "));
 }
 
@@ -1019,7 +1019,7 @@ export function $insertPastedText(
   // A range an annotation mark holds an end of is removed first, so the insertions below type at
   // the caret it leaves rather than through Lexical's range replacement, which climbs out of a mark
   // or past the node before it (`$removeRangeHeldByMarks`).
-  $removeRangeHeldByMarks(selection);
+  $removeRangeHeldByMarks(selection, true);
   // A protected document never gains a paragraph from a paste: each newline becomes a single space
   // and the payload goes in as one insertion, so the block structure the user sees is exactly the
   // one they had. Every byte-level rule above still applied. Nor does the book (`\id`) line, where

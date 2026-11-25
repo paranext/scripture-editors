@@ -340,6 +340,56 @@ function $caretAfterRemoval(point: PointType): (() => void) | undefined {
 }
 
 /**
+ * Where a caret goes once a range starting in a `token` or `segmented` text, such as a paragraph
+ * marker's separator, is removed: an element point where that text stood, since
+ * `RangeSelection.insertText` replaces such a text whole with a text of its own in its place,
+ * rather than typing at the end of the node before it (a glyph, which would take it in).
+ * `undefined` when `point` is in no such text.
+ */
+function $caretWhereTokenStood(point: PointType): (() => void) | undefined {
+  if (point.type !== "text") return undefined;
+  const text = point.getNode();
+  if (!$isTextNode(text) || (!text.isToken() && !text.isSegmented())) return undefined;
+  const parent = text.getParent();
+  const before = text.getPreviousSibling();
+  if (!parent) return undefined;
+  return () => {
+    if (text.isAttached() || !parent.isAttached()) return;
+    const offset = before?.getParent()?.is(parent) ? before.getIndexWithinParent() + 1 : 0;
+    parent.select(offset, offset);
+  };
+}
+
+/**
+ * Remove `selection`'s range keeping the content text it starts in, trimmed to the bytes before the
+ * range, with the caret at that text's end: `RangeSelection.insertText` types into the text a range
+ * starts in, and the editor reads that text as the same text edited (a char span's first text keeps
+ * the place of its structural separator), where removing it whole and typing into a new or the next
+ * text would read as different text. Returns `false`, removing nothing, when the range does not
+ * start in a content text (a `token` or `segmented` text is none).
+ * Mutating: call inside `editor.update()`.
+ */
+function $removeKeepingStartText(selection: RangeSelection): boolean {
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  if (start.type !== "text") return false;
+  const text = start.getNode();
+  if (!$isPlainTextNode(text) || text.isToken() || text.isSegmented()) return false;
+  const { offset } = start;
+  const size = text.getTextContentSize();
+  const [endKey, endOffset, endType] = [end.key, end.offset, end.type];
+  selection.anchor.set(text.getKey(), size, "text");
+  selection.focus.set(endKey, endOffset, endType);
+  if (!selection.isCollapsed()) selection.removeText();
+  const kept = text.getLatest();
+  if (!kept.isAttached()) return true;
+  kept.spliceText(offset, kept.getTextContentSize() - offset, "", false);
+  kept.select(offset, offset);
+  return true;
+}
+
+/**
  * Remove `selection`'s range, before text replaces it, when the replacement would not go where it
  * goes with no mark: its ends sit in different parents only because a mark holds one of them
  * ({@link $isRangeSplitByMarks}), or it starts at an edge of a mark's text. Lexical replaces a
@@ -349,15 +399,33 @@ function $caretAfterRemoval(point: PointType): (() => void) | undefined {
  * edge is put back at that edge ({@link $caretAfterRemoval}), where the text typed next goes
  * beside the mark as with no mark.
  *
+ * With `isReplacedByText`, for a range that text typed or pasted replaces (`insertText`), the
+ * caret is left where `insertText` with no mark types, not at the end of the node before the
+ * range (a glyph, which would take the text in): in the content text the range starts in, kept
+ * ({@link $removeKeepingStartText}), or where a `token` or `segmented` start text such as a
+ * paragraph marker's separator stood ({@link $caretWhereTokenStood}). A node insertion
+ * (`insertNodes`) removes the range first and inserts at the caret the removal leaves, as here
+ * without it.
+ *
  * Mutating: call inside `editor.update()`, before the insertion that replaces the range.
  *
  * @returns Whether the range was removed.
  */
-export function $removeRangeHeldByMarks(selection: RangeSelection): boolean {
+export function $removeRangeHeldByMarks(
+  selection: RangeSelection,
+  isReplacedByText = false,
+): boolean {
   if (selection.isCollapsed()) return false;
   const start = selection.isBackward() ? selection.focus : selection.anchor;
   const $placeCaret = $caretAfterRemoval(start);
   if (!$placeCaret && !$isRangeSplitByMarks(selection)) return false;
+  if (!$placeCaret && isReplacedByText) {
+    if ($removeKeepingStartText(selection)) return true;
+    const $placeAtToken = $caretWhereTokenStood(start);
+    selection.removeText();
+    $placeAtToken?.();
+    return true;
+  }
   selection.removeText();
   $placeCaret?.();
   return true;

@@ -344,7 +344,7 @@ export function $prepareReplaceSelection(context: MarkerEditContext): void {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return;
   if (!selection.getNodes().some((node) => $isMarkerNode(node))) {
-    $removeRangeHeldByMarks(selection);
+    $removeRangeHeldByMarks(selection, true);
     return;
   }
   $armWholeParaDeletion(context);

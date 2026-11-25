@@ -16,6 +16,7 @@ import { $byteLoc, mountInView, ORACLE_TYPE } from "./annotationLocations.test-h
 import {
   $editableTexts,
   CaseRun,
+  COPY_PASTE_KEYSTROKES,
   oracleRows,
   PASTE_KEYSTROKES,
   pendingOracleView,
@@ -139,6 +140,73 @@ describe("a byte of a carrier pasted inside it, between the pieces annotations c
       for (const spelling of [0, 1])
         expect(
           await pasteCase(view, row, carrier, at, copies, spelling),
+          `spelling ${spelling}`,
+        ).toEqual(plain);
+    },
+    120_000,
+  );
+});
+
+/**
+ * Copy the text the caret at byte `at` of the editable text spelled `text` is in, with the text
+ * after it, and paste them as text over the byte either side of the caret, in the `row` document
+ * of `view`: in the document as loaded (`spelling` undefined), or with the oracle's whole
+ * annotation set, at the caret's `spelling`-th spelling there.
+ */
+async function textPasteOverCase(
+  view: string,
+  row: string,
+  text: string,
+  at: number,
+  spelling?: number,
+): Promise<{ [name: string]: unknown }> {
+  const usj: Usj | undefined = oracleRows(view).find(([name]) => name.startsWith(`${row} (`))?.[1];
+  if (!usj) throw new Error(`no row ${row}`);
+  const viewOptions = pendingOracleView(view);
+  const mounted = await mountInView(usj, viewOptions);
+  const site = mounted.lexical.getEditorState().read(() => {
+    const index = $editableTexts().findIndex((each) => $logicalText(each) === text);
+    if (index < 0) throw new Error(`no text ${JSON.stringify(text)}`);
+    return $globalSite(index, at, false);
+  });
+  if (spelling !== undefined) {
+    const plan = mounted.lexical.getEditorState().read(() => $planAnnotations(viewOptions));
+    for (const { id, range } of plan)
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, id);
+        await Promise.resolve();
+      });
+    await act(async () => {
+      await drainNativeSelectionChange();
+    });
+  }
+  const run = await runKeystrokeCase(
+    mounted,
+    view,
+    () => $spellings(site)[spelling ?? 0],
+    COPY_PASTE_KEYSTROKES[1],
+  );
+  mounted.unmount();
+  return observed(run);
+}
+
+describe("a text paste over a range from a paragraph's or span's separator into an annotation mark", () => {
+  // Standard view's paste types the copy's USFM over the range. With a mark over the byte after the
+  // separator the range is removed first; the text then goes where typing over it with no mark
+  // puts it, in place of the paragraph marker's separator or into the span's first text, never
+  // into the glyph before them.
+  it.each([
+    ["standard", "closed char span", "In the ", 0, [0]],
+    ["standard", "closed char span", `${NBSP}grace`, 1, [0, 1]],
+    ["standard+expandedNotes", "char span with an attribute", `${NBSP}grace`, 1, [0, 1]],
+  ] as const)(
+    "%s view, %s: %j at %i",
+    async (view, row, text, at, spellings) => {
+      const plain = await textPasteOverCase(view, row, text, at);
+      expect(plain.applied, "the paste applies in the document as loaded").not.toBe(false);
+      for (const spelling of spellings)
+        expect(
+          await textPasteOverCase(view, row, text, at, spelling),
           `spelling ${spelling}`,
         ).toEqual(plain);
     },

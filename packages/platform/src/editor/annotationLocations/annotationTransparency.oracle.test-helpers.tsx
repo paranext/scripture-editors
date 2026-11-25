@@ -54,7 +54,8 @@
  *
  * The cases known to fail are listed per view in `annotationTransparency.<view>.expected-failures.json`,
  * in the pending/settled oracle's list format; `ANNOTATION_TRANSPARENCY_WRITE=1` rewrites a list,
- * and needs `ANNOTATION_TRANSPARENCY_FULL=1`, since a sampled run leaves cases out.
+ * and needs `ANNOTATION_TRANSPARENCY_FULL=1` and `ANNOTATION_TRANSPARENCY_CLIPBOARD=1`, since a
+ * sampled run, or one without the clipboard gestures, leaves cases out.
  *
  * By default a row does not run every case: it runs the core keystrokes at every site the
  * annotations change the tree at, and every keystroke at a sample of its sites, at least one per
@@ -1379,9 +1380,9 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
   const rows = oracleRows(view);
   const listed = readExpectedFailures(listFile);
   const written: ExpectedFailures = {};
-  if (WRITE && !FULL)
+  if (WRITE && !(FULL && CLIPBOARD))
     throw new Error(
-      "ANNOTATION_TRANSPARENCY_WRITE=1 rewrites the list from the cases run, so it needs ANNOTATION_TRANSPARENCY_FULL=1",
+      "ANNOTATION_TRANSPARENCY_WRITE=1 rewrites the list from the cases run, so it needs ANNOTATION_TRANSPARENCY_FULL=1 and ANNOTATION_TRANSPARENCY_CLIPBOARD=1",
     );
   afterAll(() => {
     if (WRITE) writeFileSync(listFile, `${JSON.stringify(written, null, 2)}\n`);
@@ -1744,14 +1745,16 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
           console.info(describeAccounting(row, accounting, true));
         expect(accounting.compared, `no case was compared\n${summary}`).toBeGreaterThan(0);
         // A case listed as failing that this run did not sample is not "passing": compare only the
-        // listed cases that ran, which a failing one always is by its mismatch.
-        const listedHere = FULL
-          ? listed
-          : {
-              [row]: Object.fromEntries(
-                Object.entries(listed[row] ?? {}).filter(([label]) => mismatches.has(label)),
-              ),
-            };
+        // listed cases that ran, which a failing one always is by its mismatch. Only a full run
+        // with the clipboard gestures runs every listed case.
+        const listedHere =
+          FULL && CLIPBOARD
+            ? listed
+            : {
+                [row]: Object.fromEntries(
+                  Object.entries(listed[row] ?? {}).filter(([label]) => mismatches.has(label)),
+                ),
+              };
         expectMismatchesListed(row, mismatches, listedHere, written, WRITE, summary);
       },
       1_200_000,
