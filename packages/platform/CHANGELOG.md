@@ -90,26 +90,48 @@ refused. The public surface grew substantially; nothing was removed.
   so a host can label its choice to match. Dragging a selection that holds such content is
   refused, and so is cutting one while `copyLimit` is set.
 - **A paragraph's marker can be selected** in the paragraph-structure view (`hasGutterParaMarkers`):
-  click it in the gutter. Arrow keys do not stop on a marker; arrow movement is unchanged.
+  click it in the gutter, or reach it with ← or → (see the paragraph-edge stops below).
   - The row is highlighted (`psc-para-marker-selected`), and the editor root's
     `aria-activedescendant` names the marker, which carries `role="option"` and `aria-selected`.
   - Everywhere else a selected marker counts as a caret at the start of its paragraph's text. The
     scripture reference reports the verse that text starts in, and `insertMarker`, `insertNote`,
     `applyMarkerMenuSelection`, `splitParagraphWithMarker`, `commitTypedMarker` and
     `commitTypedCloser` act there.
-  - Any arrow key returns the caret to that position without moving further. Typing, dictation,
-    pasting and the emoji picker insert there. A spellcheck replacement or a drop acts where it
-    was aimed.
-  - Enter with no modifier (a virtual keyboard's too) and Alt+↓ call `onParaMarkerMenuRequest`
-    when it is set. Without it, or with a modifier (Shift+Enter, a host's Ctrl+Enter), Enter acts
-    at that position, and Alt+↓ acts like any other arrow.
+  - A plain ← or → moves on to the next paragraph-edge stop. Any other arrow returns the caret to
+    that position without moving further. Typing, dictation, pasting and the emoji picker insert
+    there. A spellcheck replacement or a drop acts where it was aimed.
+  - Enter with no modifier, a typed `\` (through AltGr or Option too; either from a virtual
+    keyboard too) and Alt+↓ call `onParaMarkerMenuRequest` when it is set, to change the paragraph's marker.
+    Without it, Enter and `\` act at that position, and Alt+↓ acts like any other arrow. A modified
+    Enter (Shift+Enter, a host's Ctrl+Enter) always acts at that position, and a Ctrl or Cmd chord
+    on `\` leaves the marker selected.
   - Backspace or Delete, or any other deletion such as macOS ⌃H/⌃D or a virtual keyboard's, merges
     the paragraph into the one before it in a single undo step, as removing a paragraph marker
     does. Nothing happens on the first paragraph of a book or chapter, and `"protected"`
-    `structureProtectionMode` refuses the merge. Under `"guarded"`, selecting the marker is the
-    arming step, so one press merges.
+    `structureProtectionMode` refuses the merge. Under `"guarded"`, the first press arms the merge
+    and leaves the marker selected, and a second merges.
   - Cut, copy and drag are refused, since the marker is not content, unless the browser's selection
     has moved to other text (a right-click, say), which they then use.
+- **Paragraph-edge stops for ← and →** in the paragraph-structure view. Walking backward from the
+  start of a paragraph's text, a plain arrow stops before the leading verse number (a visible caret
+  where text and markers can be typed in front of the verse), then on the paragraph's marker, then
+  at the end of the previous paragraph. → from the end of a paragraph visits the same stops in the
+  opposite order. A paragraph with no leading verse number has no first stop, and `"protected"`
+  `structureProtectionMode` skips the marker stop. From the stop before the verse number, Shift+→
+  selects the verse number and Shift+← extends the selection back to the previous paragraph's end.
+  Inside an expanded note, the arrows move as they do anywhere in the note's text.
+- **→ in an empty verse moves on to the next verse** when another verse number follows, instead of
+  needing a second press. A word or line delete backward from the start of a paragraph's text acts
+  as a character delete there, rather than reaching over the gutter glyph.
+- **Gutter markers are right-aligned** (`hasGutterParaMarkers`): each marker's visible text ends a
+  fixed gap before its paragraph's text, whatever the paragraph's font size, and the rest of each
+  marker's gutter row stays part of its click target. The editor clips horizontally at the
+  gutter's outer edge (`overflow-x: clip`), so neither that click target nor a marker too wide for
+  the gutter reaches past it, and a right-to-left editor does not scroll sideways. The active text box
+  (`hasActiveTextFocusBox`) reaches 3px past the end of the text column. A host that vendors
+  its own copy of `usj-nodes.css` needs the new rules in it, including the `@property`
+  registrations of `--psc-gutter-width` and `--psc-gutter-marker-gap`: unregistered, the gutter's
+  width follows each paragraph's own font size.
 - `ViewOptions.allowInvisibleCharacters`: a host passes the project's Paratext
   `AllowInvisibleChars` setting (Platform.Bible's `platformScripture.allowInvisibleCharacters`).
   Such a project stores a no-break space as U+00A0 itself and `~` as an ordinary character, so

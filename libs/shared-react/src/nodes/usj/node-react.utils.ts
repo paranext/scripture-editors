@@ -1,3 +1,4 @@
+import { $isPassedOverInGutterView } from "../../plugins/usj/gutterHiddenNodes.utils";
 import {
   $isImmutableVerseNode,
   ImmutableVerseNode,
@@ -18,6 +19,8 @@ import {
 } from "lexical";
 import {
   $findNearestPreviousNode,
+  $isCaretHost,
+  $isGutterMarkerNode,
   $isNodeWithMarker,
   $isParaNode,
   $isSomeChapterNode,
@@ -573,6 +576,16 @@ export function $resolveVerseNode(
     $isElementNode(startNode) &&
     $isRangeSelection(selection) &&
     selection.anchor.key === startNode.getKey();
+
+  // A caret host between a paragraph's gutter glyph and its leading verse number stands for the
+  // element point there, which reads the verse after it, as below. Anything the view hides (a
+  // milestone, say) may come between the glyph and the host.
+  if ($isCaretHost(startNode)) {
+    let before = startNode.getPreviousSibling();
+    while (before && $isPassedOverInGutterView(before)) before = before.getPreviousSibling();
+    const next = startNode.getNextSibling();
+    if ($isGutterMarkerNode(before) && $isSomeVerseNode(next)) return next;
+  }
 
   if (isCursorOnElement) {
     const childAtOffset = startNode.getChildAtIndex(selection.anchor.offset);

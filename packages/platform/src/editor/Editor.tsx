@@ -194,6 +194,7 @@ import {
   HiddenContentDeleteGuardPlugin,
   HIDDEN_VIEW_CLIPBOARD_NAMESPACE,
   isBlockVerseLayout,
+  LeadingVerseCaretGuardPlugin,
   LoadStatePlugin,
   MARKER_VIEW_CLIPBOARD_NAMESPACE,
   NoteCallerHighlightHandle,
@@ -2259,6 +2260,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           {viewOptions?.markerMode === "hidden" && (
             <InlineRangeEditPlugin structureProtectionMode={structureProtectionMode} />
           )}
+          {viewOptions.hasGutterParaMarkers && <LeadingVerseCaretGuardPlugin />}
           <LineBreakPlugin
             viewOptions={viewOptions}
             structureProtectionMode={structureProtectionMode}

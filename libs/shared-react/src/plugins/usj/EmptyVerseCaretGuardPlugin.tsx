@@ -1,19 +1,24 @@
-import { useTransientCaretHost } from "./transientCaretHost";
+import { getEditorTextDirection } from "./ArrowNavigationPlugin";
+import { $deleteFromCaretHost, useTransientCaretHost } from "./transientCaretHost";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $isTextNode,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_LOW,
   DELETE_CHARACTER_COMMAND,
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
+  KEY_DOWN_COMMAND,
   LexicalCommand,
   LexicalEditor,
+  SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { useEffect } from "react";
-import { $caretHostAtBoundary, $isCaretHost } from "shared";
+import { $caretHostAtBoundary, $isCaretHost, $placeCaretAtBoundary } from "shared";
 import { $isSomeVerseNode, SomeVerseNode } from "../../nodes/usj";
 
 /**
@@ -78,15 +83,29 @@ function $deleteFromEmptyVerseHost(
 ): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const host = selection.anchor.getNode();
+  const host = selection.focus.getNode();
+  if (!$isTextNode(host) || !$isCaretHost(host) || !$isSomeVerseNode(host.getPreviousSibling()))
+    return false;
+  return $deleteFromCaretHost(editor, host, command, isBackward);
+}
+
+/**
+ * A plain forward arrow from an empty verse's host that another verse number follows: the caret
+ * goes on into that verse, past its number. Left to the browser, the press only crosses the host's
+ * own zero-width placeholder, so the caret does not move on screen and a second press is needed.
+ *
+ * Mutating: call inside `editor.update()` (a command handler is).
+ *
+ * @returns `true` if the caret moved into the next verse.
+ */
+export function $moveForwardOutOfEmptyVerse(): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const host = selection.focus.getNode();
   if (!$isCaretHost(host) || !$isSomeVerseNode(host.getPreviousSibling())) return false;
-  const parent = host.getParentOrThrow();
-  const boundary = host.getIndexWithinParent();
-  host.remove();
-  parent.select(boundary, boundary);
-  // Every other delete handler judges this one too. Handled either way: the host is gone, so the
-  // delete it stood in for has been run.
-  editor.dispatchCommand(command, isBackward);
+  const nextVerse = host.getNextSibling();
+  if (!$isSomeVerseNode(nextVerse)) return false;
+  $placeCaretAtBoundary(nextVerse.getParentOrThrow(), nextVerse.getIndexWithinParent() + 1);
   return true;
 }
 
@@ -117,6 +136,22 @@ export function EmptyVerseCaretGuardPlugin(): null {
   useEffect(
     () =>
       mergeRegister(
+        editor.registerCommand(
+          KEY_DOWN_COMMAND,
+          (event) => {
+            if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return false;
+            const root = editor.getRootElement();
+            if (!root) return false;
+            const forwardKey = getEditorTextDirection(root) === "rtl" ? "ArrowLeft" : "ArrowRight";
+            if (event.key !== forwardKey || !$moveForwardOutOfEmptyVerse()) return false;
+            event.preventDefault();
+            // Lexical reports no selection change for a move it made itself, so the caret hosts
+            // and the scripture reference would not follow it.
+            editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+            return true;
+          },
+          COMMAND_PRIORITY_CRITICAL,
+        ),
         ...DELETE_COMMANDS.map((command) =>
           editor.registerCommand(
             command,

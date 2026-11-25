@@ -112,16 +112,22 @@ it.each([
       return glyph.getKey();
     });
 
-    // By click, then out by keyboard.
+    // By click, then out by keyboard — into a focused editor, as a user's keys are.
     const glyphElement = lexical.getElementByKey(glyphKey);
     if (!glyphElement) throw new Error("glyph not rendered");
+    act(() => {
+      lexical.getRootElement()?.focus();
+    });
     await act(async () => {
       glyphElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(ref.current?.getSelectedParaMarker()).toBe(marker);
     await press(lexical, "ArrowRight");
-    // A marker is not a keyboard stop: arrowing back from the content leaves it unselected.
+    // A marker is an arrow stop at its paragraph's edge: arrowing back from the content selects it
+    // again, and a vertical arrow leaves it for the content.
     await press(lexical, "ArrowLeft");
+    expect(ref.current?.getSelectedParaMarker()).toBe(marker);
+    await press(lexical, "ArrowDown");
     expect(ref.current?.getSelectedParaMarker()).toBeUndefined();
     await flushQueuedEvents();
 

@@ -24,6 +24,8 @@ import {
   $isRangeSelection,
   $setSelection,
   BaseSelection,
+  COMMAND_PRIORITY_CRITICAL,
+  KEY_DOWN_COMMAND,
   LexicalEditor,
   LexicalNode,
   SELECTION_CHANGE_COMMAND,
@@ -1322,6 +1324,33 @@ describe("ScriptureReferencePlugin", () => {
       await act(async () => {
         editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
       });
+
+      expect(mockOnScrRefChange).toHaveBeenCalledWith(
+        expect.objectContaining({ book: "GEN", chapterNum: 1, verseNum: 2 }),
+      );
+    });
+
+    it("closes the navigation window before a key's own handler reports the selection it moved", async () => {
+      const { editor, setScrRef } = await testEnvironment(scrRef, mockOnScrRefChange);
+      await setScrRef({ book: "GEN", chapterNum: 2, verseNum: 9 }); // window open, chapter 2 never loads
+      // A key handler that moves the selection and reports it at once, as an arrow onto a
+      // paragraph marker does: no selectionchange follows a marker selection.
+      const unregister = editor.registerCommand(
+        KEY_DOWN_COMMAND,
+        () => {
+          secondVerseTextNode.select(3, 3);
+          editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+          return true;
+        },
+        COMMAND_PRIORITY_CRITICAL,
+      );
+
+      await act(async () => {
+        editor
+          .getRootElement()
+          ?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      });
+      unregister();
 
       expect(mockOnScrRefChange).toHaveBeenCalledWith(
         expect.objectContaining({ book: "GEN", chapterNum: 1, verseNum: 2 }),

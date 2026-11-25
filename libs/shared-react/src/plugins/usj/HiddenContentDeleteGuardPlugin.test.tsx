@@ -44,6 +44,7 @@ import {
 } from "lexical";
 import { ReactNode } from "react";
 import {
+  $createCaretHostNode,
   $createGutterMarkerNode,
   $createImmutableChapterNode,
   $createNoteNode,
@@ -451,6 +452,91 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(readCaret(editor)).toEqual({ key: before!.getKey(), offset: 2, isCollapsed: true });
     });
 
+    describe("held from a transient caret host", () => {
+      let para: ParaNode;
+      let host: TextNode;
+      const $initWithHost = () => {
+        para = $createParaNode("p");
+        host = $createCaretHostNode();
+        $getRoot().append(
+          para.append(
+            $createTextNode("before"),
+            $createFigureNode(),
+            host,
+            $createTextNode("after"),
+          ),
+        );
+      };
+
+      it("still deletes once the prompt's blur has replaced the host with its boundary", async () => {
+        const { handler, answer } = answeringLater();
+        const { editor } = await guardedEnvironment($initWithHost, handler);
+        updateSelection(editor, host, 0);
+
+        await pressKey(editor, "Backspace");
+        // What a blur does to a caret in a host: removes the host, leaving the caret where it stood.
+        await sutUpdate(editor, () => {
+          const boundary = host.getIndexWithinParent();
+          host.remove();
+          para.select(boundary, boundary);
+        });
+        await act(async () => answer("delete"));
+        await settle();
+
+        expect(readTree(editor)).toEqual(["beforeafter"]);
+      });
+
+      it("still deletes a measured word, past the hidden content, once the blur has removed the host", async () => {
+        let wordPara!: ParaNode;
+        let wordHost!: TextNode;
+        let after!: TextNode;
+        const { handler, answer } = answeringLater();
+        const { editor } = await guardedEnvironment(() => {
+          wordPara = $createParaNode("p");
+          wordHost = $createCaretHostNode();
+          after = $createTextNode("after more");
+          // After a verse number, as a host stands: no text before it for the caret to settle in.
+          $getRoot().append(
+            wordPara.append($createImmutableVerseNode("2"), wordHost, $createFigureNode(), after),
+          );
+        }, handler);
+        updateSelection(editor, wordHost, 0);
+        // The browser measures the word forward to the end of "after".
+        const restore = stubSelectionModify(editor, (selection) => {
+          selection.focus.set(after.getKey(), "after".length, "text");
+        });
+
+        await act(async () => {
+          editor.dispatchCommand(DELETE_WORD_COMMAND, false);
+        });
+        restore();
+        await sutUpdate(editor, () => {
+          const boundary = wordHost.getIndexWithinParent();
+          wordHost.remove();
+          wordPara.select(boundary, boundary);
+        });
+        await act(async () => answer("delete"));
+        await settle();
+
+        const [text] = readTree(editor);
+        expect(text).not.toContain("[figure");
+        expect(text).not.toContain("after");
+        expect(text).toContain(" more");
+      });
+
+      it("still deletes when the host is there when the answer comes", async () => {
+        const { handler, answer } = answeringLater();
+        const { editor } = await guardedEnvironment($initWithHost, handler);
+        updateSelection(editor, host, 0);
+
+        await pressKey(editor, "Backspace");
+        await act(async () => answer("delete"));
+        await settle();
+
+        expect(readTree(editor)[0]).not.toContain("[figure");
+      });
+    });
+
     it("leaves Shift+Delete, the cut chord off Apple platforms, to the cut handler", async () => {
       const handler = answering("delete");
       const { editor } = await guardedEnvironment($init, handler);
@@ -526,6 +612,21 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       await settle();
 
       expect(readTree(editor)).toEqual(["before[figure: caption]insertedafter"]);
+    });
+
+    it("drops the edit when the text the caret is in changed while asking", async () => {
+      const { handler, answer } = answeringLater();
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      await sutUpdate(editor, () => {
+        after.setTextContent("changed after");
+      });
+      await act(async () => answer("delete"));
+      await settle();
+
+      expect(readTree(editor)).toEqual(["before[figure: caption]changed after"]);
     });
 
     it("drops the edit, without moving the caret, when the document was replaced while asking", async () => {

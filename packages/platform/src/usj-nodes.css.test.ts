@@ -110,6 +110,77 @@ describe("usj-nodes.css gutter paragraph marker", () => {
       ".psc-gutter-markers .para > .marker:not(.verse):not(.chapter):first-child,",
     );
   });
+
+  // Unregistered, a `4em` gutter resolves in each paragraph's own font size, so a `\mt1` (166%)
+  // gets a wider gutter than a `\p`, and its active text box starts outside the editor.
+  it.each(["--psc-gutter-width", "--psc-gutter-marker-gap"])(
+    "registers %s as a length, so it computes once on the gutter root",
+    (property) => {
+      expect(flatCss).toMatch(
+        new RegExp(`@property ${property} \\{ syntax: "<length>"; inherits: true;`),
+      );
+    },
+  );
+
+  /** The declarations of the rule whose selector list ends with `lastSelector`. */
+  function ruleBody(lastSelector: string): string | undefined {
+    const start = flatCss.indexOf(`${lastSelector} {`);
+    if (start < 0) return undefined;
+    const open = start + lastSelector.length + 2;
+    // Comments inside the rule carry no braces of their own.
+    return flatCss.slice(open, flatCss.indexOf("}", open)).replace(/\/\*.*?\*\//g, "");
+  }
+
+  it("ends every marker's visible text the marker gap before the text column", () => {
+    const marker = ruleBody(".psc-gutter-markers .book > .marker:first-child");
+    // The editor ends each marker's text with a no-break space one `ch` wide (monospace); the box
+    // reaches 1ch into the gap so the space, not the text, sits there, whatever the marker's size.
+    expect(marker).toContain(
+      "right: calc(100% + var(--para-indent) + var(--psc-gutter-marker-gap) - 1ch);",
+    );
+    // A paragraph's text-indent is for its text: inherited, it would collapse or widen this
+    // shrink-to-fit box (a hanging `\q2`'s box would be 0px wide) and shift the glyph in RTL.
+    expect(marker).toContain("text-indent: 0;");
+    // Gutter-side padding keeps the rest of the marker's gutter row clickable, the glyph unmoved.
+    expect(marker).toContain("padding-left: var(--psc-gutter-width);");
+    expect(marker).not.toContain("width:");
+  });
+
+  it("anchors the marker by its text-facing edge in RTL, its text kept LTR", () => {
+    const rtl = ruleBody('.psc-gutter-markers[dir="rtl"] .book > .marker:first-child');
+    expect(rtl).toContain("right: auto;");
+    expect(rtl).toContain("left: calc(100% + var(--para-indent) + var(--psc-gutter-marker-gap));");
+    // The gutter is on the right in RTL, and so is the click-target padding.
+    expect(rtl).toContain("padding-left: 0;");
+    expect(rtl).toContain("padding-right: var(--psc-gutter-width);");
+    expect(rtl).not.toContain("direction: rtl");
+  });
+
+  // The marker's click-target padding reaches past the gutter's outer edge in both directions. In
+  // RTL that is off the editor's right edge, which a scrolling host container would scroll to.
+  it("clips the editor at the gutter's outer edge, without making it a scroll container", () => {
+    const gutterRoot = ruleBody(".usfm.psc-gutter-markers");
+    expect(gutterRoot).toContain("padding-inline-start: var(--psc-gutter-width);");
+    expect(gutterRoot).toContain("overflow-x: clip;");
+    expect(gutterRoot).not.toMatch(/overflow(-y)?: (hidden|auto|scroll)/);
+  });
+});
+
+/**
+ * Pins the active text box's inline-end edge just outside the text column. At `0` the stroke sat on
+ * the column's last pixels, where a line's last glyph and the caret at its end touched it; further
+ * out than 3px, Platform.Bible's character-marker trigger, 4px past the column, covers it.
+ */
+describe("usj-nodes.css active text box", () => {
+  const flatCss = readFileSync(new URL("./usj-nodes.css", import.meta.url), "utf-8").replace(
+    /\s+/g,
+    " ",
+  );
+
+  it("draws the box just past the end of the text column", () => {
+    const box = flatCss.match(/\.psc-active-focus \.psc-active-text::after \{([^}]*)\}/)?.[1];
+    expect(box).toContain("inset-inline-end: -3px;");
+  });
 });
 
 /**

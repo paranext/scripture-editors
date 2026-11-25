@@ -5,12 +5,14 @@ import { $placeCaretAtParaContentStart } from "./ParaMarkerPrefixCursorGuardPlug
 import { $findMatchingParent } from "@lexical/utils";
 import {
   $createTextNode,
+  $getSelection,
   $isDecoratorNode,
   $isElementNode,
   $isNodeSelection,
   $isRangeSelection,
   $isTextNode,
   BaseSelection,
+  ElementNode,
   LexicalNode,
   NodeKey,
   PointType,
@@ -555,9 +557,10 @@ export function $isArmedSelection(selection: BaseSelection | null, armed: ArmedD
       $isRangeSelection(selection) && !selection.isCollapsed() && $isAtSnapshot(selection, armed)
     );
   }
-  // A paragraph armed on its gutter marker stays armed while that marker stays selected; one that
-  // shows no marker, while the caret stays where it was.
-  if ($getSelectedParaMarkerPara(selection)?.getKey() === armed.key) return true;
+  // A paragraph armed on its gutter marker stays armed while that marker stays selected; one armed
+  // from a caret, while the caret stays where it was. Selecting the marker of a paragraph armed
+  // from a caret (an arrow key reaching it) is a move, which ends that arm.
+  if (!armed.anchor && $getSelectedParaMarkerPara(selection)?.getKey() === armed.key) return true;
   return $isRangeSelection(selection) && $isAtSnapshot(selection, armed);
 }
 
@@ -716,10 +719,26 @@ export function $getEmptyParaBefore(para: SomeParaNode): SomeParaNode | undefine
 }
 
 /**
+ * Whether a collapsed caret rests in `block` where a caret is drawn: anywhere in it but in front of
+ * a gutter paragraph's glyph or within the glyph, where none is.
+ */
+function $isCaretShownIn(block: ElementNode): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const { focus } = selection;
+  const node = focus.getNode();
+  const glyph = block.getFirstChild();
+  if (!$isGutterMarkerNode(glyph)) return node.is(block) || block.isParentOf(node);
+  if (node.is(block)) return focus.offset > 0;
+  return block.isParentOf(node) && !node.is(glyph);
+}
+
+/**
  * Performs a paragraph delete on `para`. An empty paragraph alone in its chapter becomes a blank
  * line with no marker, with the caret in it. Any other empty paragraph is removed outright, and the
  * caret goes to the start of the paragraph after it, when a Delete removes it or there is nothing
- * before it to merge into (a chapter). Otherwise `para` merges into the block before it
+ * before it to merge into (a chapter); a caret already in that paragraph, where one is drawn,
+ * stays where it is. Otherwise `para` merges into the block before it
  * ({@link $mergeParaIntoPrevious}), a no-op when that cannot be done.
  *
  * Mutating: call inside `editor.update()` (dispatched from StructureKeyboardPlugin.tsx and
@@ -739,8 +758,10 @@ export function $deletePara(para: SomeParaNode, intent: DeleteIntent = "deleteBa
   if ($canRemoveEmptyPara(para) && (intent === "deleteForward" || !$canMergeIntoPrevious(para))) {
     const next = para.getNextSibling();
     para.remove();
-    // Always a paragraph, by `$canRemoveEmptyPara`; the check only narrows its type.
-    if ($isParaLikeNode(next)) $placeCaretAtParaContentStart(next);
+    // Always a paragraph, by `$canRemoveEmptyPara`; the check only narrows its type. A Backspace
+    // from `next`'s start leaves a caret already past its glyph where it was: at the stop before a
+    // leading verse number, the content start is past the number.
+    if ($isParaLikeNode(next) && !$isCaretShownIn(next)) $placeCaretAtParaContentStart(next);
     return;
   }
   $mergeParaIntoPrevious(para);
@@ -772,7 +793,9 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   // prefix glyph (markerMode "editable"'s MarkerNode, or the "visible" mode's marker-typed
   // ImmutableTypedTextNode) is still its first child here; moving it into `prev` would fuse it
   // onto `prev`'s trailing text as a literal marker byte (e.g. `first\qsecond`), so it is dropped
-  // along with the separator instead of moved.
+  // along with the separator instead of moved. So is a transient caret host the caret was in (the
+  // stop before the paragraph's leading verse number): it stood for a position in a paragraph that
+  // is going, and carried over it would outlive the caret in the paragraph it joins.
   // Lexical's history folds an update whose only dirty leaf is a text that kept its text into the
   // step before, even one tagged `history-push`. Removing an empty paragraph touches only the text
   // the caret lands in, so the leaves that go with the paragraph are marked too, and Undo takes the
@@ -782,7 +805,9 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
     .getChildren()
     .filter(
       (child) =>
-        !$isMarkerTrailingSeparator(child) && !(dropsLeadingPrefix && child.is(leadingPrefix)),
+        !$isMarkerTrailingSeparator(child) &&
+        !(dropsLeadingPrefix && child.is(leadingPrefix)) &&
+        !$isCaretHost(child),
     );
   prev.append(...moved);
   para.remove();
