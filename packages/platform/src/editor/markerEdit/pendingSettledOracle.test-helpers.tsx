@@ -530,6 +530,20 @@ export const ENTER_KEYSTROKES: EnterKeystroke[] = [
 ];
 
 /**
+ * Text holding a line break inserted at the caret as one string — what dictation, autocorrect, a
+ * yank or an extension inserts (`CONTROLLED_TEXT_INSERTION_COMMAND`) — with the caret placed in one
+ * update and the text inserted in the next, as {@link PLACED_KEYSTROKES} type. The editor splits
+ * the paragraph at the line break, or puts a space for it where it cannot (`LineBreakPlugin`). Not
+ * one of the pending/settled oracle's keystrokes: the annotation-transparency oracle runs it.
+ */
+export const LINE_BREAK_TEXT_KEYSTROKES: { name: string; character: string }[] = [
+  {
+    name: 'place the caret, then insert "p", a line break and "q" as one string',
+    character: "p\nq",
+  },
+];
+
+/**
  * The range keystrokes the annotation-transparency oracle runs from a caret anywhere in every view:
  * Shift with Left or Right, then `x`, Backspace or Delete. Not among the pending/settled oracle's
  * own keystrokes.

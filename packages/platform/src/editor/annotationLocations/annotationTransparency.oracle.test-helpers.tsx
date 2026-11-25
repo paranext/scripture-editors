@@ -13,6 +13,8 @@
  * At a site strictly inside a carrier a paste runs too: a byte of the carrier copied out of its
  * piece and pasted at the caret (`PASTE_KEYSTROKES`), with the carriers cut by the ranges over them
  * alone, so a paste between two pieces must join the carrier as a paste into the unsplit one does.
+ * Every site also runs Enter and Shift+Enter (`ENTER_KEYSTROKES`), and text holding a line break
+ * inserted as one string (`LINE_BREAK_TEXT_KEYSTROKES`), which the editor splits the paragraph at.
  *
  * With `ANNOTATION_TRANSPARENCY_CLIPBOARD=1`, at a site the annotations change the tree at — a cut
  * between two pieces of a carrier, a mark's edge inside a text, or in a mark ({@link $isTouched})
@@ -88,6 +90,7 @@ import {
   GestureRange,
   isSpellingFree,
   keystrokesFor,
+  LINE_BREAK_TEXT_KEYSTROKES,
   OracleKeystroke,
   oracleRows,
   outsideNotes,
@@ -180,6 +183,7 @@ function isCoreKeystroke(keystroke: OracleKeystroke, shell: boolean): boolean {
     keystroke.name === "Backspace" ||
     keystroke.name === "Delete" ||
     ENTER_KEYSTROKES.some((enter) => enter === keystroke) ||
+    LINE_BREAK_TEXT_KEYSTROKES.some((insertion) => insertion === keystroke) ||
     PASTE_KEYSTROKES.some((paste) => paste === keystroke)
   );
 }
@@ -1453,6 +1457,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
           const ownKeystrokes = [
             ...keystrokesFor(view, site.shell),
             ...ENTER_KEYSTROKES,
+            ...LINE_BREAK_TEXT_KEYSTROKES,
             ...(isInsideCarrier ? PASTE_KEYSTROKES : []),
           ].filter((keystroke) => isSampled || isCoreKeystroke(keystroke, site.shell));
           for (const keystroke of [...ownKeystrokes, ...added]) {
