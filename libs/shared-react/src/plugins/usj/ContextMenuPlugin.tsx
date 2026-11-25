@@ -20,7 +20,7 @@ import {
   useState,
 } from "react";
 import * as ReactDOM from "react-dom";
-import { isImmutableChapterElement } from "shared";
+import { isImmutableChapterElement, LoggerBasic } from "shared";
 
 /**
  * A context menu option to add to the editor context menu.
@@ -141,10 +141,18 @@ export class ContextMenuOption {
   }
 }
 
+/**
+ * The editor's context menu: Cut, Copy, Paste, Paste as Plain Text, then any extra `options`.
+ *
+ * @param options - Extra items, after the built-in ones.
+ * @param logger - Where a Paste item's failed clipboard read is logged; the console when omitted.
+ */
 export function ContextMenuPlugin({
   options: extraOptions,
+  logger,
 }: {
   options?: ContextMenuOptionConfig[];
+  logger?: LoggerBasic;
 } = {}): ReactElement | null {
   const [editor] = useLexicalComposerContext();
   const [isReadonly, setIsReadonly] = useState(() => !editor.isEditable());
@@ -175,13 +183,13 @@ export function ContextMenuPlugin({
       }),
       new ContextMenuOption(`Paste`, {
         onSelect: () => {
-          pasteSelection(editor);
+          pasteSelection(editor, logger);
         },
         isDisabled: isReadonly,
       }),
       new ContextMenuOption(`Paste as Plain Text`, {
         onSelect: () => {
-          pasteSelectionAsPlainText(editor);
+          pasteSelectionAsPlainText(editor, logger);
         },
         isDisabled: isReadonly,
       }),
@@ -191,7 +199,7 @@ export function ContextMenuPlugin({
         new ContextMenuOption(opt.title, { onSelect: opt.onSelect, isDisabled: opt.isDisabled }),
     );
     return [...builtIn, ...extra];
-  }, [editor, isReadonly, extraOptions]);
+  }, [editor, isReadonly, extraOptions, logger]);
 
   const menuRef = useRef<HTMLDivElement>(null);
   // What had focus when the menu opened, so the keydown guard below can tell "focus never moved"

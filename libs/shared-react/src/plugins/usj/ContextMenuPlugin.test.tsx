@@ -9,7 +9,7 @@
  */
 import { ClipboardPlugin } from "./ClipboardPlugin";
 import { ContextMenuPlugin } from "./ContextMenuPlugin";
-import { baseTestEnvironment, pressKeyThroughDom } from "./react-test.utils";
+import { baseTestEnvironment, pressKeyThroughDom, settle } from "./react-test.utils";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -689,6 +689,54 @@ async function chooseContextMenuOption(editor: LexicalEditor, index: number): Pr
 const COPY_OPTION = 1;
 const CUT_OPTION = 0;
 
+/**
+ * Opens the context menu and clicks the option titled `title` the way a mouse user does: the
+ * mousedown on the item takes focus off the editor first. jsdom does not run the browser's
+ * mousedown-focuses-target default, so it is done here, as it is for the disabled-item test above.
+ */
+async function clickContextMenuOption(editor: LexicalEditor, title: string): Promise<void> {
+  const target = editor.getRootElement()?.firstElementChild;
+  if (!target) throw new Error("expected the editor to have rendered content to right-click");
+  await act(async () => {
+    target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+  });
+  const item = Array.from(document.querySelectorAll<HTMLLIElement>(".typeahead-popover li")).find(
+    (li) => li.querySelector(".text")?.textContent === title,
+  );
+  if (!item) throw new Error(`expected a "${title}" menu item`);
+  await act(async () => {
+    item.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    item.focus();
+  });
+  expect(document.activeElement).toBe(item);
+  await act(async () => {
+    item.click();
+  });
+}
+
+describe("ContextMenuPlugin — Paste", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(["Paste", "Paste as Plain Text"])(
+    "logs a clipboard read that fails for %s to the plugin's logger",
+    async (title) => {
+      const denied = () => Promise.reject(new Error("clipboard read denied"));
+      vi.stubGlobal("navigator", { ...navigator, clipboard: { read: denied, readText: denied } });
+      const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+      const { editor } = await baseTestEnvironment(
+        () => $getRoot().append($createParaNode("p").append($createTextNode("text"))),
+        <ContextMenuPlugin logger={logger} />,
+      );
+
+      await clickContextMenuOption(editor, title);
+      await settle();
+
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(String(logger.warn.mock.calls[0][0])).toContain("clipboard read denied");
+    },
+  );
+});
+
 describe("ContextMenuPlugin — Cut/Copy go through the empty-copy guard", () => {
   it("Copy with a collapsed caret leaves the clipboard untouched", async () => {
     const { editor, text } = await contextMenuEnvironment();
@@ -768,5 +816,30 @@ describe("ContextMenuPlugin — Escape", () => {
     });
 
     expect(escape.defaultPrevented).toBe(false);
+  });
+});
+
+describe("ContextMenuPlugin — Paste", () => {
+  beforeEach(() => {
+    // jsdom has no async clipboard API. A read that never settles is enough: this asserts only
+    // that a paste reached it.
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { read: vi.fn(() => new Promise(() => undefined)) },
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reads the clipboard", async () => {
+    const { editor, text } = await contextMenuEnvironment();
+    await act(async () => editor.update(() => text.select(3, 3)));
+
+    await clickContextMenuOption(editor, "Paste");
+    await settle();
+
+    expect(vi.mocked(navigator.clipboard.read)).toHaveBeenCalledTimes(1);
   });
 });
