@@ -456,55 +456,66 @@ describe("a caret on the chapter line", () => {
     expect(lineBreak).toEqual(enter);
   });
 
-  // Lexical inserts the line break at the start of the range, so a selection made backward from
-  // the text up into a span at the root (the `\ca` a deletion across the chapter line leaves
-  // there) starts in that span although its anchor is in a paragraph.
+  // A selection made backward from the text up into a span at the root (the `\ca` a deletion
+  // across the chapter line leaves there) starts in that span although its anchor is in a
+  // paragraph, where no block holds the start of the range.
   it.each([false, true])(
-    "Shift+Enter over a selection between a root-level \\ca span and the text does nothing (backward %s)",
+    "Shift+Enter over a selection between a root-level \\ca span and the text does what Enter does (backward %s)",
     async (backward) => {
-      const doc: Usj = { ...chapterDoc, content: [{ ...CHAPTER_2, altnumber: "3" }, VERSE_1_PARA] };
-      const { ref, lexical } = await mountStandardViewEditor(doc);
-      // A deletion across the chapter line leaves the chapter's `\ca` span at the root.
-      await act(async () =>
-        lexical.update(() => {
-          const { value } = $chapterAltnumberRunPieces($chapter());
-          const selection = $createRangeSelection();
-          selection.anchor.set(requireDefined(value, "no \\ca value").getKey(), 1, "text");
-          selection.focus.set($verseText().getKey(), 3, "text");
-          $setSelection(selection);
-          lexical.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
-        }),
+      const afterBreak = async (dispatch: (editor: LexicalEditor) => void) => {
+        const doc: Usj = {
+          ...chapterDoc,
+          content: [{ ...CHAPTER_2, altnumber: "3" }, VERSE_1_PARA],
+        };
+        const { ref, lexical } = await mountStandardViewEditor(doc);
+        // A deletion across the chapter line leaves the chapter's `\ca` span at the root.
+        await act(async () =>
+          lexical.update(() => {
+            const { value } = $chapterAltnumberRunPieces($chapter());
+            const selection = $createRangeSelection();
+            selection.anchor.set(requireDefined(value, "no \\ca value").getKey(), 1, "text");
+            selection.focus.set($verseText().getKey(), 3, "text");
+            $setSelection(selection);
+            lexical.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
+          }),
+        );
+        await act(async () =>
+          lexical.update(() => {
+            const span = requireDefined(
+              $getRoot()
+                .getChildren()
+                .find((node) => node.getTextContent().includes("ca")),
+              "no root-level \\ca span",
+            );
+            expect($isElementNode(span) && span.getParent()?.getType()).toBe("root");
+            const inRun = $isElementNode(span) ? span.getFirstDescendant() : null;
+            if (!inRun) throw new Error("no text");
+            const inText = $verseText();
+            const selection = $createRangeSelection();
+            const [anchor, focus] = backward
+              ? [
+                  { node: inText, offset: 3 },
+                  { node: inRun, offset: 0 },
+                ]
+              : [
+                  { node: inRun, offset: 0 },
+                  { node: inText, offset: 3 },
+                ];
+            selection.anchor.set(anchor.node.getKey(), anchor.offset, "text");
+            selection.focus.set(focus.node.getKey(), focus.offset, "text");
+            $setSelection(selection);
+          }),
+        );
+        await act(async () => dispatch(lexical));
+        return ref.current?.getUsj()?.content;
+      };
+      const enter = await afterBreak((editor) =>
+        editor.dispatchCommand(KEY_ENTER_COMMAND, keyDown("Enter")),
       );
-      const before = ref.current?.getUsj()?.content;
-      await act(async () =>
-        lexical.update(() => {
-          const span = requireDefined(
-            $getRoot()
-              .getChildren()
-              .find((node) => node.getTextContent().includes("ca")),
-            "no root-level \\ca span",
-          );
-          expect($isElementNode(span) && span.getParent()?.getType()).toBe("root");
-          const inRun = $isElementNode(span) ? span.getFirstDescendant() : null;
-          if (!inRun) throw new Error("no text");
-          const inText = $verseText();
-          const selection = $createRangeSelection();
-          const [anchor, focus] = backward
-            ? [
-                { node: inText, offset: 3 },
-                { node: inRun, offset: 0 },
-              ]
-            : [
-                { node: inRun, offset: 0 },
-                { node: inText, offset: 3 },
-              ];
-          selection.anchor.set(anchor.node.getKey(), anchor.offset, "text");
-          selection.focus.set(focus.node.getKey(), focus.offset, "text");
-          $setSelection(selection);
-        }),
+      const lineBreak = await afterBreak((editor) =>
+        editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false),
       );
-      await act(async () => lexical.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false));
-      expect(ref.current?.getUsj()?.content).toEqual(before);
+      expect(lineBreak).toEqual(enter);
     },
   );
 

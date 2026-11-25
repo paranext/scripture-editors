@@ -47,14 +47,13 @@ import {
 import { registerNbspStandInFont } from "./nbspStandInFont";
 import { LINE_BREAK_IN_TEXT, withNewlineLineBreaks } from "../lineBreakText.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $findMatchingParent, mergeRegister } from "@lexical/utils";
+import { mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $getNodeByKey,
   $hasUpdateTag,
   $getSelection,
   $getState,
-  $isElementNode,
   $isRangeSelection,
   BLUR_COMMAND,
   CLICK_COMMAND,
@@ -73,7 +72,6 @@ import {
   HISTORIC_TAG,
   HISTORY_MERGE_TAG,
   INSERT_PARAGRAPH_COMMAND,
-  INTERNAL_$isBlock,
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   PASTE_COMMAND,
@@ -1580,19 +1578,6 @@ export function MarkerEditPlugin({
           // out unformatted with its closing markers gone. Claiming the command performs the whole
           // split here so the generic one never runs on this shape.
           return $splitParagraphAtCharStack();
-        },
-        COMMAND_PRIORITY_HIGH,
-      ),
-      // A line break goes into a block, and Lexical's insertion throws where no block holds the
-      // caret (a chapter's `\ca`/`\cp` span sits at the root): there the key does nothing.
-      editor.registerCommand(
-        INSERT_LINE_BREAK_COMMAND,
-        () => {
-          const selection = $getSelection();
-          if (!$isRangeSelection(selection)) return false;
-          // Lexical deletes a range and then breaks the line where the range started.
-          const start = selection.isBackward() ? selection.focus : selection.anchor;
-          return !$isElementNode($findMatchingParent(start.getNode(), INTERNAL_$isBlock));
         },
         COMMAND_PRIORITY_HIGH,
       ),

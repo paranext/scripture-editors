@@ -158,7 +158,8 @@ describe("Enter inside a verse or an attribute run an annotation cuts into piece
 });
 
 describe("Shift+Enter in a char span's content at an annotation mark's edge", () => {
-  // The line break tears the span in two; the halves settle as the uncut span's halves do.
+  // Shift+Enter is Enter (`LineBreakPlugin`): the split tears the span in two, and the halves
+  // settle as the uncut span's halves do.
   it.each([
     ["standard", "closed char span", `${NBSP}grace`, 1],
     ["standard", "nested char span", `${NBSP}two`, 1],
@@ -189,7 +190,7 @@ describe("Enter in a chapter's `\\ca`/`\\cp` span at an annotation mark's edge",
 });
 
 describe("Shift+Enter in a chapter's `\\ca`/`\\cp` span, where no paragraph holds the caret", () => {
-  // A line break goes into a block; with none around the caret the key does nothing.
+  // Shift+Enter is Enter (`LineBreakPlugin`), which does the same with or without the cut.
   it.each([
     ["\\ca span beside its chapter", `${NBSP}3`, 1],
     ["\\cp span beside its chapter", `${NBSP}A`, 2],
@@ -241,8 +242,8 @@ async function shiftEnterInAttributeSpan(
 }
 
 describe("Shift+Enter inside a char span's content before its attribute run", () => {
-  // The line break tears the span in two, the run and the closer in the second half; settled, the
-  // span is whole again, its attribute spelled once, and the screen shows what the file saves.
+  // The split tears the span in two, the run and the closer in the second half; pending and
+  // settled, its attribute is spelled once, and the screen shows what the file saves.
   it.each([
     ["standard", 1],
     ["standard", 5],
