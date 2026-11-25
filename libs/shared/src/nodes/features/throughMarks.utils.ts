@@ -304,7 +304,8 @@ export function $isRangeSplitByMarks(selection: RangeSelection): boolean {
  * Where a caret goes once a range starting at an edge of an annotation mark's text is removed: at
  * that edge of the text when it is still there — where Lexical types beside the mark, outside it, as
  * at any mark's edge — or else, the mark gone with its text, at the place the outermost mark it
- * starts or ends stood. `undefined` when `point` is at no mark's edge.
+ * starts or ends stood: the end of the content text before it, when there is one, or an element
+ * point there. `undefined` when `point` is at no mark's edge.
  */
 function $caretAfterRemoval(point: PointType): (() => void) | undefined {
   if (point.type !== "text") return undefined;
@@ -334,6 +335,14 @@ function $caretAfterRemoval(point: PointType): (() => void) | undefined {
     }
     if (!element.isAttached()) return;
     const left = isAtStart || !mark.isAttached() ? before : mark;
+    // At the end of the content text before the gone mark, as the removal leaves a caret with no
+    // mark: an element point between two inline nodes makes a node insertion split the span (and
+    // a note around it) to put its nodes at the block's level, outside them.
+    if ($isPlainTextNode(left) && left.isAttached() && left.getParent()?.is(element)) {
+      const end = left.getTextContentSize();
+      left.select(end, end);
+      return;
+    }
     const offset = left?.isAttached() ? left.getIndexWithinParent() + 1 : 0;
     element.select(offset, offset);
   };
@@ -399,13 +408,13 @@ function $removeKeepingStartText(selection: RangeSelection): boolean {
  * edge is put back at that edge ({@link $caretAfterRemoval}), where the text typed next goes
  * beside the mark as with no mark.
  *
- * With `isReplacedByText`, for a range that text typed or pasted replaces (`insertText`), the
- * caret is left where `insertText` with no mark types, not at the end of the node before the
- * range (a glyph, which would take the text in): in the content text the range starts in, kept
- * ({@link $removeKeepingStartText}), or where a `token` or `segmented` start text such as a
- * paragraph marker's separator stood ({@link $caretWhereTokenStood}). A node insertion
- * (`insertNodes`) removes the range first and inserts at the caret the removal leaves, as here
- * without it.
+ * A range starting in a content text keeps that text, trimmed to the bytes before the range, with
+ * the caret at its end ({@link $removeKeepingStartText}), as Lexical's removal with no mark keeps
+ * it, rather than leaving the caret at the end of the node before it (a glyph, which would take
+ * the inserted text or nodes in). With `isReplacedByText`, for a range that text typed or pasted
+ * replaces (`insertText`), one starting in a `token` or `segmented` text such as a paragraph
+ * marker's separator leaves the caret where that text stood ({@link $caretWhereTokenStood}), since
+ * `insertText` replaces such a text whole in its place.
  *
  * Mutating: call inside `editor.update()`, before the insertion that replaces the range.
  *
@@ -419,15 +428,10 @@ export function $removeRangeHeldByMarks(
   const start = selection.isBackward() ? selection.focus : selection.anchor;
   const $placeCaret = $caretAfterRemoval(start);
   if (!$placeCaret && !$isRangeSplitByMarks(selection)) return false;
-  if (!$placeCaret && isReplacedByText) {
-    if ($removeKeepingStartText(selection)) return true;
-    const $placeAtToken = $caretWhereTokenStood(start);
-    selection.removeText();
-    $placeAtToken?.();
-    return true;
-  }
+  if (!$placeCaret && $removeKeepingStartText(selection)) return true;
+  const $placeAfter = $placeCaret ?? (isReplacedByText ? $caretWhereTokenStood(start) : undefined);
   selection.removeText();
-  $placeCaret?.();
+  $placeAfter?.();
   return true;
 }
 

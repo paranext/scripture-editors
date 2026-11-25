@@ -149,7 +149,7 @@ describe("a byte of a carrier pasted inside it, between the pieces annotations c
 
 /**
  * Copy the text the caret at byte `at` of the editable text spelled `text` is in, with the text
- * after it, and paste them as text over the byte either side of the caret, in the `row` document
+ * after it, and paste them over the byte either side of the caret, in the `row` document
  * of `view`: in the document as loaded (`spelling` undefined), or with the oracle's whole
  * annotation set, at the caret's `spelling`-th spelling there.
  */
@@ -190,15 +190,18 @@ async function textPasteOverCase(
   return observed(run);
 }
 
-describe("a text paste over a range from a paragraph's or span's separator into an annotation mark", () => {
-  // Standard view's paste types the copy's USFM over the range. With a mark over the byte after the
-  // separator the range is removed first; the text then goes where typing over it with no mark
-  // puts it, in place of the paragraph marker's separator or into the span's first text, never
-  // into the glyph before them.
+describe("a paste over a range an annotation mark holds an end of", () => {
+  // The range is removed first. Standard view's paste then types the copy's USFM where typing over
+  // the range with no mark types it, in place of a paragraph marker's separator or into a span's
+  // first text; the Unformatted view's inserts the copy's nodes where Lexical's removal with no mark
+  // leaves the caret, in the text the range starts in or ends a mark after. Never into the glyph
+  // before them, nor outside the span or note.
   it.each([
     ["standard", "closed char span", "In the ", 0, [0]],
     ["standard", "closed char span", `${NBSP}grace`, 1, [0, 1]],
     ["standard+expandedNotes", "char span with an attribute", `${NBSP}grace`, 1, [0, 1]],
+    ["unformatted", "closed char span", `${NBSP}grace`, 1, [0, 1]],
+    ["unformatted", "note", `${NBSP}note text`, 10, [0]],
   ] as const)(
     "%s view, %s: %j at %i",
     async (view, row, text, at, spellings) => {
