@@ -83,7 +83,7 @@ function $deleteFromEmptyVerseHost(
 ): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const host = selection.anchor.getNode();
+  const host = selection.focus.getNode();
   if (!$isTextNode(host) || !$isCaretHost(host) || !$isSomeVerseNode(host.getPreviousSibling()))
     return false;
   return $deleteFromCaretHost(editor, host, command, isBackward);
@@ -101,7 +101,7 @@ function $deleteFromEmptyVerseHost(
 export function $moveForwardOutOfEmptyVerse(): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const host = selection.anchor.getNode();
+  const host = selection.focus.getNode();
   if (!$isCaretHost(host) || !$isSomeVerseNode(host.getPreviousSibling())) return false;
   const nextVerse = host.getNextSibling();
   if (!$isSomeVerseNode(nextVerse)) return false;

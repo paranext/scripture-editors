@@ -95,14 +95,14 @@ function $leadingVerse(para: ParaNode): LexicalNode | undefined {
 function $childBeforeCaret(para: ElementNode): LexicalNode | "start" | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
-  const { anchor } = selection;
-  let node: LexicalNode = anchor.getNode();
+  const { focus } = selection;
+  let node: LexicalNode = focus.getNode();
   if (node.is(para)) {
-    if (anchor.type !== "element") return undefined;
-    return $shownAtOrBefore(para.getChildAtIndex(anchor.offset - 1));
+    if (focus.type !== "element") return undefined;
+    return $shownAtOrBefore(para.getChildAtIndex(focus.offset - 1));
   }
   const isAtNodeStart =
-    $isCaretHost(node) || (($isTextNode(node) || anchor.type === "element") && anchor.offset === 0);
+    $isCaretHost(node) || (($isTextNode(node) || focus.type === "element") && focus.offset === 0);
   if (!isAtNodeStart) return undefined;
   // Out of the spans the caret starts, to the child of `para` it is in front of.
   for (let parent = node.getParent(); !parent?.is(para); parent = node.getParent()) {
@@ -135,8 +135,8 @@ export function $getParaEdgeStop(): ParaEdgeStop | undefined {
     return { stop: "marker", para: markerPara };
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
 
-  const anchorNode = selection.anchor.getNode();
-  const para = $gutterParaOf(anchorNode);
+  const caretNode = selection.focus.getNode();
+  const para = $gutterParaOf(caretNode);
   if (para) {
     const before = $childBeforeCaret(para);
     const glyph = para.getFirstChild();
@@ -151,7 +151,7 @@ export function $getParaEdgeStop(): ParaEdgeStop | undefined {
     }
   }
 
-  const block = anchorNode.getTopLevelElement();
+  const block = caretNode.getTopLevelElement();
   if ($isParaLikeNode(block) && $isCaretAtEndOf(block)) return { stop: "end", para: block };
   return undefined;
 }
@@ -180,11 +180,11 @@ function $isOnlyInvisibleFrom(node: LexicalNode | null): boolean {
 function $isCaretAtEndOf(block: ElementNode): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const { anchor } = selection;
-  let node: LexicalNode = anchor.getNode();
+  const { focus } = selection;
+  let node: LexicalNode = focus.getNode();
   if ($isElementNode(node)) {
-    if (!$isOnlyInvisibleFrom(node.getChildAtIndex(anchor.offset))) return false;
-  } else if (!$isCaretHost(node) && anchor.offset !== node.getTextContentSize()) return false;
+    if (!$isOnlyInvisibleFrom(node.getChildAtIndex(focus.offset))) return false;
+  } else if (!$isCaretHost(node) && focus.offset !== node.getTextContentSize()) return false;
   while (!node.is(block)) {
     if (!$isOnlyInvisibleFrom(node.getNextSibling())) return false;
     const parent = node.getParent();
@@ -381,7 +381,7 @@ export function $extendBackwardFromLeadingVerseStop(): boolean {
   const previous = $adjacentBlock(at.para, "previous");
   if (!leadingVerse || !previous) return false;
   const selection = $getSelection();
-  const host = $isRangeSelection(selection) ? selection.anchor.getNode() : undefined;
+  const host = $isRangeSelection(selection) ? selection.focus.getNode() : undefined;
   if (host && $isCaretHost(host)) {
     host.remove();
     // Removing a host is no edit, as everywhere else one is removed.

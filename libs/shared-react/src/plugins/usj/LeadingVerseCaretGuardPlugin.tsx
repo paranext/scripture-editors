@@ -76,8 +76,8 @@ export function $markLeadingVerseArrival(para: ParaNode): void {
 function $leadingStopAnchor(arrivalParaKey: NodeKey | undefined): LexicalNode | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
-  const { anchor } = selection;
-  const node = anchor.getNode();
+  const { focus } = selection;
+  const node = focus.getNode();
   let para: LexicalNode | null;
   let before: LexicalNode | null;
   let after: LexicalNode | null;
@@ -85,10 +85,10 @@ function $leadingStopAnchor(arrivalParaKey: NodeKey | undefined): LexicalNode | 
     para = node.getParent();
     before = node.getPreviousSibling();
     after = node.getNextSibling();
-  } else if (anchor.type === "element" && $isParaNode(node) && node.getKey() === arrivalParaKey) {
+  } else if (focus.type === "element" && $isParaNode(node) && node.getKey() === arrivalParaKey) {
     para = node;
-    before = node.getChildAtIndex(anchor.offset - 1);
-    after = node.getChildAtIndex(anchor.offset);
+    before = node.getChildAtIndex(focus.offset - 1);
+    after = node.getChildAtIndex(focus.offset);
   } else {
     return undefined;
   }
@@ -165,7 +165,7 @@ function $isSelectionInPara(paraKey: NodeKey): boolean {
 function $leadingVerseHost(): TextNode | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return undefined;
-  const host = selection.anchor.getNode();
+  const host = selection.focus.getNode();
   if (!$isTextNode(host) || !$isCaretHost(host)) return undefined;
   return $leadingStopAnchor(undefined) ? host : undefined;
 }
@@ -249,6 +249,9 @@ export function LeadingVerseCaretGuardPlugin(): null {
             const forwardKey = getEditorTextDirection(root) === "rtl" ? "ArrowLeft" : "ArrowRight";
             if (event.key !== forwardKey || !$extendForwardFromLeadingVerseHost()) return false;
             event.preventDefault();
+            // Lexical reports no selection change for a selection it set itself, so the host's
+            // `onSelectionChange` would not hear of the range until the next caret move.
+            editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
             return true;
           },
           COMMAND_PRIORITY_CRITICAL,

@@ -8,7 +8,9 @@ import {
   $resolveVerseNode,
 } from "../../nodes/usj";
 import { EmptyVerseCaretGuardPlugin } from "./EmptyVerseCaretGuardPlugin";
+import { SelectionRange } from "./annotation/selection.model";
 import { LeadingVerseCaretGuardPlugin } from "./LeadingVerseCaretGuardPlugin";
+import { OnSelectionChangePlugin } from "./OnSelectionChangePlugin";
 import { ParaMarkerSelectionPlugin } from "./ParaMarkerSelectionPlugin";
 import { baseTestEnvironment, settle, updateSelection } from "./react-test.utils";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
@@ -78,6 +80,7 @@ async function environment({
   withHistory = false,
   historyState = createEmptyHistoryState(),
   withStructureKeyboard = false,
+  onSelectionChange = undefined as ((selection: SelectionRange | undefined) => void) | undefined,
 } = {}): Promise<{ editor: LexicalEditor } & Texts> {
   const texts = {} as Texts;
   const { editor } = await baseTestEnvironment(
@@ -106,6 +109,9 @@ async function environment({
       <LeadingVerseCaretGuardPlugin />
       <EmptyVerseCaretGuardPlugin />
       <TextDirectionPlugin textDirection={textDirection} />
+      {onSelectionChange && (
+        <OnSelectionChangePlugin onChange={onSelectionChange} viewOptions={undefined} />
+      )}
     </>,
   );
   // A user's arrow keys reach a focused editor. Unfocused, the focus the first press brings re-runs
@@ -858,6 +864,22 @@ describe("the stop before a leading verse number", () => {
     });
 
     expect(verse).toBe("2");
+  });
+
+  it.each([
+    ["Shift+→", "ArrowRight"],
+    ["Shift+←", "ArrowLeft"],
+  ])("%s reports the range it makes to the host during the press", async (_name, key) => {
+    const onSelectionChange = vi.fn();
+    const { editor } = await atStopBeforeVerse2({ onSelectionChange });
+    onSelectionChange.mockClear();
+
+    pressNow(editor, key, { shiftKey: true });
+
+    expect(onSelectionChange).toHaveBeenCalled();
+    const reported = onSelectionChange.mock.lastCall?.[0] as SelectionRange | undefined;
+    expect(reported?.end).toBeDefined();
+    expect(reported?.end).not.toEqual(reported?.start);
   });
 
   it("Shift+→ selects the verse number", async () => {

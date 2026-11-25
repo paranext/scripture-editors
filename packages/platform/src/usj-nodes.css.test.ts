@@ -155,6 +155,15 @@ describe("usj-nodes.css gutter paragraph marker", () => {
     expect(rtl).toContain("padding-right: var(--psc-gutter-width);");
     expect(rtl).not.toContain("direction: rtl");
   });
+
+  // The marker's click-target padding reaches past the gutter's outer edge in both directions. In
+  // RTL that is off the editor's right edge, which a scrolling host container would scroll to.
+  it("clips the editor at the gutter's outer edge, without making it a scroll container", () => {
+    const gutterRoot = ruleBody(".usfm.psc-gutter-markers");
+    expect(gutterRoot).toContain("padding-inline-start: var(--psc-gutter-width);");
+    expect(gutterRoot).toContain("overflow-x: clip;");
+    expect(gutterRoot).not.toMatch(/overflow(-y)?: (hidden|auto|scroll)/);
+  });
 });
 
 /**
