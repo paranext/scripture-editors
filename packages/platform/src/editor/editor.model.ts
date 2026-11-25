@@ -20,6 +20,7 @@ import {
   StateChangeSnapshot,
   StructureProtectionMode,
   TextDirection,
+  UnstorableTextRemovedHandler,
   UsjNodeOptions,
   ViewOptions,
 } from "shared-react";
@@ -1124,6 +1125,16 @@ export interface EditorOptions {
    * {@link EditorOptions.copyLimit} is set, is refused. Unset, editing is native.
    */
   onHiddenContentDelete?: HiddenContentDeleteHandler;
+  /**
+   * Called once per paste, drop, keystroke, delete, transpose or drag-move in a hidden-marker view
+   * (`view.markerMode` is `"hidden"`) that removed or refused `\` or `//`, which the view cannot
+   * store: a `\` would start a marker, and `//` is an optional line break. `source` says which: the
+   * text went in as a `"paste"`, `"drop"` or typed (`"typing"`, which also covers a refused
+   * transpose), or a delete (`"deletion"`) or a drag-move (`"move"`) was refused whole. See
+   * `UnstorableTextRemoved`. Use it to tell the user why text is missing, or why a delete,
+   * transpose or move did nothing. Not called in Standard or Markers view.
+   */
+  onUnstorableTextRemoved?: UnstorableTextRemovedHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */
   hasExternalUI?: boolean;
   /** Is the editor enabled for spell checking. */

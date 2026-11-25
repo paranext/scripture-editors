@@ -8,7 +8,8 @@
  * name bytes. (USFM documentation: "Markers", "Character styles > Nesting", "Milestones".)
  *
  * Two byte classes exist DELIBERATELY, and every marker-name regex in the editor derives from one
- * of them — the derivations below are the only places the classes are spelled:
+ * of them. The canonical class is spelled here and the engine class in `shared`
+ * (`usfmFragmentToUsj.ts`), so `shared-react` can derive from it too; nowhere else spells either:
  *
  * - {@link ENGINE_MARKER_NAME_BYTES} — the liberal class (`\w` plus `-`) the marker-edit engine
  *   uses to RECOGNIZE a marker-shaped byte run mid-edit. Wider than canonical USFM (uppercase,
@@ -23,9 +24,13 @@
  * scan-based rule itself) do not import from here; keeping the byte classes single-sourced is the
  * goal, not forcing every marker test through one regex.
  */
+import { ENGINE_MARKER_NAME_BYTES } from "shared";
 
-/** The engine's marker-name byte class CONTENTS (no brackets): `\w` plus the milestone hyphen. */
-export const ENGINE_MARKER_NAME_BYTES = String.raw`\w-`;
+/**
+ * The engine's marker-name byte class CONTENTS (no brackets): `\w` plus the milestone hyphen. Spelled
+ * in `shared`, so `shared-react`'s marker-token removal derives from the same class.
+ */
+export { ENGINE_MARKER_NAME_BYTES };
 
 /** Canonical USFM marker-name byte class CONTENTS (no brackets): lowercase letters and digits. */
 export const CANONICAL_MARKER_NAME_BYTES = "a-z0-9";

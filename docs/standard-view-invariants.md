@@ -438,11 +438,15 @@ depends on the project, through `ViewOptions.allowInvisibleCharacters` (Paratext
   of `--usj-font-fallback`. The library does not export the name: a host stylesheet spells
   `PlatformEditorNbspStandIn` itself, so the name is part of the contract and must not change.
 
-Why U+001A: no project text can hold it. ParatextData's `ScrText.GetText` turns U+0001–U+0008 and
-U+000E–U+001F into spaces on every read (measured), so the stand-in collides with nothing. Its
-Unicode properties fit a no-break space: bidi class BN, line-break class CM (no break before it),
-one grapheme. Not U+0000 (`SIGNATURE_SEPARATOR` in `settledScopes.utils.ts`), nor U+000B/U+000C
-(whitespace to JavaScript's `\s`), nor U+001C–U+001F (bidi paragraph and segment separators).
+Why U+001A: no project text can hold it. ParatextData's reader (`ScrText.ProcessBookOrChapterText`,
+behind `GetText`) turns every C0 control character but tab, LF and CR into a space, so the stand-in
+collides with nothing. Its Unicode properties fit a no-break space: bidi class BN, line-break class
+CM (no break before it), one grapheme. Not U+0000 (`SIGNATURE_SEPARATOR` in
+`settledScopes.utils.ts`), nor U+000B/U+000C (whitespace to JavaScript's `\s`), nor U+001C–U+001F
+(bidi paragraph and segment separators).
+
+Reserved control characters: U+0000 (`SIGNATURE_SEPARATOR`), U+000B (the settle's display-only
+break), U+001A (NBSP stand-in). Entered text can never hold them.
 
 The stand-in is internal and must never leave the editor, and nothing from outside may become it:
 
@@ -454,14 +458,16 @@ The stand-in is internal and must never leave the editor, and nothing from outsi
   a copy writes), annotation callbacks' text, and note-caller previews. Text a host reads from the
   DOM still holds it; `toUsfmNbspSpelling` turns it back.
 - **In:** every C0 control character but tab, line feed and carriage return becomes a space before
-  anything else reads the text (`controlCharactersToSpaces`) — a load
-  (`usjWithoutControlCharacters`, attribute values included), a paste or a drop
-  (`getDataTransferPayload`), typing (`registerTypedNbspSpelling`), applied ops (`opsFromHost`) — in
-  either setting. U+0001–U+0008 and U+000E–U+001F become spaces as ParatextData would read them
-  back; ParatextData keeps U+000B and U+000C, which become spaces on purpose, since JavaScript's
-  `\s` reads them as whitespace. Then a U+00A0 that is data becomes the stand-in: typed, pasted or
-  dropped (every U+00A0 but an opening marker's separator — `normalizePastedNbsp`), or in applied ops when it is not a marker's
-  separator or a lone spacer.
+  anything else reads the text, in either setting, as ParatextData would read it back — a load
+  (`usjWithoutControlCharacters`, attribute values included) and applied ops (`opsFromHost`)
+  through `controlCharactersToSpaces`, which leaves U+0000 alone; text the user enters, in every
+  view, through `enteredControlCharactersToSpaces`, U+0000 included: a paste or a drop
+  (`InvisibleCharactersPlugin`, every flavor, then `getDataTransferPayload`) and typing
+  (`registerTypedNbspSpelling`). The settle relies on this too: it spells the display-only line
+  break a view without spacing shows before a verse as U+000B in the text it re-reads, and removes
+  every U+000B before tokenizing (`tier2Rebuild.utils.ts`). Then a U+00A0 that is data becomes the
+  stand-in: typed, pasted or dropped (every U+00A0 but an opening marker's separator —
+  `normalizePastedNbsp`), or in applied ops when it is not a marker's separator or a lone spacer.
 - **The tokenizer** keeps the spellings as characters: `regularizeSpaces` would otherwise turn a
   control character into a space before `UsfmFragmentOptions.nbspSpelling` (or
   `attributeNbspSpelling`) maps it to U+00A0.

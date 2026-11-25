@@ -493,6 +493,8 @@ export interface MountOptions {
   nodes?: EditorOptions["nodes"];
   /** `EditorOptions.copyLimit`: the most text one copy or cut may take. */
   copyLimit?: number;
+  /** `EditorOptions.onUnstorableTextRemoved`: told when a paste, drop or keystroke lost `\` or `//`. */
+  onUnstorableTextRemoved?: EditorOptions["onUnstorableTextRemoved"];
 }
 
 /** A mounted test editor: its public ref, the raw Lexical editor, and the teardown a row needs
@@ -508,8 +510,8 @@ export interface MountedEditor {
   rerenderWithStyleInfo: (styleInfo: StyleInfo | undefined) => Promise<void>;
   /** Re-render the same editor at a different scripture reference, the way a host navigates it. */
   rerenderWithScrRef: (scrRef: SerializedVerseRef) => Promise<void>;
-  /** Re-render the same editor with different view options, the way a host passes a project
-   * setting once it has loaded. */
+  /** Re-render the same editor with different view options, the way a host switches views or
+   * passes a project setting once it has loaded. */
   rerenderWithView: (view: ViewOptions) => Promise<void>;
 }
 
@@ -528,6 +530,7 @@ export async function mountInView(
     structureProtectionMode,
     nodes,
     copyLimit,
+    onUnstorableTextRemoved,
   }: MountOptions = {},
 ): Promise<MountedEditor> {
   const ref = createRef<EditorRef>();
@@ -561,6 +564,7 @@ export async function mountInView(
         structureProtectionMode,
         nodes,
         copyLimit,
+        onUnstorableTextRemoved,
       }}
       onUsjChange={onUsjChange}
       onSelectionChange={onSelectionChange}
@@ -590,18 +594,19 @@ export async function mountInView(
         await Promise.resolve();
       });
     },
-    rerenderWithScrRef: async (nextScrRef) => {
-      currentScrRef = nextScrRef;
+    rerenderWithView: async (nextView) => {
+      currentView = nextView;
       await act(async () => {
         rerenderEditor(editorWith(currentStyleInfo));
         await Promise.resolve();
         await Promise.resolve();
       });
     },
-    rerenderWithView: async (nextView) => {
-      currentView = nextView;
+    rerenderWithScrRef: async (nextScrRef) => {
+      currentScrRef = nextScrRef;
       await act(async () => {
         rerenderEditor(editorWith(currentStyleInfo));
+        await Promise.resolve();
         await Promise.resolve();
       });
     },

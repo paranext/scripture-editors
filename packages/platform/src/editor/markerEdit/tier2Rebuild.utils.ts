@@ -260,9 +260,17 @@ function withoutBareBackslashSeparators(content: MarkerContent[]): MarkerContent
  * fragment reader that counts positions (`/\s/`), so the caret positions on either side of the
  * break stay apart exactly as a plain space would keep them, but {@link tokenizeFragment} removes
  * it: the file has nothing between the verse and the bytes before it, and a space there would
- * re-tokenize as text. No other fragment byte is this character.
+ * re-tokenize as text. It never leaves the fragment, so no text node, page or saved document holds
+ * it.
+ *
+ * It is VERTICAL TAB (U+000B) because no other fragment byte can be: the fragment holds text nodes'
+ * content as it is, and no text can hold U+000B. ParatextData reads every control character but
+ * tab, line feed and carriage return as a space (`ScrText.ProcessBookOrChapterText`), so a project
+ * never loads one, and the editor takes one the user types, pastes or drops in as a space
+ * (`enteredControlCharactersToSpaces`). A character text can hold — Unicode's line separator,
+ * which Paratext keeps as a character — would be removed from the text along with the breaks.
  */
-const DISPLAY_LINE_BREAK = String.fromCharCode(0x2028);
+const DISPLAY_LINE_BREAK = String.fromCharCode(0x0b);
 
 /** `text` as the tokenizer reads it: without the display-only line breaks
  * ({@link DISPLAY_LINE_BREAK}). */

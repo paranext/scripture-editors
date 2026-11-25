@@ -365,7 +365,8 @@ function $endOnClusterBoundary(
 
 /**
  * The selection's text as the view shows it: `RangeSelection.getTextContent()`, built the same way,
- * without the text of nodes `$isHidden` picks.
+ * without the text of nodes `$isHidden` picks, and with an element point at either end placed by
+ * the child it stands before ({@link $offsetInText}).
  *
  * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
  */
@@ -462,7 +463,8 @@ interface ShownPart {
 
 /**
  * The pieces of {@link $selectionShownText} in order, each with the node it came from: built the
- * same way as `RangeSelection.getTextContent()`, without the text of nodes `$isHidden` picks.
+ * same way as `RangeSelection.getTextContent()`, without the text of nodes `$isHidden` picks, and
+ * with each end placed by {@link $selectedText}.
  */
 function $selectionShownParts(
   selection: RangeSelection,
@@ -494,9 +496,10 @@ function $selectionShownParts(
       else
         parts.push({
           node,
-          text: content.slice(
-            i === 0 ? $characterOffset(startPoint) : 0,
-            i === lastIndex ? $characterOffset(endPoint) : content.length,
+          text: $selectedText(
+            node,
+            i === 0 ? startPoint : undefined,
+            i === lastIndex ? endPoint : undefined,
           ),
         });
     } else if (
@@ -560,6 +563,52 @@ export function $selectionHoldsStructure(selection: RangeSelection): boolean {
         $isSomeChapterNode(node) ||
         $isOpaqueBlockNode(node),
     );
+}
+
+/**
+ * Where `point` falls in text node `node`, as an offset into its text: the point's own offset when
+ * it is a text point on `node`, otherwise 0 when it lies before `node` and the text's length when it
+ * lies after. An element point is placed by the child it stands before, where Lexical's
+ * `$getCharacterOffsets` answers 0 for any element point short of its element's end — so a range
+ * ending on the root between two paragraphs would read as taking none of the last one's text.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+export function $offsetInText(node: TextNode, point: PointType): number {
+  const length = node.getTextContentSize();
+  if (point.type === "text") {
+    if (point.key === node.getKey()) return point.offset;
+    return point.getNode().isBefore(node) ? 0 : length;
+  }
+  return $liesBeforeElementPoint(node, point) ? length : 0;
+}
+
+/**
+ * Whether leaf `node` lies wholly before element point `point`.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`, an update, or a command handler.
+ */
+export function $liesBeforeElementPoint(node: LexicalNode, point: PointType): boolean {
+  const element = point.getNode();
+  if (!$isElementNode(element)) return false;
+  const after = element.getChildAtIndex(point.offset);
+  if (after === null) return element.isParentOf(node) || node.isBefore(element);
+  return (
+    after !== node && !($isElementNode(after) && after.isParentOf(node)) && node.isBefore(after)
+  );
+}
+
+/**
+ * The part of text node `node`'s text from `start` to `end`, each placed by {@link $offsetInText}
+ * (a missing one is the text's own start or end). An element point is placed by the child it
+ * stands before, where `RangeSelection.getTextContent()` reads any element point short of its
+ * element's end as offset 0, so a range ending right before an optional break in a paragraph would
+ * take none of the text before it.
+ */
+function $selectedText(node: TextNode, start?: PointType, end?: PointType): string {
+  const content = node.getTextContent();
+  const from = start ? $offsetInText(node, start) : 0;
+  return content.slice(from, end ? Math.max(from, $offsetInText(node, end)) : content.length);
 }
 
 /** Mirrors how `RangeSelection.getTextContent()` turns a point into a character offset. */
