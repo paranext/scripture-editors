@@ -19,6 +19,7 @@ import {
   oracleRows,
   PASTE_KEYSTROKES,
   pendingOracleView,
+  PLAIN_PASTE_KEYSTROKES,
   PositionReport,
   runKeystrokeCase,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
@@ -171,15 +172,28 @@ describe("a byte of a carrier pasted inside it in a structure-protected document
 describe("an annotation over bytes a paste splits off a carrier", () => {
   // Bytes a paste splits off a glyph are content, which holds no display annotation: an
   // annotation over them alone holds nothing more and is reported removed, once; one that keeps
-  // bytes in the glyph keeps them and hears nothing.
+  // bytes in the glyph keeps them and hears nothing. A paste of two lines splits the paragraph at
+  // the caret, moving the glyph's bytes after it into the new paragraph; a paste of one byte goes
+  // in as USFM the editor reads back, so the glyph keeps the bytes either side of it.
+  const TWO_LINES = PLAIN_PASTE_KEYSTROKES[1];
+  const ONE_BYTE = PASTE_KEYSTROKES[0];
   it.each([
-    ["the closer's `w*` alone", "char span with an attribute", "\\w*", 1, 3, 1, ["destroyed"]],
-    ["the closer whole", "char span with an attribute", "\\w*", 0, 3, 1, []],
+    [
+      "the closer's `w*` alone",
+      "char span with an attribute",
+      "\\w*",
+      1,
+      3,
+      1,
+      TWO_LINES,
+      ["destroyed"],
+    ],
+    ["the closer whole", "char span with an attribute", "\\w*", 0, 3, 1, TWO_LINES, []],
     // Split off with the rest of the glyph, the number is read back into a verse, held.
-    ["a verse's number", "verse", `\\v${NBSP}1 `, 3, 4, 1, []],
+    ["a verse's number", "verse", `\\v${NBSP}1 `, 3, 4, 1, ONE_BYTE, []],
   ] as const)(
     "%s (%s: %j bytes %i to %i, a paste at %i)",
-    async (_, row, carrier, from, to, at, reports) => {
+    async (_, row, carrier, from, to, at, keystroke, reports) => {
       const view = "standard";
       const usj = oracleRows(view).find(([name]) => name.startsWith(`${row} (`))?.[1];
       if (!usj) throw new Error(`no row ${row}`);
@@ -207,12 +221,7 @@ describe("an annotation over bytes a paste splits off a carrier", () => {
           .join("");
       const held = text();
       expect(held).not.toBe("");
-      const run = await runKeystrokeCase(
-        mounted,
-        view,
-        () => $spellings(site)[0],
-        PASTE_KEYSTROKES[0],
-      );
+      const run = await runKeystrokeCase(mounted, view, () => $spellings(site)[0], keystroke);
       expect(run, "the paste applies").toBeDefined();
       expect(onRemove.mock.calls.map(([, , reason]) => reason)).toEqual(reports);
       if (reports.length > 0) expect(text()).toBe("");

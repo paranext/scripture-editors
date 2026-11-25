@@ -466,12 +466,9 @@ describe("a pasted copy of annotated bytes", () => {
           .filter(([, data]) => data !== ""),
       );
       expect(Object.keys(payload)).toContain("application/x-lexical-editor");
-      let target!: NodeKey;
       await act(async () => {
         mounted.lexical.update(() => {
-          const depart = $textContaining("depart here");
-          target = depart.getParentOrThrow().getKey();
-          depart.select(3, 3);
+          $textContaining("depart here").select(3, 3);
         });
         await drainNativeSelectionChange();
       });
@@ -483,11 +480,22 @@ describe("a pasted copy of annotated bytes", () => {
 
       expect(held(), "the annotation holds only its own bytes").toBe(heldBefore);
       expect(onRemove).not.toHaveBeenCalled();
-      const pasted = mounted.lexical.getElementByKey(target);
-      expect(pasted?.textContent, "the copy was pasted").toContain("grace");
+      // A paste of the editor's own copy in Standard view goes in as its USFM, which may rebuild
+      // the paragraph it lands in or split it, so every paragraph after the edited one is read.
+      const pasted = mounted.lexical
+        .getEditorState()
+        .read(() => $getRoot().getChildren().slice(3))
+        .map((block) => mounted.lexical.getElementByKey(block.getKey()));
       expect(
-        pasted?.querySelectorAll(".annotationId-a, .annotationId-c1, [data-annotation-keys]")
-          .length,
+        pasted.map((element) => element?.textContent ?? "").join(""),
+        "the copy was pasted",
+      ).toContain("grace");
+      expect(
+        pasted.flatMap((element) => [
+          ...(element?.querySelectorAll(
+            ".annotationId-a, .annotationId-c1, [data-annotation-keys]",
+          ) ?? []),
+        ]).length,
         "nothing pasted is painted",
       ).toBe(0);
       expect(commentMilestones(mounted.ref.current?.getUsj(), "c1")).toEqual(["zmsc-s", "zmsc-e"]);
