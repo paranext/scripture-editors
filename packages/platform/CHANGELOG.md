@@ -732,6 +732,10 @@ refused. The public surface grew substantially; nothing was removed.
 - In the views that show a marker glyph on a blank line (`\b`), deleting the empty paragraph after
   it, with Delete or Backspace, leaves the blank line a `\b`. It had taken that paragraph's marker,
   so `\b`, `\q1`, `\p` saved as `\q1`, `\p`.
+- In Standard view, the gray box drawn around content the editor does not edit directly (`\fig`,
+  sidebars, `\periph`, ...) starts at its opening marker. It had inherited its paragraph's
+  first-line indent, so in a `\q` line the opening glyph was drawn past the box's left edge, and in
+  an indented line such as `\p` it started after an extra gap.
 
 ### Security
 

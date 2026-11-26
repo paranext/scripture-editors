@@ -2226,6 +2226,10 @@
      own) must stay visible/selectable: without content the box collapses to 0 height. One
      line-height of room keeps the dashed frame renderable. */
   min-height: 1.5em;
+  /* `text-indent` is inherited and a block box applies it to its own first line, so without this
+     a `\q` paragraph's hanging indent pushes the opening glyph out past the box's left edge, and
+     an indented paragraph leaves a gap before it. */
+  text-indent: 0;
   border: 1px dashed hsl(var(--muted-foreground, 215 16% 65%) / 0.5);
   background-color: hsl(var(--muted-foreground, 215 16% 65%) / 0.08);
   color: hsl(var(--muted-foreground, 215 16% 65%) / 0.85);
