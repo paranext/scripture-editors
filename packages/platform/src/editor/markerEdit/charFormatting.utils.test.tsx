@@ -7,6 +7,10 @@ import {
   usjNoteOf,
 } from "./markerEdit.test-helpers";
 import { $removeCharFormattingFromSelection } from "./charFormatting.utils";
+import { inOneUpdate } from "./displayAnnotations.test-helpers";
+import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
+import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
@@ -26,6 +30,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $addDisplayAnnotation,
   $createCharNode,
   $createMarkerNode,
   $createNoteNode,
@@ -34,6 +39,13 @@ import {
   $isMarkerNode,
   $isNoteNode,
   $isParaNode,
+  $isPieceOf,
+  $isVerseNode,
+  $logicalOffset,
+  $logicalText,
+  $noteEditableCallerNode,
+  $pieceAtLogicalOffset,
+  $pieces,
   CharNode,
   getEditableCallerText,
   NBSP,
@@ -1309,5 +1321,104 @@ describe("Ctrl+Space through a nested character-style stack", () => {
     expect(usjNoteOf(editor)).toEqual(
       usjNoteFromUsfm("\\p \\f + \\ft A \\+nd ho\\+nd*\\ft* \\ft \\+nd ly\\+nd* B\\f*"),
     );
+  });
+});
+
+describe("Ctrl+Space over display bytes an annotation cuts into pieces", () => {
+  /** The first node in the document `guard` accepts. */
+  function $first<T extends LexicalNode>(guard: (node: LexicalNode) => node is T): T {
+    const found = $getRoot()
+      .getChildren()
+      .flatMap(function walk(node: LexicalNode): LexicalNode[] {
+        return [node, ...($isElementNode(node) ? node.getChildren().flatMap(walk) : [])];
+      })
+      .find(guard);
+    return requireDefined(found, "no such node");
+  }
+
+  it("steps over the space after a verse number held alone, as over the same verse uncut", async () => {
+    const verse: MarkerObject = { type: "verse", marker: "v", number: "3" };
+    const afterCtrlSpace = async (cut: boolean) => {
+      const mounted = await mountStandardViewEditor(
+        twoParaUsj(["in the ", verse, "and the earth"]),
+      );
+      // `\v 3 `: hold the `3` alone, so the verse is cut in three.
+      if (cut)
+        await inOneUpdate(mounted.lexical, () =>
+          $addDisplayAnnotation($first($isVerseNode), "test", "digit", 3, 4),
+        );
+      await inOneUpdate(mounted.lexical, () => {
+        // The caret right after the `3`.
+        const [piece, offset] = $pieceAtLogicalOffset($first($isVerseNode), 4);
+        piece.select(offset, offset);
+        $removeCharFormattingFromSelection();
+      });
+      const shape = mounted.lexical.getEditorState().read(() => {
+        const found = $first($isVerseNode);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no caret");
+        const anchor = selection.anchor.getNode();
+        return {
+          pieces: $pieces(found).length,
+          verse: $logicalText(found),
+          caret: $isPieceOf(anchor, found)
+            ? $logicalOffset(anchor, selection.anchor.offset)
+            : undefined,
+        };
+      });
+      return { ...shape, usj: mounted.ref.current?.getUsj() };
+    };
+    const uncut = await afterCtrlSpace(false);
+    expect(uncut).toMatchObject({ pieces: 1, verse: `\\v${NBSP}3 `, caret: 5 });
+    expect(await afterCtrlSpace(true)).toEqual({ ...uncut, pieces: 3 });
+  });
+
+  it("leaves a cut caller whole when a range over its note clears the span around it", async () => {
+    const note: MarkerObject = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [{ type: "char", marker: "ft", content: ["a note"] }],
+    };
+    const words: MarkerObject = { type: "char", marker: "wj", content: ["holy ", note, " word"] };
+    const afterCtrlSpace = async (cut: boolean) => {
+      let callerAtOnce: string | undefined;
+      const mounted = await mountExpandedNoteEditor(twoParaUsj(["say ", words, " now"]));
+      // ` + `: hold the `+` alone, so the caller is cut into a space, the `+` and its separator.
+      if (cut)
+        await inOneUpdate(mounted.lexical, () =>
+          $addDisplayAnnotation(
+            requireDefined($noteEditableCallerNode($first($isNoteNode)), "no caller text"),
+            "test",
+            "caller",
+            1,
+            2,
+          ),
+        );
+      await inOneUpdate(mounted.lexical, () => {
+        const start = $textContaining("holy");
+        const end = $textContaining(" word");
+        const selection = $createRangeSelection();
+        selection.anchor.set(start.getKey(), start.getTextContent().indexOf("holy"), "text");
+        selection.focus.set(end.getKey(), end.getTextContent().indexOf("word") + 2, "text");
+        $setSelection(selection);
+        const callerHead = requireDefined(
+          $noteEditableCallerNode($first($isNoteNode)),
+          "no caller text",
+        );
+        $removeCharFormattingFromSelection();
+        // Read before any repair the update's transforms could make.
+        callerAtOnce = $logicalText(callerHead.getLatest());
+      });
+      const caller = mounted.lexical.getEditorState().read(() => {
+        const text = $noteEditableCallerNode($first($isNoteNode));
+        return text ? $logicalText(text) : undefined;
+      });
+      return { callerAtOnce, caller, usj: mounted.ref.current?.getUsj() };
+    };
+    const uncut = await afterCtrlSpace(false);
+    expect(uncut.callerAtOnce).toBe(getEditableCallerText("+"));
+    expect(uncut.caller).toBe(getEditableCallerText("+"));
+    expect(await afterCtrlSpace(true)).toEqual(uncut);
   });
 });

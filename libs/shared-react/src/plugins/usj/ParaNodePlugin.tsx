@@ -5,6 +5,7 @@ import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $isTextNode,
   LexicalEditor,
   LexicalNode,
 } from "lexical";
@@ -12,6 +13,8 @@ import { useEffect } from "react";
 import {
   $isGutterMarkerNode,
   $isParaNode,
+  $nextSiblingThroughMarks,
+  $nodeAfterBoundaryThroughMarks,
   $isVisibleMarkerNode,
   getApplyingUpdateSource,
   ParaNode,
@@ -59,7 +62,16 @@ function useParaNode(editor: LexicalEditor) {
 function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
   if (!getApplyingUpdateSource(editor) && wasNodeCreated(editor, node.getKey())) {
     const first = node.getFirstChild();
-    $removeLeadingSpace($isGutterMarkerNode(first) ? first.getNextSibling() : first);
+    // Read as the document with no annotation mark has it: a mark holding the leading space, or
+    // holding nothing but spaces, does not keep them.
+    for (
+      let leaf = $nodeAfterBoundaryThroughMarks(node, $isGutterMarkerNode(first) ? 1 : 0);
+      $isTextNode(leaf);
+      leaf = $nextSiblingThroughMarks(leaf)
+    ) {
+      $removeLeadingSpace(leaf);
+      if (leaf.getTextContentSize() > 0) break;
+    }
     // Lexical's history folds an update whose only dirty leaf is a text that kept its text into
     // the previous undo step. A paragraph break in front of a char span or a note is such an
     // update (only the text before the break is touched), so the new paragraph's first leaf is

@@ -1,14 +1,21 @@
 import { $selectionPlainText, isCopyFromOutsideEditor } from "./copyLimit/copyLimit.utils";
 import { $isLeftOutOfHiddenViewCopy } from "./hiddenViewCopy.utils";
+import { $uncutClipboardData } from "./markerEdit/uncutClipboard.utils";
 import {
   hiddenViewCopySpelling,
   registerViewCopyWriter,
 } from "./markerEdit/whitespaceDisplay.plugin.utils";
 import { $getHtmlContent, LexicalClipboardData } from "@lexical/clipboard";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $isElementNode, $isTextNode, COMMAND_PRIORITY_LOW, RangeSelection } from "lexical";
+import {
+  $isElementNode,
+  $isTextNode,
+  COMMAND_PRIORITY_LOW,
+  LexicalEditor,
+  RangeSelection,
+} from "lexical";
 import { useEffect } from "react";
-import { $isGutterMarkerNode, $isUnknownNode } from "shared";
+import { $isGutterMarkerNode, $isUnknownNode, LoggerBasic } from "shared";
 import {
   $hiddenViewLexicalFlavor,
   $removeTextKeepingBookAndChapterLines,
@@ -37,6 +44,26 @@ function $selectsOnlyGutterMarkers(selection: RangeSelection): boolean {
 }
 
 /**
+ * The `text/html` and `application/x-lexical-editor` flavors of a hidden-marker view's copy of
+ * `selection` in `editor` (see {@link HiddenMarkersViewCopyPlugin}), with an empty `text/plain`.
+ *
+ * Read-only: call inside a copy or cut command handler, or a read of the editor `selection` is in.
+ */
+function $hiddenViewFlavors(
+  selection: RangeSelection,
+  editor: LexicalEditor,
+): LexicalClipboardData {
+  const html = $getHtmlContent(editor, selection);
+  const nodeCopy = $hiddenViewLexicalFlavor(selection);
+  const data: LexicalClipboardData = {
+    "text/plain": "",
+    "text/html": nodeCopy === undefined ? html : htmlWithNodeCopy(html, nodeCopy),
+  };
+  if (nodeCopy !== undefined) data["application/x-lexical-editor"] = nodeCopy;
+  return data;
+}
+
+/**
  * Copies a hidden-marker view's selection as the text it shows. Lexical's own copy would write
  * every selected node's text, putting a paragraph's gutter marker glyph (`\q1 `), the caption of a
  * figure the view hides, and the NBSP spacers the view lays out around a collapsed note's caller and
@@ -57,6 +84,10 @@ function $selectsOnlyGutterMarkers(selection: RangeSelection): boolean {
  *   own paste reads them, and a `~` would come back as a literal tilde.
  * - `application/x-lexical-editor`: {@link $hiddenViewLexicalFlavor}, for a paste the browser runs
  *   itself, such as the macOS app menu's Paste.
+ *
+ * The `text/html` and internal flavors are written from the tree without annotations when the
+ * selection touches one (`$uncutClipboardData`), so a mark or a carrier an annotation cut does not
+ * paste back as separate spans or pieces.
  *
  * Declines, leaving the command to Lexical's own handler, when the selection has no text to write
  * (only a verse number, say, which Lexical's flavors carry), except that it claims a copy or cut
@@ -85,9 +116,12 @@ function $selectsOnlyGutterMarkers(selection: RangeSelection): boolean {
 export function HiddenMarkersViewCopyPlugin({
   allowInvisibleCharacters,
   copyLimit,
+  logger,
 }: {
   allowInvisibleCharacters?: boolean;
   copyLimit?: number;
+  /** Told when an annotated copy cannot be written without its annotations. */
+  logger?: LoggerBasic;
 }): null {
   const [editor] = useLexicalComposerContext();
 
@@ -104,19 +138,16 @@ export function HiddenMarkersViewCopyPlugin({
             hiddenViewCopySpelling(allowInvisibleCharacters),
           );
           if (plain === "") return $selectsOnlyGutterMarkers(selection) ? EMPTY_COPY : undefined;
-          const html = $getHtmlContent(editor, selection);
-          const nodeCopy = $hiddenViewLexicalFlavor(selection);
-          const data: LexicalClipboardData = {
+          return {
+            ...($uncutClipboardData(editor, selection, logger, $hiddenViewFlavors) ??
+              $hiddenViewFlavors(selection, editor)),
             "text/plain": plain,
-            "text/html": nodeCopy === undefined ? html : htmlWithNodeCopy(html, nodeCopy),
           };
-          if (nodeCopy !== undefined) data["application/x-lexical-editor"] = nodeCopy;
-          return data;
         },
         copyLimit,
         $removeTextKeepingBookAndChapterLines,
       ),
-    [editor, allowInvisibleCharacters, copyLimit],
+    [editor, allowInvisibleCharacters, copyLimit, logger],
   );
 
   return null;

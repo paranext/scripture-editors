@@ -324,36 +324,6 @@ async function withExtensionLandingAt(
   }
 }
 
-/**
- * {@link withExtensionLandingAt} for a gesture that extends more than once: each call to `modify`
- * must ask for the next extension in `steps`, and lands where that step says.
- */
-async function withExtensionsLandingAt(
-  lexical: LexicalEditor,
-  steps: [ModifyArgs, (selection: RangeSelection) => void][],
-  gesture: () => Promise<void>,
-): Promise<void> {
-  const proto = lexical
-    .getEditorState()
-    .read(() => Object.getPrototypeOf($createRangeSelection()) as RangeSelection);
-  let call = 0;
-  const modifySpy = vi.spyOn(proto, "modify").mockImplementation(function (
-    this: RangeSelection,
-    ...args: ModifyArgs
-  ) {
-    const [expected, $landing] = steps[call % steps.length];
-    call += 1;
-    expect(args).toEqual(expected);
-    $landing(this);
-  });
-  try {
-    await gesture();
-    expect(modifySpy).toHaveBeenCalled();
-  } finally {
-    modifySpy.mockRestore();
-  }
-}
-
 /** Runs `gesture` and checks it never extended the selection: it was judged from the caret alone. */
 async function withNoExtension(
   lexical: LexicalEditor,
@@ -788,22 +758,11 @@ describe("structure protection refuses a delete it does not allow", () => {
       text.select(POETRY_TEXT.length, POETRY_TEXT.length);
     });
 
-    // As measured in Chrome: the figure is not rendered, so the line extension finds nothing to
-    // extend into; one character on is the next line.
-    await withExtensionsLandingAt(
-      mounted.lexical,
-      [
-        [["extend", false, "lineboundary"], () => undefined],
-        [
-          ["extend", false, "character"],
-          (selection) => {
-            const next = $paraEndingWith("Closing text");
-            selection.focus.set(next.getKey(), 1, "element");
-          },
-        ],
-      ],
-      () =>
-        expectRefused(mounted, "q2", () => dispatch(mounted.lexical, DELETE_LINE_COMMAND, false)),
+    // The caret is right against the figure, so the delete would start into it: refused from the
+    // caret (OpaqueBlockGuardPlugin), before any extension is measured. With a host handler the
+    // hidden-content question claims it first instead.
+    await withNoExtension(mounted.lexical, () =>
+      expectRefused(mounted, "q2", () => dispatch(mounted.lexical, DELETE_LINE_COMMAND, false)),
     );
   });
 });

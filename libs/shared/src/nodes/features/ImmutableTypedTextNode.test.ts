@@ -23,6 +23,7 @@ import {
   $createImmutableTypedTextNode,
   $isImmutableTypedTextNode,
 } from "./ImmutableTypedTextNode.js";
+import { setDecoratorPaint } from "./decoratorPaint.js";
 import { $createParaNode } from "../usj/ParaNode.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
 import { $getNodeByKey, $getRoot, $isElementNode } from "lexical";
@@ -118,5 +119,25 @@ describe("ImmutableTypedTextNode HTML export", () => {
     );
 
     expect(element).toBeNull();
+  });
+
+  it("writes the bytes as plain text however the live element is painted", () => {
+    let key = "";
+    const { editor } = createBasicTestEnvironment(undefined, () => {
+      const glyph = $createImmutableTypedTextNode("marker", "//");
+      key = glyph.getKey();
+      $getRoot().append($createParaNode("p").append(glyph));
+    });
+    setDecoratorPaint(editor, key, [
+      { start: 0, end: 1, classNames: ["painted-class"], annotationKeys: ["a"] },
+    ]);
+
+    const exported = editor.getEditorState().read(() => {
+      const node = $getNodeByKey(key);
+      if (!$isImmutableTypedTextNode(node)) throw new Error("no glyph");
+      return node.exportDOM(editor).element as HTMLElement;
+    });
+
+    expect(exported.outerHTML).toBe('<span data-text-type="marker" class="marker">//</span>');
   });
 });

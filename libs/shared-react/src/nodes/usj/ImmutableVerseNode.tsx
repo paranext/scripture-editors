@@ -15,6 +15,7 @@ import {
   Spread,
   isHTMLElement,
 } from "lexical";
+import { DecoratorPaintedText } from "./DecoratorPaintedText";
 import { useLexicalNodeSelection } from "@lexical/react/useLexicalNodeSelection";
 import { ReactElement } from "react";
 import {
@@ -241,8 +242,8 @@ export class ImmutableVerseNode extends DecoratorNode<ReactElement> {
     return { element };
   }
 
-  override decorate(): ReactElement {
-    return <VerseDecorator nodeKey={this.getKey()} text={this.getRenderedText()} />;
+  override decorate(editor: LexicalEditor): ReactElement {
+    return <VerseDecorator editor={editor} nodeKey={this.getKey()} text={this.getRenderedText()} />;
   }
 
   /** The text this verse shows on screen: its whole `\v N` glyph, or only its number. */
@@ -290,12 +291,25 @@ export class ImmutableVerseNode extends DecoratorNode<ReactElement> {
 /**
  * Renders the verse marker text and reflects its node-selection state. DecoratorNodes do not get
  * selection styling for free, so this subscribes to the node's selection and toggles
- * {@link VERSE_SELECTED_CLASS_NAME}.
+ * {@link VERSE_SELECTED_CLASS_NAME}. An annotation held on part of the text paints that part as a
+ * sub-span ({@link DecoratorPaintedText}).
  */
-function VerseDecorator({ nodeKey, text }: { nodeKey: NodeKey; text: string }): ReactElement {
+function VerseDecorator({
+  editor,
+  nodeKey,
+  text,
+}: {
+  editor: LexicalEditor;
+  nodeKey: NodeKey;
+  text: string;
+}): ReactElement {
   const [isSelected] = useLexicalNodeSelection(nodeKey);
   // ZWSPs stay inside this span so double-click word selection still excludes the number.
-  return <span className={isSelected ? VERSE_SELECTED_CLASS_NAME : undefined}>{text}</span>;
+  return (
+    <span className={isSelected ? VERSE_SELECTED_CLASS_NAME : undefined}>
+      <DecoratorPaintedText editor={editor} nodeKey={nodeKey} text={text} />
+    </span>
+  );
 }
 
 function $convertImmutableVerseElement(element: HTMLElement): DOMConversionOutput {

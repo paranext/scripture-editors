@@ -1,8 +1,11 @@
 /** Marker node used when displaying USFM */
 
 import { closingMarkerText, openingMarkerText } from "../usj/markerText.utils.js";
+import { $logicalText, $mergePieces, $setLogicalText } from "./displayPieces.state.js";
+import { $isTypedMarkNode } from "./TypedMarkNode.js";
 import {
   $applyNodeReplacement,
+  $hasUpdateTag,
   EditorConfig,
   LexicalNode,
   LexicalUpdateJSON,
@@ -14,6 +17,13 @@ import {
 } from "lexical";
 
 export const MARKER_VERSION = 1;
+
+/**
+ * Update tag: the update left the caret at a glyph's start by removing the glyph's first bytes, so
+ * text typed at that caret goes into the glyph even right after an annotation mark
+ * ({@link MarkerNode.canInsertTextBefore}).
+ */
+export const CARET_IN_GLYPH_TAG = "caret-in-glyph";
 
 export type MarkerSyntax = "opening" | "closing" | "selfClosing";
 export type SerializedMarkerNode = Spread<
@@ -93,7 +103,9 @@ export class MarkerNode extends TextNode {
   setMarker(marker: string): this {
     if (this.__marker === marker) return this;
 
-    const self = this.getWritable();
+    // A glyph split into pieces by an annotation is one glyph: its spelling is rewritten whole,
+    // so the setter joins the pieces first (see `displayPieces.state.ts`).
+    const self = $mergePieces(this).getWritable();
     self.__marker = marker;
     self.__text = getMarkerText(marker, self.__markerSyntax, self.__nested);
     return self;
@@ -107,7 +119,7 @@ export class MarkerNode extends TextNode {
   setMarkerSyntax(markerSyntax: MarkerSyntax): this {
     if (this.__markerSyntax === markerSyntax) return this;
 
-    const self = this.getWritable();
+    const self = $mergePieces(this).getWritable();
     self.__markerSyntax = markerSyntax;
     self.__text = getMarkerText(self.__marker, markerSyntax, self.__nested);
     return self;
@@ -121,7 +133,7 @@ export class MarkerNode extends TextNode {
   setNested(nested: boolean): this {
     if (this.__nested === nested) return this;
 
-    const self = this.getWritable();
+    const self = $mergePieces(this).getWritable();
     self.__nested = nested;
     self.__text = getMarkerText(self.__marker, self.__markerSyntax, nested);
     return self;
@@ -153,6 +165,20 @@ export class MarkerNode extends TextNode {
       dom.classList.add(this.__markerSyntax);
     }
     return isRecreated;
+  }
+
+  /**
+   * A glyph right after an annotation mark refuses text typed at its front. A mark is
+   * presentation and takes no text after it, so Lexical reads a caret at the end of the mark's
+   * content onto this glyph's start; text typed there is the content's, as it is with no mark
+   * there (where the caret rests at the end of the content text), so it goes into a text of its own
+   * before the glyph rather than into the glyph's bytes. A caret an update put at the glyph's start
+   * by removing the glyph's first bytes ({@link CARET_IN_GLYPH_TAG}) is in the glyph, as it is with
+   * no mark there, and the glyph takes the text. Anywhere else a glyph takes text at its front as
+   * any text does.
+   */
+  override canInsertTextBefore(): boolean {
+    return !$isTypedMarkNode(this.getPreviousSibling()) || $hasUpdateTag(CARET_IN_GLYPH_TAG);
   }
 
   override exportJSON(): SerializedMarkerNode {
@@ -204,12 +230,14 @@ export function isSerializedMarkerNode(
  * span's `\+w*` is canonical FOR A NESTED GLYPH; the `+` comes from the node's own stored nesting,
  * so a rest-state nested glyph is never mistaken for a damaged one.
  *
+ * A glyph an annotation has split into pieces is read whole (`$logicalText`): each piece's own
+ * text is only part of the spelling.
+ *
  * Read-only: call inside `editor.getEditorState().read(...)` or an update.
  */
 export function $isCanonicalMarkerNode(node: MarkerNode): boolean {
   return (
-    node.getTextContent() ===
-    getMarkerText(node.getMarker(), node.getMarkerSyntax(), node.getNested())
+    $logicalText(node) === getMarkerText(node.getMarker(), node.getMarkerSyntax(), node.getNested())
   );
 }
 
@@ -224,7 +252,7 @@ export function $isCanonicalMarkerNode(node: MarkerNode): boolean {
  * transform when a non-user divergence is detected).
  */
 export function $restoreCanonicalMarkerText(node: MarkerNode): void {
-  node.setTextContent(getMarkerText(node.getMarker(), node.getMarkerSyntax(), node.getNested()));
+  $setLogicalText(node, getMarkerText(node.getMarker(), node.getMarkerSyntax(), node.getNested()));
 }
 
 /**

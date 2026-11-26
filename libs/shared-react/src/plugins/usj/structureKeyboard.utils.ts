@@ -31,6 +31,12 @@ import {
   $isSomeChapterNode,
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
+  $lastPiece,
+  $logicalNextSibling,
+  $logicalOffset,
+  $logicalPreviousSibling,
+  $logicalText,
+  $pieceHead,
   $placeCaretAtBoundary,
   ParaLikeNode,
   ParaNode,
@@ -355,17 +361,23 @@ export function $adjacentVerseMarker(
     const idx = direction === "backward" ? anchor.offset - 1 : anchor.offset;
     if (idx < 0) return undefined;
     const candidate = children[idx];
-    return $isSomeVerseNode(candidate) ? candidate : undefined;
+    if (!$isSomeVerseNode(candidate)) return undefined;
+    // A verse an annotation cut into pieces is named by its first piece. A point between two of
+    // its pieces is inside it, not beside it.
+    const edge = direction === "backward" ? $lastPiece(candidate) : $pieceHead(candidate);
+    return edge.is(candidate) ? $pieceHead(candidate) : undefined;
   }
+  // A caret in a carrier cut into pieces is at its edge only at the edge of the whole carrier.
+  const offset = $logicalOffset(node, anchor.offset);
   const isInHost = $isCaretHost(node);
   if (direction === "backward") {
-    if (anchor.offset !== 0 && !isInHost) return undefined;
-    const prev = node.getPreviousSibling();
+    if (offset !== 0 && !isInHost) return undefined;
+    const prev = $logicalPreviousSibling(node);
     return $isSomeVerseNode(prev) ? prev : undefined;
   }
-  if (anchor.offset !== node.getTextContentSize() && !isInHost) return undefined;
-  const next = node.getNextSibling();
-  return $isSomeVerseNode(next) ? next : undefined;
+  if (offset !== $logicalText(node).length && !isInHost) return undefined;
+  const next = $logicalNextSibling(node);
+  return $isSomeVerseNode(next) ? $pieceHead(next) : undefined;
 }
 
 /** True when the paragraph holding the caret has a preceding block sibling. */
@@ -516,6 +528,25 @@ export function $isUnmergeableParaStart(selection: BaseSelection): boolean {
   if (!$isRangeSelection(selection)) return false;
   const para = $getParaAncestor(selection.anchor.getNode());
   return !$isSomeParaNode(para) || !$canDeletePara(para);
+}
+
+/**
+ * True when a collapsed caret sits at the end of a block whose next block is neither a paragraph
+ * nor a chapter: a sidebar, say. A Delete there has no paragraph to merge up ({@link
+ * $structuralDeleteTarget}), and left to the native delete it would pull that block's first
+ * paragraph out of it, so it must be refused. A chapter is {@link $isCaretBesideChapterGlyph}'s to
+ * judge. A caret in front of a line's gutter glyph is judged from just past it, where a forward
+ * delete would run from.
+ *
+ * Read-only: safe in any read or update.
+ */
+export function $isUnmergeableParaEnd(selection: BaseSelection): boolean {
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const from = selection.clone();
+  $moveCaretPastGutterGlyph(from);
+  if (!$caretAtParaEnd(from)) return false;
+  const next = $getParaAncestor(from.anchor.getNode())?.getNextSibling();
+  return !!next && !$isSomeParaNode(next) && !$isSomeChapterNode(next);
 }
 
 /**
@@ -778,12 +809,12 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   // the caret lands in, so the leaves that go with the paragraph are marked too, and Undo takes the
   // removal back on its own.
   for (const child of para.getChildren()) if (!$isElementNode(child)) child.markDirty();
-  const moved = para
-    .getChildren()
-    .filter(
-      (child) =>
-        !$isMarkerTrailingSeparator(child) && !(dropsLeadingPrefix && child.is(leadingPrefix)),
-    );
+  const moved = para.getChildren().filter(
+    (child) =>
+      !$isMarkerTrailingSeparator(child) &&
+      // Every piece of a prefix glyph an annotation cut into pieces.
+      !(dropsLeadingPrefix && $pieceHead(child).is(leadingPrefix)),
+  );
   prev.append(...moved);
   para.remove();
   // The caret lands where the two paragraphs joined, not at the end.

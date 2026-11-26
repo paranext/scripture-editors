@@ -3,7 +3,9 @@ import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $getNearestNodeFromDOMNode,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
+  $isRootOrShadowRoot,
   COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   CONTROLLED_TEXT_INSERTION_COMMAND,
@@ -15,6 +17,7 @@ import {
   KEY_DOWN_COMMAND,
   LexicalNode,
   PASTE_COMMAND,
+  PointType,
   RangeSelection,
 } from "lexical";
 import { useEffect } from "react";
@@ -43,6 +46,15 @@ import { $isImmutableTableNode, $isUnknownNode } from "shared";
  * this guard's business. That is a request to replace a region of the document, which is the
  * structural-deletion question and is answered elsewhere; annexing it here would turn a targeted
  * guard into a blanket one.
+ *
+ * A delete from a caret directly AGAINST a construct is refused too (see
+ * {@link $caretDeleteStartsIntoOpaqueBlock}): Delete just before a figure or sidebar, or Backspace
+ * just after one, does nothing, as it does in front of a table. Left alone, its first press steps
+ * into the construct and the next one guts it — a figure's caption gone, a sidebar's first
+ * paragraph pulled out into the paragraph before it. In a view that hides these constructs,
+ * `HiddenContentDeleteGuardPlugin` claims such a delete first (it runs at CRITICAL) to ask whether
+ * to remove the construct whole, so the refusal only decides what happens where that question is
+ * not asked.
  *
  * Navigation and copying stay untouched, because they are what a read-only block is FOR: the block's
  * bytes are selectable and copyable. Only keys that would insert or delete are refused, and
@@ -77,8 +89,23 @@ export function OpaqueBlockGuardPlugin(): null {
       return true;
     };
 
+    /** A delete in this direction: refused inside a construct, or from a caret against one. */
+    const $refuseDelete = (isBackward: boolean): boolean =>
+      $selectionReachesIntoOpaqueBlock() || $caretDeleteStartsIntoOpaqueBlock(isBackward);
+
+    const $refuseKeyDown = (event: KeyboardEvent): boolean => {
+      if (!isEditingKey(event)) return false;
+      const isDeleteKey = event.key === "Backspace" || event.key === "Delete";
+      const isRefused = isDeleteKey
+        ? $refuseDelete(event.key === "Backspace")
+        : $selectionReachesIntoOpaqueBlock();
+      if (!isRefused) return false;
+      event.preventDefault();
+      return true;
+    };
+
     return mergeRegister(
-      editor.registerCommand(KEY_DOWN_COMMAND, $refuseEditInsideOpaqueBlock, COMMAND_PRIORITY_HIGH),
+      editor.registerCommand(KEY_DOWN_COMMAND, $refuseKeyDown, COMMAND_PRIORITY_HIGH),
       editor.registerCommand(
         CONTROLLED_TEXT_INSERTION_COMMAND,
         $refuseEditInsideOpaqueBlock,
@@ -112,21 +139,9 @@ export function OpaqueBlockGuardPlugin(): null {
         },
         COMMAND_PRIORITY_HIGH,
       ),
-      editor.registerCommand(
-        DELETE_CHARACTER_COMMAND,
-        $refuseEditInsideOpaqueBlock,
-        COMMAND_PRIORITY_HIGH,
-      ),
-      editor.registerCommand(
-        DELETE_WORD_COMMAND,
-        $refuseEditInsideOpaqueBlock,
-        COMMAND_PRIORITY_HIGH,
-      ),
-      editor.registerCommand(
-        DELETE_LINE_COMMAND,
-        $refuseEditInsideOpaqueBlock,
-        COMMAND_PRIORITY_HIGH,
-      ),
+      editor.registerCommand(DELETE_CHARACTER_COMMAND, $refuseDelete, COMMAND_PRIORITY_HIGH),
+      editor.registerCommand(DELETE_WORD_COMMAND, $refuseDelete, COMMAND_PRIORITY_HIGH),
+      editor.registerCommand(DELETE_LINE_COMMAND, $refuseDelete, COMMAND_PRIORITY_HIGH),
     );
   }, [editor]);
 
@@ -224,4 +239,40 @@ export function $rangeReachesIntoOpaqueBlock(range: RangeSelection): boolean {
     $opaqueBlockAncestor(range.anchor.getNode()) !== undefined ||
     $opaqueBlockAncestor(range.focus.getNode()) !== undefined
   );
+}
+
+/**
+ * Mutating: read inside an `editor.update()` or a command handler.
+ *
+ * Whether a delete in this direction from a collapsed caret would start INTO an opaque construct:
+ * the node directly beyond the caret — past the edge of the caret's text, or of every element whose
+ * edge the caret also sits at, out to the block — is one. A character, word or line delete from
+ * there all begin by stepping into the construct, so each is refused alike.
+ *
+ * A non-collapsed selection is not judged here; its ends are what {@link
+ * $selectionReachesIntoOpaqueBlock} judges.
+ */
+function $caretDeleteStartsIntoOpaqueBlock(isBackward: boolean): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  return $isOpaqueBlockNode($nodeBeyondCaret(selection.anchor, isBackward));
+}
+
+/** The node a delete in this direction from `point` reaches first, or `undefined` at the root's edge. */
+function $nodeBeyondCaret(point: PointType, isBackward: boolean): LexicalNode | undefined {
+  let node: LexicalNode = point.getNode();
+  if (point.type === "text") {
+    const isAtEdge = isBackward ? point.offset === 0 : point.offset === node.getTextContentSize();
+    if (!isAtEdge) return undefined;
+  } else if ($isElementNode(node)) {
+    const child = node.getChildAtIndex(isBackward ? point.offset - 1 : point.offset);
+    if (child) return child;
+  }
+  for (;;) {
+    const sibling = isBackward ? node.getPreviousSibling() : node.getNextSibling();
+    if (sibling) return sibling;
+    const parent = node.getParent();
+    if (!parent || $isRootOrShadowRoot(parent)) return undefined;
+    node = parent;
+  }
 }

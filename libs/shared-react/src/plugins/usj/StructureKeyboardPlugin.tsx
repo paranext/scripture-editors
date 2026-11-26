@@ -3,6 +3,7 @@ import {
   $getParaAncestor,
   $isArmedSelection,
   $isCaretBesideChapterGlyph,
+  $isUnmergeableParaEnd,
   $isUnmergeableParaStart,
   $moveCaretPastGutterGlyph,
   $narrowSelectionPastGutterGlyph,
@@ -60,6 +61,7 @@ import {
   $getSelectedParaMarkerPara,
   $isBookNode,
   $isSomeParaNode,
+  $pieces,
   $selectParaMarker,
   LoggerBasic,
 } from "shared";
@@ -219,10 +221,12 @@ export function StructureKeyboardPlugin({
         const node = $getNodeByKey(armed.key) ?? undefined;
         if (armed.kind === "verse") {
           if (node) {
+            // Every piece of a verse an annotation cut into pieces.
+            const pieces = $pieces(node);
             const parent = node.getParent();
-            const prev = node.getPreviousSibling();
-            const next = node.getNextSibling();
-            node.remove();
+            const prev = pieces[0].getPreviousSibling();
+            const next = pieces[pieces.length - 1].getNextSibling();
+            pieces.forEach((piece) => piece.remove());
             if (prev) $placeCaretAtEnd(prev);
             else if (next && $isTextNode(next)) next.select(0, 0);
             else parent?.selectStart();
@@ -327,6 +331,12 @@ export function StructureKeyboardPlugin({
         event?.preventDefault();
         return true;
       }
+      // And at a block's end with a sidebar or other non-paragraph block after it, whose first
+      // paragraph the native delete would pull out of it.
+      if (intent === "deleteForward" && $isUnmergeableParaEnd(selection)) {
+        event?.preventDefault();
+        return true;
+      }
       return false;
     };
 
@@ -382,7 +392,9 @@ export function StructureKeyboardPlugin({
       }
       // Through the command a paste's nodes always go through, so its listeners run here too:
       // prose lands inside the caret's span, a range over several texts is replaced as typing
-      // replaces it, pasted spans are recorded and display annotations stripped.
+      // replaces it, pasted spans are recorded and display annotations stripped, and the
+      // display-annotation index splits a carrier an annotation cut into pieces at the caret, as the
+      // insertion splits an uncut one.
       if (
         $isRangeSelection(selection) &&
         !editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {

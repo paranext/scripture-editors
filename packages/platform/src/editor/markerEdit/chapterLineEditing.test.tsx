@@ -44,6 +44,7 @@ import {
   UNDO_COMMAND,
 } from "lexical";
 import {
+  $addDisplayAnnotation,
   $chapterAltnumberRunPieces,
   $chapterGlyphTextNode,
   $chapterPubnumberRunPieces,
@@ -54,6 +55,8 @@ import {
   $isMarkerTrailingSeparator,
   $isParaNode,
   $isTypedMarkNode,
+  $lastPiece,
+  $pieces,
   ChapterNode,
   defaultStyleInfo,
   getVisibleOpenMarkerText,
@@ -452,6 +455,69 @@ describe("a caret on the chapter line", () => {
     );
     expect(lineBreak).toEqual(enter);
   });
+
+  // A selection made backward from the text up into a span at the root (the `\ca` a deletion
+  // across the chapter line leaves there) starts in that span although its anchor is in a
+  // paragraph, where no block holds the start of the range.
+  it.each([false, true])(
+    "Shift+Enter over a selection between a root-level \\ca span and the text does what Enter does (backward %s)",
+    async (backward) => {
+      const afterBreak = async (dispatch: (editor: LexicalEditor) => void) => {
+        const doc: Usj = {
+          ...chapterDoc,
+          content: [{ ...CHAPTER_2, altnumber: "3" }, VERSE_1_PARA],
+        };
+        const { ref, lexical } = await mountStandardViewEditor(doc);
+        // A deletion across the chapter line leaves the chapter's `\ca` span at the root.
+        await act(async () =>
+          lexical.update(() => {
+            const { value } = $chapterAltnumberRunPieces($chapter());
+            const selection = $createRangeSelection();
+            selection.anchor.set(requireDefined(value, "no \\ca value").getKey(), 1, "text");
+            selection.focus.set($verseText().getKey(), 3, "text");
+            $setSelection(selection);
+            lexical.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
+          }),
+        );
+        await act(async () =>
+          lexical.update(() => {
+            const span = requireDefined(
+              $getRoot()
+                .getChildren()
+                .find((node) => node.getTextContent().includes("ca")),
+              "no root-level \\ca span",
+            );
+            expect($isElementNode(span) && span.getParent()?.getType()).toBe("root");
+            const inRun = $isElementNode(span) ? span.getFirstDescendant() : null;
+            if (!inRun) throw new Error("no text");
+            const inText = $verseText();
+            const selection = $createRangeSelection();
+            const [anchor, focus] = backward
+              ? [
+                  { node: inText, offset: 3 },
+                  { node: inRun, offset: 0 },
+                ]
+              : [
+                  { node: inRun, offset: 0 },
+                  { node: inText, offset: 3 },
+                ];
+            selection.anchor.set(anchor.node.getKey(), anchor.offset, "text");
+            selection.focus.set(focus.node.getKey(), focus.offset, "text");
+            $setSelection(selection);
+          }),
+        );
+        await act(async () => dispatch(lexical));
+        return ref.current?.getUsj()?.content;
+      };
+      const enter = await afterBreak((editor) =>
+        editor.dispatchCommand(KEY_ENTER_COMMAND, keyDown("Enter")),
+      );
+      const lineBreak = await afterBreak((editor) =>
+        editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false),
+      );
+      expect(lineBreak).toEqual(enter);
+    },
+  );
 
   // As in Paratext 9, the paragraph goes directly after the chapter even with a `\cp` paragraph
   // following it: a `\cp` can stand on its own, and the user may mean to put a paragraph between.
@@ -2078,4 +2144,83 @@ describe("a chapter inserted into a book with no chapters", () => {
 
     expect(ref.current?.getUsj()?.content).toEqual([extraBook, CHAPTER_1]);
   });
+});
+
+describe("the chapter line with its `\\c N` glyph cut into pieces", () => {
+  // An annotation held over part of the glyph cuts it into pieces (`displayPieces.state.ts`); the
+  // pieces are one glyph, so a caret at the end of the line is in its last piece.
+  const CHAPTER_2_CA_3: MarkerContent = { ...CHAPTER_2, altnumber: "3" };
+  const CA_3: MarkerContent = { type: "char", marker: "ca", content: ["3"] };
+  const FRESH_CHAR_ND: MarkerContent = { type: "char", marker: "nd" };
+  const docOf = (...content: MarkerContent[]): Usj => ({ type: "USJ", version: "3.1", content });
+  const numberAt = CHAPTER_2_GLYPH.indexOf("2");
+  const holds: [string, number, number][] = [
+    ["the number", numberAt, numberAt + 1],
+    ["the marker and number", 0, numberAt + 1],
+  ];
+
+  /** Holds `[start, end)` of the glyph, then puts the caret at the end of the line. */
+  async function cutAndPark(lexical: LexicalEditor, start: number, end: number): Promise<void> {
+    await act(async () =>
+      lexical.update(() => {
+        $addDisplayAnnotation($glyph(), "test", "a", start, end);
+      }),
+    );
+    await act(async () =>
+      lexical.update(() => {
+        expect($pieces($glyph()).length).toBeGreaterThan(1);
+        const last = $lastPiece($glyph());
+        last.select(last.getTextContentSize(), last.getTextContentSize());
+      }),
+    );
+  }
+
+  it.each(holds)(
+    "puts an inline insertion after the whole number with %s held",
+    async (_label, start, end) => {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2, VERSE_1_PARA), {
+        scrRef: GEN_2_1,
+      });
+      await cutAndPark(lexical, start, end);
+      await act(async () => {
+        ref.current?.insertMarker("nd");
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, FRESH_CHAR_ND, VERSE_1_PARA]);
+    },
+  );
+
+  it.each(holds)(
+    "puts an inline insertion ahead of the \\ca run with %s held",
+    async (_label, start, end) => {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2_CA_3, VERSE_1_PARA), {
+        scrRef: GEN_2_1,
+      });
+      await cutAndPark(lexical, start, end);
+      await act(async () => {
+        ref.current?.insertMarker("nd");
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([
+        CHAPTER_2,
+        FRESH_CHAR_ND,
+        CA_3,
+        VERSE_1_PARA,
+      ]);
+    },
+  );
+
+  it.each(holds)(
+    "takes a structure-protected paste just past the end of the line with %s held",
+    async (_label, start, end) => {
+      const { ref, lexical } = await mountStandardViewEditor(chapterDoc, {
+        structureProtectionMode: "protected",
+      });
+      await cutAndPark(lexical, start, end);
+      await act(async () =>
+        lexical.update(() => {
+          lexical.dispatchCommand(PASTE_COMMAND, plainTextPaste("aa"));
+        }),
+      );
+      expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, "aa", VERSE_1_PARA, POETRY_PARA]);
+    },
+  );
 });

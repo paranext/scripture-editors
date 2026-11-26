@@ -1,8 +1,9 @@
 import nx from "@nx/eslint-plugin";
-import baseConfig from "../../eslint.config.mjs";
+import baseConfig, { noRawCarrierAccessorsConfig } from "../../eslint.config.mjs";
 
 export default [
   ...baseConfig,
+  noRawCarrierAccessorsConfig,
   ...nx.configs["flat/react"],
   {
     ignores: ["**/lib"],

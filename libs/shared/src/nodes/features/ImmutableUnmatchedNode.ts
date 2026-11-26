@@ -13,6 +13,12 @@ import {
   Spread,
   TextNode,
 } from "lexical";
+import {
+  $isPieceContinuation,
+  $logicalText,
+  $mergePieces,
+  DISPLAY_PIECE_CONTINUATION_ATTRIBUTE,
+} from "./displayPieces.state.js";
 
 export const UNMATCHED_TAG_NAME = "unmatched";
 export const IMMUTABLE_UNMATCHED_VERSION = 2;
@@ -113,7 +119,8 @@ export class ImmutableUnmatchedNode extends TextNode {
   setMarker(marker: string): this {
     if (this.__marker === marker) return this;
 
-    const self = this.getWritable();
+    // A closer an annotation cut into pieces is one closer: it is respelled whole.
+    const self = $mergePieces(this).getWritable();
     self.__marker = marker;
     self.__text = unmatchedGlyphText(marker);
     return self;
@@ -146,9 +153,11 @@ export class ImmutableUnmatchedNode extends TextNode {
 
   override exportDOM(): DOMExportOutput {
     // The dedicated element round-trips through importDOM above, so an HTML copy of the flagged
-    // bytes pastes back as the same construct.
+    // bytes pastes back as the same construct. Each piece exports its own bytes, so a reader of the
+    // text sees the closer's bytes once; a later piece is tagged so the import makes one closer.
     const element = document.createElement(UNMATCHED_TAG_NAME);
     element.setAttribute("data-marker", this.getMarker());
+    if ($isPieceContinuation(this)) element.setAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE, "");
     element.classList.add(INVALID_CLASS_NAME);
     element.textContent = this.getTextContent();
     return { element };
@@ -178,7 +187,7 @@ export class ImmutableUnmatchedNode extends TextNode {
  * mid-edit (pend-shaped). The unmatched counterpart of `$isCanonicalMarkerNode`.
  * Read-only: call inside `editor.getEditorState().read(...)` or an update. */
 export function $isCanonicalUnmatchedNode(node: ImmutableUnmatchedNode): boolean {
-  return node.getTextContent() === unmatchedGlyphText(node.getMarker());
+  return $logicalText(node) === unmatchedGlyphText(node.getMarker());
 }
 
 function unmatchedTitle(marker: string): string {
@@ -188,7 +197,17 @@ function unmatchedTitle(marker: string): string {
 }
 
 function $convertImmutableUnmatchedElement(element: HTMLElement): DOMConversionOutput {
+  // A later piece of a closer whose earlier piece was copied too is already part of that closer:
+  // it and its text paste as nothing.
   const marker = element.getAttribute("data-marker") ?? "";
+  const previous = element.previousSibling;
+  if (
+    element.hasAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE) &&
+    previous instanceof Element &&
+    isUnmatchedElement(previous) &&
+    previous.getAttribute("data-marker") === marker
+  )
+    return { node: null, after: () => [] };
   const node = $createImmutableUnmatchedNode(marker);
   return { node };
 }
@@ -197,7 +216,7 @@ export function $createImmutableUnmatchedNode(marker?: string): ImmutableUnmatch
   return $applyNodeReplacement(new ImmutableUnmatchedNode(marker));
 }
 
-function isUnmatchedElement(node: HTMLElement | null | undefined): boolean {
+function isUnmatchedElement(node: Element | null | undefined): boolean {
   // `tagName` is upper-cased for HTML-namespace elements, so compare case-insensitively.
   return node?.tagName.toLowerCase() === UNMATCHED_TAG_NAME;
 }
